@@ -20,7 +20,19 @@ app.use((err, req, res, next) => {
 });
 
 const server = app.listen(PORT, () => {
-  console.log(`\n🎬 Video Descriptor corriendo en http://localhost:${PORT}\n`);
+  console.log(`\n🎬 Video Descriptor corriendo en http://localhost:${PORT}`);
+  console.log('Deja esta ventana abierta mientras uses la app. Ciérrala para apagarla.\n');
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log(`\n⚠️  El puerto ${PORT} ya está en uso.`);
+    console.log('Esto casi siempre significa que la app YA está corriendo en otra ventana —');
+    console.log(`abre http://localhost:${PORT} en tu navegador en vez de iniciar otra copia.\n`);
+    process.exit(1);
+  }
+  console.error('\n❌ Error al iniciar el servidor:', err.message, '\n');
+  process.exit(1);
 });
 
 server.requestTimeout = 0;
