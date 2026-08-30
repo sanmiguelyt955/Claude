@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Viral Video Lab</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <h1>🎬 Viral Video Lab</h1>
+    <p class="tagline">Clona videos ganadores y extrae lecciones de videos educativos.</p>
+
+    <div class="mode-switch">
+      <button class="mode-btn active" data-mode="viral">🏆 Ganadores</button>
+      <button class="mode-btn" data-mode="aprendizaje">🎓 Aprendizaje</button>
+    </div>
+    <p id="mode-desc" class="mode-desc">Clips cortos para clonar su estructura viral (hook/climax/CTA).</p>
+
+    <section class="panel">
+      <h2>📼 Biblioteca</h2>
+      <button id="btn-scan" class="btn-primary">🔎 Escanear carpeta por defecto</button>
+      <div class="row">
+        <input id="input-path" type="text" placeholder="Pega una ruta absoluta a un video..." />
+        <button id="btn-register" title="Agregar por ruta">＋</button>
+      </div>
+      <div id="dropzone" class="dropzone">
+        <span class="dropzone-icon">⬆️</span>
+        <span>Arrastra un video aquí<br /><small>se copia por streaming, sin límite de tamaño</small></span>
+      </div>
+      <input id="file-input" type="file" accept="video/*" style="display:none" />
+      <details class="manual-entry">
+        <summary>✍️ Modo B: crear entrada sin archivo</summary>
+        <input id="manual-nombre" type="text" placeholder="Nombre del video" />
+        <input id="manual-duracion" type="number" step="0.01" placeholder="Duración total (segundos)" />
+        <button id="btn-manual">Crear entrada manual</button>
+      </details>
+      <ul id="video-list" class="video-list"></ul>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div id="empty-state" class="empty-state">
+      <div class="empty-icon">🎬✨</div>
+      <h2 id="empty-title">Empieza en 3 pasos</h2>
+      <ol id="empty-steps" class="empty-steps"></ol>
+    </div>
+
+    <div id="video-view" class="video-view" hidden>
+      <header class="video-header">
+        <div>
+          <h2 id="video-title">—</h2>
+          <div id="video-badges" class="badges"></div>
+        </div>
+      </header>
+
+      <nav class="stepper">
+        <button class="step-btn active" data-tab="reproductor" data-step="1">
+          <span class="step-num">1</span><span class="step-icon">▶️</span><span class="step-label">Reproductor</span>
+        </button>
+        <button class="step-btn" data-tab="analisis" data-step="2">
+          <span class="step-num">2</span><span class="step-icon">🔬</span><span class="step-label">Análisis</span>
+        </button>
+        <button class="step-btn" data-tab="estructura" data-step="3" data-mode="viral">
+          <span class="step-num">3</span><span class="step-icon">✂️</span><span class="step-label">Estructura</span>
+        </button>
+        <button class="step-btn" data-tab="validacion" data-step="4" data-mode="viral">
+          <span class="step-num">4</span><span class="step-icon">✅</span><span class="step-label">Validación</span>
+        </button>
+        <button class="step-btn" data-tab="guion" data-step="5" data-mode="viral">
+          <span class="step-num">5</span><span class="step-icon">📝</span><span class="step-label">Guion</span>
+        </button>
+        <button class="step-btn" data-tab="notas" data-step="3" data-mode="aprendizaje" hidden>
+          <span class="step-num">3</span><span class="step-icon">📓</span><span class="step-label">Notas</span>
+        </button>
+        <button class="step-btn" data-tab="aplicar" data-step="4" data-mode="aprendizaje" hidden>
+          <span class="step-num">4</span><span class="step-icon">🚀</span><span class="step-label">Aplicar</span>
+        </button>
+      </nav>
+
+      <section id="tab-reproductor" class="tab-content active">
+        <video id="player" controls></video>
+      </section>
+
+      <section id="tab-analisis" class="tab-content">
+        <p id="analisis-hint" class="hint">🧪 ffmpeg extrae candidatos de cambio de escena, silencios y una tira de miniaturas — todo por streaming, sin cargar el video completo en memoria.</p>
+        <button id="btn-analyze" class="btn-primary">🔬 Analizar video</button>
+        <div id="analyze-progress" class="progress" hidden>
+          <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+          <span id="progress-label">0%</span>
+        </div>
+        <div id="analysis-timeline-wrap" class="timeline-wrap" hidden>
+          <div id="analysis-timeline" class="timeline"></div>
+          <div class="timeline-caption">Haz clic para mover el reproductor · <span class="dot dot-scene"></span> corte de escena · <span class="dot dot-silence"></span> silencio</div>
+        </div>
+        <div id="frames-view" class="frames-view"></div>
+      </section>
+
+      <section id="tab-estructura" class="tab-content">
+        <div class="field-row">
+          <label>Tipo de contenido
+            <select id="tipo-contenido">
+              <option value="producto">🛍️ Producto / mascota / transformación (climax 68–71%)</option>
+              <option value="tutorial">🎓 Tutorial / hack / educativo (climax 85–90%)</option>
+              <option value="otro">❔ Otro (a determinar caso por caso)</option>
+            </select>
+          </label>
+          <label>Duración total (s)
+            <input id="duracion-total" type="number" step="0.01" />
+          </label>
+        </div>
+
+        <div id="structure-timeline-wrap" class="timeline-wrap">
+          <div id="structure-timeline" class="timeline editable"></div>
+          <div class="timeline-caption">Arrastra los bordes de cada bloque, o haz clic en la línea para mover el reproductor ahí.</div>
+        </div>
+
+        <table id="segments-table">
+          <thead><tr><th>Segmento</th><th>Inicio (s)</th><th>Fin (s)</th><th>Qué pasa</th><th>Audio</th><th></th></tr></thead>
+          <tbody id="segments-body"></tbody>
+        </table>
+        <button id="btn-add-segment">+ Agregar segmento</button>
+
+        <div class="card">
+          <label class="checkbox"><input id="cambio-estado-presente" type="checkbox" /> 🔄 Hay cambio de estado visible (antes ≠ después)</label>
+          <input id="cambio-estado-desc" type="text" placeholder="Describe el cambio de estado (antes → después)" />
+        </div>
+
+        <div class="actions-row">
+          <button id="btn-save-structure" class="btn-primary">💾 Guardar estructura</button>
+          <button id="btn-copy-manifest">📋 Copiar manifiesto para pedirle el análisis a Claude</button>
+        </div>
+        <p class="hint">Modo A: si ya analizaste el video, mira las miniaturas en la pestaña Análisis o pídele a Claude en el chat ("usa el agente-lider, analiza data/library/&lt;id&gt;/") que determine hook/climax/cta por ti y pega el resultado aquí. Modo B: arrastra los bloques o llena la tabla directamente con tu descripción.</p>
+      </section>
+
+      <section id="tab-validacion" class="tab-content">
+        <div class="actions-row">
+          <button id="btn-validate" class="btn-primary">✅ Validar contra el algoritmo</button>
+          <button id="btn-match">🧩 Comparar contra PATTERN_LIBRARY</button>
+        </div>
+        <div id="validation-result"></div>
+        <div id="pattern-result"></div>
+      </section>
+
+      <section id="tab-guion" class="tab-content">
+        <div class="field-row">
+          <label>Patrón base
+            <select id="pattern-select"></select>
+          </label>
+        </div>
+        <div id="pattern-preview" class="card pattern-preview" hidden></div>
+        <input id="guion-producto" type="text" placeholder="Tu producto" />
+        <input id="guion-contexto" type="text" placeholder="Contexto/ángulo de venta (opcional)" />
+        <input id="guion-duracion" type="number" step="0.1" placeholder="Duración objetivo en segundos (opcional)" />
+        <button id="btn-prepare-script" class="btn-primary">✨ Generar prompt para el chat</button>
+        <textarea id="script-prompt" rows="14" readonly placeholder="El prompt listo para pegar en el chat con Claude aparecerá aquí..."></textarea>
+        <button id="btn-copy-script">📋 Copiar</button>
+      </section>
+
+      <section id="tab-notas" class="tab-content">
+        <p class="hint">🎓 Extrae lo valioso de un video educativo: técnicas, pasos, herramientas, citas o advertencias, cada una con el momento exacto en que ocurre. Esto no se valida contra el algoritmo viral — aquí el objetivo es capturar conocimiento, no clonar una estructura.</p>
+        <div class="field-row">
+          <label>Tema principal
+            <input id="leccion-tema" type="text" placeholder="p. ej. Cómo generar infografías con Nano Banana" />
+          </label>
+          <label>Fuente / canal (opcional)
+            <input id="leccion-fuente" type="text" placeholder="Nombre del canal o creador" />
+          </label>
+        </div>
+        <label class="block-label">Resumen ejecutivo</label>
+        <textarea id="leccion-resumen" rows="3" placeholder="2-3 líneas: de qué trata el video y por qué vale la pena"></textarea>
+
+        <div id="notas-timeline-wrap" class="timeline-wrap" hidden>
+          <div id="notas-timeline" class="timeline"></div>
+          <div class="timeline-caption">Tus notas sobre la línea de tiempo · clic para saltar ahí.</div>
+        </div>
+
+        <div id="notas-list" class="notas-list"></div>
+        <button id="btn-add-nota">+ Agregar nota</button>
+
+        <div class="actions-row">
+          <button id="btn-save-lessons" class="btn-primary">💾 Guardar notas</button>
+          <button id="btn-copy-lessons-manifest">📋 Copiar manifiesto para pedirle apoyo a Claude</button>
+        </div>
+        <p class="hint">¿Prefieres que Claude identifique los momentos clave por ti? Analiza el video en la pestaña Análisis y usa "Copiar manifiesto" — luego pégalo en el chat pidiendo `usa el agente-lider` para que revise las miniaturas y te proponga las notas.</p>
+      </section>
+
+      <section id="tab-aplicar" class="tab-content">
+        <p class="hint">🚀 Arma un prompt con tus notas guardadas para pedirle a Claude (agente-lider → skill-creator) que proponga mejoras concretas a tus skills, o registre lo aprendido en MEJORAS_SKILLS.md.</p>
+        <div id="lessons-summary" class="card"></div>
+        <button id="btn-prepare-lessons-prompt" class="btn-primary">✨ Generar prompt para el chat</button>
+        <textarea id="lessons-prompt" rows="14" readonly placeholder="El prompt listo para pegar en el chat con Claude aparecerá aquí..."></textarea>
+        <button id="btn-copy-lessons-prompt">📋 Copiar</button>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

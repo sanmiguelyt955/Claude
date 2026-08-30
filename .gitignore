@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Generated/uploaded video data (large binaries, regenerable, not source)
+video-descriptor-app/data/uploads/
+video-descriptor-app/data/packages/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/

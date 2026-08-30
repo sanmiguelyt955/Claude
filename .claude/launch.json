@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "video-descriptor",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["video-descriptor-app/server/index.js"],
+      "port": 4501,
+      "autoPort": true
+    }
+  ]
+}

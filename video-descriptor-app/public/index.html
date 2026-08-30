@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Video Descriptor</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🎬 Video Descriptor</h1>
+    <p class="tagline">Extrae frames + audio, corta en bloques. Claude lee todo directo del disco — no hace falta subir nada.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. Sube tu video</h2>
+      <div id="dropzone" class="dropzone">
+        <span class="icon">⬆️</span>
+        <span>Arrastra un video aquí<br /><small>sin límite de tamaño, procesado localmente</small></span>
+      </div>
+      <input id="file-input" type="file" accept="video/*" style="display:none" />
+    </section>
+
+    <section class="card" id="config-section" hidden>
+      <h2>2. Configura intervalo</h2>
+      <div class="field">
+        <label>Extrae un frame cada <span id="interval-display">1.0</span> segundo(s)</label>
+        <input id="interval-slider" type="range" min="0.5" max="5" step="0.5" value="1" />
+      </div>
+      <button id="btn-analyze" class="btn-primary">🎬 Analizar video</button>
+    </section>
+
+    <section class="card" id="progress-section" hidden>
+      <h2>Analizando...</h2>
+      <div class="progress">
+        <div class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <span id="progress-label">0%</span>
+      </div>
+      <p id="progress-info" class="info"></p>
+    </section>
+
+    <section class="card" id="result-section" hidden>
+      <h2>✅ Listo para descargar</h2>
+      <div id="result-info" class="info"></div>
+      <button id="btn-download" class="btn-primary">📦 Descargar paquete ZIP (opcional)</button>
+      <p class="hint">El ZIP es solo respaldo/portabilidad. Claude ya puede leer los archivos directo de <code>data/packages/</code> sin que lo subas — sigue al paso 3.</p>
+    </section>
+
+    <section class="card" id="blocks-section" hidden>
+      <h2>3. Genera bloques para análisis</h2>
+      <p class="hint">Corta el audio en tramos y agrupa los frames. Al terminar, dile a Claude "ya generé los bloques del job &lt;ID&gt;" — él los lee directo del disco, sube cada bloque de audio a KIE.ai, transcribe y analiza. No necesitas subir ni adjuntar nada tú.</p>
+      <div class="field">
+        <label>Duración de cada bloque: <span id="block-duration-display">60</span>s</label>
+        <input id="block-duration-slider" type="range" min="15" max="180" step="5" value="60" />
+      </div>
+      <div class="field">
+        <label>Frames clave por bloque: <span id="keyframe-count-display">4</span> (ahorra tokens al analizar)</label>
+        <input id="keyframe-count-slider" type="range" min="2" max="10" step="1" value="4" />
+      </div>
+      <button id="btn-generate-blocks" class="btn-primary">🧩 Generar bloques</button>
+      <div id="blocks-result" class="info" hidden></div>
+      <ul id="blocks-list"></ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>Todo queda en <code>data/packages/&lt;jobId&gt;/</code> — Claude lo lee directo del disco. No hace falta subir archivos.</p>
+  </footer>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

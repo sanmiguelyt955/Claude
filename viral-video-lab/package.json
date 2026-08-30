@@ -1,0 +1,17 @@
+{
+  "name": "viral-video-lab",
+  "version": "1.0.0",
+  "description": "Analiza estructura temporal de videos virales (hook/demo/climax/cta), valida contra el algoritmo viral y compara contra la PATTERN_LIBRARY, sin limite de tamano/duracion de video.",
+  "private": true,
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "busboy": "^1.6.0",
+    "express": "^4.19.2"
+  }
+}
