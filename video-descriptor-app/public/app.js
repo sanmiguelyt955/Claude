@@ -28,7 +28,7 @@ state.keyFrameCount = 4;
 
 blockDurationSlider.addEventListener('input', (e) => {
   state.blockDuration = parseInt(e.target.value, 10);
-  blockDurationDisplay.textContent = state.blockDuration;
+  blockDurationDisplay.textContent = state.blockDuration + 's';
 });
 
 keyframeCountSlider.addEventListener('input', (e) => {
@@ -71,19 +71,33 @@ function showBlocks(manifest) {
   blocksResult.hidden = false;
   const totalFrames = manifest.blocks.reduce((sum, b) => sum + b.frameCount, 0);
   const totalKeyFrames = manifest.blocks.reduce((sum, b) => sum + b.keyFrames.length, 0);
+  const savings = totalFrames > 0 ? Math.round((1 - totalKeyFrames / totalFrames) * 100) : 0;
+
   blocksResult.innerHTML = `
     ✅ <strong>${manifest.blockCount} bloques</strong> de ${manifest.blockDuration}s generados
     (video: ${manifest.duration.toFixed(1)}s).<br />
-    Frames totales extraídos: ${totalFrames} · Frames clave para análisis: <strong>${totalKeyFrames}</strong>
-    (ahorro de ~${Math.round((1 - totalKeyFrames / totalFrames) * 100)}% en lectura de imágenes).<br />
-    <strong>Job ID:</strong> <code>${manifest.jobId}</code> — dile esto a Claude para que empiece el análisis.
+    Frames totales: ${totalFrames} · Frames clave para análisis: <strong>${totalKeyFrames}</strong>
+    (~${savings}% menos lectura de imágenes).<br />
+    <strong>Job ID:</strong> <code id="job-id-value">${manifest.jobId}</code>
+    <button id="btn-copy-job-id" class="btn-copy" type="button" title="Copiar Job ID">📋</button>
+    — dile esto a Claude para que empiece el análisis.
   `;
+
+  document.getElementById('btn-copy-job-id').addEventListener('click', (e) => {
+    navigator.clipboard.writeText(manifest.jobId).then(() => {
+      e.target.textContent = '✅';
+      setTimeout(() => { e.target.textContent = '📋'; }, 1200);
+    });
+  });
 
   blocksList.innerHTML = manifest.blocks.map(b => `
     <li>
-      <strong>Bloque ${b.blockIndex}</strong>
-      (${b.startTime.toFixed(0)}s–${b.endTime.toFixed(0)}s) —
-      ${b.frameCount} frames (${b.keyFrames.length} clave) — ${b.audioFile}
+      <span class="block-index">${b.blockIndex}</span>
+      <span class="block-time">${b.startTime.toFixed(0)}s–${b.endTime.toFixed(0)}s</span>
+      <span class="block-meta">
+        <span class="chip">${b.frameCount} frames</span>
+        <span class="chip">${b.keyFrames.length} clave</span>
+      </span>
     </li>
   `).join('');
 }
@@ -95,11 +109,11 @@ dropzone.addEventListener('dragover', (e) => {
   dropzone.style.borderColor = 'var(--accent)';
 });
 dropzone.addEventListener('dragleave', () => {
-  dropzone.style.borderColor = 'var(--border)';
+  dropzone.style.borderColor = 'var(--card-border)';
 });
 dropzone.addEventListener('drop', (e) => {
   e.preventDefault();
-  dropzone.style.borderColor = 'var(--border)';
+  dropzone.style.borderColor = 'var(--card-border)';
   const files = e.dataTransfer.files;
   if (files.length > 0) selectFile(files[0]);
 });

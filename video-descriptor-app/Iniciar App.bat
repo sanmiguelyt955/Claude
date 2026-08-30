@@ -1,27 +1,26 @@
 @echo off
-title Video Descriptor - Servidor
+setlocal
 cd /d "%~dp0"
 
-echo ============================================
-echo   VIDEO DESCRIPTOR
-echo ============================================
-echo.
-echo Iniciando servidor local...
-echo.
-echo IMPORTANTE:
-echo  - Mientras esta ventana este abierta, la app esta ENCENDIDA.
-echo  - Si cierras esta ventana (o le das Ctrl+C), la app se APAGA.
-echo  - No la cierres mientras la estes usando en el navegador.
-echo.
+set PORT=4501
+set URL=http://localhost:%PORT%
 
-call npm start
+rem Revisa si el puerto ya esta en uso (la app ya esta corriendo)
+powershell -NoProfile -Command "(Test-NetConnection -ComputerName localhost -Port %PORT% -WarningAction SilentlyContinue).TcpTestSucceeded" | findstr /C:"True" >nul
 
-echo.
-echo ============================================
-echo   La app se detuvo.
-echo   (Revisa el mensaje de arriba: si dice que el puerto
-echo    ya estaba en uso, es porque YA tenias otra ventana
-echo    de la app abierta — no es un error real.)
-echo ============================================
-echo.
-pause
+if %errorlevel%==0 (
+    echo La app ya estaba corriendo. Abriendo...
+) else (
+    echo Iniciando servidor en segundo plano...
+    start "Video Descriptor - Servidor" /min cmd /c "npm start"
+
+    rem Espera a que el servidor responda antes de abrir el navegador
+    set /a intentos=0
+    :esperar
+    set /a intentos+=1
+    timeout /t 1 /nobreak >nul
+    powershell -NoProfile -Command "(Test-NetConnection -ComputerName localhost -Port %PORT% -WarningAction SilentlyContinue).TcpTestSucceeded" | findstr /C:"True" >nul
+    if not %errorlevel%==0 if %intentos% lss 15 goto esperar
+)
+
+start "" "%URL%"
