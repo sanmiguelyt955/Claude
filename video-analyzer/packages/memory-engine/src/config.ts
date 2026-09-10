@@ -47,3 +47,17 @@ export const SKILLS_OUT_DIR = path.join(DATA_DIR, 'skills-generadas')
 export const EMBEDDING_DIMENSIONS = Number(process.env.EMBEDDING_DIMENSIONS ?? 768)
 
 export const EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL ?? 'gemini-embedding-001'
+
+/**
+ * videos.stored_path (and every other *_path column) is stored relative to
+ * DATA_DIR, not as an absolute path — the whole `data/` folder is meant to
+ * be movable/backupable as a unit. These two helpers are the only place
+ * that should convert between the two.
+ */
+export function resolveDataPath(relativePath: string): string {
+  return path.join(DATA_DIR, relativePath)
+}
+
+export function toDataRelativePath(absolutePath: string): string {
+  return path.relative(DATA_DIR, absolutePath)
+}

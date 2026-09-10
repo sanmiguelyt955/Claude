@@ -6,6 +6,23 @@
 
 export type VideoStatus = 'pending' | 'probing' | 'queued' | 'analyzing' | 'ready' | 'failed'
 
+/**
+ * Shape produced by packages/video-processor's probe(). Duplicated here
+ * (rather than imported) so memory-engine has no dependency on other
+ * workspace packages — apps depend on memory-engine, not the other way.
+ */
+export type VideoMetadata = {
+  durationSeconds: number
+  width: number | null
+  height: number | null
+  fps: number | null
+  container: string
+  videoCodec: string | null
+  audioCodec: string | null
+  hasAudio: boolean
+  sizeBytes: number
+}
+
 export type JobType =
   | 'probe'
   | 'segment'

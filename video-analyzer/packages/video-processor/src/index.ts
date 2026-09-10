@@ -1,44 +1,43 @@
+export type { VideoMetadata, SegmentPlan } from './types.js'
+export { probe } from './ffmpeg.js'
+export { hashFile } from './hash.js'
+export { downloadToFile } from './download.js'
+export {
+  SUPPORTED_VIDEO_EXTENSIONS,
+  SUPPORTED_AUDIO_EXTENSIONS,
+  SUPPORTED_EXTENSIONS,
+  isSupportedExtension,
+  isYoutubeUrl,
+} from './formats.js'
+
+import type { VideoMetadata, SegmentPlan } from './types.js'
+
 /**
- * FFmpeg wrappers. Implemented in bloque 2 (pipeline de ingesta).
- * The contracts live here so the schema, the worker and the UI already agree
- * on shapes before any of it is wired up.
+ * Splitting a video for the token budget needs to know which Gemini model
+ * and processing mode will receive it — that lives in ai-router, built in
+ * bloque 3. Stubs kept here so the schema and callers already agree on the
+ * shape; calling them before bloque 3 fails loudly rather than silently.
  */
-
-export type VideoMetadata = {
-  durationSeconds: number
-  width: number
-  height: number
-  fps: number
-  container: string
-  videoCodec: string
-  audioCodec: string | null
-  hasAudio: boolean
-  sizeBytes: number
+export function planSegments(
+  _metadata: VideoMetadata,
+  _budget: { maxTokensPerRequest: number; agentic: boolean },
+): SegmentPlan {
+  throw new Error('planSegments() se implementa en el bloque 3 (integracion con Gemini).')
 }
 
-export type SegmentPlan = {
-  /** Why the split was needed, surfaced to the user before spending quota. */
-  reason: 'fits' | 'token_budget' | 'file_size'
-  estimatedTokens: number
-  segments: { index: number; startSeconds: number; endSeconds: number }[]
+export async function extractSegment(
+  _filePath: string,
+  _outPath: string,
+  _startSeconds: number,
+  _endSeconds: number,
+): Promise<void> {
+  throw new Error('extractSegment() se implementa en el bloque 3 (integracion con Gemini).')
 }
 
-export declare function probe(filePath: string): Promise<VideoMetadata>
-
-export declare function planSegments(
-  metadata: VideoMetadata,
-  budget: { maxTokensPerRequest: number; agentic: boolean },
-): SegmentPlan
-
-export declare function extractSegment(
-  filePath: string,
-  outPath: string,
-  startSeconds: number,
-  endSeconds: number,
-): Promise<void>
-
-export declare function extractKeyframe(
-  filePath: string,
-  outPath: string,
-  atSeconds: number,
-): Promise<void>
+export async function extractKeyframe(
+  _filePath: string,
+  _outPath: string,
+  _atSeconds: number,
+): Promise<void> {
+  throw new Error('extractKeyframe() se implementa en el bloque 5 (UI de resultados).')
+}

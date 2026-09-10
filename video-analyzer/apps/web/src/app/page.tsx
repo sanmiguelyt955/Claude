@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { getDb, inspectSchema, SQLITE_PATH } from '@cva/memory-engine'
 
 // The storage layer is read at request time, never at build time.
@@ -55,9 +56,16 @@ export default function HomePage() {
         <p className="text-sm font-medium text-(--color-accent)">Bloque 1 · Scaffolding</p>
         <h1 className="text-3xl font-semibold tracking-tight">Video Analyzer</h1>
         <p className="text-(--color-ink-soft)">
-          Memoria audiovisual local. Las pantallas de biblioteca, carga y resultados llegan en el
-          bloque 5; por ahora esta pagina solo confirma que la capa de almacenamiento responde.
+          Memoria audiovisual local. Las pantallas finales de biblioteca, carga y resultados
+          llegan en el bloque 5; por ahora esta pagina solo confirma que la capa de almacenamiento
+          responde.
         </p>
+        <Link
+          href="/ingesta"
+          className="w-fit rounded-md bg-(--color-accent) px-4 py-2 text-sm font-medium text-white"
+        >
+          Ir a cargar un video (bloque 2) →
+        </Link>
       </header>
 
       <section className="overflow-hidden rounded-(--radius-card) border border-(--color-line) bg-(--color-surface)">

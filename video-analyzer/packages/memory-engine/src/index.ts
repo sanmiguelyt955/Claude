@@ -10,6 +10,8 @@ export {
   SKILLS_OUT_DIR,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
+  resolveDataPath,
+  toDataRelativePath,
 } from './config.js'
 export type {
   VideoRow,
@@ -24,4 +26,28 @@ export type {
   JobType,
   JobStatus,
   VideoStatus,
+  VideoMetadata,
 } from './types.js'
+
+export {
+  createVideo,
+  getVideo,
+  listVideos,
+  setVideoStatus,
+  setVideoStoredPath,
+  applyVideoMetadata,
+  setVideoTitle,
+  deleteVideo,
+} from './repo/videos.js'
+export type { CreateVideoInput } from './repo/videos.js'
+
+export {
+  enqueueJob,
+  claimNextJob,
+  updateJobProgress,
+  completeJob,
+  retryOrFailJob,
+  getJob,
+  listJobsForVideo,
+} from './repo/jobs.js'
+export type { EnqueueJobInput } from './repo/jobs.js'
