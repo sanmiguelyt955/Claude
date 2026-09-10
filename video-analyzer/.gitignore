@@ -1,0 +1,22 @@
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+.env
+.env.local
+.env*.local
+
+# Datos locales: nunca al repositorio
+data/videos/*
+!data/videos/.gitkeep
+data/db/*
+!data/db/.gitkeep
+data/skills-generadas/*
+!data/skills-generadas/.gitkeep
+data/tmp/
+
+*.log
+.DS_Store
+Thumbs.db

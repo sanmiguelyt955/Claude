@@ -7,6 +7,13 @@
       "runtimeArgs": ["video-descriptor-app/server/index.js"],
       "port": 4501,
       "autoPort": true
+    },
+    {
+      "name": "video-analyzer-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace=@cva/web", "--prefix", "video-analyzer"],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

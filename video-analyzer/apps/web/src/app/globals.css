@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+
+/* Base tokens for the iOS-like look of PROJECT.md §20. The full design system
+   lands with the real screens in bloque 5; this is only enough to keep the
+   scaffolding from looking like unstyled HTML. */
+@theme {
+  --color-canvas: oklch(0.985 0.002 250);
+  --color-surface: oklch(1 0 0);
+  --color-line: oklch(0.92 0.004 250);
+  --color-ink: oklch(0.22 0.01 260);
+  --color-ink-soft: oklch(0.55 0.012 260);
+  --color-accent: oklch(0.62 0.19 258);
+  --color-ok: oklch(0.68 0.16 155);
+  --color-warn: oklch(0.75 0.16 70);
+
+  --radius-card: 1rem;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+    system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-canvas: oklch(0.17 0.008 260);
+    --color-surface: oklch(0.22 0.01 260);
+    --color-line: oklch(0.3 0.012 260);
+    --color-ink: oklch(0.96 0.003 250);
+    --color-ink-soft: oklch(0.68 0.012 260);
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

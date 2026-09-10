@@ -1,0 +1,16 @@
+{
+  "name": "@cva/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env.local src/main.ts",
+    "start": "tsx --env-file-if-exists=../../.env.local src/main.ts"
+  },
+  "dependencies": {
+    "@cva/memory-engine": "*",
+    "@cva/video-processor": "*",
+    "@cva/ai-router": "*",
+    "@cva/skill-engine": "*"
+  }
+}
