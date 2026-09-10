@@ -7,6 +7,9 @@ dist/
 .env
 .env.local
 .env*.local
+# El .gitignore raiz del repo tiene ".env.*", que tambien atrapa a este
+# archivo. No es un secreto: es la plantilla que documenta cada variable.
+!.env.example
 
 # Datos locales: nunca al repositorio
 data/videos/*
