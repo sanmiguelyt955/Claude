@@ -57,6 +57,25 @@ export function setSkillStatus(
   db.prepare('UPDATE skills SET status = ? WHERE id = ?').run(status, id)
 }
 
+/**
+ * Atomically claims a 'detected' skill for generation, flipping it to
+ * 'generating' in one UPDATE...WHERE — unlike a SELECT-then-UPDATE, this is
+ * safe even against a second, truly concurrent request on a *different*
+ * connection: the WHERE clause is evaluated by SQLite as part of the single
+ * atomic statement, at the moment it actually runs, not against a JS-level
+ * snapshot read earlier. Confirmed necessary live (bloque 6/7 testing): two
+ * near-simultaneous POSTs to the "Crear Skill" endpoint both read
+ * status='detected' via separate connections before either had committed,
+ * and both proceeded, spending two real Gemini requests on the same
+ * candidate. Returns whether THIS call won the race.
+ */
+export function claimSkillForGeneration(id: string, db: Db = getDb()): boolean {
+  const result = db
+    .prepare("UPDATE skills SET status = 'generating' WHERE id = ? AND status = 'detected'")
+    .run(id)
+  return result.changes === 1
+}
+
 export type SaveGeneratedSkillInput = {
   skillMd: string
   outputPath: string

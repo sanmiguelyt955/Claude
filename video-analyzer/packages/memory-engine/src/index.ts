@@ -85,6 +85,7 @@ export {
   getSkill,
   listSkillsForVideo,
   setSkillStatus,
+  claimSkillForGeneration,
   saveGeneratedSkill,
   listGeneratedSkills,
   updateSkillMd,

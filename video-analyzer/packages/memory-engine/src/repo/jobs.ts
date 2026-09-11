@@ -38,12 +38,16 @@ export function enqueueJob(input: EnqueueJobInput, db: Db = getDb()): JobRow {
 
 /**
  * Same as enqueueJob, but refuses if the video already has a queued/running
- * job of one of `blockingTypes` — checked and inserted inside one
- * db.transaction so two near-simultaneous requests (a double-click before
- * React re-renders and disables the button, observed live in bloque 6) can't
- * both pass the check before either commits. better-sqlite3 is fully
- * synchronous, so nothing else can run on this connection between the SELECT
- * and the INSERT once the transaction starts.
+ * job of one of `blockingTypes` — two near-simultaneous requests (one click
+ * producing two POSTs, observed live in bloques 6 and 7) must not both get
+ * a job.
+ *
+ * The transaction is IMMEDIATE, not the default deferred: a deferred
+ * transaction only takes the write lock at its first write, so two of these
+ * running on *different* connections can both complete their SELECT before
+ * either inserts, and both then see "no active job". IMMEDIATE takes the
+ * write lock at BEGIN, so the second one waits (busy_timeout=5000) and then
+ * reads the first one's committed row.
  */
 export function enqueueJobUnlessActive(
   input: EnqueueJobInput,
@@ -63,7 +67,7 @@ export function enqueueJobUnlessActive(
       if (active) return { blocked: active }
     }
     return { job: enqueueJob(input, db) }
-  })()
+  }).immediate()
 }
 
 /**

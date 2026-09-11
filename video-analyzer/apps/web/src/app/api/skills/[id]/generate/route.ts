@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getDb, getSkill, setSkillStatus, enqueueJob } from '@cva/memory-engine'
+import { getSkill, claimSkillForGeneration, enqueueJob } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 
@@ -8,35 +8,29 @@ export const runtime = 'nodejs'
  * Spends another of the account's shared 20 RPD, so this stays a click, not
  * something that follows detection automatically.
  *
- * The status flip to 'generating' happens inside the same db.transaction as
- * the enqueue, both gated on status still being 'detected' — this closes a
- * double-click race observed live in bloque 6 (two POSTs from one click both
- * passing a check-then-write guard and burning two real Gemini requests on
- * the same candidate).
+ * claimSkillForGeneration does the status flip in one atomic UPDATE...WHERE
+ * (see its comment in packages/memory-engine/src/repo/skills.ts) — a
+ * SELECT-then-write guard here was not enough: two near-simultaneous POSTs
+ * from one click, each on its own DB connection, both read status='detected'
+ * before either commit, and both proceeded (confirmed live, bloque 6/7).
  */
 export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await context.params
-  const db = getDb()
+  const skill = getSkill(id)
+  if (!skill) return NextResponse.json({ error: 'La skill no existe.' }, { status: 404 })
 
-  const outcome = db.transaction(() => {
-    const skill = getSkill(id, db)
-    if (!skill) return { notFound: true as const }
-    if (skill.status !== 'detected') return { conflict: skill.status }
-    const job = enqueueJob({ type: 'generate_skill', videoId: skill.video_id ?? undefined, payload: { skillId: id } }, db)
-    setSkillStatus(id, 'generating', db)
-    return { job }
-  })()
-
-  if ('notFound' in outcome) return NextResponse.json({ error: 'La skill no existe.' }, { status: 404 })
-  if ('conflict' in outcome) {
+  const claimed = claimSkillForGeneration(id)
+  if (!claimed) {
+    const current = getSkill(id)
     return NextResponse.json(
-      { error: `La skill debe estar en estado "detected" (esta en "${outcome.conflict}").` },
+      { error: `La skill debe estar en estado "detected" (esta en "${current?.status ?? 'desconocido'}").` },
       { status: 409 },
     )
   }
 
-  return NextResponse.json({ jobId: outcome.job.id }, { status: 202 })
+  const job = enqueueJob({ type: 'generate_skill', videoId: skill.video_id ?? undefined, payload: { skillId: id } })
+  return NextResponse.json({ jobId: job.id }, { status: 202 })
 }

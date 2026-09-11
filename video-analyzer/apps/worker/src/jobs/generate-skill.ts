@@ -26,13 +26,14 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
   const { skillId } = JSON.parse(job.payload_json) as GenerateSkillPayload
   const skill = getSkill(skillId, db)
   if (!skill) throw new Error(`La skill ${skillId} ya no existe.`)
-  // The API route flips status to 'generating' at enqueue time (inside the
-  // same transaction as the insert) so a double-click can't enqueue this
-  // twice — by the time the job actually runs, 'generating' is the expected
-  // state, not 'detected'.
-  if (skill.status !== 'generating') {
-    throw new Error(`La skill debe estar en estado "generating" (esta en "${skill.status}").`)
-  }
+  // No status re-check here on purpose: the API route already claims the
+  // skill atomically (claimSkillForGeneration) before enqueueing, so this
+  // job is the sole owner of the 'generating' -> 'generated' transition.
+  // A prior version re-checked status==='generating' here and reverted to
+  // 'detected' on every failed attempt (not just the final one) — which
+  // made the worker's own automatic retry (attempt 2, 3) immediately fail
+  // this same check against the status *this job itself* had just reverted,
+  // turning one transient 503 into a permanent failure. Confirmed live.
   if (!skill.video_id || skill.start_seconds == null || skill.end_seconds == null) {
     throw new Error('La skill no tiene video o rango de tiempo asociado.')
   }
@@ -110,7 +111,15 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
       },
       db,
     )
-    setSkillStatus(skillId, 'detected', db)
+    // Only hand the skill back to the UI as a re-clickable candidate once
+    // the worker has actually given up on it — reverting on an intermediate
+    // attempt would both cancel the pending retries' premise and briefly
+    // re-expose the "Crear Skill" button while a retry is still queued.
+    // claimNextJob already incremented attempts, so this matches
+    // retryOrFailJob's own exhaustion check.
+    if (job.attempts >= job.max_attempts) {
+      setSkillStatus(skillId, 'detected', db)
+    }
     throw error
   }
 }
