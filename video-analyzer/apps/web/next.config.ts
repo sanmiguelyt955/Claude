@@ -1,5 +1,16 @@
 import type { NextConfig } from 'next'
 import { fileURLToPath } from 'node:url'
+import { existsSync } from 'node:fs'
+
+// Next only auto-loads .env.local from its own directory (apps/web/), but
+// this repo keeps a single .env.local at the workspace root (same file the
+// worker reads via `tsx watch --env-file-if-exists=../../.env.local`) so
+// GEMINI_API_KEY etc. aren't duplicated across apps. Load it manually before
+// Next reads process.env for anything.
+const rootEnvLocal = fileURLToPath(new URL('../../.env.local', import.meta.url))
+if (existsSync(rootEnvLocal)) {
+  process.loadEnvFile(rootEnvLocal)
+}
 
 // Next re-exports its own webpack; taking the type from the `webpack` config
 // hook's parameter avoids adding a direct dependency on the `webpack` package.

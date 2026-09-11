@@ -9,6 +9,11 @@ import {
 } from '@cva/memory-engine'
 import type { Db, JobRow, JobType } from '@cva/memory-engine'
 import { runProbeJob } from './jobs/probe.js'
+import { runAnalyzeJob } from './jobs/analyze.js'
+import { runEmbedJob } from './jobs/embed.js'
+import { runDetectSkillsJob } from './jobs/detect-skills.js'
+import { runGenerateSkillJob } from './jobs/generate-skill.js'
+import { JobDeferred } from './deferred.js'
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1500)
 
@@ -18,6 +23,10 @@ type JobHandler = (job: JobRow, db: Db) => Promise<void>
 // isn't dispatched by any code path yet — see the fallback in runJob below.
 const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   probe: runProbeJob,
+  analyze: runAnalyzeJob,
+  embed: runEmbedJob,
+  detect_skills: runDetectSkillsJob,
+  generate_skill: runGenerateSkillJob,
 }
 
 async function runJob(job: JobRow, db: Db): Promise<void> {
@@ -61,6 +70,13 @@ async function main(): Promise<void> {
       completeJob(job.id, undefined, db)
       console.log(`[worker] ${job.type} ${job.id} completado.`)
     } catch (error) {
+      if (error instanceof JobDeferred) {
+        // The handler already called deferJob() itself with the right
+        // run_after and undid the attempts++ from claimNextJob — this isn't
+        // a failure, just "try again later", so nothing more to do here.
+        console.log(`[worker] ${job.type} ${job.id} diferido: ${error.message}`)
+        continue
+      }
       console.error(`[worker] ${job.type} ${job.id} fallo: ${(error as Error).message}`)
       retryOrFailJob(job, error as Error, db)
     }

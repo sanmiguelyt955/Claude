@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { listVideos } from '@cva/memory-engine'
+import { listVideos, getActiveJobForVideo } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -9,7 +9,20 @@ export const dynamic = 'force-dynamic'
  * (PROJECT.md §27 leaves this as Claude Code's call) — one video library for
  * one local user does not need a push channel, and polling has no server
  * state to leak between requests.
+ *
+ * Each video carries its active job's progress_label so a quota deferral
+ * ("Se alcanzo el limite diario...") is visible instead of a video sitting
+ * in 'queued' with no explanation.
  */
 export async function GET(): Promise<NextResponse> {
-  return NextResponse.json({ videos: listVideos() })
+  const videos = listVideos().map((video) => {
+    const activeJob = getActiveJobForVideo(video.id)
+    return {
+      ...video,
+      activeJob: activeJob
+        ? { type: activeJob.type, status: activeJob.status, progressLabel: activeJob.progress_label }
+        : null,
+    }
+  })
+  return NextResponse.json({ videos })
 }

@@ -84,7 +84,7 @@ export type AnalysisRunRow = {
   video_id: string
   job_id: string | null
   segment_id: string | null
-  phase: 'first_pass' | 'deep_pass' | 'skill_detection' | 'embedding'
+  phase: 'first_pass' | 'deep_pass' | 'skill_detection' | 'skill_generation' | 'embedding'
   provider: string
   model: string
   processing_mode: 'STATIC' | 'AGENTIC' | null

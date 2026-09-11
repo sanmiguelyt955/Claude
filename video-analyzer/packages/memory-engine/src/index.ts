@@ -43,11 +43,45 @@ export type { CreateVideoInput } from './repo/videos.js'
 
 export {
   enqueueJob,
+  enqueueJobUnlessActive,
   claimNextJob,
   updateJobProgress,
   completeJob,
   retryOrFailJob,
+  deferJob,
   getJob,
   listJobsForVideo,
+  getActiveJobForVideo,
 } from './repo/jobs.js'
 export type { EnqueueJobInput } from './repo/jobs.js'
+
+export { insertAnalysisRun, getQuotaWindowCounts, listAnalysisRunsForVideo } from './repo/analysis.js'
+export type { InsertAnalysisRunInput, QuotaWindowCounts } from './repo/analysis.js'
+
+export {
+  saveAnalysisResult,
+  getVideoSummary,
+  listScenes,
+  listTranscriptChunks,
+  listVideoElements,
+} from './repo/analysis-results.js'
+export type {
+  FullAnalysisResult,
+  SummaryInput,
+  SceneInput,
+  TranscriptChunkInput,
+  VideoElementInput,
+  VideoSummaryRow,
+} from './repo/analysis-results.js'
+
+export { getPendingChunks, insertEmbeddingsBatch, searchMemoryChunks } from './repo/embeddings.js'
+export type { PendingChunk, SemanticSearchResult } from './repo/embeddings.js'
+
+export {
+  insertSkillCandidates,
+  getSkill,
+  listSkillsForVideo,
+  setSkillStatus,
+  saveGeneratedSkill,
+} from './repo/skills.js'
+export type { SkillCandidateInput, SaveGeneratedSkillInput } from './repo/skills.js'

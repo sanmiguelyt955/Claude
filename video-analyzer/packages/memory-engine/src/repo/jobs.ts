@@ -37,6 +37,36 @@ export function enqueueJob(input: EnqueueJobInput, db: Db = getDb()): JobRow {
 }
 
 /**
+ * Same as enqueueJob, but refuses if the video already has a queued/running
+ * job of one of `blockingTypes` — checked and inserted inside one
+ * db.transaction so two near-simultaneous requests (a double-click before
+ * React re-renders and disables the button, observed live in bloque 6) can't
+ * both pass the check before either commits. better-sqlite3 is fully
+ * synchronous, so nothing else can run on this connection between the SELECT
+ * and the INSERT once the transaction starts.
+ */
+export function enqueueJobUnlessActive(
+  input: EnqueueJobInput,
+  blockingTypes: JobType[],
+  db: Db = getDb(),
+): { job: JobRow } | { blocked: JobRow } {
+  return db.transaction(() => {
+    if (input.videoId) {
+      const placeholders = blockingTypes.map(() => '?').join(',')
+      const active = db
+        .prepare(
+          `SELECT * FROM jobs
+             WHERE video_id = ? AND status IN ('queued', 'running') AND type IN (${placeholders})
+             ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(input.videoId, ...blockingTypes) as JobRow | undefined
+      if (active) return { blocked: active }
+    }
+    return { job: enqueueJob(input, db) }
+  })()
+}
+
+/**
  * Claims one job atomically. `UPDATE ... RETURNING` on the row picked by the
  * inner SELECT means two worker processes can never grab the same job, which
  * a SELECT-then-UPDATE pair would allow.
@@ -104,11 +134,15 @@ export function retryOrFailJob(job: JobRow, error: Error, db: Db = getDb()): voi
       error.message,
       job.id,
     )
+    // A video that already reached 'ready' has a complete analysis sitting
+    // in SQLite — a secondary job failing (e.g. 'embed', run after 'analyze'
+    // already succeeded) must not hide that behind status='failed'. Only
+    // 'probe'/'analyze' failures, where the video genuinely has nothing to
+    // show yet, should flip it.
     if (job.video_id) {
-      db.prepare(`UPDATE videos SET status='failed', error_message=? WHERE id=?`).run(
-        error.message,
-        job.video_id,
-      )
+      db.prepare(
+        `UPDATE videos SET status='failed', error_message=? WHERE id=? AND status != 'ready'`,
+      ).run(error.message, job.video_id)
     }
     return
   }
@@ -123,6 +157,25 @@ export function retryOrFailJob(job: JobRow, error: Error, db: Db = getDb()): voi
   )
 }
 
+/**
+ * Re-queues a job for later without counting it as a failed attempt — used
+ * when the local quota guard defers a Gemini call rather than the call
+ * itself failing. claimNextJob already incremented `attempts` the moment
+ * this job was picked up, so that bump is undone here; otherwise hitting
+ * the daily quota 3 times would permanently fail a video that never actually
+ * had anything go wrong.
+ */
+export function deferJob(jobId: string, runAfterIso: string, label: string, db: Db = getDb()): void {
+  db.prepare(
+    `UPDATE jobs
+        SET status = 'queued',
+            run_after = ?,
+            attempts = MAX(0, attempts - 1),
+            progress_label = ?
+      WHERE id = ?`,
+  ).run(runAfterIso, label, jobId)
+}
+
 export function getJob(id: string, db: Db = getDb()): JobRow | undefined {
   return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow | undefined
 }
@@ -131,4 +184,21 @@ export function listJobsForVideo(videoId: string, db: Db = getDb()): JobRow[] {
   return db
     .prepare('SELECT * FROM jobs WHERE video_id = ? ORDER BY created_at')
     .all(videoId) as JobRow[]
+}
+
+/**
+ * The one job the UI actually needs per video: whatever is still pending —
+ * so a quota deferral (progress_label = "Se alcanzo el limite diario...")
+ * is visible instead of a video silently sitting in 'queued' with no
+ * explanation.
+ */
+export function getActiveJobForVideo(videoId: string, db: Db = getDb()): JobRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM jobs
+        WHERE video_id = ? AND status IN ('queued', 'running')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+    )
+    .get(videoId) as JobRow | undefined
 }
