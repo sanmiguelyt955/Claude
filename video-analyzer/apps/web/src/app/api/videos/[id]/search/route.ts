@@ -5,9 +5,9 @@ import { embedTexts } from '@cva/ai-router'
 export const runtime = 'nodejs'
 
 /**
- * Minimal proof that bloque 4's index is actually retrievable, not just
- * written — the full biblioteca search UI (multi-video, keyword + semantic
- * blended) is bloque 8. This scopes to one video and vector-only.
+ * Semantic search scoped to one video (vector-only) — kept alongside the
+ * library-wide, keyword+semantic blended /api/search (bloque 8) since
+ * narrowing to "just this video" is still useful from its detail page.
  */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }): Promise<NextResponse> {
   const { id } = await context.params

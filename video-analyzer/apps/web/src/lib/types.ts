@@ -133,3 +133,10 @@ export type SemanticSearchResult = {
   text: string
   distance: number
 }
+
+export type LibrarySearchResult = SemanticSearchResult & {
+  video_id: string
+  video_title: string
+  video_status: VideoStatus
+  match_type: 'semantic' | 'keyword' | 'both'
+}

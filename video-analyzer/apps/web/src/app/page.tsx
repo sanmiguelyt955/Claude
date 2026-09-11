@@ -1,5 +1,6 @@
 import { getDb, inspectSchema, SQLITE_PATH } from '@cva/memory-engine'
 import { BibliotecaGrid } from '@/components/BibliotecaGrid'
+import { LibrarySearch } from '@/components/LibrarySearch'
 
 // The storage layer is read at request time, never at build time.
 export const dynamic = 'force-dynamic'
@@ -56,6 +57,8 @@ export default function HomePage() {
         <h1 className="text-2xl font-semibold tracking-tight">Biblioteca</h1>
         <p className="text-sm text-(--color-ink-soft)">Tus videos analizados y su memoria buscable.</p>
       </header>
+
+      <LibrarySearch />
 
       <BibliotecaGrid />
 
