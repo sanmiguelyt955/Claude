@@ -217,3 +217,89 @@ export async function generateSkillContent(input: {
   )
   return { skill: result, usage, rawResponseText }
 }
+
+// ── Mejora de Skills (PROJECT.md §13) ──────────────────────────────────────
+
+export type ProposedSkillImprovement = {
+  kind: 'new_step' | 'better_method' | 'new_tool' | 'pitfall' | 'missing_info' | 'outdated'
+  title: string
+  rationale: string
+  start_seconds: number | null
+  end_seconds: number | null
+  proposed_diff: string
+}
+
+const SKILL_IMPROVEMENTS_SCHEMA = {
+  type: 'object',
+  properties: {
+    improvements: {
+      type: 'array',
+      description:
+        'Mejoras concretas encontradas al comparar la Skill existente contra el conocimiento nuevo del video. Puede ser un array vacio si el video no aporta nada nuevo.',
+      items: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['new_step', 'better_method', 'new_tool', 'pitfall', 'missing_info', 'outdated'],
+            description:
+              'new_step: paso que faltaba. better_method: forma mas eficiente de hacer un paso ya existente. new_tool: herramienta/recurso nuevo. pitfall: error a evitar que el video muestra. missing_info: dato/contexto que faltaba. outdated: algo en la skill que el video contradice o que ya no aplica.',
+          },
+          title: { type: 'string', description: 'Titulo corto de la mejora, en espanol.' },
+          rationale: { type: 'string', description: 'Por que esto es una mejora real, citando lo que dice/muestra el video.' },
+          start_seconds: { type: ['number', 'null'] },
+          end_seconds: { type: ['number', 'null'] },
+          proposed_diff: {
+            type: 'string',
+            description:
+              'El texto Markdown exacto a anadir al SKILL.md (una seccion, un paso, una advertencia) — se anexa tal cual al final del documento al aplicar, asi que debe ser autocontenido y legible por si solo, sin depender de contexto que no incluya.',
+          },
+        },
+        required: ['kind', 'title', 'rationale', 'start_seconds', 'end_seconds', 'proposed_diff'],
+      },
+    },
+  },
+  required: ['improvements'],
+} as const
+
+function buildSkillImprovementPrompt(input: { existingSkillMd: string; videoDigest: string }): string {
+  return `Vas a comparar una Skill (SKILL.md) ya existente contra el contenido de un video nuevo, para encontrar mejoras concretas y accionables (PROJECT.md §13).
+
+SKILL.md ACTUAL:
+---
+${input.existingSkillMd}
+---
+
+CONTENIDO DEL VIDEO NUEVO:
+---
+${input.videoDigest}
+---
+
+Busca especificamente:
+- Pasos nuevos que el video muestra y la skill no cubre (new_step).
+- Una forma mejor/mas eficiente de hacer algo que la skill ya describe (better_method).
+- Herramientas o recursos nuevos que el video usa y la skill no menciona (new_tool).
+- Errores o problemas que el video muestra y que valdria la pena advertir (pitfall).
+- Informacion que falta en la skill y el video si da (missing_info).
+- Algo que la skill dice y el video contradice o vuelve obsoleto (outdated).
+
+Reglas:
+- Cada mejora debe ser real y especifica al contenido del video, no una generica de sentido comun.
+- Si el video no aporta nada genuinamente nuevo o distinto, devuelve "improvements": [].
+- "proposed_diff" es el texto Markdown que se anexara literalmente al final del SKILL.md si el usuario aprueba la mejora — escribelo autocontenido (con su propio encabezado si aplica), en espanol.
+- Responde SOLO el JSON, sin markdown ni comentarios.`
+}
+
+export async function proposeSkillImprovements(input: {
+  model: string
+  existingSkillMd: string
+  videoDigest: string
+}): Promise<{ improvements: ProposedSkillImprovement[]; usage: TokenUsage; rawResponseText: string }> {
+  const prompt = buildSkillImprovementPrompt(input)
+  const { result, usage, rawResponseText } = await runTextJson<{ improvements: ProposedSkillImprovement[] }>(
+    input.model,
+    prompt,
+    SKILL_IMPROVEMENTS_SCHEMA,
+  )
+  return { improvements: result.improvements ?? [], usage, rawResponseText }
+}

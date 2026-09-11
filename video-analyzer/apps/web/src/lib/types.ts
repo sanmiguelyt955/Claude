@@ -88,6 +88,32 @@ export type SkillDetail = {
   updated_at: string
 }
 
+export type SkillImprovementKind =
+  | 'new_step'
+  | 'better_method'
+  | 'new_tool'
+  | 'pitfall'
+  | 'missing_info'
+  | 'outdated'
+
+export type SkillImprovementStatus = 'proposed' | 'applied' | 'ignored'
+
+export type SkillImprovementDetail = {
+  id: string
+  skill_id: string | null
+  source_skill_path: string | null
+  video_id: string
+  kind: SkillImprovementKind
+  title: string
+  rationale: string
+  start_seconds: number | null
+  end_seconds: number | null
+  proposed_diff: string | null
+  status: SkillImprovementStatus
+  applied_at: string | null
+  created_at: string
+}
+
 export type VideoDetailResponse = {
   video: VideoRow
   summary: VideoSummary | null
@@ -96,6 +122,7 @@ export type VideoDetailResponse = {
   elements: ElementDetail[]
   analysisRuns: AnalysisRunSummary[]
   skills: SkillDetail[]
+  skillImprovements: SkillImprovementDetail[]
 }
 
 export type SemanticSearchResult = {

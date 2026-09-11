@@ -6,8 +6,8 @@ import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
 import { formatDuration, formatSize } from '@/lib/format'
-import { ELEMENT_KIND_LABEL } from '@/lib/status'
-import type { VideoDetailResponse, SemanticSearchResult } from '@/lib/types'
+import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
+import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
 type Tab = 'resumen' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
 
@@ -31,6 +31,9 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [searchValue, setSearchValue] = useState('')
   const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [generatedSkills, setGeneratedSkills] = useState<SkillDetail[]>([])
+  const [improveSkillId, setImproveSkillId] = useState('')
+  const [improveExternalPath, setImproveExternalPath] = useState('')
 
   async function refresh() {
     try {
@@ -49,6 +52,15 @@ export function VideoDetailClient({ id }: { id: string }) {
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
+
+  useEffect(() => {
+    fetch('/api/skills')
+      .then((res) => res.json())
+      .then((body: { skills?: SkillDetail[] }) => setGeneratedSkills(body.skills ?? []))
+      .catch(() => {
+        // The "Mejorar Skill" dropdown just stays empty; not worth surfacing an error for.
+      })
+  }, [])
 
   async function handleAnalyze() {
     setActionBusy(true)
@@ -110,6 +122,56 @@ export function VideoDetailClient({ id }: { id: string }) {
     }
   }
 
+  async function handleImproveSkill() {
+    setActionBusy(true)
+    setErrorMessage(null)
+    try {
+      const body = improveSkillId ? { skillId: improveSkillId } : { sourceSkillPath: improveExternalPath.trim() }
+      const res = await fetch(`/api/videos/${id}/improve-skill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const resBody = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(resBody.error ?? 'No se pudo iniciar la comparacion.')
+      await refresh()
+    } catch (error) {
+      setErrorMessage((error as Error).message)
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleApplyImprovement(improvementId: string) {
+    setActionBusy(true)
+    setErrorMessage(null)
+    try {
+      const res = await fetch(`/api/skill-improvements/${improvementId}/apply`, { method: 'POST' })
+      const body = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo aplicar la mejora.')
+      await refresh()
+    } catch (error) {
+      setErrorMessage((error as Error).message)
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleIgnoreImprovement(improvementId: string) {
+    setActionBusy(true)
+    setErrorMessage(null)
+    try {
+      const res = await fetch(`/api/skill-improvements/${improvementId}/ignore`, { method: 'POST' })
+      const body = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo ignorar la mejora.')
+      await refresh()
+    } catch (error) {
+      setErrorMessage((error as Error).message)
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
   async function handleRetry() {
     setActionBusy(true)
     setErrorMessage(null)
@@ -149,7 +211,7 @@ export function VideoDetailClient({ id }: { id: string }) {
     )
   }
 
-  const { video, summary, scenes, transcript, elements, analysisRuns, skills } = data
+  const { video, summary, scenes, transcript, elements, analysisRuns, skills, skillImprovements } = data
   const objectElements = elements.filter((e) => OBJECT_KINDS.has(e.kind))
   const textElements = elements.filter((e) => e.kind === 'on_screen_text')
   const topics = summary ? (JSON.parse(summary.topics_json) as string[]) : []
@@ -398,6 +460,99 @@ export function VideoDetailClient({ id }: { id: string }) {
                     </li>
                   ))}
               </ul>
+
+              <div className="mt-2 flex flex-col gap-3 border-t border-(--color-line) pt-4">
+                <h2 className="text-sm font-semibold">Mejorar una skill existente con este video</h2>
+                <p className="text-sm text-(--color-ink-soft)">
+                  Compara una Skill ya generada (de este video o de otro) contra lo que este video ensena, y
+                  propone mejoras concretas (PROJECT.md §13).
+                </p>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <select
+                    value={improveSkillId}
+                    onChange={(e) => {
+                      setImproveSkillId(e.target.value)
+                      if (e.target.value) setImproveExternalPath('')
+                    }}
+                    className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
+                  >
+                    <option value="">— Elegir una skill generada —</option>
+                    {generatedSkills.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="self-center text-xs text-(--color-ink-soft)">o</span>
+                  <input
+                    type="text"
+                    value={improveExternalPath}
+                    onChange={(e) => {
+                      setImproveExternalPath(e.target.value)
+                      if (e.target.value) setImproveSkillId('')
+                    }}
+                    placeholder="Ruta a un SKILL.md en el disco..."
+                    className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleImproveSkill}
+                  disabled={actionBusy || (!improveSkillId && !improveExternalPath.trim())}
+                  className="w-fit rounded-full bg-(--color-accent) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {actionBusy ? 'Comparando...' : 'Comparar'}
+                </button>
+
+                <ul className="flex flex-col gap-3">
+                  {skillImprovements
+                    .filter((imp) => imp.status !== 'ignored')
+                    .map((imp) => (
+                      <li key={imp.id} className="flex flex-col gap-2 rounded-(--radius-card) border border-(--color-line) p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="rounded-full border border-(--color-line) px-2 py-0.5 text-xs">
+                              {IMPROVEMENT_KIND_LABEL[imp.kind]}
+                            </span>
+                            <p className="mt-1 font-medium">{imp.title}</p>
+                          </div>
+                          {imp.start_seconds !== null && (
+                            <span className="shrink-0 font-mono text-xs text-(--color-ink-soft)">
+                              {formatDuration(imp.start_seconds)}
+                              {imp.end_seconds !== null && ` – ${formatDuration(imp.end_seconds)}`}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-(--color-ink-soft)">{imp.rationale}</p>
+                        {imp.status === 'proposed' && (
+                          <div className="mt-1 flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleApplyImprovement(imp.id)}
+                              disabled={actionBusy}
+                              className="rounded-full bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                            >
+                              Aplicar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleIgnoreImprovement(imp.id)}
+                              disabled={actionBusy}
+                              className="rounded-full border border-(--color-line) px-4 py-1.5 text-sm font-medium disabled:opacity-50"
+                            >
+                              Ignorar
+                            </button>
+                          </div>
+                        )}
+                        {imp.status === 'applied' && (
+                          <p className="text-sm" style={{ color: 'var(--color-ok)' }}>
+                            Aplicada — el SKILL.md ya se actualizo.
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                </ul>
+              </div>
             </div>
           )}
 

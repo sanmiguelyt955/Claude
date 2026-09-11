@@ -7,6 +7,7 @@ import {
   listVideoElements,
   listAnalysisRunsForVideo,
   listSkillsForVideo,
+  listSkillImprovementsForVideo,
 } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
@@ -28,5 +29,6 @@ export async function GET(
     elements: listVideoElements(id),
     analysisRuns: listAnalysisRunsForVideo(id),
     skills: listSkillsForVideo(id),
+    skillImprovements: listSkillImprovementsForVideo(id),
   })
 }

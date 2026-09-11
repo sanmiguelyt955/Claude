@@ -13,6 +13,7 @@ import { runAnalyzeJob } from './jobs/analyze.js'
 import { runEmbedJob } from './jobs/embed.js'
 import { runDetectSkillsJob } from './jobs/detect-skills.js'
 import { runGenerateSkillJob } from './jobs/generate-skill.js'
+import { runImproveSkillJob } from './jobs/improve-skill.js'
 import { JobDeferred } from './deferred.js'
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1500)
@@ -27,6 +28,7 @@ const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   embed: runEmbedJob,
   detect_skills: runDetectSkillsJob,
   generate_skill: runGenerateSkillJob,
+  improve_skill: runImproveSkillJob,
 }
 
 async function runJob(job: JobRow, db: Db): Promise<void> {

@@ -83,5 +83,15 @@ export {
   listSkillsForVideo,
   setSkillStatus,
   saveGeneratedSkill,
+  listGeneratedSkills,
+  updateSkillMd,
 } from './repo/skills.js'
 export type { SkillCandidateInput, SaveGeneratedSkillInput } from './repo/skills.js'
+
+export {
+  insertSkillImprovements,
+  getSkillImprovement,
+  listSkillImprovementsForVideo,
+  setSkillImprovementStatus,
+} from './repo/skill-improvements.js'
+export type { SkillImprovementInput } from './repo/skill-improvements.js'

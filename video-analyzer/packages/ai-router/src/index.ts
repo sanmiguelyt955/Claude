@@ -9,8 +9,8 @@ export { QuotaExceededError } from './errors.js'
 export { ANALYSIS_PROMPT, ANALYSIS_JSON_SCHEMA } from './schema.js'
 export type { AnalysisResult } from './schema.js'
 export type { ProcessingMode, TokenUsage, VideoSource } from './types.js'
-export { detectSkillCandidates, generateSkillContent } from './skills.js'
-export type { SkillCandidate, GeneratedSkillContent } from './skills.js'
+export { detectSkillCandidates, generateSkillContent, proposeSkillImprovements } from './skills.js'
+export type { SkillCandidate, GeneratedSkillContent, ProposedSkillImprovement } from './skills.js'
 
 /**
  * Reasoning engine for Skill detection/generation/improvement (PROJECT.md

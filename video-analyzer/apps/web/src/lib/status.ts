@@ -1,4 +1,4 @@
-import type { ElementKind, VideoStatus } from './types'
+import type { ElementKind, VideoStatus, SkillImprovementKind } from './types'
 
 export const STATUS_LABEL: Record<VideoStatus, string> = {
   pending: 'En cola',
@@ -24,4 +24,13 @@ export const ELEMENT_KIND_LABEL: Record<ElementKind, string> = {
   action: 'Accion',
   person: 'Persona',
   relation: 'Relacion',
+}
+
+export const IMPROVEMENT_KIND_LABEL: Record<SkillImprovementKind, string> = {
+  new_step: 'Paso nuevo',
+  better_method: 'Mejor metodo',
+  new_tool: 'Herramienta nueva',
+  pitfall: 'Error a evitar',
+  missing_info: 'Informacion faltante',
+  outdated: 'Desactualizado',
 }

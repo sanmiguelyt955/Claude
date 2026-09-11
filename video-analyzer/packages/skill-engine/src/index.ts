@@ -1,11 +1,12 @@
 import path from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
 import {
   SKILLS_OUT_DIR,
   getVideoSummary,
   listScenes,
   listTranscriptChunks,
   toDataRelativePath,
+  resolveDataPath,
 } from '@cva/memory-engine'
 import type { SceneRow, TranscriptChunkRow } from '@cva/memory-engine'
 
@@ -184,4 +185,47 @@ export async function writeSkillFolder(input: {
   }
 
   return { outputPath: toDataRelativePath(dir), skillMd, assets }
+}
+
+// ── Mejora de Skills (PROJECT.md §13, bloque 7) ────────────────────────────
+
+export const IMPROVEMENT_KIND_LABEL: Record<ProposedImprovement['kind'], string> = {
+  new_step: 'Paso nuevo',
+  better_method: 'Mejor metodo',
+  new_tool: 'Herramienta nueva',
+  pitfall: 'Error a evitar',
+  missing_info: 'Informacion faltante',
+  outdated: 'Desactualizado',
+}
+
+/** Reads a SKILL.md living outside SKILLS_OUT_DIR — the "point at a file on disk" path of §13. */
+export async function readExternalSkillMd(absolutePath: string): Promise<string> {
+  await access(absolutePath)
+  return readFile(absolutePath, 'utf8')
+}
+
+/**
+ * Deterministic "[Aplicar]" (PROJECT.md §13): appends the improvement's
+ * proposed_diff as its own section at the end of the current SKILL.md,
+ * rather than re-prompting Gemini to merge it in. This is also why each
+ * proposed_diff is required to be self-contained (ai-router/src/skills.ts) —
+ * applying two improvements back-to-back just stacks two sections, with no
+ * risk of one clobbering context the other needed.
+ */
+export function appendImprovementToSkillMd(
+  currentSkillMd: string,
+  improvement: { kind: ProposedImprovement['kind']; title: string; proposedDiff: string },
+): string {
+  const heading = `\n\n## Actualizacion: ${improvement.title}\n_${IMPROVEMENT_KIND_LABEL[improvement.kind]}_\n\n${improvement.proposedDiff.trim()}\n`
+  return currentSkillMd.trimEnd() + heading
+}
+
+/** Overwrites an internally-generated skill's SKILL.md in place (output_path is DATA_DIR-relative). */
+export async function writeSkillMdAtOutputPath(outputPath: string, skillMd: string): Promise<void> {
+  await writeFile(path.join(resolveDataPath(outputPath), 'SKILL.md'), skillMd, 'utf8')
+}
+
+/** Overwrites a SKILL.md living outside SKILLS_OUT_DIR, at the exact path the user pointed at. */
+export async function writeExternalSkillMd(absolutePath: string, skillMd: string): Promise<void> {
+  await writeFile(absolutePath, skillMd, 'utf8')
 }
