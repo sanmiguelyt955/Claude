@@ -9,7 +9,7 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { generateSkillContent } from '@cva/ai-router'
 import { buildSegmentDigest, writeSkillFolder, normalizeSkillName, clampDescription } from '@cva/skill-engine'
-import { checkQuota } from '../quota.js'
+import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
 
 type GenerateSkillPayload = { skillId: string }
@@ -38,11 +38,14 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('La skill no tiene video o rango de tiempo asociado.')
   }
 
-  const quota = checkQuota(db, SKILL_MODEL)
-  if (!quota.ok) {
-    updateJobProgress(job.id, { label: quota.reason }, db)
-    deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)
-    throw new JobDeferred(quota.reason)
+  const models = listSkillModelsWithQuota(db)
+  if (!models.length) {
+    const quota = checkQuota(db, SKILL_MODEL)
+    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
+    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    updateJobProgress(job.id, { label: reason }, db)
+    deferJob(job.id, retryAfter.toISOString(), reason, db)
+    throw new JobDeferred(reason)
   }
 
   updateJobProgress(job.id, { label: `Escribiendo SKILL.md para "${skill.name}"...` }, db)
@@ -51,8 +54,8 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
 
   const startedAt = Date.now()
   try {
-    const { skill: content, usage } = await generateSkillContent({
-      model: SKILL_MODEL,
+    const { skill: content, usage, modelUsed } = await generateSkillContent({
+      models,
       name: skill.name,
       description: skill.description,
       rationale: `Detectado entre los segundos ${skill.start_seconds} y ${skill.end_seconds}.`,
@@ -65,7 +68,7 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
         videoId: skill.video_id,
         jobId: job.id,
         phase: 'skill_generation',
-        model: SKILL_MODEL,
+        model: modelUsed,
         processingMode: null,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,

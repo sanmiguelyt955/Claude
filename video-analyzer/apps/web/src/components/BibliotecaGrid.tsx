@@ -8,6 +8,38 @@ import type { VideoRow } from '@/lib/types'
 
 export function BibliotecaGrid() {
   const [videos, setVideos] = useState<VideoRow[] | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [batchBusy, setBatchBusy] = useState(false)
+  const [batchMessage, setBatchMessage] = useState<string | null>(null)
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function analyzeTogether() {
+    setBatchBusy(true)
+    setBatchMessage(null)
+    try {
+      const res = await fetch('/api/videos/analyze-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoIds: [...selected] }),
+      })
+      const body = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo encolar el lote.')
+      setBatchMessage(`${selected.size} videos encolados en 1 sola peticion.`)
+      setSelected(new Set())
+    } catch (error) {
+      setBatchMessage((error as Error).message)
+    } finally {
+      setBatchBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -46,8 +78,30 @@ export function BibliotecaGrid() {
     )
   }
 
+  const selectable = videos.filter((v) => v.status === 'queued')
+
   return (
-    <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="flex flex-col gap-3">
+      {selectable.length > 1 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-(--radius-card) border border-(--color-line) px-4 py-3 text-sm">
+          <span className="text-(--color-ink-soft)">
+            {selected.size > 0
+              ? `${selected.size} seleccionados`
+              : `${selectable.length} videos listos para analizar`}
+          </span>
+          <button
+            type="button"
+            onClick={analyzeTogether}
+            disabled={batchBusy || selected.size < 2}
+            className="rounded-full bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {batchBusy ? 'Encolando...' : 'Analizar juntos (1 peticion)'}
+          </button>
+          {batchMessage && <span className="text-(--color-ink-soft)">{batchMessage}</span>}
+        </div>
+      )}
+
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {videos.map((video) => (
         <li key={video.id}>
           <Link
@@ -58,6 +112,20 @@ export function BibliotecaGrid() {
               <p className="line-clamp-2 text-sm font-medium">{video.title}</p>
               <StatusBadge status={video.status} />
             </div>
+            {video.status === 'queued' && (
+              <label
+                className="flex w-fit items-center gap-2 text-xs text-(--color-ink-soft)"
+                onClick={(e) => {
+                  // The whole card is a link; keep the click on the checkbox.
+                  e.preventDefault()
+                  e.stopPropagation()
+                  toggle(video.id)
+                }}
+              >
+                <input type="checkbox" readOnly checked={selected.has(video.id)} />
+                Incluir en el lote
+              </label>
+            )}
             <div className="mt-auto flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-(--color-ink-soft)">
               {video.duration_seconds !== null && <span>{formatDuration(video.duration_seconds)}</span>}
               {video.width && video.height && (
@@ -75,6 +143,7 @@ export function BibliotecaGrid() {
           </Link>
         </li>
       ))}
-    </ul>
+      </ul>
+    </div>
   )
 }

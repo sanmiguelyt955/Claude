@@ -77,6 +77,7 @@ export type {
 export { getPendingChunks, insertEmbeddingsBatch, searchMemoryChunks } from './repo/embeddings.js'
 export type { PendingChunk, SemanticSearchResult } from './repo/embeddings.js'
 
+export { getModelDailyLimits, recordModelDailyLimit } from './repo/model-limits.js'
 export { searchLibrary } from './repo/library-search.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 

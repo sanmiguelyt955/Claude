@@ -1,4 +1,4 @@
-import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts } from '@cva/memory-engine'
+import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts, getModelDailyLimits } from '@cva/memory-engine'
 import { BibliotecaGrid } from '@/components/BibliotecaGrid'
 import { LibrarySearch } from '@/components/LibrarySearch'
 
@@ -27,16 +27,18 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean)
-    const quota = {
-      models: models.length,
-      total: models.length * maxRpd,
-      remaining: status.ok
-        ? models.reduce(
-            (sum, model) => sum + Math.max(0, maxRpd - getQuotaWindowCounts(db, model).requestsToday),
-            0,
-          )
-        : 0,
-    }
+    const learnedLimits = status.ok ? getModelDailyLimits(db) : {}
+    const quota = models.reduce(
+      (acc, model) => {
+        const limit = learnedLimits[model] ?? maxRpd
+        const used = status.ok ? getQuotaWindowCounts(db, model).requestsToday : 0
+        acc.total += limit
+        acc.remaining += Math.max(0, limit - used)
+        if (learnedLimits[model] !== undefined) acc.confirmed += 1
+        return acc
+      },
+      { models: models.length, total: 0, remaining: 0, confirmed: 0 },
+    )
 
     return {
       checks: [
@@ -52,7 +54,7 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
         { label: 'Jobs pendientes', value: String(jobs), ok: true },
         {
           label: 'Analisis disponibles hoy',
-          value: `${quota.remaining} de ${quota.total} (${quota.models} modelos)`,
+          value: `${quota.remaining} de ${quota.total} · ${quota.models} modelos, ${quota.confirmed} con limite confirmado`,
           ok: quota.remaining > 0,
         },
         {

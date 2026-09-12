@@ -9,35 +9,20 @@ import {
   saveAnalysisResult,
   deferJob,
   enqueueJob,
+  recordModelDailyLimit,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { analyzeVideo, estimateVideoTokens } from '@cva/ai-router'
+import { analyzeVideo, estimateVideoTokens, parseQuotaLimit } from '@cva/ai-router'
 import { isYoutubeUrl } from '@cva/video-processor'
 import { listVideoModelsWithQuota, pickVideoModel } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
+import { guessMimeType } from './mime.js'
 
 type AnalyzeJobPayload = { videoId: string }
 
 const VIDEO_PROCESSING = (process.env.GEMINI_VIDEO_PROCESSING ?? 'AGENTIC') as 'AGENTIC' | 'STATIC'
 
-const MIME_BY_EXT: Record<string, string> = {
-  '.mp4': 'video/mp4',
-  '.mov': 'video/mov',
-  '.mkv': 'video/x-matroska',
-  '.avi': 'video/avi',
-  '.webm': 'video/webm',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-  '.ogg': 'audio/ogg',
-  '.flac': 'audio/flac',
-}
-
-function guessMimeType(filePath: string): string {
-  return MIME_BY_EXT[path.extname(filePath).toLowerCase()] ?? 'video/mp4'
-}
 
 /**
  * Handles the 'analyze' job: the single comprehensive Gemini call over an
@@ -108,6 +93,10 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
     // One row per model that refused, so the quota log reflects what Google
     // actually counted, not just the model that ended up answering.
     for (const skipped of attempt.exhaustedModels) {
+      // Google states the real cap in the rejection; remember it so the next
+      // run stops guessing 20 for a model whose actual limit is different.
+      const reportedLimit = parseQuotaLimit(new Error(skipped.error))
+      if (reportedLimit) recordModelDailyLimit(skipped.model, reportedLimit, db)
       insertAnalysisRun(
         {
           videoId: video.id,

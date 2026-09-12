@@ -1,4 +1,5 @@
 import { getGeminiClient } from './client.js'
+import { isQuotaExhaustedError } from './analyze-video.js'
 import { estimateCostUsd } from './cost.js'
 import type { TokenUsage } from './types.js'
 
@@ -31,7 +32,34 @@ function usageFromGenerateContent(usage: {
   }
 }
 
+/**
+ * Runs the prompt against the first model in `models` that answers. Same
+ * reasoning as analyzeVideo's rotation: Gemini's free-tier daily cap is per
+ * model, so one model being out of quota is a reason to try the next, not to
+ * fail the job. Skill detection/generation share that cap with video
+ * analysis, which is exactly why they need the rotation too.
+ */
 async function runTextJson<T>(
+  models: string[],
+  prompt: string,
+  schema: object,
+): Promise<{ result: T; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
+  if (!models.length) throw new Error('Se requiere al menos un modelo.')
+
+  for (const [index, model] of models.entries()) {
+    try {
+      return { ...(await runTextJsonOnce<T>(model, prompt, schema)), modelUsed: model }
+    } catch (error) {
+      if (index === models.length - 1) throw error
+      const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : 'fallo'
+      console.warn(`[ai-router] ${model} ${reason}, probando ${models[index + 1]}...`)
+    }
+  }
+
+  throw new Error('No se pudo completar la llamada con ninguno de los modelos configurados.')
+}
+
+async function runTextJsonOnce<T>(
   model: string,
   prompt: string,
   schema: object,
@@ -124,16 +152,16 @@ CONTENIDO DEL VIDEO:
 `
 
 export async function detectSkillCandidates(input: {
-  model: string
+  models: string[]
   videoDigest: string
-}): Promise<{ candidates: SkillCandidate[]; usage: TokenUsage; rawResponseText: string }> {
+}): Promise<{ candidates: SkillCandidate[]; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = SKILL_DETECTION_PROMPT_HEADER + input.videoDigest
-  const { result, usage, rawResponseText } = await runTextJson<{ candidates: SkillCandidate[] }>(
-    input.model,
+  const { result, usage, rawResponseText, modelUsed } = await runTextJson<{ candidates: SkillCandidate[] }>(
+    input.models,
     prompt,
     SKILL_CANDIDATES_SCHEMA,
   )
-  return { candidates: result.candidates ?? [], usage, rawResponseText }
+  return { candidates: result.candidates ?? [], usage, rawResponseText, modelUsed }
 }
 
 // ── Generacion de SKILL.md (PROJECT.md §12) ────────────────────────────────
@@ -203,19 +231,19 @@ Instrucciones:
 }
 
 export async function generateSkillContent(input: {
-  model: string
+  models: string[]
   name: string
   description: string
   rationale: string
   segmentDigest: string
-}): Promise<{ skill: GeneratedSkillContent; usage: TokenUsage; rawResponseText: string }> {
+}): Promise<{ skill: GeneratedSkillContent; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = buildSkillGenerationPrompt(input)
-  const { result, usage, rawResponseText } = await runTextJson<GeneratedSkillContent>(
-    input.model,
+  const { result, usage, rawResponseText, modelUsed } = await runTextJson<GeneratedSkillContent>(
+    input.models,
     prompt,
     SKILL_GENERATION_SCHEMA,
   )
-  return { skill: result, usage, rawResponseText }
+  return { skill: result, usage, rawResponseText, modelUsed }
 }
 
 // ── Mejora de Skills (PROJECT.md §13) ──────────────────────────────────────
@@ -291,15 +319,15 @@ Reglas:
 }
 
 export async function proposeSkillImprovements(input: {
-  model: string
+  models: string[]
   existingSkillMd: string
   videoDigest: string
-}): Promise<{ improvements: ProposedSkillImprovement[]; usage: TokenUsage; rawResponseText: string }> {
+}): Promise<{ improvements: ProposedSkillImprovement[]; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = buildSkillImprovementPrompt(input)
-  const { result, usage, rawResponseText } = await runTextJson<{ improvements: ProposedSkillImprovement[] }>(
-    input.model,
+  const { result, usage, rawResponseText, modelUsed } = await runTextJson<{ improvements: ProposedSkillImprovement[] }>(
+    input.models,
     prompt,
     SKILL_IMPROVEMENTS_SCHEMA,
   )
-  return { improvements: result.improvements ?? [], usage, rawResponseText }
+  return { improvements: result.improvements ?? [], usage, rawResponseText, modelUsed }
 }

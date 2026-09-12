@@ -9,7 +9,7 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { proposeSkillImprovements } from '@cva/ai-router'
 import { buildVideoDigest, readExternalSkillMd } from '@cva/skill-engine'
-import { checkQuota } from '../quota.js'
+import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
 
 type ImproveSkillPayload = { videoId: string; skillId?: string; sourceSkillPath?: string }
@@ -42,11 +42,14 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('Se requiere skillId o sourceSkillPath.')
   }
 
-  const quota = checkQuota(db, SKILL_MODEL)
-  if (!quota.ok) {
-    updateJobProgress(job.id, { label: quota.reason }, db)
-    deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)
-    throw new JobDeferred(quota.reason)
+  const models = listSkillModelsWithQuota(db)
+  if (!models.length) {
+    const quota = checkQuota(db, SKILL_MODEL)
+    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
+    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    updateJobProgress(job.id, { label: reason }, db)
+    deferJob(job.id, retryAfter.toISOString(), reason, db)
+    throw new JobDeferred(reason)
   }
 
   updateJobProgress(job.id, { label: 'Comparando la skill contra el video...' }, db)
@@ -54,8 +57,8 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
 
   const startedAt = Date.now()
   try {
-    const { improvements, usage } = await proposeSkillImprovements({
-      model: SKILL_MODEL,
+    const { improvements, usage, modelUsed } = await proposeSkillImprovements({
+      models,
       existingSkillMd,
       videoDigest: digest,
     })
@@ -66,7 +69,7 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
         videoId,
         jobId: job.id,
         phase: 'skill_improvement',
-        model: SKILL_MODEL,
+        model: modelUsed,
         processingMode: null,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,

@@ -8,7 +8,7 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { detectSkillCandidates } from '@cva/ai-router'
 import { buildVideoDigest, normalizeSkillName, clampDescription, SKILL_NAME_PATTERN } from '@cva/skill-engine'
-import { checkQuota } from '../quota.js'
+import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
 
 type DetectSkillsPayload = { videoId: string }
@@ -30,11 +30,14 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
     throw new Error(`El video debe estar analizado ("ready") para detectar skills (esta en "${video.status}").`)
   }
 
-  const quota = checkQuota(db, SKILL_MODEL)
-  if (!quota.ok) {
-    updateJobProgress(job.id, { label: quota.reason }, db)
-    deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)
-    throw new JobDeferred(quota.reason)
+  const models = listSkillModelsWithQuota(db)
+  if (!models.length) {
+    const quota = checkQuota(db, SKILL_MODEL)
+    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
+    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    updateJobProgress(job.id, { label: reason }, db)
+    deferJob(job.id, retryAfter.toISOString(), reason, db)
+    throw new JobDeferred(reason)
   }
 
   updateJobProgress(job.id, { label: 'Buscando procesos reutilizables en el video...' }, db)
@@ -42,8 +45,8 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
 
   const startedAt = Date.now()
   try {
-    const { candidates, usage, rawResponseText } = await detectSkillCandidates({
-      model: SKILL_MODEL,
+    const { candidates, usage, rawResponseText, modelUsed } = await detectSkillCandidates({
+      models,
       videoDigest: digest,
     })
     const latencyMs = Date.now() - startedAt
@@ -53,7 +56,7 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
         videoId,
         jobId: job.id,
         phase: 'skill_detection',
-        model: SKILL_MODEL,
+        model: modelUsed,
         processingMode: null,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,

@@ -1,4 +1,4 @@
-import { getQuotaWindowCounts, nextQuotaResetDate } from '@cva/memory-engine'
+import { getQuotaWindowCounts, nextQuotaResetDate, getModelDailyLimits } from '@cva/memory-engine'
 import type { Db } from '@cva/memory-engine'
 
 /**
@@ -16,15 +16,24 @@ const MAX_RPD = Number(process.env.GEMINI_MAX_RPD ?? 20)
 
 export type QuotaCheck = { ok: true } | { ok: false; retryAfter: Date; reason: string }
 
+/**
+ * The daily cap to enforce for a model: the real one Google reported in a
+ * previous 429 if we have learned it, otherwise the configured assumption.
+ */
+export function dailyLimitFor(db: Db, model: string): number {
+  return getModelDailyLimits(db)[model] ?? MAX_RPD
+}
+
 /** Quota check scoped to one model — the only scope Google actually enforces. */
 export function checkQuota(db: Db, model: string): QuotaCheck {
   const counts = getQuotaWindowCounts(db, model)
+  const limit = dailyLimitFor(db, model)
 
-  if (counts.requestsToday >= MAX_RPD) {
+  if (counts.requestsToday >= limit) {
     return {
       ok: false,
       retryAfter: nextQuotaResetDate(),
-      reason: `Se alcanzo el limite diario de ${model} (${counts.requestsToday}/${MAX_RPD} peticiones hoy).`,
+      reason: `Se alcanzo el limite diario de ${model} (${counts.requestsToday}/${limit} peticiones hoy).`,
     }
   }
 
@@ -66,6 +75,21 @@ export function isQuotaExhaustedError(error: unknown): boolean {
  */
 export function listVideoModelsWithQuota(db: Db): string[] {
   return videoModels().filter((model) => checkQuota(db, model).ok)
+}
+
+/**
+ * Models available for the text-only skill calls. GEMINI_SKILL_MODELS can
+ * narrow it, but by default it is the same pool as video: these are plain
+ * text+JSON calls, so any multimodal model can serve them — and they draw
+ * from the same per-model daily caps, which is exactly why "Crear Skill" used
+ * to die once gemini-3.7-flash alone ran out.
+ */
+export function listSkillModelsWithQuota(db: Db): string[] {
+  const configured = process.env.GEMINI_SKILL_MODELS?.trim()
+  const pool = configured
+    ? configured.split(',').map((m) => m.trim()).filter(Boolean)
+    : videoModels()
+  return pool.filter((model) => checkQuota(db, model).ok)
 }
 
 /**

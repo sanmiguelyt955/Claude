@@ -10,6 +10,7 @@ import {
 import type { Db, JobRow, JobType } from '@cva/memory-engine'
 import { runProbeJob } from './jobs/probe.js'
 import { runAnalyzeJob } from './jobs/analyze.js'
+import { runAnalyzeBatchJob } from './jobs/analyze-batch.js'
 import { runEmbedJob } from './jobs/embed.js'
 import { runDetectSkillsJob } from './jobs/detect-skills.js'
 import { runGenerateSkillJob } from './jobs/generate-skill.js'
@@ -24,7 +25,15 @@ type JobHandler = (job: JobRow, db: Db) => Promise<void>
 // isn't dispatched by any code path yet — see the fallback in runJob below.
 const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   probe: runProbeJob,
-  analyze: runAnalyzeJob,
+  // One job type, two shapes: a payload carrying `videoIds` is a batch (N
+  // videos in a single Gemini request), anything else is the single-video
+  // path. Keeping one type avoids migrating the jobs.type CHECK constraint.
+  analyze: async (job, db) => {
+    const payload = JSON.parse(job.payload_json) as { videoIds?: string[] }
+    return Array.isArray(payload.videoIds) && payload.videoIds.length > 1
+      ? runAnalyzeBatchJob(job, db)
+      : runAnalyzeJob(job, db)
+  },
   embed: runEmbedJob,
   detect_skills: runDetectSkillsJob,
   generate_skill: runGenerateSkillJob,

@@ -262,3 +262,18 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   // Unreachable: the loop above always returns or throws on the last model.
   throw new Error('No se pudo analizar con ninguno de los modelos configurados.')
 }
+
+/**
+ * Google's 429 payload states the exact cap it just enforced, e.g.
+ * `"quotaValue":"20"` alongside `limit: 20, model: gemini-3.7-flash`.
+ * Reading it is the only reliable way to learn a model's real free-tier
+ * daily limit — models.list does not expose rate limits, and assuming the
+ * same number for every model is simply wrong (pro/preview models differ).
+ */
+export function parseQuotaLimit(error: unknown): number | undefined {
+  const message = (error as Error)?.message ?? ''
+  const fromQuotaValue = message.match(/"quotaValue"\s*:\s*"?(\d+)"?/)
+  if (fromQuotaValue?.[1]) return Number(fromQuotaValue[1])
+  const fromLimit = message.match(/limit:\s*(\d+)/)
+  return fromLimit?.[1] ? Number(fromLimit[1]) : undefined
+}

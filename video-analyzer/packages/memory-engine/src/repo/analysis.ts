@@ -18,6 +18,9 @@ export type InsertAnalysisRunInput = {
   succeeded: boolean
   errorMessage?: string | null
   rawResponsePath?: string | null
+  /** Real API requests this row represents: 1 normally, 0 for the extra
+   * videos that rode along in a batched call. */
+  requestCount?: number
 }
 
 export function insertAnalysisRun(input: InsertAnalysisRunInput, db: Db = getDb()): AnalysisRunRow {
@@ -26,11 +29,11 @@ export function insertAnalysisRun(input: InsertAnalysisRunInput, db: Db = getDb(
     `INSERT INTO analysis_runs (
        id, video_id, job_id, phase, provider, model, processing_mode,
        input_tokens, output_tokens, cached_tokens, thought_tokens,
-       estimated_cost_usd, latency_ms, succeeded, error_message, raw_response_path
+       estimated_cost_usd, latency_ms, succeeded, error_message, raw_response_path, request_count
      ) VALUES (
        @id, @videoId, @jobId, @phase, 'gemini', @model, @processingMode,
        @inputTokens, @outputTokens, @cachedTokens, @thoughtTokens,
-       @estimatedCostUsd, @latencyMs, @succeeded, @errorMessage, @rawResponsePath
+       @estimatedCostUsd, @latencyMs, @succeeded, @errorMessage, @rawResponsePath, @requestCount
      )`,
   ).run({
     id,
@@ -48,6 +51,7 @@ export function insertAnalysisRun(input: InsertAnalysisRunInput, db: Db = getDb(
     succeeded: input.succeeded ? 1 : 0,
     errorMessage: input.errorMessage ?? null,
     rawResponsePath: input.rawResponsePath ?? null,
+    requestCount: input.requestCount ?? 1,
   })
   return db.prepare('SELECT * FROM analysis_runs WHERE id = ?').get(id) as AnalysisRunRow
 }
@@ -116,13 +120,16 @@ export function getQuotaWindowCounts(db: Db = getDb(), model?: string): QuotaWin
 
   const perMinute = db
     .prepare(
-      `SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
+      `SELECT COALESCE(SUM(request_count), 0) AS requests,
+              COALESCE(SUM(input_tokens + output_tokens), 0) AS tokens
          FROM analysis_runs WHERE created_at >= ?${modelFilter}`,
     )
     .get(...args(oneMinuteAgo)) as { requests: number; tokens: number }
 
   const perDay = db
-    .prepare(`SELECT COUNT(*) AS requests FROM analysis_runs WHERE created_at >= ?${modelFilter}`)
+    .prepare(
+      `SELECT COALESCE(SUM(request_count), 0) AS requests FROM analysis_runs WHERE created_at >= ?${modelFilter}`,
+    )
     .get(...args(startOfToday)) as { requests: number }
 
   return {
