@@ -23,3 +23,6 @@ data/tmp/
 *.log
 .DS_Store
 Thumbs.db
+
+# scratch temporal
+/*.cjs
