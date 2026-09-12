@@ -17,11 +17,34 @@ const MAX_RPD = Number(process.env.GEMINI_MAX_RPD ?? 20)
 export type QuotaCheck = { ok: true } | { ok: false; retryAfter: Date; reason: string }
 
 /**
- * The daily cap to enforce for a model: the real one Google reported in a
- * previous 429 if we have learned it, otherwise the configured assumption.
+ * Per-model caps written by hand from the account's own rate-limit panel
+ * (aistudio.google.com/rate-limit), as "model=RPD" pairs. Google does NOT
+ * publish free-tier limits per model anywhere in the docs — that panel is the
+ * only authoritative source — and the limits differ wildly between models
+ * (the newest Flash models sit at 20/day while older Lite models are
+ * reportedly in the hundreds or thousands). Without this, the app has to fall
+ * back to one assumed number for everything, which is always wrong for most
+ * of the list.
+ */
+function configuredLimits(): Record<string, number> {
+  const raw = process.env.GEMINI_MODEL_DAILY_LIMITS?.trim()
+  if (!raw) return {}
+  const out: Record<string, number> = {}
+  for (const pair of raw.split(',')) {
+    const [model, value] = pair.split('=').map((x) => x.trim())
+    const limit = Number(value)
+    if (model && Number.isFinite(limit) && limit > 0) out[model] = limit
+  }
+  return out
+}
+
+/**
+ * The daily cap to enforce for a model, best source first: what Google itself
+ * reported in a real 429, then what was configured by hand from the panel,
+ * then the blanket assumption.
  */
 export function dailyLimitFor(db: Db, model: string): number {
-  return getModelDailyLimits(db)[model] ?? MAX_RPD
+  return getModelDailyLimits(db)[model] ?? configuredLimits()[model] ?? MAX_RPD
 }
 
 /** Quota check scoped to one model — the only scope Google actually enforces. */
@@ -93,26 +116,31 @@ export function listSkillModelsWithQuota(db: Db): string[] {
 }
 
 /**
- * Every general-purpose multimodal model the account can reach, newest and
- * highest-quality first, as reported by the API's own models.list (image-gen,
- * TTS, music, robotics and text-only Gemma models filtered out). Since the
- * free-tier daily cap is per model, this list IS the daily capacity: ~20
- * analyses per model. Aliases like gemini-flash-latest are deliberately left
- * out — they resolve to a model already in this list and would double-count.
+ * Text-output models with actual free-tier quota, read from the account's own
+ * rate-limit panel (aistudio.google.com/rate-limit) on 2026-09-12 — the only
+ * authoritative source, since Google publishes none of this.
+ *
+ * Deliberately EXCLUDED because their free-tier limit is literally 0 (they
+ * would only waste a rotation step): Gemini 3.1 Pro, 2.5 Pro, 2 Flash,
+ * 2 Flash Lite, and both Omni models. Aliases (gemini-flash-latest) are also
+ * out: they resolve to a model already listed and would double-count.
+ *
+ * The real numbers: 20/day for every Flash, but **500/day** for Gemini 3.5
+ * and 3.1 Flash Lite. That asymmetry is the whole story — the Lite models
+ * carry ~88% of the daily capacity.
  */
 const DEFAULT_VIDEO_MODELS = [
+  // Flash: mejor calidad, 20/dia cada uno.
   'gemini-3.8-flash',
   'gemini-3.7-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
   'gemini-3-flash-preview',
-  'gemini-3.1-pro-preview',
+  'gemini-2.5-flash',
+  // Flash Lite: calidad menor pero 500/dia los de 3.x — es donde vive la
+  // capacidad real, asi que van al final como caballo de batalla.
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
-  'gemini-omni-1.1-flash',
-  'gemini-omni-flash-preview',
-  'gemini-2.5-flash',
-  'gemini-2.5-pro',
   'gemini-2.5-flash-lite',
 ]
 

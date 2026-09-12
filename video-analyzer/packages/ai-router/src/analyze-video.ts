@@ -12,6 +12,24 @@ import type { ProcessingMode, TokenUsage, VideoSource } from './types.js'
 // the model's own default happens to be.
 const MAX_OUTPUT_TOKENS = 65536
 
+/**
+ * Agentic processing drives the model through dozens of tool-call steps on a
+ * long video, and it can simply never come back — observed live: a single
+ * 11-minute video sat in agentic mode for over half an hour with no result
+ * and no error, blocking the worker the whole time. Static mode is the
+ * proven fallback, so cap the wait rather than hanging forever.
+ */
+const AGENTIC_TIMEOUT_MS = Number(process.env.GEMINI_AGENTIC_TIMEOUT_MS ?? 8 * 60 * 1000)
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} supero el limite de ${Math.round(ms / 1000)}s sin responder.`)), ms),
+    ),
+  ])
+}
+
 export type AnalyzeVideoInput = {
   /** Models to try in order. Google's daily cap is per model, so a 429 on the
    * first one means "use the next", not "come back tomorrow". */
@@ -210,7 +228,7 @@ async function tryOneModel(
   if (processing === 'AGENTIC') {
     try {
       notify(`Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...`)
-      const agentic = await tryAgentic(model, uri, mimeType)
+      const agentic = await withTimeout(tryAgentic(model, uri, mimeType), AGENTIC_TIMEOUT_MS, 'El modo agentic')
       return { ...agentic, processingModeUsed: 'AGENTIC' }
     } catch (error) {
       if (isQuotaExhaustedError(error)) throw error
