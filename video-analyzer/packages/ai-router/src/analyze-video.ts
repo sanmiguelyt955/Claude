@@ -13,7 +13,9 @@ import type { ProcessingMode, TokenUsage, VideoSource } from './types.js'
 const MAX_OUTPUT_TOKENS = 65536
 
 export type AnalyzeVideoInput = {
-  model: string
+  /** Models to try in order. Google's daily cap is per model, so a 429 on the
+   * first one means "use the next", not "come back tomorrow". */
+  models: string[]
   processing: ProcessingMode
   source: VideoSource
   /** Best-effort phase labels for a live progress UI — not a percentage: a
@@ -26,8 +28,18 @@ export type AnalyzeVideoOutput = {
   usage: TokenUsage
   /** May differ from the requested mode if agentic failed and it fell back. */
   processingModeUsed: ProcessingMode
+  /** Which model actually produced this, after any out-of-quota switches. */
+  modelUsed: string
+  /** Models skipped because they were out of daily quota, for the cost log. */
+  exhaustedModels: Array<{ model: string; error: string }>
   /** Kept for analysis_runs.raw_response_path — debugging a bad parse. */
   rawResponseText: string
+}
+
+/** True for Google's "you ran out of daily requests for this model" (429). */
+export function isQuotaExhaustedError(error: unknown): boolean {
+  const message = (error as Error)?.message ?? ''
+  return message.includes('RESOURCE_EXHAUSTED') || message.includes('"code":429')
 }
 
 /** Strips a ```json ... ``` fence if the model wrapped the JSON in one anyway. */
@@ -183,25 +195,70 @@ async function runStatic(
  * processing automatically, per PROJECT.md §16's own fallback requirement.
  * The caller finds out which mode actually ran via `processingModeUsed`.
  */
+/**
+ * Runs one model's agentic-then-static attempt. Agentic failing for a reason
+ * OTHER than quota just falls back to static on the SAME model, exactly as
+ * before — only a quota rejection is the caller's cue to try the next model.
+ */
+async function tryOneModel(
+  model: string,
+  uri: string,
+  mimeType: string | undefined,
+  processing: ProcessingMode,
+  notify: (label: string) => void,
+): Promise<{ result: AnalysisResult; usage: TokenUsage; processingModeUsed: ProcessingMode; rawResponseText: string }> {
+  if (processing === 'AGENTIC') {
+    try {
+      notify(`Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...`)
+      const agentic = await tryAgentic(model, uri, mimeType)
+      return { ...agentic, processingModeUsed: 'AGENTIC' }
+    } catch (error) {
+      if (isQuotaExhaustedError(error)) throw error
+      console.warn(`[ai-router] ${model}: modo agentic fallo, usando static como respaldo: ${(error as Error).message}`)
+    }
+  }
+
+  notify(`Gemini (${model}) esta analizando el video (modo static, puede tardar varios minutos)...`)
+  const staticResult = await runStatic(model, uri, mimeType)
+  return { ...staticResult, processingModeUsed: 'STATIC' }
+}
+
+/**
+ * Uploads the video ONCE, then walks `input.models` in order until one
+ * accepts the call. Google's free-tier daily cap is per model (its own 429
+ * payload names the quota `GenerateRequestsPerDayPerProjectPerModel-FreeTier`
+ * with a `model` dimension) — so exhausting one model is a reason to try the
+ * next, not to give up. Any other error (a bad/unavailable model id, a
+ * transient 500) is ALSO treated as "try the next model" unless it is the
+ * last one, since the whole point of listing many models is to maximize the
+ * odds one of them actually answers — the caller finds out which model (if
+ * any) worked via `modelUsed`, and which ones were skipped via
+ * `exhaustedModels` for the cost/quota log.
+ */
 export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
+  if (!input.models.length) throw new Error('Se requiere al menos un modelo en AnalyzeVideoInput.models.')
   const notify = input.onProgress ?? (() => {})
 
   notify(input.source.kind === 'file' ? 'Subiendo video a Gemini...' : 'Preparando video de YouTube...')
   const { uri, mimeType } = await resolveVideoUri(input.source)
 
-  if (input.processing === 'AGENTIC') {
+  const exhaustedModels: Array<{ model: string; error: string }> = []
+
+  for (const [index, model] of input.models.entries()) {
+    const isLast = index === input.models.length - 1
     try {
-      notify('Gemini esta analizando el video (modo agentic, puede tardar varios minutos)...')
-      const agentic = await tryAgentic(input.model, uri, mimeType)
-      return { ...agentic, processingModeUsed: 'AGENTIC' }
+      const attempt = await tryOneModel(model, uri, mimeType, input.processing, notify)
+      return { ...attempt, modelUsed: model, exhaustedModels }
     } catch (error) {
-      console.warn(
-        `[ai-router] modo agentic fallo, usando static como respaldo: ${(error as Error).message}`,
-      )
+      const message = (error as Error).message
+      if (isLast) throw error
+      exhaustedModels.push({ model, error: message })
+      const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : 'fallo'
+      console.warn(`[ai-router] ${model} ${reason}, probando ${input.models[index + 1]}...`)
+      notify(`${model} ${reason}, probando ${input.models[index + 1]}...`)
     }
   }
 
-  notify('Gemini esta analizando el video (modo static, puede tardar varios minutos)...')
-  const staticResult = await runStatic(input.model, uri, mimeType)
-  return { ...staticResult, processingModeUsed: 'STATIC' }
+  // Unreachable: the loop above always returns or throws on the last model.
+  throw new Error('No se pudo analizar con ninguno de los modelos configurados.')
 }

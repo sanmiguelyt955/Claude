@@ -1,4 +1,4 @@
-import { getDb, inspectSchema, SQLITE_PATH } from '@cva/memory-engine'
+import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts } from '@cva/memory-engine'
 import { BibliotecaGrid } from '@/components/BibliotecaGrid'
 import { LibrarySearch } from '@/components/LibrarySearch'
 
@@ -20,6 +20,24 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
         }).n
       : 0
 
+    // Daily capacity is per model, so what matters is the sum across every
+    // configured model, not the 20 of whichever one happens to be first.
+    const maxRpd = Number(process.env.GEMINI_MAX_RPD ?? 20)
+    const models = (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
+      .split(',')
+      .map((m) => m.trim())
+      .filter(Boolean)
+    const quota = {
+      models: models.length,
+      total: models.length * maxRpd,
+      remaining: status.ok
+        ? models.reduce(
+            (sum, model) => sum + Math.max(0, maxRpd - getQuotaWindowCounts(db, model).requestsToday),
+            0,
+          )
+        : 0,
+    }
+
     return {
       checks: [
         { label: 'Base de datos', value: SQLITE_PATH, ok: true },
@@ -32,6 +50,11 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
         },
         { label: 'Videos en memoria', value: String(videos), ok: true },
         { label: 'Jobs pendientes', value: String(jobs), ok: true },
+        {
+          label: 'Analisis disponibles hoy',
+          value: `${quota.remaining} de ${quota.total} (${quota.models} modelos)`,
+          ok: quota.remaining > 0,
+        },
         {
           label: 'GEMINI_API_KEY',
           value: process.env.GEMINI_API_KEY ? 'configurada' : 'sin configurar',

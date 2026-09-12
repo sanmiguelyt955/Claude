@@ -32,6 +32,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [generatedSkills, setGeneratedSkills] = useState<SkillDetail[]>([])
+  const [exportedNote, setExportedNote] = useState<string | null>(null)
   const [improveSkillId, setImproveSkillId] = useState('')
   const [improveExternalPath, setImproveExternalPath] = useState('')
 
@@ -70,6 +71,22 @@ export function VideoDetailClient({ id }: { id: string }) {
       const body = (await res.json()) as { error?: string }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo iniciar el analisis.')
       await refresh()
+    } catch (error) {
+      setErrorMessage((error as Error).message)
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  async function handleExportVault() {
+    setActionBusy(true)
+    setErrorMessage(null)
+    setExportedNote(null)
+    try {
+      const res = await fetch(`/api/videos/${id}/export-vault`, { method: 'POST' })
+      const body = (await res.json()) as { error?: string; noteName?: string; notePath?: string }
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo exportar al vault.')
+      setExportedNote(body.noteName ?? 'Nota creada')
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
@@ -286,6 +303,22 @@ export function VideoDetailClient({ id }: { id: string }) {
 
       {video.status === 'ready' && (
         <div className="flex flex-col gap-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleExportVault}
+              disabled={actionBusy}
+              className="w-fit rounded-full border border-(--color-line) px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {actionBusy ? 'Exportando...' : 'Exportar todo a Obsidian'}
+            </button>
+            {exportedNote && (
+              <span className="text-sm" style={{ color: 'var(--color-ok)' }}>
+                Guardado en el vault: {exportedNote}
+              </span>
+            )}
+          </div>
+
           <SegmentedControl options={TABS} value={tab} onChange={setTab} />
 
           {tab === 'resumen' && summary && (

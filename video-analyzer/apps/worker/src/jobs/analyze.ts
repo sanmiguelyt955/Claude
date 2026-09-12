@@ -14,12 +14,11 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { analyzeVideo, estimateVideoTokens } from '@cva/ai-router'
 import { isYoutubeUrl } from '@cva/video-processor'
-import { checkQuota } from '../quota.js'
+import { listVideoModelsWithQuota, pickVideoModel } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
 
 type AnalyzeJobPayload = { videoId: string }
 
-const VIDEO_MODEL = process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash'
 const VIDEO_PROCESSING = (process.env.GEMINI_VIDEO_PROCESSING ?? 'AGENTIC') as 'AGENTIC' | 'STATIC'
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -50,15 +49,21 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
   const { videoId } = JSON.parse(job.payload_json) as AnalyzeJobPayload
   const video = getVideo(videoId, db)
   if (!video) throw new Error(`El video ${videoId} ya no existe.`)
-  if (video.status !== 'queued') {
+  // 'analyzing' is accepted too: a previous attempt of THIS job left the video
+  // in that state before failing, and rejecting it here would make every retry
+  // fail on the guard instead of on the real problem.
+  if (video.status !== 'queued' && video.status !== 'analyzing') {
     throw new Error(`El video debe estar "listo para analizar" (esta en "${video.status}").`)
   }
 
-  const quota = checkQuota(db)
-  if (!quota.ok) {
-    updateJobProgress(job.id, { label: quota.reason }, db)
-    deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)
-    throw new JobDeferred(quota.reason)
+  const models = listVideoModelsWithQuota(db)
+  if (!models.length) {
+    const blocked = pickVideoModel(db)
+    const reason = blocked.ok ? 'Sin cupo disponible.' : blocked.reason
+    const retryAfter = blocked.ok ? new Date(Date.now() + 60_000) : blocked.retryAfter
+    updateJobProgress(job.id, { label: reason }, db)
+    deferJob(job.id, retryAfter.toISOString(), reason, db)
+    throw new JobDeferred(reason)
   }
 
   if (video.duration_seconds) {
@@ -87,13 +92,43 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
     : ({ kind: 'file', path: resolveDataPath(video.stored_path!), mimeType: guessMimeType(video.stored_path!) } as const)
 
   const startedAt = Date.now()
+  let modelUsed = models[0]!
   try {
-    const { result, usage, processingModeUsed, rawResponseText } = await analyzeVideo({
-      model: VIDEO_MODEL,
+    // The model rotation itself lives in analyzeVideo, which uploads the file
+    // once and then tries each model against that same upload — rotating out
+    // here instead would re-upload the whole video per model.
+    const attempt = await analyzeVideo({
+      models,
       processing: VIDEO_PROCESSING,
       source,
       onProgress: (label) => updateJobProgress(job.id, { label }, db),
     })
+    modelUsed = attempt.modelUsed
+
+    // One row per model that refused, so the quota log reflects what Google
+    // actually counted, not just the model that ended up answering.
+    for (const skipped of attempt.exhaustedModels) {
+      insertAnalysisRun(
+        {
+          videoId: video.id,
+          jobId: job.id,
+          phase: 'first_pass',
+          model: skipped.model,
+          processingMode: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          thoughtTokens: 0,
+          estimatedCostUsd: 0,
+          latencyMs: 0,
+          succeeded: false,
+          errorMessage: skipped.error,
+        },
+        db,
+      )
+    }
+
+    const { result, usage, processingModeUsed, rawResponseText } = attempt
     const latencyMs = Date.now() - startedAt
 
     const rawDir = path.join(DATA_DIR, 'tmp', 'gemini-responses')
@@ -106,7 +141,7 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
         videoId: video.id,
         jobId: job.id,
         phase: 'first_pass',
-        model: VIDEO_MODEL,
+        model: modelUsed,
         processingMode: processingModeUsed,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
@@ -169,7 +204,7 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
         videoId: video.id,
         jobId: job.id,
         phase: 'first_pass',
-        model: VIDEO_MODEL,
+        model: modelUsed,
         processingMode: null,
         inputTokens: 0,
         outputTokens: 0,

@@ -30,7 +30,7 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
     throw new Error(`El video debe estar analizado ("ready") para detectar skills (esta en "${video.status}").`)
   }
 
-  const quota = checkQuota(db)
+  const quota = checkQuota(db, SKILL_MODEL)
   if (!quota.ok) {
     updateJobProgress(job.id, { label: quota.reason }, db)
     deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)

@@ -38,7 +38,7 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('La skill no tiene video o rango de tiempo asociado.')
   }
 
-  const quota = checkQuota(db)
+  const quota = checkQuota(db, SKILL_MODEL)
   if (!quota.ok) {
     updateJobProgress(job.id, { label: quota.reason }, db)
     deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)

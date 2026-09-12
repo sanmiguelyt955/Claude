@@ -55,7 +55,7 @@ export {
 } from './repo/jobs.js'
 export type { EnqueueJobInput } from './repo/jobs.js'
 
-export { insertAnalysisRun, getQuotaWindowCounts, listAnalysisRunsForVideo } from './repo/analysis.js'
+export { insertAnalysisRun, getQuotaWindowCounts, nextQuotaResetDate, listAnalysisRunsForVideo } from './repo/analysis.js'
 export type { InsertAnalysisRunInput, QuotaWindowCounts } from './repo/analysis.js'
 
 export {

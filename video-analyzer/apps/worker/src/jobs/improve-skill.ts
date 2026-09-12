@@ -42,7 +42,7 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('Se requiere skillId o sourceSkillPath.')
   }
 
-  const quota = checkQuota(db)
+  const quota = checkQuota(db, SKILL_MODEL)
   if (!quota.ok) {
     updateJobProgress(job.id, { label: quota.reason }, db)
     deferJob(job.id, quota.retryAfter.toISOString(), quota.reason, db)

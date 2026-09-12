@@ -11,6 +11,7 @@
     "@cva/memory-engine": "*",
     "@cva/video-processor": "*",
     "@cva/ai-router": "*",
-    "@cva/skill-engine": "*"
+    "@cva/skill-engine": "*",
+    "@cva/vault-export": "*"
   }
 }

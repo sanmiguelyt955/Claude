@@ -1,0 +1,235 @@
+import {
+  getVideo,
+  getVideoSummary,
+  listScenes,
+  listTranscriptChunks,
+  listVideoElements,
+  listSkillsForVideo,
+  listSkillImprovementsForVideo,
+  listAnalysisRunsForVideo,
+} from '@cva/memory-engine'
+import type { Db, VideoElementRow } from '@cva/memory-engine'
+
+const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+
+export function formatVaultDate(date = new Date()): string {
+  return `${String(date.getDate()).padStart(2, '0')} ${MONTHS_ES[date.getMonth()]} ${date.getFullYear()}`
+}
+
+function timestamp(seconds: number | null): string {
+  if (seconds === null) return '—'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = Math.floor(seconds % 60)
+  const mm = h > 0 ? String(m).padStart(2, '0') : String(m)
+  return `${h > 0 ? h + ':' : ''}${mm}:${String(s).padStart(2, '0')}`
+}
+
+function range(start: number | null, end: number | null): string {
+  if (start === null) return '—'
+  return end === null ? timestamp(start) : `${timestamp(start)}–${timestamp(end)}`
+}
+
+/** Markdown tables break on a raw pipe, and a newline would split the row. */
+function cell(value: string | null): string {
+  if (!value) return '—'
+  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ')
+}
+
+const ELEMENT_GROUPS: Array<{ kind: VideoElementRow['kind']; heading: string }> = [
+  { kind: 'on_screen_text', heading: 'Texto en pantalla (OCR)' },
+  { kind: 'object', heading: 'Objetos' },
+  { kind: 'action', heading: 'Acciones' },
+  { kind: 'person', heading: 'Personas' },
+  { kind: 'relation', heading: 'Relaciones' },
+]
+
+const PHASE_LABEL: Record<string, string> = {
+  first_pass: 'Análisis del video',
+  deep_pass: 'Análisis profundo',
+  skill_detection: 'Detección de skills',
+  skill_generation: 'Generación de skill',
+  skill_improvement: 'Mejora de skill',
+  embedding: 'Indexado semántico',
+}
+
+/**
+ * Renders one video's entire stored analysis as Markdown — every scene, every
+ * transcript line, every detected element, plus the skills and the token/cost
+ * log. Deliberately lossless: anything the analysis captured ends up here,
+ * because the vault note is meant to stand on its own if the database is ever
+ * lost or the video file is deleted.
+ */
+export function buildVideoMarkdown(videoId: string, db?: Db): string {
+  const video = getVideo(videoId, db)
+  if (!video) throw new Error(`El video ${videoId} no existe.`)
+
+  const summary = getVideoSummary(videoId, db)
+  const scenes = listScenes(videoId, db)
+  const transcript = listTranscriptChunks(videoId, db)
+  const elements = listVideoElements(videoId, db)
+  const skills = listSkillsForVideo(videoId, db)
+  const improvements = listSkillImprovementsForVideo(videoId, db)
+  const runs = listAnalysisRunsForVideo(videoId, db)
+
+  const topics: string[] = summary ? (JSON.parse(summary.topics_json) as string[]) : []
+  const out: string[] = []
+
+  out.push(`# ${video.title}`)
+  out.push('')
+  out.push(
+    `Análisis completo del video, exportado automáticamente desde la app Video Analyzer. Incluye todo lo capturado: resumen, timeline escena por escena (imagen y audio), transcripción, y cada objeto, texto en pantalla, acción y persona detectados.`,
+  )
+  out.push('')
+  out.push('#contenido #video #analisis-video')
+  out.push('')
+
+  // ── Ficha técnica ───────────────────────────────────────────────────────
+  out.push('## Ficha del video')
+  out.push('')
+  out.push('| Dato | Valor |')
+  out.push('|---|---|')
+  out.push(`| Origen | ${video.source_kind === 'url' ? cell(video.source_url) : 'Archivo local'} |`)
+  out.push(`| Duración | ${timestamp(video.duration_seconds)} |`)
+  if (video.width && video.height) {
+    out.push(`| Resolución | ${video.width}x${video.height}${video.fps ? ` @ ${video.fps.toFixed(1)}fps` : ''} |`)
+  }
+  if (video.container) out.push(`| Contenedor | ${cell(video.container)} |`)
+  if (video.video_codec) out.push(`| Códec de video | ${cell(video.video_codec)} |`)
+  if (video.audio_codec) out.push(`| Códec de audio | ${cell(video.audio_codec)} |`)
+  if (video.size_bytes) out.push(`| Tamaño | ${(video.size_bytes / 1024 / 1024).toFixed(1)} MB |`)
+  if (video.content_hash) out.push(`| Hash (SHA-256) | \`${video.content_hash}\` |`)
+  out.push(`| Analizado | ${new Date(video.updated_at).toLocaleString('es-MX')} |`)
+  out.push('')
+
+  // ── Resumen ─────────────────────────────────────────────────────────────
+  if (summary) {
+    out.push('## Resumen')
+    out.push('')
+    out.push(`**En una línea:** ${summary.short_summary}`)
+    out.push('')
+    out.push(summary.full_summary)
+    out.push('')
+    if (topics.length) {
+      out.push(`**Temas:** ${topics.join(' · ')}`)
+      out.push('')
+    }
+  }
+
+  // ── Timeline ────────────────────────────────────────────────────────────
+  if (scenes.length) {
+    out.push(`## Timeline completo (${scenes.length} escenas)`)
+    out.push('')
+    for (const scene of scenes) {
+      out.push(`### [${range(scene.start_seconds, scene.end_seconds)}] ${scene.title ?? 'Escena ' + scene.scene_index}`)
+      out.push('')
+      out.push(`- **Imagen:** ${scene.description}`)
+      out.push(`- **Audio:** ${scene.audio_description ?? '—'}`)
+      out.push('')
+    }
+  }
+
+  // ── Transcripción ───────────────────────────────────────────────────────
+  if (transcript.length) {
+    out.push(`## Transcripción completa (${transcript.length} intervenciones)`)
+    out.push('')
+    for (const chunk of transcript) {
+      const who = chunk.speaker ? `**${chunk.speaker}:** ` : ''
+      out.push(`- **[${timestamp(chunk.start_seconds)}]** ${who}${chunk.text}`)
+    }
+    out.push('')
+  }
+
+  // ── Elementos ───────────────────────────────────────────────────────────
+  if (elements.length) {
+    out.push(`## Todo lo que aparece (${elements.length} elementos)`)
+    out.push('')
+    for (const group of ELEMENT_GROUPS) {
+      const items = elements.filter((e) => e.kind === group.kind)
+      if (!items.length) continue
+      out.push(`### ${group.heading} (${items.length})`)
+      out.push('')
+      out.push('| Momento | Qué es | Detalle |')
+      out.push('|---|---|---|')
+      for (const item of items) {
+        out.push(`| ${range(item.start_seconds, item.end_seconds)} | ${cell(item.label)} | ${cell(item.detail)} |`)
+      }
+      out.push('')
+    }
+  }
+
+  // ── Skills ──────────────────────────────────────────────────────────────
+  if (skills.length) {
+    out.push('## Procesos reutilizables detectados (skills)')
+    out.push('')
+    out.push('| Skill | Tramo | Confianza | Estado | Qué cubre |')
+    out.push('|---|---|---|---|---|')
+    for (const skill of skills) {
+      const confidence = skill.confidence === null ? '—' : `${Math.round(skill.confidence * 100)}%`
+      out.push(
+        `| \`${cell(skill.name)}\` | ${range(skill.start_seconds, skill.end_seconds)} | ${confidence} | ${skill.status} | ${cell(skill.description)} |`,
+      )
+    }
+    out.push('')
+    for (const skill of skills) {
+      if (!skill.skill_md) continue
+      out.push(`### SKILL.md generado: \`${skill.name}\``)
+      out.push('')
+      if (skill.output_path) out.push(`Guardado en: \`data/${skill.output_path}\``)
+      out.push('')
+      out.push('```markdown')
+      out.push(skill.skill_md.trimEnd())
+      out.push('```')
+      out.push('')
+    }
+  }
+
+  // ── Mejoras propuestas ──────────────────────────────────────────────────
+  if (improvements.length) {
+    out.push('## Mejoras propuestas a skills existentes')
+    out.push('')
+    for (const imp of improvements) {
+      out.push(`### ${imp.title} — *${imp.kind}* (${imp.status})`)
+      out.push('')
+      out.push(`- **Evidencia:** ${range(imp.start_seconds, imp.end_seconds)}`)
+      out.push(`- **Por qué:** ${imp.rationale}`)
+      if (imp.proposed_diff) {
+        out.push('')
+        out.push('```markdown')
+        out.push(imp.proposed_diff.trimEnd())
+        out.push('```')
+      }
+      out.push('')
+    }
+  }
+
+  // ── Registro técnico ────────────────────────────────────────────────────
+  const okRuns = runs.filter((r) => r.succeeded)
+  if (okRuns.length) {
+    out.push('## Registro de procesamiento')
+    out.push('')
+    out.push('| Fase | Modelo | Modo | Tokens | Costo |')
+    out.push('|---|---|---|---|---|')
+    let totalTokens = 0
+    let totalCost = 0
+    for (const run of okRuns) {
+      const tokens = (run.input_tokens ?? 0) + (run.output_tokens ?? 0)
+      totalTokens += tokens
+      totalCost += run.estimated_cost_usd ?? 0
+      out.push(
+        `| ${PHASE_LABEL[run.phase] ?? run.phase} | ${cell(run.model)} | ${run.processing_mode ?? '—'} | ${tokens.toLocaleString('es-MX')} | $${(run.estimated_cost_usd ?? 0).toFixed(4)} |`,
+      )
+    }
+    out.push(`| **Total** | | | **${totalTokens.toLocaleString('es-MX')}** | **$${totalCost.toFixed(4)}** |`)
+    out.push('')
+  }
+
+  out.push('---')
+  out.push('')
+  out.push(
+    `*Exportado desde Video Analyzer el ${formatVaultDate()}. Fuente de verdad: la base de datos local de la app (\`data/db/app.sqlite\`).*`,
+  )
+  out.push('')
+
+  return out.join('\n')
+}
