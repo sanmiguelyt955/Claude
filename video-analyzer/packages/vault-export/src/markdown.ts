@@ -30,6 +30,26 @@ function range(start: number | null, end: number | null): string {
   return end === null ? timestamp(start) : `${timestamp(start)}–${timestamp(end)}`
 }
 
+/**
+ * Marks a timestamp that falls outside the video's real duration.
+ *
+ * Gemini reliably derives the timeline for scenes and transcript, but on long
+ * videos it still drifts on `elements` and skill ranges — this export has seen
+ * an 11:29 video produce element timestamps up to 15:24. Clamping them would
+ * invent data, and printing them bare invites citing a minute that does not
+ * exist, so they are kept verbatim and flagged instead.
+ */
+function outOfRange(start: number | null, end: number | null, duration: number | null): boolean {
+  if (duration === null) return false
+  const tolerance = 1
+  return (start !== null && start > duration + tolerance) || (end !== null && end > duration + tolerance)
+}
+
+function rangeWithin(start: number | null, end: number | null, duration: number | null): string {
+  const text = range(start, end)
+  return outOfRange(start, end, duration) ? `${text} ⚠️` : text
+}
+
 /** Markdown tables break on a raw pipe, and a newline would split the row. */
 function cell(value: string | null): string {
   if (!value) return '—'
@@ -144,6 +164,12 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
   if (elements.length) {
     out.push(`## Todo lo que aparece (${elements.length} elementos)`)
     out.push('')
+    if (elements.some((e) => outOfRange(e.start_seconds, e.end_seconds, video.duration_seconds))) {
+      out.push(
+        `> [!warning] Un ⚠️ marca un momento que cae fuera de la duración real del video (${timestamp(video.duration_seconds)}). Gemini derivó ese timestamp: el dato del elemento sirve, el minuto exacto no. Verifícalo en el video antes de citarlo.`,
+      )
+      out.push('')
+    }
     for (const group of ELEMENT_GROUPS) {
       const items = elements.filter((e) => e.kind === group.kind)
       if (!items.length) continue
@@ -152,7 +178,9 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
       out.push('| Momento | Qué es | Detalle |')
       out.push('|---|---|---|')
       for (const item of items) {
-        out.push(`| ${range(item.start_seconds, item.end_seconds)} | ${cell(item.label)} | ${cell(item.detail)} |`)
+        out.push(
+          `| ${rangeWithin(item.start_seconds, item.end_seconds, video.duration_seconds)} | ${cell(item.label)} | ${cell(item.detail)} |`,
+        )
       }
       out.push('')
     }
@@ -167,7 +195,7 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
     for (const skill of skills) {
       const confidence = skill.confidence === null ? '—' : `${Math.round(skill.confidence * 100)}%`
       out.push(
-        `| \`${cell(skill.name)}\` | ${range(skill.start_seconds, skill.end_seconds)} | ${confidence} | ${skill.status} | ${cell(skill.description)} |`,
+        `| \`${cell(skill.name)}\` | ${rangeWithin(skill.start_seconds, skill.end_seconds, video.duration_seconds)} | ${confidence} | ${skill.status} | ${cell(skill.description)} |`,
       )
     }
     out.push('')

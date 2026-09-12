@@ -81,6 +81,7 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
     return {
       key: video.id,
       title: video.title,
+      durationSeconds: video.duration_seconds,
       source: isYoutube
         ? ({ kind: 'youtube', url: video.source_url! } as const)
         : ({

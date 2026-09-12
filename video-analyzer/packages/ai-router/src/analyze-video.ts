@@ -1,6 +1,6 @@
 import { getGeminiClient } from './client.js'
 import { uploadAndWaitActive } from './upload.js'
-import { ANALYSIS_JSON_SCHEMA, ANALYSIS_PROMPT, type AnalysisResult } from './schema.js'
+import { ANALYSIS_JSON_SCHEMA, buildAnalysisPrompt, type AnalysisResult } from './schema.js'
 import { estimateCostUsd } from './cost.js'
 import type { ProcessingMode, TokenUsage, VideoSource } from './types.js'
 
@@ -36,6 +36,9 @@ export type AnalyzeVideoInput = {
   models: string[]
   processing: ProcessingMode
   source: VideoSource
+  /** Real length of the video, in seconds. Pinned into the prompt so the model
+   * cannot invent a timeline past the end — see buildAnalysisPrompt. */
+  durationSeconds?: number | null
   /** Best-effort phase labels for a live progress UI — not a percentage: a
    * single Gemini call has no partial-progress signal to report mid-flight. */
   onProgress?: (label: string) => void
@@ -135,13 +138,14 @@ async function tryAgentic(
   model: string,
   uri: string,
   mimeType: string | undefined,
+  prompt: string,
 ): Promise<{ result: AnalysisResult; usage: TokenUsage; rawResponseText: string }> {
   const ai = getGeminiClient()
   const interaction = await ai.interactions.create({
     model,
     input: [
       { type: 'video', uri, mime_type: mimeType, processing: 'agentic' },
-      { type: 'text', text: ANALYSIS_PROMPT },
+      { type: 'text', text: prompt },
     ],
     response_format: { type: 'text', mime_type: 'application/json', schema: ANALYSIS_JSON_SCHEMA },
     generation_config: { max_output_tokens: MAX_OUTPUT_TOKENS },
@@ -163,6 +167,7 @@ async function runStatic(
   model: string,
   uri: string,
   mimeType: string | undefined,
+  prompt: string,
 ): Promise<{ result: AnalysisResult; usage: TokenUsage; rawResponseText: string }> {
   const ai = getGeminiClient()
   const response = await ai.models.generateContent({
@@ -170,7 +175,7 @@ async function runStatic(
     contents: [
       {
         role: 'user',
-        parts: [{ fileData: { fileUri: uri, mimeType } }, { text: ANALYSIS_PROMPT }],
+        parts: [{ fileData: { fileUri: uri, mimeType } }, { text: prompt }],
       },
     ],
     config: {
@@ -223,12 +228,13 @@ async function tryOneModel(
   uri: string,
   mimeType: string | undefined,
   processing: ProcessingMode,
+  prompt: string,
   notify: (label: string) => void,
 ): Promise<{ result: AnalysisResult; usage: TokenUsage; processingModeUsed: ProcessingMode; rawResponseText: string }> {
   if (processing === 'AGENTIC') {
     try {
       notify(`Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...`)
-      const agentic = await withTimeout(tryAgentic(model, uri, mimeType), AGENTIC_TIMEOUT_MS, 'El modo agentic')
+      const agentic = await withTimeout(tryAgentic(model, uri, mimeType, prompt), AGENTIC_TIMEOUT_MS, 'El modo agentic')
       return { ...agentic, processingModeUsed: 'AGENTIC' }
     } catch (error) {
       if (isQuotaExhaustedError(error)) throw error
@@ -237,7 +243,7 @@ async function tryOneModel(
   }
 
   notify(`Gemini (${model}) esta analizando el video (modo static, puede tardar varios minutos)...`)
-  const staticResult = await runStatic(model, uri, mimeType)
+  const staticResult = await runStatic(model, uri, mimeType, prompt)
   return { ...staticResult, processingModeUsed: 'STATIC' }
 }
 
@@ -260,12 +266,13 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   notify(input.source.kind === 'file' ? 'Subiendo video a Gemini...' : 'Preparando video de YouTube...')
   const { uri, mimeType } = await resolveVideoUri(input.source)
 
+  const prompt = buildAnalysisPrompt(input.durationSeconds)
   const exhaustedModels: Array<{ model: string; error: string }> = []
 
   for (const [index, model] of input.models.entries()) {
     const isLast = index === input.models.length - 1
     try {
-      const attempt = await tryOneModel(model, uri, mimeType, input.processing, notify)
+      const attempt = await tryOneModel(model, uri, mimeType, input.processing, prompt, notify)
       return { ...attempt, modelUsed: model, exhaustedModels }
     } catch (error) {
       const message = (error as Error).message

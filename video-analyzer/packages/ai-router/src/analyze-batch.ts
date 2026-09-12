@@ -13,7 +13,7 @@ const MAX_OUTPUT_TOKENS = 65536
  * stay small enough that each video still gets a full, gapless analysis —
  * the caller enforces that with its own duration/count limits.
  */
-export type BatchItem = { key: string; source: VideoSource; title?: string }
+export type BatchItem = { key: string; source: VideoSource; title?: string; durationSeconds?: number | null }
 
 export type BatchAnalysisOutput = {
   results: Array<{ key: string; result: AnalysisResult }>

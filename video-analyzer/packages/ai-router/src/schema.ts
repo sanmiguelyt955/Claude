@@ -133,3 +133,26 @@ GENERAL:
 - When genuinely unsure whether to split something into more, smaller entries or keep one larger entry, always choose more/smaller — losing granularity is the failure mode to avoid.
 - Write every piece of natural-language text (summaries, titles, descriptions, transcript text, labels) in Spanish — the person reading this is a Spanish speaker — but keep every JSON key exactly as given in the schema (English).
 - Output ONLY the JSON object. No markdown code fences, no commentary before or after it.`
+
+/**
+ * The analysis prompt with the video's real length pinned to it.
+ *
+ * Without the number, Gemini derives its own timeline on long videos and
+ * drifts: an 11:29 video came back with scenes and transcript correct but
+ * `elements` timestamped up to 15:24 — minutes that do not exist. The model
+ * cannot check itself against a duration it was never told, so telling it is
+ * the fix, and the ceiling is restated where the drift actually happens.
+ */
+export function buildAnalysisPrompt(durationSeconds?: number | null): string {
+  if (!durationSeconds || !Number.isFinite(durationSeconds)) return ANALYSIS_PROMPT
+  const total = Math.round(durationSeconds)
+  const mm = Math.floor(total / 60)
+  const ss = String(total % 60).padStart(2, '0')
+  return `${ANALYSIS_PROMPT}
+
+DURATION — this is a hard limit, not a hint:
+- This video lasts EXACTLY ${total} seconds (${mm}:${ss}). It ends at second ${total}.
+- No timestamp anywhere in the JSON may exceed ${total} — not in scenes, not in transcript, and not in elements. A start or end beyond ${total} is an error, not an approximation.
+- Scenes, transcript and elements all share ONE timeline: the same moment must carry the same number in all three. Do not restart, rescale or estimate a separate timeline for elements.
+- The last scene must end at or very near second ${total}.`
+}

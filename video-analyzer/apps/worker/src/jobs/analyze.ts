@@ -86,6 +86,7 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       models,
       processing: VIDEO_PROCESSING,
       source,
+      durationSeconds: video.duration_seconds,
       onProgress: (label) => updateJobProgress(job.id, { label }, db),
     })
     modelUsed = attempt.modelUsed
