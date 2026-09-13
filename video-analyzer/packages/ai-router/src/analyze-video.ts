@@ -116,6 +116,19 @@ export function isModelRetiredError(error: unknown): boolean {
   return message.includes('"code":404') && message.includes('no longer available')
 }
 
+/**
+ * True for Google's "this model is overloaded right now" (503 UNAVAILABLE,
+ * "high demand"). Confirmed live during a real outage: retrying the SAME
+ * model after a delay never once succeeded while the outage lasted — every
+ * sibling model was down too, so the 13s wait bought nothing and just made
+ * the rotation twice as slow. A model-wide outage calls for switching models
+ * immediately, not waiting on the one that just said it is overloaded.
+ */
+export function isOverloadedError(error: unknown): boolean {
+  const message = (error as Error)?.message ?? ''
+  return message.includes('"code":503') && message.includes('UNAVAILABLE')
+}
+
 /** Strips a ```json ... ``` fence if the model wrapped the JSON in one anyway. */
 function stripCodeFence(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
@@ -437,7 +450,14 @@ async function runWindowsWithModel(
       requestsSpent++
       attempt = await withTimeout(runStaticWindow(model, uri, mimeType, prompt, window.start, window.end), STATIC_TIMEOUT_MS, windowLabel)
     } catch (error) {
-      if (isQuotaExhaustedError(error) || isModelRetiredError(error)) {
+      // Quota/retired errors can never succeed on this model — hand off now.
+      // An overloaded (503) error gets the same immediate hand-off: during a
+      // real outage every retry on the SAME model just failed again after
+      // burning the 13s delay, because the whole model was down, not this
+      // one call. Only a genuinely unclassified error (network blip, bad
+      // response shape) gets the one delayed retry, since that is the case
+      // where waiting a few seconds can plausibly help.
+      if (isQuotaExhaustedError(error) || isModelRetiredError(error) || isOverloadedError(error)) {
         throw new WindowedAnalysisError((error as Error).message, state, requestsSpent)
       }
       console.warn(`[ai-router] ${model}: tramo ${i + 1}/${windows.length} fallo, reintentando una vez: ${(error as Error).message}`)
