@@ -113,12 +113,16 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
           latencyMs: 0,
           succeeded: false,
           errorMessage: skipped.error,
+          // For a windowed video this model may have made several real
+          // calls (some possibly successful) before giving up mid-video —
+          // logging a hardcoded 1 would undercount its real quota spend.
+          requestCount: skipped.requestCount,
         },
         db,
       )
     }
 
-    const { result, usage, processingModeUsed, rawResponseText } = attempt
+    const { result, usage, processingModeUsed, rawResponseText, requestCount } = attempt
     const latencyMs = Date.now() - startedAt
 
     const rawDir = path.join(DATA_DIR, 'tmp', 'gemini-responses')
@@ -141,6 +145,9 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
         latencyMs,
         succeeded: true,
         rawResponsePath: path.relative(DATA_DIR, rawPath),
+        // A windowed long video makes several real requests against the same
+        // model's daily quota, not one — see AnalyzeVideoOutput.requestCount.
+        requestCount,
       },
       db,
     )

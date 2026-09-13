@@ -23,9 +23,15 @@ type BatchPayload = { videoIds: string[] }
  * every video in the call, so past a certain size the per-video analysis
  * stops being exhaustive (or the JSON gets truncated outright) — which would
  * defeat the purpose of batching to begin with.
+ *
+ * The 600s default from before assumed sparse ~50s scenes. The prompt now
+ * asks for second-by-second audio description (~200-280 tokens per second of
+ * video), so the same combined duration would need 3x the output budget the
+ * batch actually has. Lowered accordingly — a batch is for several SHORT
+ * videos now, not for cramming minutes of footage into one call.
  */
 const MAX_BATCH_VIDEOS = Number(process.env.GEMINI_BATCH_MAX_VIDEOS ?? 5)
-const MAX_BATCH_SECONDS = Number(process.env.GEMINI_BATCH_MAX_SECONDS ?? 600)
+const MAX_BATCH_SECONDS = Number(process.env.GEMINI_BATCH_MAX_SECONDS ?? 150)
 
 export function planBatch(videos: VideoRow[]): { batch: VideoRow[]; skipped: VideoRow[] } {
   const batch: VideoRow[] = []
@@ -33,7 +39,10 @@ export function planBatch(videos: VideoRow[]): { batch: VideoRow[]; skipped: Vid
   let total = 0
   for (const video of videos) {
     const duration = video.duration_seconds ?? 0
-    if (batch.length >= MAX_BATCH_VIDEOS || total + duration > MAX_BATCH_SECONDS) {
+    // A video long enough to need windowing on its own does not belong in a
+    // shared-budget batch call at all, regardless of how much room is left —
+    // it goes through the single-video (possibly windowed) path instead.
+    if (batch.length >= MAX_BATCH_VIDEOS || total + duration > MAX_BATCH_SECONDS || duration > MAX_BATCH_SECONDS) {
       skipped.push(video)
       continue
     }

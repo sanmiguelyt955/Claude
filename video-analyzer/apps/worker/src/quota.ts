@@ -125,23 +125,33 @@ export function listSkillModelsWithQuota(db: Db): string[] {
  * 2 Flash Lite, and both Omni models. Aliases (gemini-flash-latest) are also
  * out: they resolve to a model already listed and would double-count.
  *
+ * ALSO excluded, for a different reason: Gemini 2.5 Flash and 2.5 Flash Lite
+ * return a permanent 404 ("no longer available to new users", pointing at
+ * 3.6-flash / 3.5-flash-lite as replacements) — confirmed live 13 sep 2026.
+ * Not a rate limit, not a transient outage: Google retired them. Keeping a
+ * retired model in rotation just spends a wasted request every single run.
+ *
  * The real numbers: 20/day for every Flash, but **500/day** for Gemini 3.5
  * and 3.1 Flash Lite. That asymmetry is the whole story — the Lite models
  * carry ~88% of the daily capacity.
  */
 const DEFAULT_VIDEO_MODELS = [
   // Flash: mejor calidad, 20/dia cada uno.
+  // gemini-2.5-flash y gemini-2.5-flash-lite fueron sacados de esta lista:
+  // ambos devuelven 404 permanente ("no longer available to new users"),
+  // confirmado en vivo el 13 sep 2026 -- no es una caida temporal, Google los
+  // retiro. Dejarlos aqui solo gasta 2 peticiones inutiles (intento + retry)
+  // en cada rotacion, en el peor momento posible: cuando ya se esta cayendo
+  // en cascada por otros modelos con problemas reales.
   'gemini-3.8-flash',
   'gemini-3.7-flash',
   'gemini-3.6-flash',
   'gemini-3.5-flash',
   'gemini-3-flash-preview',
-  'gemini-2.5-flash',
   // Flash Lite: calidad menor pero 500/dia los de 3.x — es donde vive la
   // capacidad real, asi que van al final como caballo de batalla.
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
-  'gemini-2.5-flash-lite',
 ]
 
 function videoModels(): string[] {
