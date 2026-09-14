@@ -60,7 +60,7 @@ export const ANALYSIS_JSON_SCHEMA = {
     scenes: {
       type: 'array',
       description:
-        'Tiles the whole video end to end with no gaps, ordered by start_seconds. Slice finely: a new scene on every meaningful change, not a sparse summary.',
+        'Exactly one entry per integer second of the video, ordered by start_seconds, start_seconds=N/end_seconds=N+1 for every N — never a wider span, never merged seconds.',
       items: {
         type: 'object',
         properties: {
@@ -120,7 +120,7 @@ export const ANALYSIS_JSON_SCHEMA = {
  * (buildAnalysisPrompt for a short video, buildWindowAnalysisPrompt for one
  * slice of a windowed long one) — it says nothing about scene length itself.
  */
-const AUDIO_DESCRIPTION_VOICE = `You are a professional audio-description narrator, the kind broadcasters hire to describe a program for a blind viewer who cannot see the screen at all. Everything visual has to be said out loud, in words, with the same precision a sighted expert would use if asked to guide someone through the video second by second: exact colors, textures, spatial position ("top-left of frame", "he steps forward and to the right"), facial expressions, body language, camera movement (pan, zoom, cut), on-screen text read verbatim, lighting and mood — never a vague "something happens", always the concrete visual fact. Apply the exact same rigor to sound: describe voice tone and delivery, not just words; name music genre/mood and how it changes; call out sound effects, silence, and background noise explicitly. Someone will rely on this JSON as the only account of what happens, without ever watching or hearing the video themselves — a detail you skip is permanently lost to them.`
+const AUDIO_DESCRIPTION_VOICE = `You are a professional audio-description narrator, the kind broadcasters hire to describe a program for a blind viewer who cannot see the screen at all. Everything visual has to be said out loud, in words, with the same precision a sighted expert would use if asked to guide someone through the video second by second: exact colors, textures, spatial position ("top-left of frame", "he steps forward and to the right"), facial expressions, body language, hand gestures and micro-movements (a finger pointing, a nod, a shrug — these carry meaning and are never filler), camera movement (pan, zoom, cut), on-screen text read verbatim, lighting and mood — never a vague "something happens", always the concrete visual fact. Apply the exact same rigor to sound: describe voice tone and delivery, not just words; name music genre/mood and how it changes; call out sound effects, silence, and background noise explicitly. This JSON is the permanent record for a personal knowledge base (an Obsidian vault) — nobody will ever re-watch the source video to recover something you left out. A detail omitted here is not "summarized elsewhere", it is gone. When in doubt, include it.`
 
 export const ANALYSIS_PROMPT = `${AUDIO_DESCRIPTION_VOICE} Watch the entire video (video and audio together — treat them as one synchronized source, never analyze the picture without the sound or vice versa) and produce ONE JSON object matching the given schema, covering the whole duration from second 0 to the very end.
 
@@ -130,11 +130,11 @@ TRANSCRIPT — completeness is mandatory, not best-effort:
 - Split into entries by natural sentence/phrase boundaries — do not merge two minutes of continuous speech into one entry, and do not invent pauses that were not there.
 - "transcript" is empty ([]) only if the video truly has no speech anywhere.
 
-SCENES — describe SECOND BY SECOND, not in sparse summary blocks:
-- Consecutive scenes: each end_seconds equals the next scene's start_seconds, covering 0 to the end, with no gaps.
-- Each scene must span only 1 to 4 seconds. A shot that holds still for 10 seconds is still 3-4 separate scene entries, one per moment worth narrating (a gesture completing, a new word of on-screen text appearing, a shift in expression) — never one entry silently covering many seconds of continuous action. If truly nothing changes for a stretch, split it anyway at a natural ~2-3 second boundary and describe what is still happening in each ("sigue sosteniendo el producto frente a la camara, sin moverse") rather than collapsing it into a long single entry.
-- Every scene's "description" narrates that 1-4 second slice with full audio-description detail as instructed above — never a generic one-liner.
-- Every scene's "audio_description" must reflect what is actually heard during that exact slice (speech content, music, silence, sound effects) with the same second-level precision — this is a hard requirement, not optional detail. Use null only when there is truly nothing to describe (silent segment with no ambient sound at all).
+SCENES — ONE ENTRY PER SECOND, no exceptions, no ranges:
+- This is a hard structural rule, not a style preference: emit exactly one scene entry per integer second of the video. Second 0 is start_seconds=0/end_seconds=1, second 1 is start_seconds=1/end_seconds=2, second 2 is start_seconds=2/end_seconds=3, and so on to the very last second — never start_seconds=1/end_seconds=4 or any other span wider than 1. If the video is N seconds long, there must be exactly N scene entries (the last one truncated to the real end if it is not a whole second).
+- Do NOT merge multiple seconds into one entry even when nothing visibly changes. A shot held perfectly still for 10 seconds is still 10 separate entries, each describing that same held instant ("sigue sosteniendo el producto frente a la camara, sin moverse, luz constante") — repeating the description is correct here, collapsing it into one entry covering several seconds is not.
+- Every scene's "description" narrates exactly that one second with full audio-description detail as instructed above — never a generic one-liner, and never a description that silently spans more time than the one second it is attached to.
+- Every scene's "audio_description" must reflect what is actually heard during that exact second (speech content, music, silence, sound effects) with the same one-second precision — this is a hard requirement, not optional detail. Use null only when there is truly nothing to describe (silent segment with no ambient sound at all).
 
 ELEMENTS — log every occurrence, not a representative sample:
 - Objects shown, text burned into the frame (OCR), notable actions, people, and relations between them — each with the timestamp where it appears.
@@ -213,9 +213,10 @@ TRANSCRIPT — completeness is mandatory, not best-effort:
 - Consecutive entries must be contiguous, with no unexplained multi-second jumps while someone is talking.
 - "transcript" is empty ([]) only if this fragment truly has no speech.
 
-SCENES — describe SECOND BY SECOND, not in sparse summary blocks:
-- Tile this fragment's ${total} seconds with no gaps, each scene spanning only 1 to 4 seconds — the same second-level narration density described above, applied to this fragment alone.
-- Every "description" and "audio_description" carries full audio-description detail for that exact 1-4 second slice.
+SCENES — ONE ENTRY PER SECOND, no exceptions, no ranges:
+- Emit exactly one scene entry per integer second of THIS fragment: start_seconds=0/end_seconds=1, start_seconds=1/end_seconds=2, ... up to start_seconds=${total - 1}/end_seconds=${total}. Exactly ${total} entries total, never a wider span, never merged seconds — the same rule described above, applied to this fragment alone.
+- Even a second where nothing visibly changes gets its own entry (repeat the description if needed) — do not collapse a still moment into a single entry covering more than one second.
+- Every "description" and "audio_description" carries full audio-description detail for that exact one-second slice.
 
 ELEMENTS — log every occurrence within this fragment, not a representative sample.
 

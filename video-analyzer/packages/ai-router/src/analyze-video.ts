@@ -38,10 +38,17 @@ const STATIC_TIMEOUT_MS = Number(process.env.GEMINI_STATIC_TIMEOUT_MS ?? 4 * 60 
  * it gets cut into WINDOW_SECONDS-sized slices instead, each analyzed with
  * its own Gemini call via `videoMetadata.startOffset/endOffset` on the SAME
  * upload (see analyzeVideoWindowed). This trades daily quota for coverage on
- * purpose: a video that used to cost 1 request can now cost 5-10 — real,
+ * purpose: a video that used to cost 1 request can now cost 5-15 — real,
  * confirmed with the account owner before this was written.
+ *
+ * Lowered from 90 to 45 when the scene schema moved from "1-4 seconds per
+ * entry" to "exactly one entry per second, never merged" — that change
+ * removed the model's only way to keep output compact (bundling a held shot
+ * into one entry), so the same window now produces noticeably more JSON per
+ * second of footage. 45s keeps a comfortable margin under MAX_OUTPUT_TOKENS
+ * even for a dense, dialogue-heavy fragment.
  */
-const WINDOW_SECONDS = Number(process.env.GEMINI_WINDOW_SECONDS ?? 90)
+const WINDOW_SECONDS = Number(process.env.GEMINI_WINDOW_SECONDS ?? 45)
 const WINDOW_THRESHOLD_SECONDS = Number(process.env.GEMINI_WINDOW_THRESHOLD_SECONDS ?? 110)
 /** Higher than generateContent's default 1.0 fps so the model actually has enough
  * frames to narrate 1-4 second scenes accurately instead of interpolating. */
@@ -64,6 +71,17 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ])
 }
 
+/**
+ * A single non-windowed call (short video, or any call that is not one
+ * window of a long one) has no partial-progress signal, so `current`/`total`
+ * are omitted and the UI falls back to an indeterminate indicator for that
+ * phase. A windowed video's per-window notifications DO carry them — `total`
+ * is the window count, `current` is how many windows are already committed
+ * to WindowState — which is what turns the progress bar from indeterminate
+ * into a real percentage-plus-ETA display, like a download progress bar.
+ */
+export type ProgressUpdate = { label: string; current?: number; total?: number }
+
 export type AnalyzeVideoInput = {
   /** Models to try in order. Google's daily cap is per model, so a 429 on the
    * first one means "use the next", not "come back tomorrow". */
@@ -73,9 +91,7 @@ export type AnalyzeVideoInput = {
   /** Real length of the video, in seconds. Pinned into the prompt so the model
    * cannot invent a timeline past the end — see buildAnalysisPrompt. */
   durationSeconds?: number | null
-  /** Best-effort phase labels for a live progress UI — not a percentage: a
-   * single Gemini call has no partial-progress signal to report mid-flight. */
-  onProgress?: (label: string) => void
+  onProgress?: (progress: ProgressUpdate) => void
 }
 
 export type AnalyzeVideoOutput = {
@@ -420,7 +436,7 @@ async function runWindowsWithModel(
   windows: Array<{ start: number; end: number }>,
   durationSeconds: number,
   state: WindowState,
-  notify: (label: string) => void,
+  notify: (progress: ProgressUpdate) => void,
 ): Promise<number> {
   // Every real call this model makes counts here, success or failure,
   // including a window's internal retry — so the winning model's own
@@ -430,9 +446,13 @@ async function runWindowsWithModel(
 
   for (let i = state.nextWindowIndex; i < windows.length; i++) {
     const window = windows[i]!
-    notify(
-      `Gemini (${model}) analiza el tramo ${i + 1}/${windows.length} (${Math.round(window.start)}-${Math.round(window.end)}s de ${Math.round(durationSeconds)}s)...`,
-    )
+    // `current: i` (not i+1) — a percentage bar should reflect windows
+    // actually COMMITTED to state so far, not the one currently in flight.
+    notify({
+      label: `Gemini (${model}) analiza el tramo ${i + 1}/${windows.length} (${Math.round(window.start)}-${Math.round(window.end)}s de ${Math.round(durationSeconds)}s)...`,
+      current: i,
+      total: windows.length,
+    })
     const prompt = buildWindowAnalysisPrompt({
       windowIndex: i,
       windowCount: windows.length,
@@ -517,7 +537,7 @@ async function analyzeVideoWindowedWithRotation(
   uri: string,
   mimeType: string | undefined,
   durationSeconds: number,
-  notify: (label: string) => void,
+  notify: (progress: ProgressUpdate) => void,
 ): Promise<AnalyzeVideoOutput> {
   const windows = planWindows(durationSeconds)
   let state = emptyWindowState()
@@ -548,7 +568,11 @@ async function analyzeVideoWindowedWithRotation(
       console.warn(
         `[ai-router] ${model} ${reason} en el tramo ${state.nextWindowIndex + 1}/${windows.length}, probando ${models[index + 1]}...`,
       )
-      notify(`${model} ${reason} en el tramo ${state.nextWindowIndex + 1}/${windows.length}, probando ${models[index + 1]}...`)
+      notify({
+        label: `${model} ${reason} en el tramo ${state.nextWindowIndex + 1}/${windows.length}, probando ${models[index + 1]}...`,
+        current: state.nextWindowIndex,
+        total: windows.length,
+      })
     }
   }
 
@@ -583,7 +607,7 @@ async function tryOneModel(
   mimeType: string | undefined,
   processing: ProcessingMode,
   durationSeconds: number | null | undefined,
-  notify: (label: string) => void,
+  notify: (progress: ProgressUpdate) => void,
 ): Promise<{
   result: AnalysisResult
   usage: TokenUsage
@@ -598,7 +622,7 @@ async function tryOneModel(
 
   if (processing === 'AGENTIC') {
     try {
-      notify(`Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...`)
+      notify({ label: `Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...` })
       const agentic = await withTimeout(tryAgentic(model, uri, mimeType, prompt), AGENTIC_TIMEOUT_MS, 'El modo agentic')
       return { ...agentic, processingModeUsed: 'AGENTIC', requestCount: 1 }
     } catch (error) {
@@ -609,7 +633,7 @@ async function tryOneModel(
     }
   }
 
-  notify(`Gemini (${model}) esta analizando el video (modo static, puede tardar varios minutos)...`)
+  notify({ label: `Gemini (${model}) esta analizando el video (modo static, puede tardar varios minutos)...` })
   const staticResult = await withTimeout(runStatic(model, uri, mimeType, prompt), STATIC_TIMEOUT_MS, `Gemini (${model}, static)`)
   return { ...staticResult, processingModeUsed: 'STATIC', requestCount: 1 }
 }
@@ -630,7 +654,7 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   if (!input.models.length) throw new Error('Se requiere al menos un modelo en AnalyzeVideoInput.models.')
   const notify = input.onProgress ?? (() => {})
 
-  notify(input.source.kind === 'file' ? 'Subiendo video a Gemini...' : 'Preparando video de YouTube...')
+  notify({ label: input.source.kind === 'file' ? 'Subiendo video a Gemini...' : 'Preparando video de YouTube...' })
   const { uri, mimeType } = await resolveVideoUri(input.source)
 
   // Long videos get their own rotation path with a shared WindowState, so a
@@ -653,7 +677,7 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
       exhaustedModels.push({ model, error: message, requestCount: 1 })
       const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : isModelRetiredError(error) ? 'retirado por Google' : 'fallo'
       console.warn(`[ai-router] ${model} ${reason}, probando ${input.models[index + 1]}...`)
-      notify(`${model} ${reason}, probando ${input.models[index + 1]}...`)
+      notify({ label: `${model} ${reason}, probando ${input.models[index + 1]}...` })
     }
   }
 

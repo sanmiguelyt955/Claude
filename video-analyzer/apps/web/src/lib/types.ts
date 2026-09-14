@@ -1,6 +1,16 @@
 export type VideoStatus = 'pending' | 'probing' | 'queued' | 'analyzing' | 'ready' | 'failed'
 
-export type ActiveJob = { type: string; status: string; progressLabel: string | null } | null
+export type ActiveJob = {
+  type: string
+  status: string
+  progressLabel: string | null
+  /** Windows completed so far — only set for a windowed video's per-window
+   * notifications. Null/undefined means "no numeric progress to show yet",
+   * which is the UI's cue to render the indeterminate bar instead. */
+  progressCurrent?: number
+  progressTotal?: number | null
+  startedAt?: string | null
+} | null
 
 export type VideoRow = {
   id: string

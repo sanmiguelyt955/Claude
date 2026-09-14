@@ -20,7 +20,14 @@ export async function GET(): Promise<NextResponse> {
     return {
       ...video,
       activeJob: activeJob
-        ? { type: activeJob.type, status: activeJob.status, progressLabel: activeJob.progress_label }
+        ? {
+            type: activeJob.type,
+            status: activeJob.status,
+            progressLabel: activeJob.progress_label,
+            progressCurrent: activeJob.progress_current,
+            progressTotal: activeJob.progress_total,
+            startedAt: activeJob.started_at,
+          }
         : null,
     }
   })

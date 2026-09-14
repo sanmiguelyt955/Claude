@@ -1,37 +1,109 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+
+function formatDuration(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds))
+  const minutes = Math.floor(s / 60)
+  const seconds = s % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+type Pace = { lastCurrent: number; lastAtMs: number; etaBaselineSeconds: number | null; etaBaselineAtMs: number }
 
 /**
- * Honest live-progress indicator: an indeterminate bar, not a fake
- * percentage. A single Gemini call has no partial-progress signal, so this
- * shows what actually changes moment to moment — the phase label from the
- * job's progress_label, plus elapsed time, while the UI stays fully
- * interactive underneath (PROJECT.md §5: "nada bloqueante en la UI").
+ * Live-progress indicator for an analysis in flight. When the job carries no
+ * numeric progress (a single-call video, or the "Subiendo video..." phase
+ * before windowing starts — a lone Gemini call has no partial-progress
+ * signal), this stays an honest indeterminate bar rather than faking a
+ * percentage. Once a windowed video reports current/total windows (see
+ * ProgressUpdate in ai-router's analyze-video.ts), it switches to a real
+ * percentage bar plus an ETA.
+ *
+ * The ETA is deliberately NOT (elapsed-since-job-start / windows-done) — that
+ * naive average blends in every past stall (a model rotating through several
+ * failed attempts on the same window, observed live to take minutes), and
+ * keeps climbing for as long as the stall lasts, which is the opposite of
+ * what a countdown should do. Instead the pace is re-baselined only when
+ * `current` actually increases, using just the most recently completed
+ * window, then counted down locally every second until the next real update
+ * arrives — the same behavior a download progress bar has.
  */
-export function AnalyzingProgress({ label, startedAt }: { label: string | null; startedAt: string }) {
-  const [elapsed, setElapsed] = useState(0)
+export function AnalyzingProgress({
+  label,
+  startedAt,
+  current,
+  total,
+}: {
+  label: string | null
+  startedAt: string
+  current?: number
+  total?: number | null
+}) {
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
-    const start = new Date(startedAt).getTime()
-    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)))
-    tick()
-    const interval = setInterval(tick, 1000)
+    const interval = setInterval(() => setNowMs(Date.now()), 1000)
     return () => clearInterval(interval)
+  }, [])
+
+  const startMs = new Date(startedAt).getTime()
+  const elapsed = Math.max(0, Math.floor((nowMs - startMs) / 1000))
+  const hasRealProgress = typeof total === 'number' && total > 0 && typeof current === 'number'
+
+  const paceRef = useRef<Pace>({ lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs })
+
+  // A new job (new startedAt) starts a fresh pace history — otherwise a
+  // just-restarted analysis would inherit the previous run's baseline.
+  useEffect(() => {
+    paceRef.current = { lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startedAt])
 
-  const minutes = Math.floor(elapsed / 60)
-  const seconds = elapsed % 60
+  // Re-baseline synchronously during render (not in an effect) so the very
+  // render that receives a new `current` already shows the corrected ETA
+  // instead of lagging one tick behind.
+  if (hasRealProgress && current! > paceRef.current.lastCurrent) {
+    const pace = paceRef.current
+    const windowsDone = current! - pace.lastCurrent
+    const msPerWindow = (nowMs - pace.lastAtMs) / windowsDone
+    const remaining = total! - current!
+    pace.etaBaselineSeconds = remaining > 0 ? (msPerWindow * remaining) / 1000 : 0
+    pace.etaBaselineAtMs = nowMs
+    pace.lastCurrent = current!
+    pace.lastAtMs = nowMs
+  }
+
+  const percent = hasRealProgress ? Math.min(100, Math.round((current! / total!) * 100)) : null
+  const etaSeconds =
+    hasRealProgress && paceRef.current.etaBaselineSeconds !== null
+      ? Math.max(0, Math.round(paceRef.current.etaBaselineSeconds - (nowMs - paceRef.current.etaBaselineAtMs) / 1000))
+      : null
 
   return (
     <div className="flex flex-col gap-2 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-4">
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--color-line)">
-        <div className="h-full w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite] rounded-full bg-(--color-accent)" />
+        {hasRealProgress ? (
+          <div
+            className="h-full rounded-full bg-(--color-accent) transition-[width] duration-500 ease-out"
+            style={{ width: `${percent}%` }}
+          />
+        ) : (
+          <div className="h-full w-1/3 animate-[indeterminate_1.4s_ease-in-out_infinite] rounded-full bg-(--color-accent)" />
+        )}
       </div>
       <div className="flex items-center justify-between text-xs text-(--color-ink-soft)">
         <span>{label ?? 'Analizando...'}</span>
         <span className="font-mono">
-          {minutes}:{String(seconds).padStart(2, '0')}
+          {hasRealProgress ? (
+            <>
+              {percent}%{etaSeconds !== null && etaSeconds > 0 ? ` · quedan ~${formatDuration(etaSeconds)}` : ''}
+              {' · '}
+              {formatDuration(elapsed)}
+            </>
+          ) : (
+            formatDuration(elapsed)
+          )}
         </span>
       </div>
       <style>{`

@@ -24,14 +24,15 @@ type BatchPayload = { videoIds: string[] }
  * stops being exhaustive (or the JSON gets truncated outright) — which would
  * defeat the purpose of batching to begin with.
  *
- * The 600s default from before assumed sparse ~50s scenes. The prompt now
- * asks for second-by-second audio description (~200-280 tokens per second of
- * video), so the same combined duration would need 3x the output budget the
- * batch actually has. Lowered accordingly — a batch is for several SHORT
- * videos now, not for cramming minutes of footage into one call.
+ * The 600s default from before assumed sparse ~50s scenes, then 150s once the
+ * prompt moved to second-by-second audio description. The schema has since
+ * tightened further — EXACTLY one scene object per second, never several
+ * seconds bundled into one entry (see schema.ts) — which produces even more
+ * JSON per second of combined footage than that 150s figure assumed. Halved
+ * again for the same safety margin applied to GEMINI_WINDOW_SECONDS.
  */
 const MAX_BATCH_VIDEOS = Number(process.env.GEMINI_BATCH_MAX_VIDEOS ?? 5)
-const MAX_BATCH_SECONDS = Number(process.env.GEMINI_BATCH_MAX_SECONDS ?? 150)
+const MAX_BATCH_SECONDS = Number(process.env.GEMINI_BATCH_MAX_SECONDS ?? 75)
 
 export function planBatch(videos: VideoRow[]): { batch: VideoRow[]; skipped: VideoRow[] } {
   const batch: VideoRow[] = []

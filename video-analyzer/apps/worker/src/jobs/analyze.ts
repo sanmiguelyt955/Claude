@@ -87,7 +87,10 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       processing: VIDEO_PROCESSING,
       source,
       durationSeconds: video.duration_seconds,
-      onProgress: (label) => updateJobProgress(job.id, { label }, db),
+      // current/total are only present for a windowed video's per-window
+      // notifications — the UI's progress bar turns from indeterminate into
+      // a real percentage-plus-ETA display exactly when these are set.
+      onProgress: (progress) => updateJobProgress(job.id, { label: progress.label, current: progress.current, total: progress.total }, db),
     })
     modelUsed = attempt.modelUsed
 

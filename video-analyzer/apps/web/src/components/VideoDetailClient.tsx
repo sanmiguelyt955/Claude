@@ -282,7 +282,12 @@ export function VideoDetailClient({ id }: { id: string }) {
       )}
 
       {video.status === 'analyzing' && (
-        <AnalyzingProgress label={video.activeJob?.progressLabel ?? null} startedAt={video.updated_at} />
+        <AnalyzingProgress
+          label={video.activeJob?.progressLabel ?? null}
+          startedAt={video.activeJob?.startedAt ?? video.updated_at}
+          current={video.activeJob?.progressCurrent}
+          total={video.activeJob?.progressTotal}
+        />
       )}
 
       {video.status === 'failed' && (
