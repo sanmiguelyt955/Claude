@@ -53,10 +53,78 @@ const WINDOW_THRESHOLD_SECONDS = Number(process.env.GEMINI_WINDOW_THRESHOLD_SECO
 /** Higher than generateContent's default 1.0 fps so the model actually has enough
  * frames to narrate 1-4 second scenes accurately instead of interpolating. */
 const WINDOW_FPS = Number(process.env.GEMINI_WINDOW_FPS ?? 2)
-/** Google's free tier caps requests per minute (5, per quota.ts's MAX_RPM) —
- * spacing consecutive window calls keeps a single video's own windows from
- * tripping that limit on their own. */
+/** Base delay before retrying an unclassified window failure (network blip,
+ * malformed JSON) on the same model. Jittered — see jittered(). */
 const WINDOW_CALL_DELAY_MS = Number(process.env.GEMINI_WINDOW_CALL_DELAY_MS ?? 13_000)
+
+/**
+ * How many windows of one video are in flight at once. Each window call takes
+ * ~60-95s (measured on 2 Oct 2026), so running them one after another — plus
+ * the fixed 13s pause this replaced — left the per-minute budget mostly idle:
+ * a 5-minute video took 13 minutes. The per-model pacer below still enforces
+ * Google's RPM, so this only fills the idle time, it never exceeds the limit.
+ */
+const WINDOW_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_WINDOW_CONCURRENCY ?? 4))
+
+/**
+ * Google's free tier enforces RPM per model and per project
+ * (`GenerateRequestsPerMinutePerProjectPerModel`). Request STARTS are spaced
+ * 60s/RPM apart per model, so concurrency can never trip the limit by itself.
+ */
+const MAX_RPM_PER_MODEL = Math.max(1, Number(process.env.GEMINI_MAX_RPM ?? 5))
+
+/**
+ * A 503 "high demand" is a transient, model-wide overload — not a reason to
+ * abandon the best model for the rest of the video (the old behavior, which
+ * pushed a whole video down to Flash Lite over a 30-second spike). The model
+ * is only skipped for this long, then retried for later windows.
+ */
+const OVERLOAD_COOLDOWN_MS = Number(process.env.GEMINI_OVERLOAD_COOLDOWN_MS ?? 60_000)
+
+/** Upper bound for the escalating 503 cooldown. */
+const OVERLOAD_COOLDOWN_MAX_MS = 15 * 60_000
+
+/** Next free request-start time per model, shared by every job in this process. */
+const nextSlotByModel = new Map<string, number>()
+
+/**
+ * Overload state per model, shared across windows AND jobs in this process.
+ * Each consecutive 503 doubles the cooldown (60s, 2m, 4m... up to 15m); one
+ * success resets it. Measured 2 Oct 2026: with a flat 60s cooldown,
+ * gemini-3.8-flash took 14 rejections for 1 success during a sustained
+ * outage — every retry costing a pacing slot and, as the app counts it, a
+ * daily request.
+ */
+const overloadByModel = new Map<string, { strikes: number; until: number }>()
+
+function markOverloaded(model: string): number {
+  const strikes = (overloadByModel.get(model)?.strikes ?? 0) + 1
+  const cooldown = Math.min(OVERLOAD_COOLDOWN_MS * 2 ** (strikes - 1), OVERLOAD_COOLDOWN_MAX_MS)
+  overloadByModel.set(model, { strikes, until: Date.now() + cooldown })
+  return cooldown
+}
+
+function isCoolingDown(model: string): boolean {
+  return (overloadByModel.get(model)?.until ?? 0) > Date.now()
+}
+
+/**
+ * Waits for this model's next request slot. The reservation is taken
+ * synchronously before awaiting, so concurrent windows can never race onto the
+ * same slot.
+ */
+async function acquireModelSlot(model: string): Promise<void> {
+  const interval = 60_000 / MAX_RPM_PER_MODEL
+  const now = Date.now()
+  const slot = Math.max(now, nextSlotByModel.get(model) ?? 0)
+  nextSlotByModel.set(model, slot + interval)
+  if (slot > now) await sleep(slot - now)
+}
+
+/** ±25% jitter so retries from parallel windows don't land in lockstep. */
+function jittered(ms: number): number {
+  return Math.round(ms * (0.75 + Math.random() * 0.5))
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -82,6 +150,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  */
 export type ProgressUpdate = { label: string; current?: number; total?: number }
 
+/**
+ * One real Gemini generate call, reported the moment it finishes (success or
+ * failure). Lets the caller write the quota log per request instead of once at
+ * the end of the job — otherwise the quota counter reads 0 for the whole
+ * duration of a long video, and every request is lost from it if the process
+ * dies mid-video.
+ */
+export type RequestEvent = {
+  model: string
+  processingMode: ProcessingMode
+  succeeded: boolean
+  error?: string
+  usage?: TokenUsage
+  latencyMs: number
+}
+
 export type AnalyzeVideoInput = {
   /** Models to try in order. Google's daily cap is per model, so a 429 on the
    * first one means "use the next", not "come back tomorrow". */
@@ -96,13 +180,18 @@ export type AnalyzeVideoInput = {
    * Resume point for a windowed video whose PREVIOUS job attempt exhausted
    * every configured model with some windows already completed (see
    * WindowedAnalysisError). Without this, a retried job attempt starts
-   * analyzeVideoWindowedWithRotation with a fresh, empty state and re-does
+   * analyzeVideoWindowed with a fresh, empty state and re-does
    * every window from 0 — the in-memory WindowState normally used to hand
    * off between models within ONE attempt does not otherwise survive the
    * attempt itself failing and the job being requeued. Ignored for a
    * non-windowed (short) video.
    */
   initialWindowState?: WindowState
+  /** Called once per real Gemini generate call — see RequestEvent. */
+  onRequest?: (event: RequestEvent) => void
+  /** Called whenever a window finishes, with the state to persist so a crash
+   * mid-video resumes from here instead of window 0. Windowed videos only. */
+  onCheckpoint?: (state: WindowState) => void
 }
 
 export type AnalyzeVideoOutput = {
@@ -124,6 +213,9 @@ export type AnalyzeVideoOutput = {
    * this as analysis_runs.request_count, not a hardcoded 1, or the quota
    * counter silently under-counts every windowed video. */
   requestCount: number
+  /** True when every request was already reported through `onRequest` —
+   * the caller must then NOT log `requestCount`/`exhaustedModels` again. */
+  requestsLoggedLive: boolean
 }
 
 /** True for Google's "you ran out of daily requests for this model" (429). */
@@ -154,6 +246,21 @@ export function isModelRetiredError(error: unknown): boolean {
 export function isOverloadedError(error: unknown): boolean {
   const message = (error as Error)?.message ?? ''
   return message.includes('"code":503') && message.includes('UNAVAILABLE')
+}
+
+/**
+ * A 429 for the PER-MINUTE quota (`...PerMinute...` in Google's quotaId), as
+ * opposed to the daily one. isQuotaExhaustedError() matches both, and treating
+ * a per-minute 429 as "out of quota for today" throws away a model that would
+ * have answered fine 10 seconds later.
+ */
+export function isPerMinuteQuotaError(error: unknown): boolean {
+  return isQuotaExhaustedError(error) && ((error as Error)?.message ?? '').includes('PerMinute')
+}
+
+/** A 429 that means the model is done for today. */
+function isDailyQuotaError(error: unknown): boolean {
+  return isQuotaExhaustedError(error) && !isPerMinuteQuotaError(error)
 }
 
 /** Strips a ```json ... ``` fence if the model wrapped the JSON in one anyway. */
@@ -310,7 +417,13 @@ async function runStaticWindow(
   endSeconds: number,
 ): Promise<{ result: AnalysisResult; usage: TokenUsage; rawResponseText: string }> {
   const ai = getGeminiClient()
-  const response = await ai.models.generateContent({
+  // A real abort, not just a Promise.race: with several windows in flight, a
+  // hung call would otherwise keep its socket open after the timeout fires.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), STATIC_TIMEOUT_MS)
+  let response: Awaited<ReturnType<typeof ai.models.generateContent>>
+  try {
+    response = await ai.models.generateContent({
     model,
     contents: [
       {
@@ -328,8 +441,19 @@ async function runStaticWindow(
       responseMimeType: 'application/json',
       responseSchema: ANALYSIS_JSON_SCHEMA,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      abortSignal: controller.signal,
     },
-  })
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `El tramo [${startSeconds}-${endSeconds}s] (${model}) supero el limite de ${Math.round(STATIC_TIMEOUT_MS / 1000)}s sin responder.`,
+      )
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
     throw new Error(
@@ -379,6 +503,61 @@ export type WindowState = {
   usage: TokenUsage
   /** Index of the first window NOT yet completed by any model. */
   nextWindowIndex: number
+  /**
+   * Windows that finished out of order (windows run in parallel), keyed by
+   * window index, waiting for every earlier window before being merged.
+   * Optional so checkpoints written before parallel windows still load.
+   */
+  ahead?: Record<string, WindowOutcome>
+}
+
+/** One finished window, timestamps still relative to the window's own start. */
+type WindowOutcome = {
+  result: AnalysisResult
+  usage: TokenUsage
+  rawResponseText: string
+  windowStart: number
+}
+
+/**
+ * Merges window `index` into the state if it is the next one in order, then
+ * keeps merging any already-finished windows that were waiting behind it.
+ * Shifting every timestamp by the window's real start happens here, in code,
+ * never trusted to the model — that is what keeps the merged timeline from
+ * drifting (see buildWindowAnalysisPrompt).
+ */
+function commitWindow(state: WindowState, index: number, outcome: WindowOutcome): void {
+  state.ahead ??= {}
+  state.ahead[String(index)] = outcome
+  for (;;) {
+    const next = state.ahead[String(state.nextWindowIndex)]
+    if (!next) break
+    delete state.ahead[String(state.nextWindowIndex)]
+    const offset = next.windowStart
+    for (const scene of next.result.scenes) {
+      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + offset, end_seconds: scene.end_seconds + offset })
+    }
+    for (const line of next.result.transcript) {
+      state.transcript.push({ ...line, start_seconds: line.start_seconds + offset, end_seconds: line.end_seconds + offset })
+    }
+    for (const el of next.result.elements) {
+      state.elements.push({
+        ...el,
+        start_seconds: el.start_seconds + offset,
+        end_seconds: el.end_seconds === null ? null : el.end_seconds + offset,
+      })
+    }
+    state.summaries.push(next.result.summary)
+    state.rawTexts.push(next.rawResponseText)
+    state.usage = {
+      inputTokens: state.usage.inputTokens + next.usage.inputTokens,
+      outputTokens: state.usage.outputTokens + next.usage.outputTokens,
+      cachedTokens: state.usage.cachedTokens + next.usage.cachedTokens,
+      thoughtTokens: state.usage.thoughtTokens + next.usage.thoughtTokens,
+      estimatedCostUsd: state.usage.estimatedCostUsd + next.usage.estimatedCostUsd,
+    }
+    state.nextWindowIndex++
+  }
 }
 
 function emptyWindowState(): WindowState {
@@ -441,43 +620,52 @@ function finalizeWindowState(state: WindowState): AnalysisResult {
 }
 
 /**
- * Runs whichever windows `state.nextWindowIndex` says are still pending, all
- * with ONE model (STATIC only — agentic already navigates a whole video on
- * its own and does not accept a clip range). Each slice's JSON comes back
- * with its OWN 0-based timeline (see buildWindowAnalysisPrompt for why), so
- * this shifts every timestamp by the slice's real start before merging —
- * arithmetic done here, never trusted to the model, is what keeps a
- * multi-window video's final timeline from drifting the way un-pinned
- * durations used to (see buildAnalysisPrompt's own history).
+ * Analyzes every pending window of a long video, WINDOW_CONCURRENCY at a time
+ * (STATIC only — agentic navigates a whole video on its own and does not
+ * accept a clip range). Each slice's JSON comes back with its OWN 0-based
+ * timeline (see buildWindowAnalysisPrompt) and is shifted by commitWindow().
  *
- * Mutates `state` in place as each window completes, so a caller catching
- * the thrown WindowedAnalysisError still has every window THIS call finished
- * before the one that failed.
+ * Model choice is made PER WINDOW, best model first:
+ * - daily-quota 429 / retired 404 → that model is skipped for the rest of the
+ *   video (it cannot succeed again today);
+ * - 503 overload → skipped for an escalating cooldown (see markOverloaded), then tried again,
+ *   so a short spike no longer drags the whole video down to Flash Lite;
+ * - per-minute 429 → exponential backoff with jitter on the SAME model;
+ * - anything else → one jittered retry on the same model, then the next one.
+ *
+ * Mutates `state` in place, so on failure the thrown WindowedAnalysisError
+ * carries every window finished so far — including ones that finished out of
+ * order (state.ahead) — and the next attempt only redoes what is missing.
  */
-async function runWindowsWithModel(
-  model: string,
+async function analyzeVideoWindowed(
+  models: string[],
   uri: string,
   mimeType: string | undefined,
-  windows: Array<{ start: number; end: number }>,
   durationSeconds: number,
-  state: WindowState,
   notify: (progress: ProgressUpdate) => void,
-): Promise<number> {
-  // Every real call this model makes counts here, success or failure,
-  // including a window's internal retry — so the winning model's own
-  // request_count reflects calls it actually spent, not just windows it
-  // completed (a window that needed 1 retry to succeed still cost 2 calls).
-  let requestsSpent = 0
+  emit: (event: RequestEvent) => void,
+  initialState: WindowState | undefined,
+  onCheckpoint: (state: WindowState) => void,
+): Promise<AnalyzeVideoOutput> {
+  const windows = planWindows(durationSeconds)
+  const state = initialState ?? emptyWindowState()
+  state.ahead ??= {}
 
+  const pending: number[] = []
   for (let i = state.nextWindowIndex; i < windows.length; i++) {
+    if (!state.ahead[String(i)]) pending.push(i)
+  }
+
+  const deadModels = new Map<string, string>() // model -> why it cannot be used again today
+  const windowsByModel = new Map<string, number>()
+  let requestsSpent = 0
+  let failure: Error | undefined
+
+  const doneCount = () => state.nextWindowIndex + Object.keys(state.ahead ?? {}).length
+  const report = (label: string) => notify({ label, current: doneCount(), total: windows.length })
+
+  async function runOneWindow(i: number): Promise<void> {
     const window = windows[i]!
-    // `current: i` (not i+1) — a percentage bar should reflect windows
-    // actually COMMITTED to state so far, not the one currently in flight.
-    notify({
-      label: `Gemini (${model}) analiza el tramo ${i + 1}/${windows.length} (${Math.round(window.start)}-${Math.round(window.end)}s de ${Math.round(durationSeconds)}s)...`,
-      current: i,
-      total: windows.length,
-    })
     const prompt = buildWindowAnalysisPrompt({
       windowIndex: i,
       windowCount: windows.length,
@@ -485,127 +673,106 @@ async function runWindowsWithModel(
       windowDurationSeconds: window.end - window.start,
       fullVideoDurationSeconds: durationSeconds,
     })
-    // One retry for a transient failure on THIS window alone. Without it, a
-    // single 500 on window 6 of 8 would abandon the model entirely over one
-    // blip. A real quota exhaustion or retired-model error still propagates
-    // immediately — retrying either wastes a call and cannot succeed.
-    const windowLabel = `El tramo ${i + 1}/${windows.length} (static, ${model})`
-    let attempt: { result: AnalysisResult; usage: TokenUsage; rawResponseText: string }
-    try {
-      requestsSpent++
-      attempt = await withTimeout(runStaticWindow(model, uri, mimeType, prompt, window.start, window.end), STATIC_TIMEOUT_MS, windowLabel)
-    } catch (error) {
-      // Quota/retired errors can never succeed on this model — hand off now.
-      // An overloaded (503) error gets the same immediate hand-off: during a
-      // real outage every retry on the SAME model just failed again after
-      // burning the 13s delay, because the whole model was down, not this
-      // one call. Only a genuinely unclassified error (network blip, bad
-      // response shape) gets the one delayed retry, since that is the case
-      // where waiting a few seconds can plausibly help.
-      if (isQuotaExhaustedError(error) || isModelRetiredError(error) || isOverloadedError(error)) {
-        throw new WindowedAnalysisError((error as Error).message, state, requestsSpent)
-      }
-      console.warn(`[ai-router] ${model}: tramo ${i + 1}/${windows.length} fallo, reintentando una vez: ${(error as Error).message}`)
-      await sleep(WINDOW_CALL_DELAY_MS)
-      try {
+    let lastError: Error | undefined
+
+    for (const model of models) {
+      if (failure) return
+      if (deadModels.has(model)) continue
+      // A cooling-down model is skipped while any other usable model exists;
+      // if every remaining model is cooling down, it is tried anyway rather
+      // than failing the window outright.
+      const usable = models.filter((m) => !deadModels.has(m))
+      const allCooling = usable.every((m) => isCoolingDown(m))
+      if (!allCooling && isCoolingDown(model)) continue
+
+      for (let attempt = 1; ; attempt++) {
+        if (failure) return
+        await acquireModelSlot(model)
+        const startedAt = Date.now()
         requestsSpent++
-        attempt = await withTimeout(runStaticWindow(model, uri, mimeType, prompt, window.start, window.end), STATIC_TIMEOUT_MS, windowLabel)
-      } catch (retryError) {
-        throw new WindowedAnalysisError((retryError as Error).message, state, requestsSpent)
+        try {
+          const out = await runStaticWindow(model, uri, mimeType, prompt, window.start, window.end)
+          emit({ model, processingMode: 'STATIC', succeeded: true, usage: out.usage, latencyMs: Date.now() - startedAt })
+          windowsByModel.set(model, (windowsByModel.get(model) ?? 0) + 1)
+          overloadByModel.delete(model) // answered again: back to full priority
+          commitWindow(state, i, { ...out, windowStart: window.start })
+          onCheckpoint(state)
+          report(`Gemini analiza ${windows.length} tramos en paralelo: ${doneCount()}/${windows.length} listos (tramo ${i + 1} con ${model})...`)
+          return
+        } catch (error) {
+          const message = (error as Error).message
+          emit({ model, processingMode: 'STATIC', succeeded: false, error: message, latencyMs: Date.now() - startedAt })
+          lastError = error as Error
+
+          if (isDailyQuotaError(error) || isModelRetiredError(error)) {
+            deadModels.set(model, message)
+            console.warn(`[ai-router] ${model} ${isModelRetiredError(error) ? 'retirado por Google' : 'sin cupo diario'} (tramo ${i + 1}/${windows.length}), sigue con el siguiente modelo.`)
+            break
+          }
+          if (isOverloadedError(error)) {
+            const cooldown = markOverloaded(model)
+            console.warn(`[ai-router] ${model} saturado (503) en el tramo ${i + 1}/${windows.length}; pausado ${Math.round(cooldown / 1000)}s, este tramo sigue con el siguiente modelo.`)
+            break
+          }
+          if (isPerMinuteQuotaError(error) && attempt <= 3) {
+            const wait = jittered(15_000 * 2 ** (attempt - 1))
+            console.warn(`[ai-router] ${model}: limite por minuto (tramo ${i + 1}), reintento ${attempt}/3 en ${Math.round(wait / 1000)}s.`)
+            await sleep(wait)
+            continue
+          }
+          if (attempt === 1 && !isPerMinuteQuotaError(error)) {
+            console.warn(`[ai-router] ${model}: tramo ${i + 1}/${windows.length} fallo, reintentando una vez: ${message}`)
+            await sleep(jittered(WINDOW_CALL_DELAY_MS))
+            continue
+          }
+          console.warn(`[ai-router] ${model}: tramo ${i + 1}/${windows.length} fallo de nuevo, sigue con el siguiente modelo: ${message}`)
+          break
+        }
       }
     }
 
-    for (const scene of attempt.result.scenes) {
-      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + window.start, end_seconds: scene.end_seconds + window.start })
-    }
-    for (const line of attempt.result.transcript) {
-      state.transcript.push({ ...line, start_seconds: line.start_seconds + window.start, end_seconds: line.end_seconds + window.start })
-    }
-    for (const el of attempt.result.elements) {
-      state.elements.push({
-        ...el,
-        start_seconds: el.start_seconds + window.start,
-        end_seconds: el.end_seconds === null ? null : el.end_seconds + window.start,
-      })
-    }
-    state.summaries.push(attempt.result.summary)
-    state.rawTexts.push(attempt.rawResponseText)
-    state.usage = {
-      inputTokens: state.usage.inputTokens + attempt.usage.inputTokens,
-      outputTokens: state.usage.outputTokens + attempt.usage.outputTokens,
-      cachedTokens: state.usage.cachedTokens + attempt.usage.cachedTokens,
-      thoughtTokens: state.usage.thoughtTokens + attempt.usage.thoughtTokens,
-      estimatedCostUsd: state.usage.estimatedCostUsd + attempt.usage.estimatedCostUsd,
-    }
-    // Committed immediately: if the NEXT window fails, this one still counts
-    // as done and will not be re-run by whichever model tries next.
-    state.nextWindowIndex = i + 1
-
-    if (i < windows.length - 1) await sleep(WINDOW_CALL_DELAY_MS)
+    throw lastError ?? new Error(`Ningun modelo disponible para el tramo ${i + 1}/${windows.length}.`)
   }
 
-  return requestsSpent
-}
+  report(`Gemini analiza ${windows.length} tramos en paralelo (hasta ${WINDOW_CONCURRENCY} a la vez)...`)
 
-/**
- * Walks `models` in order for a long (windowed) video, exactly like the
- * plain-call rotation below but carrying ONE shared WindowState across model
- * switches — a model that goes down mid-video hands off its progress to the
- * next one instead of erasing it. Each model's per-model, real request count
- * (successes AND failed attempts) is tracked separately for an honest quota
- * log, since a model that failed after 2 requests must not be logged as if
- * it made 0, and the winning model must not be credited with windows another
- * model actually paid for.
- */
-async function analyzeVideoWindowedWithRotation(
-  models: string[],
-  uri: string,
-  mimeType: string | undefined,
-  durationSeconds: number,
-  notify: (progress: ProgressUpdate) => void,
-  initialState?: WindowState,
-): Promise<AnalyzeVideoOutput> {
-  const windows = planWindows(durationSeconds)
-  // A resumed job attempt seeds this from the PREVIOUS attempt's
-  // WindowedAnalysisError.state instead of starting at window 0 — see
-  // AnalyzeVideoInput.initialWindowState.
-  let state = initialState ?? emptyWindowState()
-  const exhaustedModels: Array<{ model: string; error: string; requestCount: number }> = []
-
-  for (const [index, model] of models.entries()) {
-    const isLast = index === models.length - 1
-    try {
-      const requestsSpent = await runWindowsWithModel(model, uri, mimeType, windows, durationSeconds, state, notify)
-      return {
-        result: finalizeWindowState(state),
-        usage: state.usage,
-        processingModeUsed: 'STATIC',
-        modelUsed: model,
-        exhaustedModels,
-        rawResponseText: JSON.stringify({ windows: state.rawTexts.map((t) => JSON.parse(t)) }),
-        // Real calls THIS model made — includes any internal window retries,
-        // not just a count of windows completed (see runWindowsWithModel).
-        requestCount: requestsSpent,
+  const queue = [...pending]
+  async function lane(): Promise<void> {
+    for (;;) {
+      if (failure) return
+      const i = queue.shift()
+      if (i === undefined) return
+      try {
+        await runOneWindow(i)
+      } catch (error) {
+        // Stop handing out new windows; in-flight ones still finish and stay
+        // in the state, so nothing already paid for is lost.
+        failure ??= error as Error
       }
-    } catch (error) {
-      const requestsSpent = error instanceof WindowedAnalysisError ? error.requestsSpentByThisModel : 0
-      if (error instanceof WindowedAnalysisError) state = error.state
-      const message = (error as Error).message
-      if (isLast) throw error
-      exhaustedModels.push({ model, error: message, requestCount: requestsSpent })
-      const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : isModelRetiredError(error) ? 'retirado por Google' : 'fallo'
-      console.warn(
-        `[ai-router] ${model} ${reason} en el tramo ${state.nextWindowIndex + 1}/${windows.length}, probando ${models[index + 1]}...`,
-      )
-      notify({
-        label: `${model} ${reason} en el tramo ${state.nextWindowIndex + 1}/${windows.length}, probando ${models[index + 1]}...`,
-        current: state.nextWindowIndex,
-        total: windows.length,
-      })
     }
   }
+  await Promise.all(Array.from({ length: Math.min(WINDOW_CONCURRENCY, queue.length) }, lane))
 
-  throw new Error('No se pudo completar el video (ventaneo) con ninguno de los modelos configurados.')
+  if (failure || state.nextWindowIndex < windows.length) {
+    throw new WindowedAnalysisError(
+      failure?.message ?? 'Quedaron tramos sin analizar.',
+      state,
+      requestsSpent,
+    )
+  }
+
+  // The model that did most of the work is the one reported as "used".
+  const modelUsed = [...windowsByModel.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? models[0]!
+  return {
+    result: finalizeWindowState(state),
+    usage: state.usage,
+    processingModeUsed: 'STATIC',
+    modelUsed,
+    exhaustedModels: [...deadModels.entries()].map(([model, error]) => ({ model, error, requestCount: 0 })),
+    rawResponseText: JSON.stringify({ windows: state.rawTexts.map((t) => JSON.parse(t)) }),
+    requestCount: requestsSpent,
+    requestsLoggedLive: true,
+  }
 }
 
 /**
@@ -637,6 +804,7 @@ async function tryOneModel(
   processing: ProcessingMode,
   durationSeconds: number | null | undefined,
   notify: (progress: ProgressUpdate) => void,
+  emit: (event: RequestEvent) => void,
 ): Promise<{
   result: AnalysisResult
   usage: TokenUsage
@@ -645,16 +813,20 @@ async function tryOneModel(
   requestCount: number
 }> {
   // Long videos never reach here — analyzeVideo() routes them to
-  // analyzeVideoWindowedWithRotation instead, which handles model rotation
-  // itself (with cross-model progress carried over). See WINDOW_THRESHOLD_SECONDS.
+  // analyzeVideoWindowed instead. See WINDOW_THRESHOLD_SECONDS.
   const prompt = buildAnalysisPrompt(durationSeconds)
+  let requestCount = 0
 
   if (processing === 'AGENTIC') {
+    const startedAt = Date.now()
     try {
       notify({ label: `Gemini (${model}) esta analizando el video (modo agentic, puede tardar varios minutos)...` })
+      requestCount++
       const agentic = await withTimeout(tryAgentic(model, uri, mimeType, prompt), AGENTIC_TIMEOUT_MS, 'El modo agentic')
-      return { ...agentic, processingModeUsed: 'AGENTIC', requestCount: 1 }
+      emit({ model, processingMode: 'AGENTIC', succeeded: true, usage: agentic.usage, latencyMs: Date.now() - startedAt })
+      return { ...agentic, processingModeUsed: 'AGENTIC', requestCount }
     } catch (error) {
+      emit({ model, processingMode: 'AGENTIC', succeeded: false, error: (error as Error).message, latencyMs: Date.now() - startedAt })
       // A retired model will not work in static mode either — falling back
       // would just spend a second wasted request on the same dead model.
       if (isQuotaExhaustedError(error) || isModelRetiredError(error)) throw error
@@ -663,8 +835,17 @@ async function tryOneModel(
   }
 
   notify({ label: `Gemini (${model}) esta analizando el video (modo static, puede tardar varios minutos)...` })
-  const staticResult = await withTimeout(runStatic(model, uri, mimeType, prompt), STATIC_TIMEOUT_MS, `Gemini (${model}, static)`)
-  return { ...staticResult, processingModeUsed: 'STATIC', requestCount: 1 }
+  await acquireModelSlot(model)
+  const startedAt = Date.now()
+  requestCount++
+  try {
+    const staticResult = await withTimeout(runStatic(model, uri, mimeType, prompt), STATIC_TIMEOUT_MS, `Gemini (${model}, static)`)
+    emit({ model, processingMode: 'STATIC', succeeded: true, usage: staticResult.usage, latencyMs: Date.now() - startedAt })
+    return { ...staticResult, processingModeUsed: 'STATIC', requestCount }
+  } catch (error) {
+    emit({ model, processingMode: 'STATIC', succeeded: false, error: (error as Error).message, latencyMs: Date.now() - startedAt })
+    throw error
+  }
 }
 
 /**
@@ -672,25 +853,36 @@ async function tryOneModel(
  * accepts the call. Google's free-tier daily cap is per model (its own 429
  * payload names the quota `GenerateRequestsPerDayPerProjectPerModel-FreeTier`
  * with a `model` dimension) — so exhausting one model is a reason to try the
- * next, not to give up. Any other error (a bad/unavailable model id, a
- * transient 500) is ALSO treated as "try the next model" unless it is the
- * last one, since the whole point of listing many models is to maximize the
- * odds one of them actually answers — the caller finds out which model (if
- * any) worked via `modelUsed`, and which ones were skipped via
- * `exhaustedModels` for the cost/quota log.
+ * next, not to give up. Any other error (a transient 500/503) is ALSO treated
+ * as "try the next model" unless it is the last one. Long videos take the
+ * parallel windowed path instead (analyzeVideoWindowed).
+ *
+ * Every real generate call is reported through `input.onRequest` as it
+ * happens; `requestsLoggedLive` tells the caller whether that was the case.
  */
 export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVideoOutput> {
   if (!input.models.length) throw new Error('Se requiere al menos un modelo en AnalyzeVideoInput.models.')
   const notify = input.onProgress ?? (() => {})
+  const emit = input.onRequest ?? (() => {})
+  const live = Boolean(input.onRequest)
 
   notify({ label: input.source.kind === 'file' ? 'Subiendo video a Gemini...' : 'Preparando video de YouTube...' })
+  const uploadStartedAt = Date.now()
   const { uri, mimeType } = await resolveVideoUri(input.source)
+  console.log(`[ai-router] video listo en Gemini en ${Math.round((Date.now() - uploadStartedAt) / 1000)}s.`)
 
-  // Long videos get their own rotation path with a shared WindowState, so a
-  // model failing on window 5 hands off to the next model at window 5, not
-  // window 0 — see analyzeVideoWindowedWithRotation.
   if (input.durationSeconds && Number.isFinite(input.durationSeconds) && input.durationSeconds > WINDOW_THRESHOLD_SECONDS) {
-    return analyzeVideoWindowedWithRotation(input.models, uri, mimeType, input.durationSeconds, notify, input.initialWindowState)
+    const out = await analyzeVideoWindowed(
+      input.models,
+      uri,
+      mimeType,
+      input.durationSeconds,
+      notify,
+      emit,
+      input.initialWindowState,
+      input.onCheckpoint ?? (() => {}),
+    )
+    return { ...out, requestsLoggedLive: live }
   }
 
   const exhaustedModels: Array<{ model: string; error: string; requestCount: number }> = []
@@ -698,14 +890,22 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   for (const [index, model] of input.models.entries()) {
     const isLast = index === input.models.length - 1
     try {
-      const attempt = await tryOneModel(model, uri, mimeType, input.processing, input.durationSeconds, notify)
-      return { ...attempt, modelUsed: model, exhaustedModels }
+      const attempt = await tryOneModel(model, uri, mimeType, input.processing, input.durationSeconds, notify, emit)
+      return { ...attempt, modelUsed: model, exhaustedModels, requestsLoggedLive: live }
     } catch (error) {
       const message = (error as Error).message
       if (isLast) throw error
       exhaustedModels.push({ model, error: message, requestCount: 1 })
-      const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : isModelRetiredError(error) ? 'retirado por Google' : 'fallo'
-      console.warn(`[ai-router] ${model} ${reason}, probando ${input.models[index + 1]}...`)
+      const reason = isQuotaExhaustedError(error)
+        ? 'sin cupo diario'
+        : isModelRetiredError(error)
+          ? 'retirado por Google'
+          : isOverloadedError(error)
+            ? 'saturado (503)'
+            : 'fallo'
+      // The real reason goes to the log — "fallo" alone made the 2 Oct 2026
+      // 503 outage indistinguishable from a quota or code problem.
+      console.warn(`[ai-router] ${model} ${reason}, probando ${input.models[index + 1]}: ${message.slice(0, 300)}`)
       notify({ label: `${model} ${reason}, probando ${input.models[index + 1]}...` })
     }
   }

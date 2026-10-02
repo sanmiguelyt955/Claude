@@ -1,6 +1,6 @@
 export { getGeminiClient } from './client.js'
 export { analyzeVideo } from './analyze-video.js'
-export type { AnalyzeVideoInput, AnalyzeVideoOutput, ProgressUpdate, WindowState } from './analyze-video.js'
+export type { AnalyzeVideoInput, AnalyzeVideoOutput, ProgressUpdate, RequestEvent, WindowState } from './analyze-video.js'
 export { WindowedAnalysisError } from './analyze-video.js'
 export { estimateVideoTokens } from './estimate.js'
 export { embedTexts } from './embed.js'

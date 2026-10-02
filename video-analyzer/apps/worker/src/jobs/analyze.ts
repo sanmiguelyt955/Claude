@@ -111,41 +111,46 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       // notifications — the UI's progress bar turns from indeterminate into
       // a real percentage-plus-ETA display exactly when these are set.
       onProgress: (progress) => updateJobProgress(job.id, { label: progress.label, current: progress.current, total: progress.total }, db),
+      // One quota-log row per real Gemini call, written the moment it
+      // happens. Logging only at the end of the job left the quota counter
+      // at 0 for the whole run and lost every request if the worker died
+      // mid-video.
+      onRequest: (event) => {
+        insertAnalysisRun(
+          {
+            videoId: video.id,
+            jobId: job.id,
+            phase: 'first_pass',
+            model: event.model,
+            processingMode: event.processingMode,
+            inputTokens: event.usage?.inputTokens ?? 0,
+            outputTokens: event.usage?.outputTokens ?? 0,
+            cachedTokens: event.usage?.cachedTokens ?? 0,
+            thoughtTokens: event.usage?.thoughtTokens ?? 0,
+            estimatedCostUsd: event.usage?.estimatedCostUsd ?? 0,
+            latencyMs: event.latencyMs,
+            succeeded: event.succeeded,
+            errorMessage: event.error ?? null,
+            requestCount: 1,
+          },
+          db,
+        )
+        // Google states the real DAILY cap in a daily-quota 429; remember it
+        // so the next run stops guessing. A per-minute 429 carries the RPM
+        // value instead, which must never be stored as a daily limit.
+        if (event.error?.includes('PerDay')) {
+          const reportedLimit = parseQuotaLimit(new Error(event.error))
+          if (reportedLimit) recordModelDailyLimit(event.model, reportedLimit, db)
+        }
+      },
+      // Saved after every finished window, not only when every model fails:
+      // a worker killed mid-video (app closed, PC restarted) resumes from
+      // the last finished window once the job is requeued at startup.
+      onCheckpoint: (state) => saveJobCheckpoint(job.id, JSON.stringify(state), db),
     })
     modelUsed = attempt.modelUsed
 
-    // One row per model that refused, so the quota log reflects what Google
-    // actually counted, not just the model that ended up answering.
-    for (const skipped of attempt.exhaustedModels) {
-      // Google states the real cap in the rejection; remember it so the next
-      // run stops guessing 20 for a model whose actual limit is different.
-      const reportedLimit = parseQuotaLimit(new Error(skipped.error))
-      if (reportedLimit) recordModelDailyLimit(skipped.model, reportedLimit, db)
-      insertAnalysisRun(
-        {
-          videoId: video.id,
-          jobId: job.id,
-          phase: 'first_pass',
-          model: skipped.model,
-          processingMode: null,
-          inputTokens: 0,
-          outputTokens: 0,
-          cachedTokens: 0,
-          thoughtTokens: 0,
-          estimatedCostUsd: 0,
-          latencyMs: 0,
-          succeeded: false,
-          errorMessage: skipped.error,
-          // For a windowed video this model may have made several real
-          // calls (some possibly successful) before giving up mid-video —
-          // logging a hardcoded 1 would undercount its real quota spend.
-          requestCount: skipped.requestCount,
-        },
-        db,
-      )
-    }
-
-    const { result, usage, processingModeUsed, rawResponseText, requestCount } = attempt
+    const { result, usage, processingModeUsed, rawResponseText } = attempt
     const latencyMs = Date.now() - startedAt
 
     const rawDir = path.join(DATA_DIR, 'tmp', 'gemini-responses')
@@ -153,6 +158,9 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
     const rawPath = path.join(rawDir, `${video.id}.json`)
     await writeFile(rawPath, rawResponseText, 'utf8')
 
+    // Summary row for the whole job (total latency + raw response path).
+    // Requests and tokens are already in the per-call rows written by
+    // onRequest, so this one counts 0 of each to avoid double counting.
     insertAnalysisRun(
       {
         videoId: video.id,
@@ -160,17 +168,15 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
         phase: 'first_pass',
         model: modelUsed,
         processingMode: processingModeUsed,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedTokens: usage.cachedTokens,
-        thoughtTokens: usage.thoughtTokens,
-        estimatedCostUsd: usage.estimatedCostUsd,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        thoughtTokens: 0,
+        estimatedCostUsd: 0,
         latencyMs,
         succeeded: true,
         rawResponsePath: path.relative(DATA_DIR, rawPath),
-        // A windowed long video makes several real requests against the same
-        // model's daily quota, not one — see AnalyzeVideoOutput.requestCount.
-        requestCount,
+        requestCount: 0,
       },
       db,
     )
@@ -234,6 +240,10 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
         latencyMs,
         succeeded: false,
         errorMessage: (error as Error).message,
+        // Every real call is already logged by onRequest; this row only
+        // records that the job as a whole failed. The old default of 1 here
+        // both double-counted and hid how many calls the job really spent.
+        requestCount: 0,
       },
       db,
     )
