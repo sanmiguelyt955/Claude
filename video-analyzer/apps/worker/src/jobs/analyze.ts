@@ -10,10 +10,12 @@ import {
   deferJob,
   enqueueJob,
   recordModelDailyLimit,
+  saveJobCheckpoint,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { analyzeVideo, estimateVideoTokens, parseQuotaLimit } from '@cva/ai-router'
+import { analyzeVideo, estimateVideoTokens, parseQuotaLimit, WindowedAnalysisError } from '@cva/ai-router'
+import type { WindowState } from '@cva/ai-router'
 import { isYoutubeUrl } from '@cva/video-processor'
 import { listVideoModelsWithQuota, pickVideoModel } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
@@ -76,6 +78,23 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
     ? ({ kind: 'youtube', url: video.source_url! } as const)
     : ({ kind: 'file', path: resolveDataPath(video.stored_path!), mimeType: guessMimeType(video.stored_path!) } as const)
 
+  // A PREVIOUS attempt of this same job may have exhausted every configured
+  // model mid-video and saved its WindowState via saveJobCheckpoint (see the
+  // catch block below) — without this, a retried attempt would start
+  // analyzeVideoWindowedWithRotation from window 0 and redo work Google
+  // already got paid for. result_json is otherwise unused until success
+  // (completeJob writes it then), so any value here IS a checkpoint from an
+  // earlier failed attempt of this exact job.
+  let initialWindowState: WindowState | undefined
+  if (job.result_json) {
+    try {
+      initialWindowState = JSON.parse(job.result_json) as WindowState
+    } catch {
+      // Malformed/foreign content — proceed without a checkpoint rather than
+      // crash the job over a corrupt resume point.
+    }
+  }
+
   const startedAt = Date.now()
   let modelUsed = models[0]!
   try {
@@ -87,6 +106,7 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       processing: VIDEO_PROCESSING,
       source,
       durationSeconds: video.duration_seconds,
+      initialWindowState,
       // current/total are only present for a windowed video's per-window
       // notifications — the UI's progress bar turns from indeterminate into
       // a real percentage-plus-ETA display exactly when these are set.
@@ -217,6 +237,17 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       },
       db,
     )
+    // Every model failed within THIS attempt — but if some windows were
+    // already completed (by this attempt or a prior one), save them so the
+    // next retry (or a permanently-failed job resumed by hand) does not
+    // redo work Google already got paid for. A state with nextWindowIndex 0
+    // is not worth persisting — that is "no progress", same as no checkpoint.
+    if (error instanceof WindowedAnalysisError && error.state.nextWindowIndex > 0) {
+      saveJobCheckpoint(job.id, JSON.stringify(error.state), db)
+      console.warn(
+        `[analyze] ${video.id}: guardado checkpoint en el tramo ${error.state.nextWindowIndex} para el proximo intento.`,
+      )
+    }
     throw error
   }
 }

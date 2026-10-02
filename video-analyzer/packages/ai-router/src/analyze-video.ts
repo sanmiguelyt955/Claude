@@ -92,6 +92,17 @@ export type AnalyzeVideoInput = {
    * cannot invent a timeline past the end — see buildAnalysisPrompt. */
   durationSeconds?: number | null
   onProgress?: (progress: ProgressUpdate) => void
+  /**
+   * Resume point for a windowed video whose PREVIOUS job attempt exhausted
+   * every configured model with some windows already completed (see
+   * WindowedAnalysisError). Without this, a retried job attempt starts
+   * analyzeVideoWindowedWithRotation with a fresh, empty state and re-does
+   * every window from 0 — the in-memory WindowState normally used to hand
+   * off between models within ONE attempt does not otherwise survive the
+   * attempt itself failing and the job being requeued. Ignored for a
+   * non-windowed (short) video.
+   */
+  initialWindowState?: WindowState
 }
 
 export type AnalyzeVideoOutput = {
@@ -352,7 +363,14 @@ function planWindows(durationSeconds: number): Array<{ start: number; end: numbe
  * next model restart at window 1 — observed live, twice, during a Google
  * outage: 4 already-paid-for windows discarded each time a model went down.
  */
-type WindowState = {
+/**
+ * Exported so a caller whose job attempt exhausted every model (see
+ * WindowedAnalysisError) can serialize this to disk/DB and hand it back in
+ * as `AnalyzeVideoInput.initialWindowState` on the next retry — a plain,
+ * JSON-safe object (JSON.stringify/parse round-trips it with no custom
+ * logic needed) is what makes that possible.
+ */
+export type WindowState = {
   scenes: AnalysisResult['scenes']
   transcript: AnalysisResult['transcript']
   elements: AnalysisResult['elements']
@@ -375,11 +393,18 @@ function emptyWindowState(): WindowState {
   }
 }
 
-/** Thrown when a model exhausts its retry mid-video — carries whatever this
+/**
+ * Thrown when a model exhausts its retry mid-video — carries whatever this
  * model itself completed (state.nextWindowIndex has already moved past
  * windows earlier models finished) so the caller can hand the SAME state to
- * the next model instead of starting over. */
-class WindowedAnalysisError extends Error {
+ * the next model instead of starting over. Exported (not just used
+ * internally for the model-to-model handoff) because when EVERY configured
+ * model fails within one job attempt, this is also the error that
+ * `analyzeVideo()` ultimately throws — a caller can `instanceof` it to pull
+ * `.state` back out and persist it across job attempts, not just across
+ * models within one attempt (see `AnalyzeVideoInput.initialWindowState`).
+ */
+export class WindowedAnalysisError extends Error {
   constructor(
     message: string,
     public readonly state: WindowState,
@@ -538,9 +563,13 @@ async function analyzeVideoWindowedWithRotation(
   mimeType: string | undefined,
   durationSeconds: number,
   notify: (progress: ProgressUpdate) => void,
+  initialState?: WindowState,
 ): Promise<AnalyzeVideoOutput> {
   const windows = planWindows(durationSeconds)
-  let state = emptyWindowState()
+  // A resumed job attempt seeds this from the PREVIOUS attempt's
+  // WindowedAnalysisError.state instead of starting at window 0 — see
+  // AnalyzeVideoInput.initialWindowState.
+  let state = initialState ?? emptyWindowState()
   const exhaustedModels: Array<{ model: string; error: string; requestCount: number }> = []
 
   for (const [index, model] of models.entries()) {
@@ -661,7 +690,7 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   // model failing on window 5 hands off to the next model at window 5, not
   // window 0 — see analyzeVideoWindowedWithRotation.
   if (input.durationSeconds && Number.isFinite(input.durationSeconds) && input.durationSeconds > WINDOW_THRESHOLD_SECONDS) {
-    return analyzeVideoWindowedWithRotation(input.models, uri, mimeType, input.durationSeconds, notify)
+    return analyzeVideoWindowedWithRotation(input.models, uri, mimeType, input.durationSeconds, notify, input.initialWindowState)
   }
 
   const exhaustedModels: Array<{ model: string; error: string; requestCount: number }> = []

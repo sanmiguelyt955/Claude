@@ -180,6 +180,21 @@ export function deferJob(jobId: string, runAfterIso: string, label: string, db: 
   ).run(runAfterIso, label, jobId)
 }
 
+/**
+ * Persists arbitrary progress a job's handler wants to survive its own
+ * retries — e.g. a windowed video analysis that exhausted every configured
+ * model with some windows already completed. `result_json` is otherwise only
+ * written once, by completeJob() on success, so writing it mid-retry is safe:
+ * nothing else reads this column for a job that has not reached 'done'.
+ * Deliberately separate from retryOrFailJob (which decides status/backoff)
+ * so a handler can call this regardless of whether the job is about to be
+ * requeued or permanently failed — a checkpoint is worth keeping either way,
+ * since a permanently failed job can still be resumed by hand.
+ */
+export function saveJobCheckpoint(jobId: string, checkpointJson: string, db: Db = getDb()): void {
+  db.prepare(`UPDATE jobs SET result_json = ? WHERE id = ?`).run(checkpointJson, jobId)
+}
+
 export function getJob(id: string, db: Db = getDb()): JobRow | undefined {
   return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow | undefined
 }

@@ -49,6 +49,7 @@ export {
   completeJob,
   retryOrFailJob,
   deferJob,
+  saveJobCheckpoint,
   getJob,
   listJobsForVideo,
   getActiveJobForVideo,
