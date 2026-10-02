@@ -11,6 +11,7 @@ import {
   enqueueJob,
   recordModelDailyLimit,
   saveJobCheckpoint,
+  getLatestFailedAnalyzeCheckpoint,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
@@ -85,10 +86,19 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
   // already got paid for. result_json is otherwise unused until success
   // (completeJob writes it then), so any value here IS a checkpoint from an
   // earlier failed attempt of this exact job.
+  // A brand-new job (e.g. created by "Reintentar" after the previous job
+  // failed for good) starts with no result_json — fall back to that failed
+  // job's checkpoint so its finished windows are not paid for twice.
+  const checkpointJson = job.result_json ?? getLatestFailedAnalyzeCheckpoint(video.id, db)
   let initialWindowState: WindowState | undefined
-  if (job.result_json) {
+  if (checkpointJson) {
     try {
-      initialWindowState = JSON.parse(job.result_json) as WindowState
+      initialWindowState = JSON.parse(checkpointJson) as WindowState
+      if (!job.result_json) {
+        // Adopt it right away, so it survives even if THIS job dies too.
+        saveJobCheckpoint(job.id, checkpointJson, db)
+        console.log(`[analyze] ${video.id}: retoma el checkpoint del intento fallido anterior (${initialWindowState.nextWindowIndex} tramo(s) ya fusionados).`)
+      }
     } catch {
       // Malformed/foreign content — proceed without a checkpoint rather than
       // crash the job over a corrupt resume point.

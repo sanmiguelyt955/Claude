@@ -195,6 +195,23 @@ export function saveJobCheckpoint(jobId: string, checkpointJson: string, db: Db 
   db.prepare(`UPDATE jobs SET result_json = ? WHERE id = ?`).run(checkpointJson, jobId)
 }
 
+/**
+ * The checkpoint left by this video's most recent FAILED analyze job, if any.
+ * Retrying a failed video creates a brand-new analyze job with an empty
+ * result_json — without this lookup, every window the failed job already paid
+ * for was redone from scratch (observed 2 Oct 2026: 5 of 6 windows done).
+ */
+export function getLatestFailedAnalyzeCheckpoint(videoId: string, db: Db = getDb()): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT result_json FROM jobs
+        WHERE video_id = ? AND type = 'analyze' AND status = 'failed' AND result_json IS NOT NULL
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(videoId) as { result_json: string } | undefined
+  return row?.result_json
+}
+
 export function getJob(id: string, db: Db = getDb()): JobRow | undefined {
   return db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as JobRow | undefined
 }

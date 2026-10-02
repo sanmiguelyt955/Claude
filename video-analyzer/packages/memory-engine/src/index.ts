@@ -50,6 +50,7 @@ export {
   retryOrFailJob,
   deferJob,
   saveJobCheckpoint,
+  getLatestFailedAnalyzeCheckpoint,
   getJob,
   listJobsForVideo,
   getActiveJobForVideo,

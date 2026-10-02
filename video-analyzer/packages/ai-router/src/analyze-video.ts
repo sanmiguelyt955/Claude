@@ -509,6 +509,10 @@ export type WindowState = {
    * Optional so checkpoints written before parallel windows still load.
    */
   ahead?: Record<string, WindowOutcome>
+  /** WINDOW_SECONDS when this state was built. A checkpoint cut with a
+   * different window size has different window indices and must not be
+   * resumed. Optional: older checkpoints were all cut at 45s. */
+  windowSeconds?: number
 }
 
 /** One finished window, timestamps still relative to the window's own start. */
@@ -648,8 +652,13 @@ async function analyzeVideoWindowed(
   onCheckpoint: (state: WindowState) => void,
 ): Promise<AnalyzeVideoOutput> {
   const windows = planWindows(durationSeconds)
-  const state = initialState ?? emptyWindowState()
+  const checkpointWindowSeconds = initialState ? (initialState.windowSeconds ?? 45) : WINDOW_SECONDS
+  if (initialState && checkpointWindowSeconds !== WINDOW_SECONDS) {
+    console.warn(`[ai-router] checkpoint descartado: se corto con tramos de ${checkpointWindowSeconds}s y ahora son de ${WINDOW_SECONDS}s.`)
+  }
+  const state = initialState && checkpointWindowSeconds === WINDOW_SECONDS ? initialState : emptyWindowState()
   state.ahead ??= {}
+  state.windowSeconds = WINDOW_SECONDS
 
   const pending: number[] = []
   for (let i = state.nextWindowIndex; i < windows.length; i++) {
