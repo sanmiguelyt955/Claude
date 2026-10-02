@@ -1,10 +1,8 @@
 import { NextResponse } from 'next/server'
-import { getQuotaWindowCounts, nextQuotaResetDate, getModelDailyLimits } from '@cva/memory-engine'
+import { getQuotaWindowCounts, nextQuotaResetDate, resolveModelDailyLimit } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-const MAX_RPD = Number(process.env.GEMINI_MAX_RPD ?? 20)
 
 function models(): string[] {
   return (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
@@ -18,17 +16,17 @@ function models(): string[] {
  * useful number is not "20 left" but the sum across every configured model.
  */
 export async function GET(): Promise<NextResponse> {
-  const learned = getModelDailyLimits()
   const perModel = models().map((model) => {
     const used = getQuotaWindowCounts(undefined, model).requestsToday
-    const limit = learned[model] ?? MAX_RPD
+    const { limit, source } = resolveModelDailyLimit(model)
     return {
       model,
       used,
       limit,
       remaining: Math.max(0, limit - used),
       // true only once Google itself reported this model's cap in a 429.
-      limitConfirmed: learned[model] !== undefined,
+      limitConfirmed: source === 'google',
+      limitSource: source,
     }
   })
 

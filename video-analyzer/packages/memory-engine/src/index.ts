@@ -78,7 +78,14 @@ export type {
 export { getPendingChunks, insertEmbeddingsBatch, searchMemoryChunks } from './repo/embeddings.js'
 export type { PendingChunk, SemanticSearchResult } from './repo/embeddings.js'
 
-export { getModelDailyLimits, recordModelDailyLimit } from './repo/model-limits.js'
+export { getModelDailyLimits, recordModelDailyLimit, resolveModelDailyLimit } from './repo/model-limits.js'
+export type { ModelDailyLimit } from './repo/model-limits.js'
+export {
+  WORKER_HEARTBEAT_INTERVAL_MS,
+  writeWorkerHeartbeat,
+  isAnotherWorkerAlive,
+  requeueOrphanedJobs,
+} from './repo/worker-lifecycle.js'
 export { searchLibrary } from './repo/library-search.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 

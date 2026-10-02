@@ -1,4 +1,4 @@
-import { getQuotaWindowCounts, nextQuotaResetDate, getModelDailyLimits } from '@cva/memory-engine'
+import { getQuotaWindowCounts, nextQuotaResetDate, resolveModelDailyLimit } from '@cva/memory-engine'
 import type { Db } from '@cva/memory-engine'
 
 /**
@@ -12,39 +12,16 @@ import type { Db } from '@cva/memory-engine'
  */
 const MAX_RPM = Number(process.env.GEMINI_MAX_RPM ?? 5)
 const MAX_TPM = Number(process.env.GEMINI_MAX_TPM ?? 250_000)
-const MAX_RPD = Number(process.env.GEMINI_MAX_RPD ?? 20)
 
 export type QuotaCheck = { ok: true } | { ok: false; retryAfter: Date; reason: string }
 
 /**
- * Per-model caps written by hand from the account's own rate-limit panel
- * (aistudio.google.com/rate-limit), as "model=RPD" pairs. Google does NOT
- * publish free-tier limits per model anywhere in the docs — that panel is the
- * only authoritative source — and the limits differ wildly between models
- * (the newest Flash models sit at 20/day while older Lite models are
- * reportedly in the hundreds or thousands). Without this, the app has to fall
- * back to one assumed number for everything, which is always wrong for most
- * of the list.
- */
-function configuredLimits(): Record<string, number> {
-  const raw = process.env.GEMINI_MODEL_DAILY_LIMITS?.trim()
-  if (!raw) return {}
-  const out: Record<string, number> = {}
-  for (const pair of raw.split(',')) {
-    const [model, value] = pair.split('=').map((x) => x.trim())
-    const limit = Number(value)
-    if (model && Number.isFinite(limit) && limit > 0) out[model] = limit
-  }
-  return out
-}
-
-/**
- * The daily cap to enforce for a model, best source first: what Google itself
- * reported in a real 429, then what was configured by hand from the panel,
- * then the blanket assumption.
+ * The daily cap to enforce for a model: Google's own 429, then
+ * GEMINI_MODEL_DAILY_LIMITS, then GEMINI_MAX_RPD. Shared with the quota
+ * screen through memory-engine so both always show the same number.
  */
 export function dailyLimitFor(db: Db, model: string): number {
-  return getModelDailyLimits(db)[model] ?? configuredLimits()[model] ?? MAX_RPD
+  return resolveModelDailyLimit(model, db).limit
 }
 
 /** Quota check scoped to one model — the only scope Google actually enforces. */
@@ -60,22 +37,24 @@ export function checkQuota(db: Db, model: string): QuotaCheck {
     }
   }
 
-  // RPM and TPM are per-project in practice, so they are counted across models.
-  const allModels = getQuotaWindowCounts(db)
-
-  if (allModels.requestsLastMinute >= MAX_RPM) {
+  // RPM and TPM are enforced per model too (Google's quota ids are
+  // `...PerProjectPerModel`). Observed 2 Oct 2026: 12 requests in one minute
+  // spread across models drew zero 429s. Counting them project-wide here
+  // deferred every next video by a minute for no reason, once requests
+  // started being logged live instead of at the end of each job.
+  if (counts.requestsLastMinute >= MAX_RPM) {
     return {
       ok: false,
       retryAfter: new Date(Date.now() + 60_000),
-      reason: `Se alcanzo el limite por minuto de Gemini (${allModels.requestsLastMinute}/${MAX_RPM} peticiones en el ultimo minuto).`,
+      reason: `Se alcanzo el limite por minuto de ${model} (${counts.requestsLastMinute}/${MAX_RPM} peticiones en el ultimo minuto).`,
     }
   }
 
-  if (allModels.tokensLastMinute >= MAX_TPM) {
+  if (counts.tokensLastMinute >= MAX_TPM) {
     return {
       ok: false,
       retryAfter: new Date(Date.now() + 60_000),
-      reason: `Se alcanzo el limite de tokens por minuto de Gemini (${allModels.tokensLastMinute}/${MAX_TPM}).`,
+      reason: `Se alcanzo el limite de tokens por minuto de ${model} (${counts.tokensLastMinute}/${MAX_TPM}).`,
     }
   }
 
@@ -175,8 +154,7 @@ export function pickVideoModel(db: Db): ModelChoice {
     const check = checkQuota(db, model)
     if (check.ok) return { ok: true, model }
     lastBlock = { retryAfter: check.retryAfter, reason: check.reason }
-    // A per-minute/token block is project-wide: trying another model won't help.
-    if (!check.reason.includes('limite diario')) break
+    // Every limit is per model, so a blocked model just means "try the next".
   }
 
   return {

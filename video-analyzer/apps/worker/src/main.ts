@@ -6,6 +6,10 @@ import {
   claimNextJob,
   completeJob,
   retryOrFailJob,
+  WORKER_HEARTBEAT_INTERVAL_MS,
+  writeWorkerHeartbeat,
+  isAnotherWorkerAlive,
+  requeueOrphanedJobs,
 } from '@cva/memory-engine'
 import type { Db, JobRow, JobType } from '@cva/memory-engine'
 import { runProbeJob } from './jobs/probe.js'
@@ -55,6 +59,21 @@ async function main(): Promise<void> {
     console.error(`[worker] La base de datos no esta lista (${SQLITE_PATH}):`)
     for (const problem of status.problems) console.error(`  - ${problem}`)
     process.exit(1)
+  }
+
+  if (isAnotherWorkerAlive(db)) {
+    console.error('[worker] Ya hay otro worker corriendo sobre esta base de datos. Cierra ese antes de abrir otro.')
+    process.exit(1)
+  }
+  writeWorkerHeartbeat(db)
+  // Timer-based, not per poll: the poll loop sits inside one long job for
+  // many minutes, and the heartbeat must keep beating the whole time.
+  const heartbeat = setInterval(() => writeWorkerHeartbeat(db), WORKER_HEARTBEAT_INTERVAL_MS)
+  heartbeat.unref()
+
+  const recovered = requeueOrphanedJobs(db)
+  if (recovered > 0) {
+    console.warn(`[worker] ${recovered} job(s) quedaron a medias por un cierre anterior; vuelven a la cola y retoman desde su ultimo checkpoint.`)
   }
 
   console.log(
