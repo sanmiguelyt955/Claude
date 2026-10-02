@@ -71,7 +71,11 @@ export const ANALYSIS_JSON_SCHEMA = {
           description: { type: 'string' },
           audio_description: { type: ['string', 'null'] },
         },
-        required: ['index', 'start_seconds', 'end_seconds', 'title', 'description'],
+        // audio_description is REQUIRED (it may still be null for true
+        // silence). When it was optional, fallback models dropped the field
+        // for whole 45s windows — 405 of 1606 seconds came back with no audio
+        // at all on 2 Oct 2026, always in exact 45s blocks.
+        required: ['index', 'start_seconds', 'end_seconds', 'title', 'description', 'audio_description'],
       },
     },
     transcript: {

@@ -521,6 +521,31 @@ type WindowOutcome = {
   usage: TokenUsage
   rawResponseText: string
   windowStart: number
+  /** Absent in checkpoints written before absolute-timestamp detection. */
+  windowEnd?: number
+}
+
+/**
+ * The offset to add to one group of a window's timestamps. Normally the
+ * window's start, because the prompt asks for times relative to the window.
+ * But models sometimes ignore that and emit ABSOLUTE times — observed 2 Oct
+ * 2026: window 2 (45-90s) of a video came back with transcript times 45..83.
+ * Adding 45 again shifted that speech to 90..128, leaving 45-90 empty and
+ * overlapping the next window. If every time in the group already lies past
+ * the window's own length and inside the window's absolute range, it is
+ * absolute and gets no offset.
+ */
+function windowOffsetFor(outcome: WindowOutcome, starts: number[]): number {
+  if (outcome.windowEnd === undefined || outcome.windowStart === 0 || starts.length === 0) return outcome.windowStart
+  const duration = outcome.windowEnd - outcome.windowStart
+  const min = Math.min(...starts)
+  const max = Math.max(...starts)
+  const looksAbsolute = min >= outcome.windowStart - 1 && max <= outcome.windowEnd + 1 && max > duration + 1
+  if (looksAbsolute) {
+    console.warn(`[ai-router] el tramo ${outcome.windowStart}-${outcome.windowEnd}s vino con tiempos absolutos; no se les suma el desfase.`)
+    return 0
+  }
+  return outcome.windowStart
 }
 
 /**
@@ -537,18 +562,20 @@ function commitWindow(state: WindowState, index: number, outcome: WindowOutcome)
     const next = state.ahead[String(state.nextWindowIndex)]
     if (!next) break
     delete state.ahead[String(state.nextWindowIndex)]
-    const offset = next.windowStart
+    const sceneOffset = windowOffsetFor(next, next.result.scenes.map((x) => x.start_seconds))
+    const transcriptOffset = windowOffsetFor(next, next.result.transcript.map((x) => x.start_seconds))
+    const elementOffset = windowOffsetFor(next, next.result.elements.map((x) => x.start_seconds))
     for (const scene of next.result.scenes) {
-      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + offset, end_seconds: scene.end_seconds + offset })
+      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + sceneOffset, end_seconds: scene.end_seconds + sceneOffset })
     }
     for (const line of next.result.transcript) {
-      state.transcript.push({ ...line, start_seconds: line.start_seconds + offset, end_seconds: line.end_seconds + offset })
+      state.transcript.push({ ...line, start_seconds: line.start_seconds + transcriptOffset, end_seconds: line.end_seconds + transcriptOffset })
     }
     for (const el of next.result.elements) {
       state.elements.push({
         ...el,
-        start_seconds: el.start_seconds + offset,
-        end_seconds: el.end_seconds === null ? null : el.end_seconds + offset,
+        start_seconds: el.start_seconds + elementOffset,
+        end_seconds: el.end_seconds === null ? null : el.end_seconds + elementOffset,
       })
     }
     state.summaries.push(next.result.summary)
@@ -704,7 +731,7 @@ async function analyzeVideoWindowed(
           emit({ model, processingMode: 'STATIC', succeeded: true, usage: out.usage, latencyMs: Date.now() - startedAt })
           windowsByModel.set(model, (windowsByModel.get(model) ?? 0) + 1)
           overloadByModel.delete(model) // answered again: back to full priority
-          commitWindow(state, i, { ...out, windowStart: window.start })
+          commitWindow(state, i, { ...out, windowStart: window.start, windowEnd: window.end })
           onCheckpoint(state)
           report(`Gemini analiza ${windows.length} tramos en paralelo: ${doneCount()}/${windows.length} listos (tramo ${i + 1} con ${model})...`)
           return
