@@ -12,7 +12,7 @@
     "build": "npm run build --workspace=@cva/web",
     "db:migrate": "npm run migrate --workspace=@cva/memory-engine",
     "db:check": "npm run check --workspace=@cva/memory-engine",
-    "typecheck": "tsc -b --pretty"
+    "typecheck": "tsc --noEmit -p packages/memory-engine && tsc --noEmit -p packages/video-processor && tsc --noEmit -p packages/ai-router && tsc --noEmit -p packages/skill-engine && tsc --noEmit -p packages/vault-export && tsc --noEmit -p apps/worker && tsc --noEmit -p apps/web"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
