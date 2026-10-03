@@ -592,11 +592,61 @@ function windowOffsetFor(outcome: WindowOutcome, starts: number[]): number {
   const min = Math.min(...starts)
   const max = Math.max(...starts)
   const looksAbsolute = min >= outcome.windowStart - 1 && max <= outcome.windowEnd + 1 && max > duration + 1
-  if (looksAbsolute) {
-    console.warn(`[ai-router] el tramo ${outcome.windowStart}-${outcome.windowEnd}s vino con tiempos absolutos; no se les suma el desfase.`)
-    return 0
+  // Under the V6 protocol absolute times are what the prompt asks for, so
+  // this is not an error worth logging — just a different offset.
+  return looksAbsolute ? 0 : outcome.windowStart
+}
+
+/**
+ * Each window (and each continuation) numbers its own transcript from T1, so
+ * a reference like "VOZ 1 habla — T6" in window 3 pointed at the wrong line
+ * of the merged transcript (observed 3 Oct 2026). Shift every T# by the
+ * number of transcript lines merged before this window.
+ */
+function shiftTranscriptRefs(text: string | null, offset: number): string | null {
+  if (!text || offset === 0) return text
+  return text.replace(/\bT(\d+)\b/g, (_, n: string) => `T${Number(n) + offset}`)
+}
+
+/** How many extra calls a window may make to fill a tail the model left out. */
+const MAX_WINDOW_CONTINUATIONS = 3
+
+/**
+ * One call's result with every timestamp group moved to absolute video time
+ * (the V6 prompt asks for absolute times, the legacy one for relative; models
+ * sometimes do the other — windowOffsetFor tells them apart per group).
+ */
+function toAbsoluteTimes(result: AnalysisResult, start: number, end: number): AnalysisResult {
+  const probe: WindowOutcome = {
+    result,
+    usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, thoughtTokens: 0, estimatedCostUsd: 0 },
+    rawResponseText: '',
+    windowStart: start,
+    windowEnd: end,
   }
-  return outcome.windowStart
+  const so = windowOffsetFor(probe, result.scenes.map((x) => x.start_seconds))
+  const to = windowOffsetFor(probe, result.transcript.map((x) => x.start_seconds))
+  const eo = windowOffsetFor(probe, result.elements.map((x) => x.start_seconds))
+  return {
+    summary: result.summary,
+    scenes: result.scenes.map((x) => ({ ...x, start_seconds: x.start_seconds + so, end_seconds: x.end_seconds + so })),
+    transcript: result.transcript.map((x) => ({ ...x, start_seconds: x.start_seconds + to, end_seconds: x.end_seconds + to })),
+    elements: result.elements.map((x) => ({
+      ...x,
+      start_seconds: x.start_seconds + eo,
+      end_seconds: x.end_seconds === null ? null : x.end_seconds + eo,
+    })),
+  }
+}
+
+/** Absolute second up to which the scenes cover [start, ...) without a gap. */
+function coveredUntil(result: AnalysisResult, start: number): number {
+  let cursor = start
+  for (const scene of [...result.scenes].sort((a, b) => a.start_seconds - b.start_seconds)) {
+    if (scene.start_seconds > cursor + 0.5) break
+    cursor = Math.max(cursor, scene.end_seconds)
+  }
+  return cursor
 }
 
 /**
@@ -616,8 +666,14 @@ function commitWindow(state: WindowState, index: number, outcome: WindowOutcome)
     const sceneOffset = windowOffsetFor(next, next.result.scenes.map((x) => x.start_seconds))
     const transcriptOffset = windowOffsetFor(next, next.result.transcript.map((x) => x.start_seconds))
     const elementOffset = windowOffsetFor(next, next.result.elements.map((x) => x.start_seconds))
+    const tOffset = state.transcript.length
     for (const scene of next.result.scenes) {
-      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + sceneOffset, end_seconds: scene.end_seconds + sceneOffset })
+      state.scenes.push({
+        ...scene,
+        start_seconds: scene.start_seconds + sceneOffset,
+        end_seconds: scene.end_seconds + sceneOffset,
+        audio_description: shiftTranscriptRefs(scene.audio_description, tOffset),
+      })
     }
     for (const line of next.result.transcript) {
       state.transcript.push({ ...line, start_seconds: line.start_seconds + transcriptOffset, end_seconds: line.end_seconds + transcriptOffset })
@@ -781,15 +837,77 @@ async function analyzeVideoWindowed(
         try {
           const out = await runStaticWindow(model, uri, mimeType, prompt, window.start, window.end, spec)
           emit({ model, processingMode: 'STATIC', succeeded: true, usage: out.usage, latencyMs: Date.now() - startedAt })
-          windowsByModel.set(model, (windowsByModel.get(model) ?? 0) + 1)
           overloadByModel.delete(model) // answered again: back to full priority
-          commitWindow(state, i, { ...out, windowStart: window.start, windowEnd: window.end })
+
+          // Coverage check. A model can stop early with no error at all —
+          // observed 3 Oct 2026: a 90-130s window came back covering only
+          // 90-110s, and the gap was saved silently. Ask for just the missing
+          // tail as a continuation ("si no cabe, se divide"), never accept a gap.
+          let merged = toAbsoluteTimes(out.result, window.start, window.end)
+          let usage = out.usage
+          const raws = [out.rawResponseText]
+          let covered = coveredUntil(merged, window.start)
+          for (let extra = 0; covered < window.end - 0.5 && extra < MAX_WINDOW_CONTINUATIONS; extra++) {
+            console.warn(`[ai-router] tramo ${i + 1}/${windows.length}: ${model} devolvio hasta ${covered}s de ${window.end}s; se pide la continuacion.`)
+            await acquireModelSlot(model)
+            const contStartedAt = Date.now()
+            requestsSpent++
+            let more: Awaited<ReturnType<typeof runStaticWindow>>
+            try {
+              more = await runStaticWindow(
+                model,
+                uri,
+                mimeType,
+                spec.buildPrompt({ windowIndex: i, windowCount: windows.length, start: covered, end: window.end, durationSeconds }),
+                covered,
+                window.end,
+                spec,
+              )
+            } catch (contError) {
+              emit({ model, processingMode: 'STATIC', succeeded: false, error: (contError as Error).message, latencyMs: Date.now() - contStartedAt })
+              throw Object.assign(contError as Error, { alreadyEmitted: true })
+            }
+            emit({ model, processingMode: 'STATIC', succeeded: true, usage: more.usage, latencyMs: Date.now() - contStartedAt })
+            usage = addUsage(usage, more.usage)
+            raws.push(more.rawResponseText)
+            const tail = toAbsoluteTimes(more.result, covered, window.end)
+            const tailOffset = merged.transcript.length
+            tail.scenes = tail.scenes.map((x) => ({ ...x, audio_description: shiftTranscriptRefs(x.audio_description, tailOffset) }))
+            merged = {
+              summary: { ...merged.summary, full_summary: [merged.summary.full_summary, tail.summary.full_summary].filter(Boolean).join('\n') },
+              scenes: [...merged.scenes, ...tail.scenes.filter((x) => x.start_seconds >= covered - 0.01)],
+              transcript: [...merged.transcript, ...tail.transcript.filter((x) => x.start_seconds >= covered - 0.5)],
+              elements: [...merged.elements, ...tail.elements],
+            }
+            const next = coveredUntil(merged, window.start)
+            if (next <= covered) break
+            covered = next
+          }
+          if (covered < window.end - 0.5) {
+            throw Object.assign(
+              new Error(`El tramo ${i + 1}/${windows.length} quedo incompleto: cubre hasta ${covered}s de ${window.end}s.`),
+              { alreadyEmitted: true },
+            )
+          }
+
+          windowsByModel.set(model, (windowsByModel.get(model) ?? 0) + 1)
+          // Times are already absolute, so the merge adds no offset (windowStart 0).
+          commitWindow(state, i, {
+            result: merged,
+            usage,
+            rawResponseText: raws.length === 1 ? raws[0]! : JSON.stringify({ parts: raws.map((r) => JSON.parse(r)) }),
+            windowStart: 0,
+          })
           onCheckpoint(state)
           report(`Gemini analiza ${windows.length} tramos en paralelo: ${doneCount()}/${windows.length} listos (tramo ${i + 1} con ${model})...`)
           return
         } catch (error) {
           const message = (error as Error).message
-          emit({ model, processingMode: 'STATIC', succeeded: false, error: message, latencyMs: Date.now() - startedAt })
+          // A continuation call logs its own event, and an incomplete-coverage
+          // error is not a request at all — neither may be logged twice.
+          if (!(error as { alreadyEmitted?: boolean }).alreadyEmitted) {
+            emit({ model, processingMode: 'STATIC', succeeded: false, error: message, latencyMs: Date.now() - startedAt })
+          }
           lastError = error as Error
 
           if (isDailyQuotaError(error) || isModelRetiredError(error)) {
