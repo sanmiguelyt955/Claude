@@ -97,6 +97,8 @@ export type AnalysisRunRow = {
   succeeded: 0 | 1
   error_message: string | null
   raw_response_path: string | null
+  /** Real Gemini requests this row represents (migration 005). */
+  request_count: number
   created_at: string
 }
 

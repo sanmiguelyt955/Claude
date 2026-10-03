@@ -117,6 +117,8 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
       source,
       durationSeconds: video.duration_seconds,
       initialWindowState,
+      // Pinned into the V6 prompts as [META] (protocol section 4).
+      meta: { title: video.title, width: video.width, height: video.height, fps: video.fps },
       // current/total are only present for a windowed video's per-window
       // notifications — the UI's progress bar turns from indeterminate into
       // a real percentage-plus-ETA display exactly when these are set.
@@ -199,6 +201,8 @@ export async function runAnalyzeJob(job: JobRow, db: Db): Promise<void> {
           fullSummary: result.summary.full_summary,
           topics: result.summary.topics,
           language: result.summary.language,
+          protocolVersion: attempt.protocolRecord?.version ?? null,
+          protocolRecordMd: attempt.protocolRecord?.markdown ?? null,
         },
         scenes: result.scenes.map((s) => ({
           index: s.index,

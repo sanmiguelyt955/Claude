@@ -8,6 +8,10 @@ export type SummaryInput = {
   fullSummary: string
   topics: string[]
   language: string
+  /** Protocol the record was produced under (e.g. "v6.0"), if any. */
+  protocolVersion?: string | null
+  /** The complete protocol record as Markdown — what gets exported to the vault. */
+  protocolRecordMd?: string | null
 }
 
 export type SceneInput = {
@@ -62,14 +66,16 @@ export function saveAnalysisResult(videoId: string, result: FullAnalysisResult, 
     db.prepare('DELETE FROM memory_chunks WHERE video_id = ?').run(videoId)
 
     db.prepare(
-      `INSERT INTO video_summaries (video_id, short_summary, full_summary, topics_json, language)
-       VALUES (@videoId, @shortSummary, @fullSummary, @topicsJson, @language)`,
+      `INSERT INTO video_summaries (video_id, short_summary, full_summary, topics_json, language, protocol_version, protocol_record_md)
+       VALUES (@videoId, @shortSummary, @fullSummary, @topicsJson, @language, @protocolVersion, @protocolRecordMd)`,
     ).run({
       videoId,
       shortSummary: result.summary.shortSummary,
       fullSummary: result.summary.fullSummary,
       topicsJson: JSON.stringify(result.summary.topics),
       language: result.summary.language,
+      protocolVersion: result.summary.protocolVersion ?? null,
+      protocolRecordMd: result.summary.protocolRecordMd ?? null,
     })
 
     const insertMemoryChunk = db.prepare(
@@ -177,6 +183,8 @@ export type VideoSummaryRow = {
   full_summary: string
   topics_json: string
   language: string | null
+  protocol_version: string | null
+  protocol_record_md: string | null
   created_at: string
 }
 

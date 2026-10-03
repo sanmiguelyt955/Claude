@@ -3,6 +3,20 @@ import { uploadAndWaitActive } from './upload.js'
 import { ANALYSIS_JSON_SCHEMA, buildAnalysisPrompt, buildWindowAnalysisPrompt, type AnalysisResult } from './schema.js'
 import { estimateCostUsd } from './cost.js'
 import type { ProcessingMode, TokenUsage, VideoSource } from './types.js'
+import {
+  PROTOCOL_VERSION,
+  V6_PHASE1_SCHEMA,
+  V6_PHASE3_SCHEMA,
+  V6_WINDOW_SCHEMA,
+  buildV6Phase1Prompt,
+  buildV6Phase3Prompt,
+  buildV6WindowPrompt,
+  parseV6Window,
+  renderV6Record,
+  type V6Phase1,
+  type V6Phase3,
+  type VideoMeta,
+} from './protocol-v6.js'
 
 // A gapless, second-by-second-granularity transcript + scene breakdown for
 // even a short video produces far more output than a sparse summary would —
@@ -192,6 +206,8 @@ export type AnalyzeVideoInput = {
   /** Called whenever a window finishes, with the state to persist so a crash
    * mid-video resumes from here instead of window 0. Windowed videos only. */
   onCheckpoint?: (state: WindowState) => void
+  /** File metadata pinned into the V6 prompts as [META] (protocol section 4). */
+  meta?: { title: string; width?: number | null; height?: number | null; fps?: number | null }
 }
 
 export type AnalyzeVideoOutput = {
@@ -216,6 +232,10 @@ export type AnalyzeVideoOutput = {
   /** True when every request was already reported through `onRequest` —
    * the caller must then NOT log `requestCount`/`exhaustedModels` again. */
   requestsLoggedLive: boolean
+  /** The complete V6.0 record (Markdown, protocol section 9 order), when run under the V6 protocol. */
+  protocolRecord?: { version: string; markdown: string }
+  /** Each window's own summary, in window order (V6 keeps each window's declared limits there). */
+  windowSummaries?: AnalysisResult['summary'][]
 }
 
 /** True for Google's "you ran out of daily requests for this model" (429). */
@@ -415,12 +435,13 @@ async function runStaticWindow(
   prompt: string,
   startSeconds: number,
   endSeconds: number,
+  spec: WindowSpec = LEGACY_WINDOW_SPEC,
 ): Promise<{ result: AnalysisResult; usage: TokenUsage; rawResponseText: string }> {
   const ai = getGeminiClient()
   // A real abort, not just a Promise.race: with several windows in flight, a
   // hung call would otherwise keep its socket open after the timeout fires.
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), STATIC_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), spec.timeoutMs)
   let response: Awaited<ReturnType<typeof ai.models.generateContent>>
   try {
     response = await ai.models.generateContent({
@@ -439,7 +460,7 @@ async function runStaticWindow(
     ],
     config: {
       responseMimeType: 'application/json',
-      responseSchema: ANALYSIS_JSON_SCHEMA,
+      responseSchema: spec.schema,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: controller.signal,
     },
@@ -447,7 +468,7 @@ async function runStaticWindow(
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error(
-        `El tramo [${startSeconds}-${endSeconds}s] (${model}) supero el limite de ${Math.round(STATIC_TIMEOUT_MS / 1000)}s sin responder.`,
+        `El tramo [${startSeconds}-${endSeconds}s] (${model}) supero el limite de ${Math.round(spec.timeoutMs / 1000)}s sin responder.`,
       )
     }
     throw error
@@ -465,10 +486,37 @@ async function runStaticWindow(
   if (!text) throw new Error(`Gemini (ventana ${startSeconds}-${endSeconds}s) no devolvio texto.`)
 
   return {
-    result: parseAnalysisResult(text),
+    result: spec.parse(text),
     usage: usageFromGenerateContent(response.usageMetadata ?? {}),
     rawResponseText: text,
   }
+}
+
+/**
+ * What a window call asks for and how its answer is read. The legacy spec is
+ * the original audio-description schema; the V6 spec (protocol-v6.ts) asks
+ * for the protocol's VIS/AUD/TXT/CAM timeline and converts it back into the
+ * same AnalysisResult shape, so the windowed executor does not care which.
+ */
+type WindowSpec = {
+  schema: object
+  parse: (text: string) => AnalysisResult
+  timeoutMs: number
+  buildPrompt: (input: { windowIndex: number; windowCount: number; start: number; end: number; durationSeconds: number }) => string
+}
+
+const LEGACY_WINDOW_SPEC: WindowSpec = {
+  schema: ANALYSIS_JSON_SCHEMA,
+  parse: parseAnalysisResult,
+  timeoutMs: STATIC_TIMEOUT_MS,
+  buildPrompt: ({ windowIndex, windowCount, start, end, durationSeconds }) =>
+    buildWindowAnalysisPrompt({
+      windowIndex,
+      windowCount,
+      windowStartSeconds: start,
+      windowDurationSeconds: end - start,
+      fullVideoDurationSeconds: durationSeconds,
+    }),
 }
 
 /** [start, end) boundaries covering [0, durationSeconds) in WINDOW_SECONDS slices. */
@@ -509,6 +557,9 @@ export type WindowState = {
    * Optional so checkpoints written before parallel windows still load.
    */
   ahead?: Record<string, WindowOutcome>
+  /** V6 protocol: phase-1 result (whole-video record), kept in the checkpoint
+   * so a resumed job does not pay for phase 1 twice. */
+  v6?: { phase1?: unknown }
   /** WINDOW_SECONDS when this state was built. A checkpoint cut with a
    * different window size has different window indices and must not be
    * resumed. Optional: older checkpoints were all cut at 45s. */
@@ -677,6 +728,8 @@ async function analyzeVideoWindowed(
   emit: (event: RequestEvent) => void,
   initialState: WindowState | undefined,
   onCheckpoint: (state: WindowState) => void,
+  spec: WindowSpec = LEGACY_WINDOW_SPEC,
+  sharedDeadModels?: Map<string, string>,
 ): Promise<AnalyzeVideoOutput> {
   const windows = planWindows(durationSeconds)
   const checkpointWindowSeconds = initialState ? (initialState.windowSeconds ?? 45) : WINDOW_SECONDS
@@ -684,6 +737,9 @@ async function analyzeVideoWindowed(
     console.warn(`[ai-router] checkpoint descartado: se corto con tramos de ${checkpointWindowSeconds}s y ahora son de ${WINDOW_SECONDS}s.`)
   }
   const state = initialState && checkpointWindowSeconds === WINDOW_SECONDS ? initialState : emptyWindowState()
+  // Phase-1 output of the V6 protocol is about the whole video, not about
+  // windows, so it survives a window-size mismatch.
+  if (initialState?.v6 && state !== initialState) state.v6 = initialState.v6
   state.ahead ??= {}
   state.windowSeconds = WINDOW_SECONDS
 
@@ -692,7 +748,9 @@ async function analyzeVideoWindowed(
     if (!state.ahead[String(i)]) pending.push(i)
   }
 
-  const deadModels = new Map<string, string>() // model -> why it cannot be used again today
+  // model -> why it cannot be used again today. Shared with the V6 phase-1/3
+  // calls when given, so a model exhausted there is not retried here.
+  const deadModels = sharedDeadModels ?? new Map<string, string>()
   const windowsByModel = new Map<string, number>()
   let requestsSpent = 0
   let failure: Error | undefined
@@ -702,13 +760,7 @@ async function analyzeVideoWindowed(
 
   async function runOneWindow(i: number): Promise<void> {
     const window = windows[i]!
-    const prompt = buildWindowAnalysisPrompt({
-      windowIndex: i,
-      windowCount: windows.length,
-      windowStartSeconds: window.start,
-      windowDurationSeconds: window.end - window.start,
-      fullVideoDurationSeconds: durationSeconds,
-    })
+    const prompt = spec.buildPrompt({ windowIndex: i, windowCount: windows.length, start: window.start, end: window.end, durationSeconds })
     let lastError: Error | undefined
 
     for (const model of models) {
@@ -727,7 +779,7 @@ async function analyzeVideoWindowed(
         const startedAt = Date.now()
         requestsSpent++
         try {
-          const out = await runStaticWindow(model, uri, mimeType, prompt, window.start, window.end)
+          const out = await runStaticWindow(model, uri, mimeType, prompt, window.start, window.end, spec)
           emit({ model, processingMode: 'STATIC', succeeded: true, usage: out.usage, latencyMs: Date.now() - startedAt })
           windowsByModel.set(model, (windowsByModel.get(model) ?? 0) + 1)
           overloadByModel.delete(model) // answered again: back to full priority
@@ -808,6 +860,7 @@ async function analyzeVideoWindowed(
     rawResponseText: JSON.stringify({ windows: state.rawTexts.map((t) => JSON.parse(t)) }),
     requestCount: requestsSpent,
     requestsLoggedLive: true,
+    windowSummaries: state.summaries,
   }
 }
 
@@ -884,6 +937,265 @@ async function tryOneModel(
   }
 }
 
+// ─── V6.0 protocol pipeline (see protocol-v6.ts) ──────────────────────────
+
+/** v6 (default) runs the V6.0 Protocolo Maestro; legacy keeps the old prompt. */
+const ANALYSIS_PROTOCOL = (process.env.GEMINI_ANALYSIS_PROTOCOL ?? 'v6').trim().toLowerCase()
+
+/** V6 answers are several times longer than the legacy ones, so each call gets more time. */
+const V6_TIMEOUT_MS = Number(process.env.GEMINI_V6_TIMEOUT_MS ?? 8 * 60 * 1000)
+
+/** Phase 1 sees the whole video at once; 1 fps keeps a long video under the per-minute token cap. */
+const V6_PHASE1_FPS = Number(process.env.GEMINI_V6_PHASE1_FPS ?? 1)
+
+type Part = { text: string } | { fileData: { fileUri: string; mimeType?: string }; videoMetadata?: { fps: number } }
+
+/**
+ * One JSON-returning call (V6 phase 1 or 3) with the same model policy as a
+ * window: best model first, per-model pacing, escalating 503 cooldown,
+ * per-minute 429 backoff, daily 429 / retired model skipped for the rest of
+ * this video (shared `deadModels`), one jittered retry for anything else.
+ */
+async function callJsonWithRotation<T>(opts: {
+  models: string[]
+  deadModels: Map<string, string>
+  emit: (event: RequestEvent) => void
+  label: string
+  parts: Part[]
+  schema: object
+  parse: (text: string) => T
+}): Promise<{ value: T; usage: TokenUsage; model: string; requests: number }> {
+  const ai = getGeminiClient()
+  let requests = 0
+  let lastError: Error | undefined
+
+  for (const model of opts.models) {
+    if (opts.deadModels.has(model)) continue
+    const usable = opts.models.filter((m) => !opts.deadModels.has(m))
+    const allCooling = usable.every((m) => isCoolingDown(m))
+    if (!allCooling && isCoolingDown(model)) continue
+
+    for (let attempt = 1; ; attempt++) {
+      await acquireModelSlot(model)
+      const startedAt = Date.now()
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), V6_TIMEOUT_MS)
+      requests++
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: opts.parts }],
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: opts.schema,
+            maxOutputTokens: MAX_OUTPUT_TOKENS,
+            abortSignal: controller.signal,
+          },
+        })
+        if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+          throw new Error(`${opts.label}: Gemini corto la respuesta por exceder ${MAX_OUTPUT_TOKENS} tokens de salida.`)
+        }
+        const text = response.text
+        if (!text) throw new Error(`${opts.label}: Gemini no devolvio texto.`)
+        const value = opts.parse(text)
+        const usage = usageFromGenerateContent(response.usageMetadata ?? {})
+        opts.emit({ model, processingMode: 'STATIC', succeeded: true, usage, latencyMs: Date.now() - startedAt })
+        overloadByModel.delete(model)
+        return { value, usage, model, requests }
+      } catch (error) {
+        const message = controller.signal.aborted
+          ? `${opts.label} (${model}) supero el limite de ${Math.round(V6_TIMEOUT_MS / 1000)}s sin responder.`
+          : (error as Error).message
+        opts.emit({ model, processingMode: 'STATIC', succeeded: false, error: message, latencyMs: Date.now() - startedAt })
+        lastError = new Error(message)
+
+        if (isDailyQuotaError(error) || isModelRetiredError(error)) {
+          opts.deadModels.set(model, message)
+          console.warn(`[ai-router] ${opts.label}: ${model} sin cupo diario o retirado, sigue con el siguiente modelo.`)
+          break
+        }
+        if (isOverloadedError(error)) {
+          const cooldown = markOverloaded(model)
+          console.warn(`[ai-router] ${opts.label}: ${model} saturado (503); pausado ${Math.round(cooldown / 1000)}s, sigue con el siguiente modelo.`)
+          break
+        }
+        if (isPerMinuteQuotaError(error) && attempt <= 3) {
+          const wait = jittered(15_000 * 2 ** (attempt - 1))
+          console.warn(`[ai-router] ${opts.label}: ${model} limite por minuto, reintento ${attempt}/3 en ${Math.round(wait / 1000)}s.`)
+          await sleep(wait)
+          continue
+        }
+        if (attempt === 1 && !isPerMinuteQuotaError(error)) {
+          console.warn(`[ai-router] ${opts.label}: ${model} fallo, reintentando una vez: ${message.slice(0, 300)}`)
+          await sleep(jittered(WINDOW_CALL_DELAY_MS))
+          continue
+        }
+        console.warn(`[ai-router] ${opts.label}: ${model} fallo de nuevo, sigue con el siguiente modelo: ${message.slice(0, 300)}`)
+        break
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+  }
+
+  throw Object.assign(lastError ?? new Error(`${opts.label}: ningun modelo disponible.`), { requestsSpent: requests })
+}
+
+/** "mm:ss" / "mm:ss.s" / "hh:mm:ss" → seconds; NaN if unreadable. */
+function parseClock(value: string): number {
+  const m = value.match(/(\d+):(\d{1,2}(?:\.\d+)?)(?::(\d{1,2}(?:\.\d+)?))?/)
+  if (!m) return Number.NaN
+  return m[3] !== undefined ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : Number(m[1]) * 60 + Number(m[2])
+}
+
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedTokens: a.cachedTokens + b.cachedTokens,
+    thoughtTokens: a.thoughtTokens + b.thoughtTokens,
+    estimatedCostUsd: a.estimatedCostUsd + b.estimatedCostUsd,
+  }
+}
+
+/**
+ * The three-phase V6.0 run. Every phase persists into the window checkpoint
+ * as soon as it finishes (phase 1 in state.v6, each window as usual), so a
+ * failure in any phase is retried from where it stopped, never from scratch.
+ */
+async function analyzeVideoV6(
+  input: AnalyzeVideoInput,
+  uri: string,
+  mimeType: string | undefined,
+  durationSeconds: number,
+  notify: (progress: ProgressUpdate) => void,
+  emit: (event: RequestEvent) => void,
+): Promise<AnalyzeVideoOutput> {
+  const meta: VideoMeta = {
+    title: input.meta?.title ?? 'video',
+    durationSeconds,
+    width: input.meta?.width,
+    height: input.meta?.height,
+    fps: input.meta?.fps,
+  }
+  const onCheckpoint = input.onCheckpoint ?? (() => {})
+  const deadModels = new Map<string, string>()
+  const state: WindowState = input.initialWindowState ?? emptyWindowState()
+  let requests = 0
+  let usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0, thoughtTokens: 0, estimatedCostUsd: 0 }
+  const fail = (error: unknown): never => {
+    const spent = (error as { requestsSpent?: number }).requestsSpent ?? 0
+    throw new WindowedAnalysisError((error as Error).message, state, requests + spent)
+  }
+
+  // Phase 1 — whole video: ficha, triaje, procedencia, entidades, planos, texto en pantalla.
+  let phase1 = state.v6?.phase1 as V6Phase1 | undefined
+  if (phase1) {
+    console.log('[ai-router] V6 fase 1 retomada del checkpoint.')
+  } else {
+    notify({ label: 'Protocolo V6.0 — fase 1 de 3: ficha, entidades y planos del video completo...' })
+    const r1 = await callJsonWithRotation({
+      models: input.models,
+      deadModels,
+      emit,
+      label: 'V6 fase 1',
+      parts: [{ fileData: { fileUri: uri, mimeType }, videoMetadata: { fps: V6_PHASE1_FPS } }, { text: buildV6Phase1Prompt(meta) }],
+      schema: V6_PHASE1_SCHEMA,
+      parse: (text) => JSON.parse(stripCodeFence(text)) as V6Phase1,
+    }).catch(fail)
+    requests += r1.requests
+    usage = addUsage(usage, r1.usage)
+    phase1 = r1.value
+    state.v6 = { phase1 }
+    onCheckpoint(state)
+  }
+  const p1 = phase1
+
+  // Phase 2 — the canonical timeline, window by window, in parallel.
+  const spec: WindowSpec = {
+    schema: V6_WINDOW_SCHEMA,
+    parse: (text) => parseV6Window(stripCodeFence(text)),
+    timeoutMs: V6_TIMEOUT_MS,
+    buildPrompt: ({ windowIndex, windowCount, start, end }) =>
+      buildV6WindowPrompt({ meta, phase1: p1, windowIndex, windowCount, windowStartSeconds: start, windowEndSeconds: end }),
+  }
+  let windowed: AnalyzeVideoOutput
+  try {
+    windowed = await analyzeVideoWindowed(input.models, uri, mimeType, durationSeconds, notify, emit, state, onCheckpoint, spec, deadModels)
+  } catch (error) {
+    if (error instanceof WindowedAnalysisError) {
+      throw new WindowedAnalysisError(error.message, error.state, requests + error.requestsSpentByThisModel)
+    }
+    throw error
+  }
+  requests += windowed.requestCount
+  usage = addUsage(usage, windowed.usage)
+  const windowLimits = (windowed.windowSummaries ?? []).flatMap((s) => s.full_summary.split('\n').map((l) => l.trim()).filter(Boolean))
+
+  // Phase 3 — synthesis from the record (no video).
+  notify({ label: 'Protocolo V6.0 — fase 3 de 3: patrones, gramática, recreación y límites...' })
+  const r3 = await callJsonWithRotation({
+    models: input.models,
+    deadModels,
+    emit,
+    label: 'V6 fase 3',
+    parts: [{ text: buildV6Phase3Prompt(meta, p1, windowed.result, windowLimits) }],
+    schema: V6_PHASE3_SCHEMA,
+    parse: (text) => JSON.parse(stripCodeFence(text)) as V6Phase3,
+  }).catch(fail)
+  requests += r3.requests
+  usage = addUsage(usage, r3.usage)
+  const p3 = r3.value
+
+  const markdown = renderV6Record({ meta, phase1: p1, merged: windowed.result, phase3: p3, windowLimits })
+
+  // The app's own tables: phase-1 entities and on-screen texts become
+  // elements too, so they show up in the UI and in search.
+  const at = (clock: string) => {
+    const s = parseClock(clock)
+    return Number.isFinite(s) ? s : 0
+  }
+  const elements: AnalysisResult['elements'] = [
+    ...p1.entidades.map((e) => ({
+      kind: (/^P/i.test(e.id) ? 'person' : /^[CF]/i.test(e.id) ? 'relation' : 'object') as AnalysisResult['elements'][number]['kind'],
+      label: `${e.id} — ${e.identificacion}`,
+      detail: e.descripcion_fisica,
+      start_seconds: at(e.primera_aparicion),
+      end_seconds: null,
+    })),
+    ...p1.textos_pantalla.map((t) => ({
+      kind: 'on_screen_text' as const,
+      label: `${t.id} — ${t.contenido}`,
+      detail: `${t.tipo}; ${t.posicion}; ${t.apariencia}`,
+      start_seconds: at(t.aparece),
+      end_seconds: Number.isFinite(parseClock(t.desaparece)) ? parseClock(t.desaparece) : null,
+    })),
+    ...windowed.result.elements,
+  ]
+
+  const result: AnalysisResult = {
+    summary: {
+      short_summary: p3.resumen_corto,
+      full_summary: [p3.resumen_corto, ...p3.patrones.map((p) => `Patrón: ${p.patron} — ${p.mecanismo}`)].join('\n\n'),
+      topics: p3.temas,
+      language: p1.ficha.idioma_habla,
+    },
+    scenes: windowed.result.scenes,
+    transcript: windowed.result.transcript,
+    elements,
+  }
+
+  return {
+    ...windowed,
+    result,
+    usage,
+    modelUsed: windowed.modelUsed,
+    requestCount: requests,
+    rawResponseText: JSON.stringify({ protocol: PROTOCOL_VERSION, phase1: p1, windows: JSON.parse(windowed.rawResponseText).windows, phase3: p3 }),
+    protocolRecord: { version: PROTOCOL_VERSION, markdown },
+  }
+}
+
 /**
  * Uploads the video ONCE, then walks `input.models` in order until one
  * accepts the call. Google's free-tier daily cap is per model (its own 429
@@ -906,6 +1218,11 @@ export async function analyzeVideo(input: AnalyzeVideoInput): Promise<AnalyzeVid
   const uploadStartedAt = Date.now()
   const { uri, mimeType } = await resolveVideoUri(input.source)
   console.log(`[ai-router] video listo en Gemini en ${Math.round((Date.now() - uploadStartedAt) / 1000)}s.`)
+
+  if (ANALYSIS_PROTOCOL === 'v6' && input.durationSeconds && Number.isFinite(input.durationSeconds)) {
+    const out = await analyzeVideoV6(input, uri, mimeType, input.durationSeconds, notify, emit)
+    return { ...out, requestsLoggedLive: live }
+  }
 
   if (input.durationSeconds && Number.isFinite(input.durationSeconds) && input.durationSeconds > WINDOW_THRESHOLD_SECONDS) {
     const out = await analyzeVideoWindowed(

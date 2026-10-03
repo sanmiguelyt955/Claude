@@ -92,6 +92,12 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
   const improvements = listSkillImprovementsForVideo(videoId, db)
   const runs = listAnalysisRunsForVideo(videoId, db)
 
+  // A video analyzed under the V6.0 protocol already has its complete record,
+  // in the protocol's own section order (frontmatter first). That IS the note.
+  if (summary?.protocol_record_md) {
+    return [summary.protocol_record_md.trimEnd(), '', ...processingSection(runs), ...exportFooter()].join('\n')
+  }
+
   const topics: string[] = summary ? (JSON.parse(summary.topics_json) as string[]) : []
   const out: string[] = []
 
@@ -231,33 +237,50 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
     }
   }
 
-  // ── Registro técnico ────────────────────────────────────────────────────
-  const okRuns = runs.filter((r) => r.succeeded)
-  if (okRuns.length) {
-    out.push('## Registro de procesamiento')
-    out.push('')
-    out.push('| Fase | Modelo | Modo | Tokens | Costo |')
-    out.push('|---|---|---|---|---|')
-    let totalTokens = 0
-    let totalCost = 0
-    for (const run of okRuns) {
-      const tokens = (run.input_tokens ?? 0) + (run.output_tokens ?? 0)
-      totalTokens += tokens
-      totalCost += run.estimated_cost_usd ?? 0
-      out.push(
-        `| ${PHASE_LABEL[run.phase] ?? run.phase} | ${cell(run.model)} | ${run.processing_mode ?? '—'} | ${tokens.toLocaleString('es-MX')} | $${(run.estimated_cost_usd ?? 0).toFixed(4)} |`,
-      )
-    }
-    out.push(`| **Total** | | | **${totalTokens.toLocaleString('es-MX')}** | **$${totalCost.toFixed(4)}** |`)
-    out.push('')
-  }
-
-  out.push('---')
-  out.push('')
-  out.push(
-    `*Exportado desde Video Analyzer el ${formatVaultDate()}. Fuente de verdad: la base de datos local de la app (\`data/db/app.sqlite\`).*`,
-  )
-  out.push('')
+  out.push(...processingSection(runs), ...exportFooter())
 
   return out.join('\n')
+}
+
+type AnalysisRun = ReturnType<typeof listAnalysisRunsForVideo>[number]
+
+/**
+ * Token/cost table plus the real number of Gemini calls, failures included —
+ * a 503 still spends daily quota, so hiding failed calls would misreport cost.
+ * Rows with no tokens (per-job summary rows) are left out of the table.
+ */
+function processingSection(runs: AnalysisRun[]): string[] {
+  const okRuns = runs.filter((r) => r.succeeded && (r.input_tokens ?? 0) + (r.output_tokens ?? 0) > 0)
+  if (!okRuns.length) return []
+  const calls = runs.reduce((n, r) => n + (r.request_count ?? 1), 0)
+  const failed = runs.filter((r) => !r.succeeded).reduce((n, r) => n + (r.request_count ?? 1), 0)
+  const out: string[] = [
+    '## Registro de procesamiento',
+    '',
+    `Llamadas a Gemini: **${calls}** (${calls - failed} correctas, ${failed} rechazadas o fallidas; las rechazadas también consumen cupo diario).`,
+    '',
+    '| Fase | Modelo | Modo | Tokens | Costo |',
+    '|---|---|---|---|---|',
+  ]
+  let totalTokens = 0
+  let totalCost = 0
+  for (const run of okRuns) {
+    const tokens = (run.input_tokens ?? 0) + (run.output_tokens ?? 0)
+    totalTokens += tokens
+    totalCost += run.estimated_cost_usd ?? 0
+    out.push(
+      `| ${PHASE_LABEL[run.phase] ?? run.phase} | ${cell(run.model)} | ${run.processing_mode ?? '—'} | ${tokens.toLocaleString('es-MX')} | $${(run.estimated_cost_usd ?? 0).toFixed(4)} |`,
+    )
+  }
+  out.push(`| **Total** | | | **${totalTokens.toLocaleString('es-MX')}** | **$${totalCost.toFixed(4)}** |`, '')
+  return out
+}
+
+function exportFooter(): string[] {
+  return [
+    '---',
+    '',
+    `*Exportado desde Video Analyzer el ${formatVaultDate()}. Fuente de verdad: la base de datos local de la app (\`data/db/app.sqlite\`).*`,
+    '',
+  ]
 }
