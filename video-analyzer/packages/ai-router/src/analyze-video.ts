@@ -597,17 +597,6 @@ function windowOffsetFor(outcome: WindowOutcome, starts: number[]): number {
   return looksAbsolute ? 0 : outcome.windowStart
 }
 
-/**
- * Each window (and each continuation) numbers its own transcript from T1, so
- * a reference like "VOZ 1 habla — T6" in window 3 pointed at the wrong line
- * of the merged transcript (observed 3 Oct 2026). Shift every T# by the
- * number of transcript lines merged before this window.
- */
-function shiftTranscriptRefs(text: string | null, offset: number): string | null {
-  if (!text || offset === 0) return text
-  return text.replace(/\bT(\d+)\b/g, (_, n: string) => `T${Number(n) + offset}`)
-}
-
 /** How many extra calls a window may make to fill a tail the model left out. */
 const MAX_WINDOW_CONTINUATIONS = 3
 
@@ -666,14 +655,8 @@ function commitWindow(state: WindowState, index: number, outcome: WindowOutcome)
     const sceneOffset = windowOffsetFor(next, next.result.scenes.map((x) => x.start_seconds))
     const transcriptOffset = windowOffsetFor(next, next.result.transcript.map((x) => x.start_seconds))
     const elementOffset = windowOffsetFor(next, next.result.elements.map((x) => x.start_seconds))
-    const tOffset = state.transcript.length
     for (const scene of next.result.scenes) {
-      state.scenes.push({
-        ...scene,
-        start_seconds: scene.start_seconds + sceneOffset,
-        end_seconds: scene.end_seconds + sceneOffset,
-        audio_description: shiftTranscriptRefs(scene.audio_description, tOffset),
-      })
+      state.scenes.push({ ...scene, start_seconds: scene.start_seconds + sceneOffset, end_seconds: scene.end_seconds + sceneOffset })
     }
     for (const line of next.result.transcript) {
       state.transcript.push({ ...line, start_seconds: line.start_seconds + transcriptOffset, end_seconds: line.end_seconds + transcriptOffset })
@@ -871,8 +854,6 @@ async function analyzeVideoWindowed(
             usage = addUsage(usage, more.usage)
             raws.push(more.rawResponseText)
             const tail = toAbsoluteTimes(more.result, covered, window.end)
-            const tailOffset = merged.transcript.length
-            tail.scenes = tail.scenes.map((x) => ({ ...x, audio_description: shiftTranscriptRefs(x.audio_description, tailOffset) }))
             merged = {
               summary: { ...merged.summary, full_summary: [merged.summary.full_summary, tail.summary.full_summary].filter(Boolean).join('\n') },
               scenes: [...merged.scenes, ...tail.scenes.filter((x) => x.start_seconds >= covered - 0.01)],

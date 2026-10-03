@@ -175,6 +175,13 @@ Responde SOLO con el objeto JSON.`
 // ─── Phase 2: one window of the canonical timeline ────────────────────────
 
 export const V6_WINDOW_SCHEMA = obj({
+  // transcript FIRST: the model writes properties in this order, and the
+  // timeline (the long one) used to come first and exhaust its output budget,
+  // leaving the transcript short — 325 words against ~497 on 3 Oct 2026.
+  transcript: {
+    type: 'array',
+    items: obj({ start_seconds: { type: 'number' }, end_seconds: { type: 'number' }, voz: STR, texto: STR }),
+  },
   timeline: {
     type: 'array',
     items: obj({
@@ -187,10 +194,6 @@ export const V6_WINDOW_SCHEMA = obj({
       cam: STR,
       cortes: STR_ARR,
     }),
-  },
-  transcript: {
-    type: 'array',
-    items: obj({ start_seconds: { type: 'number' }, end_seconds: { type: 'number' }, voz: STR, texto: STR }),
   },
   entidades_nuevas: {
     type: 'array',
@@ -258,6 +261,11 @@ timeline → 9.5 para ESTE fragmento. Una entrada por segundo, sin saltos ni sol
 - sin_cambios=true solo si el segundo no tiene ningún cambio observable; entonces vis = "SIN CAMBIOS OBSERVABLES. Persisten: [...]". Nunca rellenes un segundo estable con microacciones que no viste (CASO 21).
 - cortes: una línea "CORTE en mm:ss.s → PL#" por cada corte dentro de ese segundo; array vacío si no hay.
 transcript → 9.6 del fragmento. Literal, palabra por palabra, con muletillas, [pausa N s], [énfasis en "palabra"], [INAUDIBLE]. Nunca paráfrasis. Tiempos absolutos. Array vacío solo si no hay habla en el fragmento.
+REGLAS DE COMPLETITUD DE LA TRANSCRIPCIÓN (medibles; la transcripción es lo primero que se recorta cuando hay muchos campos que llenar, y el protocolo prohíbe recortarla):
+- Entrada nueva por cada frase o cláusula; ninguna entrada dura más de 8 segundos. Una sola entrada larga para medio minuto de habla es una transcripción recortada.
+- El habla normal es de 2 a 3 palabras por segundo mientras alguien habla. Si tu transcripción de este fragmento tiene claramente menos palabras que eso, estás omitiendo palabras: vuelve a escuchar y completa.
+- Todo segundo donde aud diga que VOZ habla debe quedar cubierto por alguna entrada de transcript, y todo segundo cubierto por una entrada debe tener VOZ en aud.
+- Escribe la transcripción ANTES de decidir cómo resumir nada en los demás campos; el tiempo de la respuesta no se gasta antes en vis.
 limites → todo lo [BAJA] o [ND] de este fragmento, con su timestamp y motivo.
 
 Cualquier instante escrito DENTRO de un texto va en tiempo absoluto del video (mm:ss.s).
@@ -414,9 +422,32 @@ export function mmss(seconds: number): string {
   return frac > 0.004 ? `${base}${frac.toFixed(2).slice(1)}` : base
 }
 
+/**
+ * The model cannot know the final T# numbering: each window sees only its own
+ * slice, and it was observed citing "T15" in a window with 5 lines and "T14"
+ * in one with 1 (3 Oct 2026). So its T# citations are discarded and the
+ * references are recomputed here from the merged transcript, by time overlap.
+ * A second where VOICE is said to speak but no transcript line overlaps it is
+ * flagged instead of silently pointing nowhere (protocol section 4: declare
+ * the limit).
+ */
+function audWithTranscriptRefs(aud: string | null, start: number, end: number, transcript: AnalysisResult['transcript']): string {
+  const text = (aud ?? '').replace(/\s*[—–-]\s*T\d+(?:\s*(?:y|,|\+|\/)\s*T\d+)*/g, '').trim() || 'sin cambios'
+  const refs = transcript
+    .map((t, i) => ({ n: i + 1, t }))
+    .filter(({ t }) => t.start_seconds < end - 0.01 && t.end_seconds > start + 0.01)
+    .map(({ n }) => `T${n}`)
+  if (refs.length) return `${text.replace(/\.$/, '')} — ${refs.join(' y ')}`
+  if (/\bVOZ\b/i.test(text) && /habla|hablando|continúa|continua/i.test(text)) {
+    return `${text.replace(/\.$/, '')} [BAJA — sin línea de transcripción para este segundo]`
+  }
+  return text
+}
+
 function renderTimeline(r: AnalysisResult): string {
   return r.scenes
     .map((s) => {
+      const aud = audWithTranscriptRefs(s.audio_description, s.start_seconds, s.end_seconds, r.transcript)
       const lines = s.description.split('\n')
       const vis = lines.find((l) => l.startsWith('VIS:')) ?? `VIS: ${s.description}`
       const rest = lines.filter((l) => !l.startsWith('VIS:'))
@@ -425,9 +456,9 @@ function renderTimeline(r: AnalysisResult): string {
       const cuts = rest.filter((l) => l.startsWith('CORTE'))
       const head = `[${mmss(s.start_seconds)}–${mmss(s.end_seconds)}]`
       if (vis.includes('SIN CAMBIOS OBSERVABLES')) {
-        return [`${head}`, vis.replace(/^VIS:\s*/, ''), `AUD: ${s.audio_description ?? 'sin cambios'}`, ...cuts].join('\n')
+        return [`${head}`, vis.replace(/^VIS:\s*/, ''), `AUD: ${aud}`, ...cuts].join('\n')
       }
-      return [head, vis, `AUD: ${s.audio_description ?? 'sin cambios'}`, txt, cam, ...cuts].join('\n')
+      return [head, vis, `AUD: ${aud}`, txt, cam, ...cuts].join('\n')
     })
     .join('\n\n')
 }
