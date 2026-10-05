@@ -1,4 +1,4 @@
-V6.0 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
+V6.1 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
 
 
 Analiza el video adjunto como fuente de evidencia audiovisual y produce un registro permanente de él.
@@ -14,6 +14,8 @@ De ahí salen dos consecuencias:
 1. Cualquier detalle puede ser el que explica por qué un video funciona: un ademán, una vacilación de medio segundo, un fotograma de más antes de un corte, una pausa antes de hablar. No decides qué es importante. Registras.
 
 2. El registro debe sostenerse solo. Quien lo lea no podrá volver al video para comprobar nada.
+
+3. El registro debe permitir recrear el video sin haberlo visto. La ficha de recreación (9.13) se construye solo con lo registrado: lo que no quedó registrado no se puede recrear.
 
 PRIORIDAD CUANDO HAYA CONFLICTO:
 
@@ -140,6 +142,8 @@ La COBERTURA es obligatoria y uniforme. La DENSIDAD de cada entrada es proporcio
 
 Esa línea es una entrada CORRECTA y COMPLETA. Es el dato de que durante ese segundo el cuadro permaneció estable, y eso es información real sobre ritmo.
 
+Un segundo es SIN CAMBIOS solo si NINGÚN canal cambia: imagen, sonido, texto y cámara. El habla que continúa dentro de la misma línea de transcripción no cuenta como cambio y se declara en "Persisten" ("VOZ 1 continúa — T4"); una línea de transcripción nueva sí es un cambio. La línea SIN CAMBIOS deja constancia de los tres canales VIS, AUD y TXT.
+
 LA TRAMPA
 
 Cubrir cada segundo NO significa llenarlo. Si un segundo no tiene cambios, se declara estable. Si lo rellenas con microacciones que no viste, variaciones imaginadas o reacciones "probables", cometiste el ERROR 2. Un segundo honestamente declarado estable vale infinitamente más que uno fabricado. Las tres pruebas aplican también a cada línea de cobertura.
@@ -217,8 +221,8 @@ Eje 5:
 Eje 6:
 - Menos de 10 s: granularidad máxima; subdivide por debajo del segundo siempre que haya cambios.
 - 10–60 s: cobertura segundo a segundo completa. Caso por defecto.
-- 1–10 min: cobertura segundo a segundo completa. Solo aquí se permite encadenar segundos consecutivos idénticos en una entrada que declare rango, duración y motivo: "[02:14–02:23] (9 s) SIN CAMBIOS OBSERVABLES. Persisten: [...]". Nunca sin declarar el rango completo.
-- Más de 10 min: cobertura total, entregada por bloques (ver sección 8). Un video largo se divide, no se recorta. La transcripción jamás se reduce.
+- 1–10 min: cobertura segundo a segundo completa. A partir de esta duración se permite encadenar segundos consecutivos idénticos en una entrada que declare rango, duración y motivo: "[02:14–02:23] (9 s) SIN CAMBIOS OBSERVABLES. Persisten: [...]". Nunca sin declarar el rango completo, y nunca si dentro del rango cambia cualquier canal.
+- Más de 10 min: cobertura total, entregada por bloques (ver sección 8), con la misma regla de encadenamiento. Un video largo se divide, no se recorta. La transcripción jamás se reduce.
 
 Eje 7:
 - Densidad muy alta: si los cortes son más rápidos de lo que puedes resolver con fiabilidad, dilo, registra el patrón de ritmo y marca [BAJA] los timestamps individuales.
@@ -241,7 +245,7 @@ SECCIONES PENDIENTES: [lista]
 
 4. Cuando se te pida continuar, retoma exactamente en ese timestamp, con los mismos IDs de entidades, sin repetir lo ya entregado y sin resumirlo.
 
-Las secciones de síntesis (9.7 en adelante) se entregan una sola vez, al final del último bloque, cubriendo el video completo.
+La transcripción (9.6) y el texto en pantalla (9.7) continúan en cada bloque, con su numeración (T#, TX#) sin reiniciarla. Las secciones de síntesis (9.8 en adelante) se entregan una sola vez, al final del último bloque, cubriendo el video completo.
 
 ==================================================
 9. FORMATO DE SALIDA
@@ -257,7 +261,7 @@ Bloque de metadatos al inicio, en este formato exacto:
 
 ---
 tipo: analisis-video
-protocolo: v6.0
+protocolo: v6.1
 fuente: [nombre del archivo o enlace, si se conoce; si no, vacío]
 duracion: [valor]
 duracion_origen: [metadata / observada]
@@ -300,7 +304,7 @@ Solo lo observable en la propia imagen:
 - cambios de perfil de color, exposición o nitidez entre planos
 - indicadores de generación o alteración por software (lista del eje 1)
 
-Las conclusiones sobre origen, autoría o autenticidad van solo en 9.10, marcadas [INT].
+Las conclusiones sobre origen, autoría o autenticidad van solo en 9.11, marcadas [INT].
 
 --------------------------------------------------
 9.3 REGISTRO DE ENTIDADES
@@ -327,7 +331,7 @@ APARICIONES: [intervalos, indicando cuáles son con asterisco]
 
 Qué registrar según el tipo:
 
-PERSONAS — número, partes corporales visibles, ropa, cabello, accesorios, posición. Expresión facial descrita físicamente (posición de cejas, apertura ocular, comisuras), nunca como emoción. No infieras género, edad (tampoco como rango), identidad, profesión, relación entre personas, propiedad ni rol.
+PERSONAS — número, partes corporales visibles, ropa, cabello, accesorios, posición. Expresión facial descrita físicamente (posición de cejas, apertura ocular, comisuras), nunca como emoción. No infieras género, edad (tampoco como rango), identidad, profesión, relación entre personas, propiedad ni rol. Lo que haga falta para recrear un plano con otra persona va solo en el perfil para recreación de 9.13, marcado [INT].
 
 ANIMALES — morfología, coloración y su distribución, tamaño relativo, pelaje o cobertura, extremidades, cabeza, ojos, orejas, boca, cola. Sin nombres de raza salvo evidencia explícita en el propio video. Sin emociones.
 
@@ -368,7 +372,7 @@ Cada entrada integra los canales en paralelo para conservar la sincronía:
 VIS: [movimiento y estado de cada entidad, por ID]
 AUD: [lo que suena en ese intervalo]
 TXT: [qué bloques TX# están visibles, cuáles aparecen o desaparecen y cuándo]
-CAM: [solo si cambia algo de cámara o empieza un plano nuevo]
+CAM: [cambio de cámara o inicio de un plano nuevo; si no lo hay, "sin cambios"]
 CORTE en [mm:ss.s] → PL[n]   ← línea propia en el punto exacto de cada corte
 
 Cuando un canal no tiene novedades, se escribe "sin cambios", nunca se omite.
@@ -414,6 +418,12 @@ T[n] — [inicio]–[fin] — VOZ [n]: "[texto literal]"
 - no corrijas gramática ni "limpies" la forma de hablar
 - idioma distinto del español: transcripción en el original y traducción aparte, marcada como tal
 - voz cuya naturaleza humana no es evidente: descríbela acústicamente sin afirmar su origen
+
+COMPLETITUD — comprobable, no una intención:
+- Una entrada por frase o cláusula. Ninguna entrada dura más de 8 s: una sola entrada para medio minuto de habla esconde las frases que faltan.
+- El habla continua suele rondar 2–3 palabras por segundo. Si un tramo con habla continua tiene claramente menos, faltan palabras: vuelve a escuchar ese tramo.
+- Cada segundo cuyo canal AUD diga que una VOZ habla está cubierto por una entrada T#, y cada entrada T# tiene su VOZ en el canal AUD de esos segundos.
+- La numeración T# es única y continua en todo el registro, también entre bloques.
 
 Una paráfrasis conserva el contenido y destruye lo que hace funcionar a un video hablado: cómo se dijo.
 
@@ -466,6 +476,21 @@ CONTINUIDAD: cambios de escala entre planos consecutivos · cambios de ubicació
 
 DISEÑO SONORO: capas presentes, su relación de volumen, entradas y salidas, uso del silencio.
 
+ARQUITECTURA DE RETENCIÓN — posiciones medidas, no juicios. Cada dato con timestamp y con su porcentaje de la duración total del archivo.
+- APERTURA (00:00–00:03): entidades en cuadro, primer movimiento, primer sonido y primer texto, por ID y con referencia a 9.5. Primer CORTE, si ocurre dentro de esa ventana.
+- SUJETO PRINCIPAL: la entidad que más tiempo ocupa el cuadro (ID y % del tiempo en que es visible), e instante en que aparece completa por primera vez.
+- CAMBIOS DE ESTADO DEL SUJETO PRINCIPAL: los de 9.8, cada uno con su posición en %. Cuál es el mayor va marcado [INT], declarando el criterio físico usado (magnitud del cambio de forma, de configuración, de color o de posición).
+- SONIDO EN EL MAYOR CAMBIO DE ESTADO: lo que registra AUD en ese segundo (habla, música, efecto, ambiente o silencio), sin interpretarlo.
+- LLAMADAS A LA ACCIÓN: todo texto (TX#) o habla (T#) en imperativo dirigido al espectador, literal, con timestamp y %, marcado [ID] llamada a la acción. Si no hay: "No se registran llamadas a la acción."
+- CIERRE: último plano, último texto, último sonido y lo que queda en cuadro en el último fotograma.
+
+SUJETO PRINCIPAL Y MANIPULACIÓN — agregados de lo ya registrado, por ID y timestamp:
+- ZONAS MOSTRADAS: partes del sujeto principal que se ven, en orden de primera aparición, descritas físicamente.
+- VISIBILIDAD: intervalos en que aparece completo y en que aparece parcial, con su número.
+- PLANOS DE DETALLE: cuáles son y qué parte del sujeto principal ocupa el cuadro en cada uno.
+- MANIPULACIÓN: configuraciones de agarre observadas (qué mano, qué dedos, dónde contactan), número de rotaciones con su sentido y su eje, y contactos breves que no llegan a agarre. Si no hay manos en cuadro: "No se observa manipulación con manos."
+- PRESENCIA DE ROSTRO: número de apariciones; para cada una, intervalo, porción visible (completo, perfil, parcial, fuera de cuadro), dirección de la mirada (al objetivo, al sujeto principal, fuera de cuadro) y posición respecto al sujeto principal. Si no aparece ninguno: "No aparece ningún rostro."
+
 --------------------------------------------------
 9.10 FUNCIÓN / POSIBLE USO
 --------------------------------------------------
@@ -492,6 +517,11 @@ Estados emocionales o psicológicos, formato obligatorio:
 
 Origen, autoría, autenticidad, espontaneidad o puesta en escena: mismo tratamiento, con lenguaje de posibilidad y apoyándote en los indicadores de 9.2.
 
+Si el registro lo sostiene, incluye además, siempre [INT] y citando la evidencia por timestamp o ID:
+- TÉCNICA DE APERTURA: cómo podrían operar los primeros segundos (curiosidad, contraste, movimiento, revelación u otra), apoyada en la APERTURA de 9.9.
+- DISPARADOR: qué podría hacer que alguien deje de desplazarse por el feed, y qué evidencia física lo sostiene.
+- REGISTRO DE PRODUCCIÓN: si el material se presenta como contenido de usuario, publicación orgánica, anuncio de marca o demostración, apoyado en los indicadores de 9.2 y 9.4.
+
 --------------------------------------------------
 9.12 PATRONES REPLICABLES
 --------------------------------------------------
@@ -513,6 +543,14 @@ Mínimo 3 por video. Si el video es rico, extrae todos los que encuentres.
 --------------------------------------------------
 
 Reorganiza lo ya registrado para que cada plano pueda reconstruirse con herramientas de generación de video o con una nueva grabación. Esta sección reorganiza; no observa. No añadas nada que no esté en las secciones anteriores. Si un campo no está en el registro, escribe [ND].
+
+Empieza con un PLAN GENERAL que alguien pueda seguir sin haber visto el video:
+
+SETUP: superficies, fondo, luz y elementos de entorno comunes a los planos (E#), según 9.3 y 9.4.
+SECUENCIA: los planos en orden, con su duración y el ritmo de corte de 9.9.
+SUJETOS: qué entidades hay que conseguir o recrear (IDs). Para cada persona, un PERFIL PARA RECREACIÓN [INT] solo con lo necesario para recrear el plano con otra persona: categoría de edad aparente amplia (niño, joven adulto, adulto, mayor), estilo de presentación, peinado, maquillaje visible o no, vestuario y accesorios. Nunca identidad, origen étnico ni otros rasgos sensibles.
+
+Después, una ficha por plano:
 
 PL[n] ([duración])
 SUJETOS Y ESTADO INICIAL: [IDs y su posición/configuración al inicio del plano]
@@ -699,6 +737,16 @@ MAL: "PATRÓN: el video muestra un perro que odia bañarse."
 BIEN: "PATRÓN: problema declarado antes de mostrar la solución. EVIDENCIA: TX1 de conflicto visible 00:00–00:03; O1 no aparece en cuadro hasta 00:03. MECANISMO: el espectador reconoce el problema como propio antes de tener motivo para evaluar el producto. CONDICIONES: un problema reconocible en menos de 3 segundos sin explicación. TRANSFERIBILIDAD: alta, independiente del producto y del nicho."
 POR QUÉ: si el patrón solo sirve para videos de perros, no era un patrón.
 
+CASO 24 — Identificación dentro de la descripción física (PRUEBA 3) — objeto con forma de personaje
+MAL: "DESCRIPCIÓN FÍSICA: figura violeta con forma de personaje animado (Gengar), situada sobre el mueble a la izquierda de P1."
+BIEN: "DESCRIPCIÓN FÍSICA: objeto tridimensional violeta de cuerpo redondeado, con dos protuberancias puntiagudas en la parte superior, dos áreas rojas en la mitad superior del frente y una franja blanca dentada debajo de ellas; se apoya sobre la superficie de madera de E2, a la izquierda de P1. IDENTIFICACIÓN: [ID] probable figura del personaje Gengar."
+POR QUÉ: el nombre de un personaje, marca o modelo es identificación, no forma. Dentro de la descripción física contamina el dato duro; en IDENTIFICACIÓN queda marcado como lo que es. Error real de un análisis hecho con este mismo protocolo, junto con el verbo "descansa", que ya figura en la lista de la PRUEBA 1.
+
+CASO 25 — Transcripción recortada en una entrada larga (9.6) — habla a cámara
+MAL: "T30 — 01:30–02:09 — VOZ 1: \"[una sola entrada de 85 palabras para 39 s de habla continua]\""
+BIEN: "T30 — 01:30–01:35 — VOZ 1: \"...\" / T31 — 01:35–01:41 — VOZ 1: \"...\" / ... una entrada por frase, ninguna de más de 8 s, hasta 02:09."
+POR QUÉ: una entrada larga oculta las frases omitidas, porque parece cubrir todo el intervalo. Error real: ese mismo tramo, transcrito frase por frase, tenía 130 palabras, no 85.
+
 ==================================================
 12. VERIFICACIÓN FINAL
 ==================================================
@@ -714,13 +762,22 @@ COBERTURA
 □ ¿Inventé contenido en algún segundo para que no quedara vacío?
 □ ¿Comprimí o resumí algún tramo para que cupiera en la respuesta?
 □ Si agrupé segundos, ¿eran idénticos y declaré rango, duración y motivo?
-□ ¿Cada entrada tiene sus canales VIS, AUD y TXT, aunque sea con "sin cambios"?
+□ ¿Cada entrada tiene sus canales VIS, AUD, TXT y CAM, aunque sea con "sin cambios"? ¿Cada línea SIN CAMBIOS deja constancia de VIS, AUD y TXT, y de verdad no cambia ningún canal?
 
 DETALLE
 □ ¿Registré microacciones y vacilaciones, o solo los movimientos grandes?
 □ ¿Algún ademán quedó reducido a "mueve la mano" o a su resultado?
 □ ¿Cada entidad está descrita físicamente en el registro con todo su detalle?
 □ Si hay habla, ¿la transcripción es literal y completa?
+□ ¿Alguna entrada de transcripción dura más de 8 s? ¿La cantidad de palabras es coherente con la duración del habla?
+□ ¿Cada segundo con VOZ en el canal AUD está cubierto por una entrada T#?
+□ ¿Puse un nombre de personaje, marca o modelo dentro de una DESCRIPCIÓN FÍSICA?
+
+ESTRUCTURA
+□ ¿Medí en 9.9 la apertura, el sujeto principal, los cambios de estado con su %, el sonido en el mayor cambio, las llamadas a la acción y el cierre?
+□ ¿Agregué zonas mostradas, visibilidad, planos de detalle, manipulación y presencia de rostro, o declaré que no existen?
+□ ¿La técnica de apertura, el disparador y el registro de producción están solo en 9.11, marcados [INT] y con evidencia?
+□ ¿El plan general de 9.13 permite recrear el video sin verlo, y el perfil para recreación evita identidad y rasgos sensibles?
 
 PRUEBA 1 — SUPERVIVENCIA
 □ ¿Cada observación sobrevive si borro identificación, función e interpretación?

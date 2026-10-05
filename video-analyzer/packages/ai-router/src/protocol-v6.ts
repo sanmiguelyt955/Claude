@@ -21,7 +21,7 @@ import type { AnalysisResult } from './schema.js'
  * rendered separately by renderV6Record().
  */
 
-export const PROTOCOL_VERSION = 'v6.0'
+export const PROTOCOL_VERSION = 'v6.1'
 
 let protocolText: string | undefined
 
@@ -333,7 +333,10 @@ export const V6_PHASE3_SCHEMA = obj({
     coreografia_texto: STR,
     continuidad: STR,
     diseno_sonoro: STR,
+    arquitectura_retencion: STR,
+    sujeto_principal_manipulacion: STR,
   }),
+  plan_rodaje: obj({ setup: STR, secuencia: STR, sujetos: STR }),
   funcion: { type: 'array', items: obj({ elemento: STR, evidencia: STR, posible_funcion: STR, no_determinable: STR }) },
   interpretacion: STR_ARR,
   patrones: { type: 'array', items: obj({ patron: STR, evidencia: STR, mecanismo: STR, condiciones: STR, transferibilidad: STR }) },
@@ -358,7 +361,13 @@ export type V6Phase3 = {
   resumen_corto: string
   temas: string[]
   cambios_estado: Array<Record<'timestamp' | 'antes' | 'transicion' | 'despues' | 'no_determinable', string>>
-  gramatica: Record<'ritmo_montaje' | 'estructura_temporal' | 'sincronia' | 'coreografia_texto' | 'continuidad' | 'diseno_sonoro', string>
+  gramatica: Record<'ritmo_montaje' | 'estructura_temporal' | 'sincronia' | 'coreografia_texto' | 'continuidad' | 'diseno_sonoro', string> & {
+    /** v6.1+ — absent in records produced under v6.0. */
+    arquitectura_retencion?: string
+    sujeto_principal_manipulacion?: string
+  }
+  /** v6.1+ — the general plan that opens 9.13. */
+  plan_rodaje?: Record<'setup' | 'secuencia' | 'sujetos', string>
   funcion: Array<Record<'elemento' | 'evidencia' | 'posible_funcion' | 'no_determinable', string>>
   interpretacion: string[]
   patrones: Array<Record<'patron' | 'evidencia' | 'mecanismo' | 'condiciones' | 'transferibilidad', string>>
@@ -379,10 +388,11 @@ En esta llamada NO tienes el video. Tienes el registro ya producido en las fases
 
 ENTREGA, en el JSON del esquema dado:
 - cambios_estado → 9.8
-- gramatica → 9.9
+- gramatica → 9.9. Incluye ARQUITECTURA DE RETENCIÓN (apertura, sujeto principal, cambios de estado con su %, sonido en el mayor cambio, llamadas a la acción, cierre) y SUJETO PRINCIPAL Y MANIPULACIÓN (zonas, visibilidad, planos de detalle, manipulación, presencia de rostro). Porcentajes sobre la duración exacta de la metadata.
 - funcion → 9.10 (opcional por elemento; para la mayoría la respuesta esperada es NO DETERMINABLE)
-- interpretacion → 9.11, cada entrada marcada [INT] y con su timestamp o ID
+- interpretacion → 9.11, cada entrada marcada [INT] y con su timestamp o ID. Incluye técnica de apertura, disparador y registro de producción si el registro lo sostiene.
 - patrones → 9.12, mínimo 3, cada uno superando la prueba de cambio de sujeto
+- plan_rodaje → el PLAN GENERAL con que empieza 9.13 (setup, secuencia, sujetos con su perfil para recreación [INT])
 - recreacion → 9.13, una entrada por plano del mapa de planos
 - limites → 9.14. Incluye los límites declarados por cada fragmento (abajo) y agrega los tuyos.
 - resumen_corto: UNA frase de observación física para la ficha de la biblioteca de la app (sin interpretación).
@@ -599,6 +609,14 @@ export function renderV6Record(input: {
     '',
     `DISEÑO SONORO: ${g.diseno_sonoro}`,
     '',
+    '**ARQUITECTURA DE RETENCIÓN**',
+    '',
+    g.arquitectura_retencion ?? '[ND] — registro producido con una versión del protocolo anterior a v6.1.',
+    '',
+    '**SUJETO PRINCIPAL Y MANIPULACIÓN**',
+    '',
+    g.sujeto_principal_manipulacion ?? '[ND] — registro producido con una versión del protocolo anterior a v6.1.',
+    '',
     '## 9.10 Función / posible uso',
     '',
   )
@@ -615,6 +633,18 @@ export function renderV6Record(input: {
   }
 
   out.push('## 9.13 Ficha de recreación por plano', '')
+  if (p3.plan_rodaje) {
+    out.push(
+      '**PLAN GENERAL**',
+      '',
+      `SETUP: ${p3.plan_rodaje.setup}`,
+      '',
+      `SECUENCIA: ${p3.plan_rodaje.secuencia}`,
+      '',
+      `SUJETOS: ${p3.plan_rodaje.sujetos}`,
+      '',
+    )
+  }
   for (const r of p3.recreacion) {
     out.push(
       `**${r.plano}** (${r.duracion})`,
