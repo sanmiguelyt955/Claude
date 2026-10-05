@@ -21,7 +21,7 @@ import type { AnalysisResult } from './schema.js'
  * rendered separately by renderV6Record().
  */
 
-export const PROTOCOL_VERSION = 'v6.2'
+export const PROTOCOL_VERSION = 'v6.3'
 
 let protocolText: string | undefined
 
@@ -87,6 +87,7 @@ export const V6_PHASE1_SCHEMA = obj({
       altura: STR,
       movimiento: STR,
       composicion: STR,
+      fondo_superficie: STR,
       iluminacion: STR,
       entrada_salida: STR,
     }),
@@ -130,7 +131,12 @@ export type V6Phase1 = {
   triaje: Record<string, string>
   procedencia: string[]
   entidades: Array<{ id: string; primera_aparicion: string; descripcion_fisica: string; identificacion: string; apariciones: string }>
-  planos: Array<Record<'id' | 'inicio' | 'fin' | 'duracion' | 'escala' | 'angulo' | 'altura' | 'movimiento' | 'composicion' | 'iluminacion' | 'entrada_salida', string>>
+  planos: Array<
+    Record<'id' | 'inicio' | 'fin' | 'duracion' | 'escala' | 'angulo' | 'altura' | 'movimiento' | 'composicion' | 'iluminacion' | 'entrada_salida', string> & {
+      /** v6.3+ — absent in records produced under earlier versions. */
+      fondo_superficie?: string
+    }
+  >
   textos_pantalla: Array<Record<'id' | 'aparece' | 'desaparece' | 'duracion' | 'tipo' | 'posicion' | 'contenido' | 'apariencia' | 'animacion', string>>
 }
 
@@ -164,7 +170,7 @@ El registro se produce en tres fases porque no cabe en una sola respuesta (secci
 - ficha_tecnica + triaje → 9.1 (los ocho ejes, 0 a 7, de la sección 7). La fuente de esta llamada es un VIDEO: eje0_fuente = "video".
 - procedencia → 9.2, una observación por elemento de la lista.
 - entidades → 9.3. Asigna aquí los IDs DEFINITIVOS (P#, A#, O#, I#, E#, C#, F#) de TODO el video: la fase 2 los usará tal cual. "apariciones" con la notación de asterisco tras cada corte.
-- planos → 9.4, un elemento por plano, IDs PL1, PL2... en orden. Si no hay cortes, un solo plano.
+- planos → 9.4, un elemento por plano, IDs PL1, PL2... en orden. Si no hay cortes, un solo plano. "fondo_superficie" = FONDO Y SUPERFICIE; la iluminación, descrita por sus efectos (CASO 32).
 - textos_pantalla → 9.7. Array vacío si no aparece texto en pantalla.
 
 Los timestamps dentro de los textos van en formato mm:ss o mm:ss.s, tiempo absoluto del video.
@@ -258,7 +264,7 @@ ENTREGA, en el JSON del esquema dado:
 
 timeline → 9.5 para ESTE fragmento. Una entrada por segundo, sin saltos ni solapes: start_seconds=${first}, end_seconds=${first + 1}; luego ${first + 1}–${first + 2}; ... hasta la última, que termina exactamente en ${b}. Los números son TIEMPO ABSOLUTO del video.
 - vis, aud, txt, cam: los cuatro canales SIEMPRE presentes. Si un canal no tiene novedades, escribe "sin cambios"; nunca lo dejes vacío.
-- aud es obligatorio en CADA segundo: habla ("VOZ 1 habla"), música, ambiente, efectos o silencio (distinguiendo silencio total de la ausencia de una capa).
+- aud es obligatorio en CADA segundo: habla ("VOZ 1 habla"), música, ambiente, efectos, sonidos de contacto o manipulación, o silencio (distinguiendo silencio total de la ausencia de una capa).
 - sin_cambios=true solo si el segundo no tiene ningún cambio observable; entonces vis = "SIN CAMBIOS OBSERVABLES. Persisten: [...]". Nunca rellenes un segundo estable con microacciones que no viste (CASO 21).
 - cortes: una línea "CORTE en mm:ss.s → PL#" por cada corte dentro de ese segundo; array vacío si no hay.
 transcript → 9.6 del fragmento. Literal, palabra por palabra, con muletillas, [pausa N s], [énfasis en "palabra"], [INAUDIBLE]. Nunca paráfrasis. Tiempos absolutos. Array vacío solo si no hay habla en el fragmento.
@@ -389,11 +395,11 @@ En esta llamada NO tienes el video. Tienes el registro ya producido en las fases
 
 ENTREGA, en el JSON del esquema dado:
 - cambios_estado → 9.8
-- gramatica → 9.9. Incluye ARQUITECTURA DE RETENCIÓN (apertura, sujeto principal, cambios de estado con su %, sonido en el mayor cambio, llamadas a la acción, cierre) y SUJETO PRINCIPAL Y MANIPULACIÓN (zonas, visibilidad, planos de detalle, manipulación, presencia de rostro). Porcentajes sobre la duración exacta de la metadata.
+- gramatica → 9.9. "estructura_temporal" incluye la SECUENCIA DE TRAMOS (inicio, fin y % de cada uno) y los HITOS. "arquitectura_retencion": apertura de 00:00 a 00:04, marcadores de fin de apertura, sujeto principal, cambios de estado con su %, estado final visible, sonido en el mayor cambio y en el estado final visible, llamadas a la acción (también gestuales, como [INT]) y cierre. "sujeto_principal_manipulacion": zonas mostradas, visibilidad, planos de detalle, secuencia de configuraciones, manipulación (agarres, rotaciones, gestos de señalamiento, uñas) y presencia de rostro con todos sus campos por aparición. Porcentajes sobre la duración exacta de la metadata.
 - funcion → 9.10 (opcional por elemento; para la mayoría la respuesta esperada es NO DETERMINABLE)
-- interpretacion → 9.11, cada entrada marcada [INT] y con su timestamp o ID. Incluye técnica de apertura, disparador y registro de producción si el registro lo sostiene.
-- patrones → 9.12, mínimo 3, cada uno superando la prueba de cambio de sujeto
-- plan_rodaje → el PLAN GENERAL con que empieza 9.13 (setup, secuencia, sujetos con su perfil para recreación [INT])
+- interpretacion → 9.11, cada entrada marcada [INT] y con su timestamp o ID. Una entrada por cada una de: técnica de apertura, disparador, mecanismo psicológico principal, estructura narrativa (con el % del clímax y su criterio), formato de presentación, papel del rostro (solo si aparece alguno), acción buscada y registro de producción. La que el registro no sostenga no se escribe y se declara en limites.
+- patrones → 9.12, objetivo 3 o más, cada uno superando la prueba de cambio de sujeto. Si el registro no sostiene 3, entrega los que sí y declara el motivo en limites; nunca inventes uno para llegar a la cifra (CASO 31).
+- plan_rodaje → el PLAN GENERAL con que empieza 9.13 (setup, secuencia con la manipulación, sujetos con su perfil para recreación [INT] y cada aparición de rostro)
 - recreacion → 9.13, una entrada por plano del mapa de planos
 - limites → 9.14. Incluye los límites declarados por cada fragmento (abajo) y agrega los tuyos.
 - resumen_corto: UNA frase de observación física para la ficha de la biblioteca de la app (sin interpretación).
@@ -568,6 +574,7 @@ export function renderV6Record(input: {
       `ALTURA: ${p.altura}`,
       `MOVIMIENTO: ${p.movimiento}`,
       `COMPOSICIÓN: ${p.composicion}`,
+      `FONDO Y SUPERFICIE: ${p.fondo_superficie ?? '[ND] — registro producido con una versión del protocolo anterior a v6.3.'}`,
       `ILUMINACIÓN: ${p.iluminacion}`,
       `ENTRADA / SALIDA: ${p.entrada_salida}`,
       '',
