@@ -21,7 +21,7 @@ import type { AnalysisResult } from './schema.js'
  * rendered separately by renderV6Record().
  */
 
-export const PROTOCOL_VERSION = 'v6.3'
+export const PROTOCOL_VERSION = 'v6.4'
 
 let protocolText: string | undefined
 
@@ -166,8 +166,8 @@ ${metaBlock(meta)}
 
 El registro se produce en tres fases porque no cabe en una sola respuesta (sección 8: se divide, nunca se resume). En ESTA llamada ves el video COMPLETO y entregas SOLO estas secciones, en el JSON del esquema dado:
 
-- ficha → 9.0 (sin los campos "fuente" ni "fuente_tipo": los pone la app). "planos" = número de planos.
-- ficha_tecnica + triaje → 9.1 (los ocho ejes, 0 a 7, de la sección 7). La fuente de esta llamada es un VIDEO: eje0_fuente = "video".
+- ficha → 9.0 (sin los campos "fuente", "fuente_tipo" ni "acceso": los pone la app). "planos" = número de planos.
+- ficha_tecnica + triaje → 9.1 (los ocho ejes, 0 a 7, de la sección 7). La fuente de esta llamada es un VIDEO con acceso directo continuo: eje0_fuente = "video; acceso directo continuo".
 - procedencia → 9.2, una observación por elemento de la lista.
 - entidades → 9.3. Asigna aquí los IDs DEFINITIVOS (P#, A#, O#, I#, E#, C#, F#) de TODO el video: la fase 2 los usará tal cual. "apariciones" con la notación de asterisco tras cada corte.
 - planos → 9.4, un elemento por plano, IDs PL1, PL2... en orden. Si no hay cortes, un solo plano. "fondo_superficie" = FONDO Y SUPERFICIE; la iluminación, descrita por sus efectos (CASO 32).
@@ -611,6 +611,9 @@ export function renderV6Record(input: {
     // The app only ingests video files; audio and transcript sources are
     // covered by the protocol itself when it is used outside the app.
     'fuente_tipo: video',
+    // Gemini receives the whole file (sampled at a fixed fps), never a
+    // derived extraction — protocol v6.4 "acceso directo continuo".
+    'acceso: directo',
     `duracion: ${yamlValue(f.duracion)}`,
     `duracion_origen: ${yamlValue(f.duracion_origen)}`,
     `relacion_aspecto: ${yamlValue(f.relacion_aspecto)}`,

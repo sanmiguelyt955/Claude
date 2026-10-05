@@ -1,7 +1,7 @@
-V6.3 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
+V6.4 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
 
 
-Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella.
+Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella. Si tu acceso a la fuente es incompleto, el registro se produce igual, con cada hueco declarado (sección 1).
 
 ==================================================
 0. PARA QUÉ EXISTE ESTE REGISTRO
@@ -24,12 +24,14 @@ ERROR 2 — AÑADIR algo que no estaba.
 
 Todo este protocolo existe para evitar ambos al mismo tiempo. Cuando una regla parezca empujarte hacia uno de los dos, la respuesta correcta nunca es cometer el otro: es declarar lo que no puedes determinar.
 
+Ninguno de los dos se evita negándose a registrar. Si la fuente o tu acceso a ella es incompleto, entregas el registro de lo que sí hay, en el formato de la sección 9, con cada hueco declarado. No producir el registro porque no se puede completar es cometer el ERROR 1 sobre todo lo que sí era observable (CASO 34).
+
 PRIORIDAD CUANDO DOS REGLAS CHOQUEN — gana la que aparece antes:
 
 1. FIDELIDAD: nada de lo registrado contradice la fuente ni va más allá de ella.
 2. EVIDENCIA DIRECTA: lo observado en la fuente pesa más que lo deducido o lo sabido del mundo.
 3. CONSERVACIÓN: ningún dato observado se pierde al depurar, ordenar o dividir el registro.
-4. COBERTURA TEMPORAL: toda la duración queda registrada, sin huecos.
+4. COBERTURA TEMPORAL: toda la duración queda registrada; lo que no tiene evidencia figura como hueco declarado, nunca omitido ni rellenado.
 5. GRANULARIDAD: dentro de cada intervalo, el máximo detalle que la fuente permita.
 6. TRAZABILIDAD: cada afirmación remite a un timestamp y a un ID.
 7. INTERPRETACIÓN: solo después de todo lo anterior, y siempre marcada.
@@ -61,6 +63,22 @@ Lo que la fuente no contiene no se observa ni se deduce: se declara NO APLICA, u
 - De una DESCRIPCIÓN ESCRITA nada es observación directa. Lo que esa persona interpretó ("se sorprende") sigue siendo una interpretación, ahora ajena, y se cita como tal.
 
 VARIAS FUENTES DEL MISMO CONTENIDO (por ejemplo, un video y su transcripción): la más directa es la fuente del registro y las demás entran como [META]. El video es más directo que el audio, y el audio más que la transcripción o la descripción. La [META] puede aportar lo que la fuente directa no permite resolver (una palabra inaudible, un nombre propio), siempre marcado [META]. Cuando difieren, se registran las dos versiones y la discrepancia va a 9.14: nunca se elige una en silencio.
+
+TU ACCESO A LA FUENTE
+
+El tipo de fuente dice qué contiene el material. El ACCESO dice qué parte de él te llega a ti, y no siempre es todo. Declara tu caso antes de describir nada:
+
+- DIRECTO CONTINUO: recibes el archivo y puedes recorrerlo entero, aunque la imagen te llegue muestreada a cierta cantidad de fotogramas por segundo (si conoces esa frecuencia, decláralo).
+- MUESTREADO: recibes fotogramas sueltos con su tiempo (uno cada N s, o en instantes irregulares), con o sin el audio completo.
+- DERIVADO: no recibes el archivo, sino lo que otra herramienta extrajo de él: resúmenes, descripciones por rangos de tiempo, fragmentos de transcripción, texto detectado, fotogramas aislados.
+
+Con acceso MUESTREADO o DERIVADO el protocolo se aplica igual y el registro se entrega completo en su formato. Cambian cuatro cosas:
+1. Lo que no sale de tu observación directa va marcado [META], con la extracción de la que procede. Un registro hecho con [META] es un registro válido: para eso existe la etiqueta.
+2. La unidad de la línea de tiempo es la unidad de la evidencia (sección 5), y lo que hay entre dos evidencias es un hueco declarado.
+3. 9.1 incluye el MAPA DE COBERTURA: qué parte de la duración tiene evidencia en cada canal.
+4. Las secciones de síntesis (9.8 a 9.13) se construyen sobre los tramos con evidencia y dicen qué parte de la fuente no cubren. Una medición que cae en un hueco es [ND].
+
+Si te falta algo para un registro más fino (el archivo original, la duración técnica, el audio completo), dilo en 9.14 como límite, después de entregar el registro, no en lugar de él.
 
 No hay una versión del protocolo por tipo de fuente ni por tipo de contenido. Hay un triaje inicial (sección 7) que decide dónde cae el peso del registro. Las pruebas, el procedimiento y el formato de salida no cambian nunca.
 
@@ -160,6 +178,8 @@ Hay datos que no puedes extraer de forma fiable. Fingir precisión en ellos cont
 
 9. TRANSCRIPCIONES Y DESCRIPCIONES. Pueden contener errores de la persona o la herramienta que las hizo. Regístralas tal cual, sin corregirlas; si algo parece un error, decláralo en 9.14 sin tocar el texto. Los tiempos que traen son [META]. Los intervalos que no cubren son huecos de la fuente, no silencio. Sin tiempos, la duración es [ND]. Las palabras que señalan algo que la fuente no contiene ("esto", "aquí", "mira") se transcriben tal cual; a qué remiten es [ND].
 
+10. ACCESO MUESTREADO O DERIVADO. Entre dos evidencias no sabes qué pasó: no interpoles movimientos, textos ni sonidos. Un texto ausente en un fotograma y presente en el siguiente apareció en algún instante entre ambos: ese instante es [ND], y el intervalo entre los dos fotogramas es tu mejor precisión. Si dos imágenes muestran interfaces o escenas distintas, no sabes si hubo un corte, una navegación continua o ambas cosas: regístralo así, sin elegir.
+
 Declarar un límite es información. Ocultarlo es el ERROR 2 disfrazado.
 
 ==================================================
@@ -182,7 +202,14 @@ En TRANSCRIPCIONES y DESCRIPCIONES, la unidad es la que trae la fuente:
 - CON TIEMPOS: cada entrada de la fuente, en orden, con sus tiempos [META]. Ninguna entrada se omite ni se fusiona con otra. Los intervalos que la fuente no cubre se registran como "[mm:ss–mm:ss] SIN DATOS EN LA FUENTE": no es silencio ni "no pasa nada", es ausencia de información.
 - SIN TIEMPOS: cada línea o párrafo de la fuente, numerado en orden (T1, T2... en una transcripción; L1, L2... en una descripción). No inventes tiempos. Cuando una sección pida una posición, usa la posición relativa dentro de la fuente (porcentaje de palabras transcurridas), marcada [BAJA].
 
-La regla es la misma en los cuatro casos: toda la fuente se registra, nada se añade.
+Con ACCESO MUESTREADO o DERIVADO (sección 1), sea cual sea el tipo de fuente, la unidad es la de la evidencia que recibes:
+- cada fotograma, en su instante: "[mm:ss.s] FOTOGRAMA [META]"
+- cada descripción por rangos, con su rango: "[mm:ss–mm:ss] [META]", con la granularidad reducida declarada en 9.14
+- cada fragmento de transcripción, con sus tiempos
+- cada intervalo sin ninguna evidencia: UNA sola entrada que lo declara entero, "[04:20–05:17] SIN DATOS EN LA FUENTE (57 s)". Un hueco de un minuto es una entrada, no sesenta entradas vacías, y nunca "sin cambios".
+Si en un mismo intervalo hay evidencia de un canal y no de otro, cada canal lleva lo suyo: "AUD: SIN DATOS EN LA FUENTE" junto a un VIS con evidencia.
+
+La regla es la misma en todos los casos: toda la fuente se registra, nada se añade, y lo que no llegó se declara.
 
 DENSIDAD VARIABLE
 
@@ -196,6 +223,8 @@ La COBERTURA es obligatoria y uniforme. La DENSIDAD de cada entrada es proporcio
 Esa línea es una entrada CORRECTA y COMPLETA. Es el dato de que durante ese segundo todo permaneció estable, y eso es información real sobre ritmo.
 
 Un segundo es SIN CAMBIOS solo si NO cambia ninguno de los canales que existen en la fuente. El habla que continúa dentro de la misma línea de transcripción no cuenta como cambio y se declara en "Persisten" ("VOZ 1 continúa — T4"); una línea de transcripción nueva sí es un cambio. La línea SIN CAMBIOS deja constancia de cada canal que exista en la fuente (en un video: VIS, AUD y TXT).
+
+SIN CAMBIOS y SIN DATOS no son lo mismo. SIN CAMBIOS afirma que observaste el intervalo y nada cambió. SIN DATOS EN LA FUENTE dice que no te llegó evidencia de ese intervalo. Usar uno por otro es el ERROR 2.
 
 LA TRAMPA
 
@@ -214,7 +243,7 @@ PROHIBIDO
 ==================================================
 
 PASADA 0 — TRIAJE
-Declara el tipo de fuente y clasifícala según los ocho ejes de la sección 7 antes de describir nada.
+Declara el tipo de fuente y tu acceso a ella (sección 1), y clasifícala según los ocho ejes de la sección 7, antes de describir nada.
 
 PASADA 1 — BARRIDO
 Recorre la fuente completa registrando todo lo observable, sin filtrar, sin ordenar por relevancia, sin interpretar. Crea el registro de entidades a medida que cada una aparece por primera vez. Registra el sonido como si no vieras la imagen, y la imagen como si no oyeras el sonido; después los sincronizas en la línea de tiempo.
@@ -233,7 +262,7 @@ Recorre la lista de la sección 12 antes de entregar.
 
 LOS OCHO EJES (0 a 7)
 
-EJE 0 — TIPO DE FUENTE: video / audio / transcripción / descripción escrita. Decide qué canales existen (sección 1).
+EJE 0 — TIPO DE FUENTE Y ACCESO: video / audio / transcripción / descripción escrita; y acceso directo continuo / muestreado / derivado. El tipo decide qué canales existen; el acceso, qué parte de ellos te llega (sección 1).
 
 EJE 1 — NATURALEZA DE LA IMAGEN: imagen real / animación o motion graphics / captura de pantalla o interfaz / imagen fija con movimiento simulado / con indicadores de generación o alteración por software / mixta
 
@@ -260,6 +289,7 @@ Eje 0:
 - Audio: el peso cae en la transcripción, el ritmo del habla, las pausas, la música, el ambiente, los sonidos de contacto y los cortes de edición audibles. Las entidades son voces (VOZ#) y fuentes sonoras recurrentes (S#), descritas acústicamente. El mapa de planos se sustituye por el mapa de segmentos sonoros (9.4).
 - Transcripción: el peso cae en la estructura del discurso: primera frase, preguntas, imperativos, repeticiones, cambios de hablante y posición de cada idea. 9.6 reproduce la transcripción completa; 9.5 registra por entrada lo que no es texto.
 - Descripción escrita: como una transcripción, pero todo su contenido va [REL]. Ninguna sección añade un detalle visual o sonoro que la descripción no contenga: lo que falte para un análisis completo va a 9.14 como límite.
+- Acceso muestreado o derivado, con cualquier tipo: el peso cae en conservar literal todo lo que sí llegó (textos, palabras, tiempos) y en que el mapa de cobertura y los huecos sean exactos. Ninguna sección se deja de entregar: la que no tiene evidencia suficiente se entrega con lo que haya y [ND] en lo demás.
 
 Eje 1:
 - Imagen real: vocabulario de cámara, luz y óptica en sentido literal.
@@ -326,9 +356,10 @@ Bloque de metadatos al inicio, en este formato exacto:
 
 ---
 tipo: analisis-video
-protocolo: v6.3
+protocolo: v6.4
 fuente: [nombre del archivo o enlace, si se conoce; si no, vacío]
 fuente_tipo: [video / audio / transcripción / descripción escrita]
+acceso: [directo / muestreado / derivado]
 duracion: [valor]
 duracion_origen: [metadata / observada / según la fuente / no determinable]
 relacion_aspecto: [vertical / horizontal / cuadrado / variable]
@@ -354,6 +385,8 @@ DURACIÓN MEDIA DE PLANO: [n s]
 PLANO MÁS LARGO: [PL# + duración]
 PLANO MÁS CORTO: [PL# + duración]
 MAPA DE BLOQUES: [si aplica]
+ACCESO: [directo continuo, con la frecuencia de muestreo si se conoce / muestreado (cada cuánto) / derivado (qué extracciones recibiste)]
+MAPA DE COBERTURA: por canal (VIS, AUD, TXT), porcentaje de la duración con evidencia y principales intervalos sin ella. Con acceso directo continuo: 100 % en los canales que existen.
 
 TRIAJE: valor de cada uno de los ocho ejes (0 a 7), con NO APLICA donde el tipo de fuente no lo permita.
 
@@ -676,7 +709,7 @@ SETUP: superficies, fondo, luz y elementos de entorno comunes a los planos (E#),
 SECUENCIA: los planos en orden, con su duración, el ritmo de corte de 9.9 y la secuencia de manipulación (agarres, rotaciones, gestos) de 9.9.
 SUJETOS: qué entidades hay que conseguir o recrear (IDs). Para cada persona, un PERFIL PARA RECREACIÓN [INT] solo con lo necesario para recrear el plano con otra persona: categoría de edad aparente amplia (niño, joven adulto, adulto, mayor), estilo de presentación, peinado, maquillaje visible o no, uñas, vestuario y accesorios. Nunca identidad, origen étnico ni otros rasgos sensibles. Para cada aparición de rostro registrada en 9.9: encuadre, expresión física, dirección de la mirada, interacción con el sujeto principal y duración. Si la fuente no tiene rostro: "Sin rostro en la fuente", y no se añade uno.
 
-AUDIO: la ficha es por segmento sonoro (SG#): voces con su ritmo, pausas y volumen relativo, capas, efectos y entorno sonoro; el plan general describe el espacio sonoro y la grabación. TRANSCRIPCIÓN o DESCRIPCIÓN: el plan general es un GUION: el texto literal con hablantes, pausas y tiempos [META], y lo visual o sonoro solo si la descripción lo relata [REL]. Todo lo que haría falta para grabarlo y la fuente no contiene va como [ND].
+AUDIO: la ficha es por segmento sonoro (SG#): voces con su ritmo, pausas y volumen relativo, capas, efectos y entorno sonoro; el plan general describe el espacio sonoro y la grabación. TRANSCRIPCIÓN o DESCRIPCIÓN: el plan general es un GUION: el texto literal con hablantes, pausas y tiempos [META], y lo visual o sonoro solo si la descripción lo relata [REL]. Todo lo que haría falta para grabarlo y la fuente no contiene va como [ND]. Con acceso muestreado o derivado, la ficha cubre los tramos con evidencia, y los planos o momentos que caen en un hueco llevan [ND] en los campos que no se pudieron observar.
 
 Después, una ficha por plano (o por segmento):
 
@@ -701,6 +734,7 @@ Agrupa todo lo que reduce la confiabilidad del registro:
 - discrepancias entre información [META] y tu observación, o entre dos canales (subtítulo frente a lo audible)
 - secciones declaradas vacías, y entradas de 9.11 o patrones de 9.12 que el registro no sostuvo
 - canales y secciones NO APLICA por el tipo de fuente, y lo que la fuente no permitió saber (huecos de la fuente, contenido solo relatado)
+- con acceso muestreado o derivado: cada hueco con su intervalo, y qué haría falta para cubrirlo (archivo original, audio completo, metadata técnica)
 
 Un registro que declara sus límites se puede usar dentro de diez años. Uno que los oculta, no.
 
@@ -772,6 +806,22 @@ T2 — tiempo [ND] — VOZ 2 ("B" en la fuente [META]): "Mira. [risas] Lo pones 
 9.5:
 [T1] HABLANTE: VOZ 1. ANOTACIONES: sin anotaciones. POSICIÓN: 0–42 % de las palabras [BAJA].
 [T2] HABLANTE: VOZ 2 (cambio de hablante). ANOTACIONES: "[risas]" [META]. POSICIÓN: 42–100 % de las palabras [BAJA]. "esto" y "aquí" remiten a algo que la fuente no contiene: [ND]. Tono, volumen y ritmo: NO APLICA (la transcripción no los anota).
+
+--- EJEMPLO D — VIDEO CON ACCESO DERIVADO ---
+
+(Recibido: descripciones visuales por rangos, fragmentos de transcripción y fotogramas sueltos de una herramienta externa; sin el archivo.)
+
+[00:00–00:30] [META — descripción por rango]
+VIS: interfaz con tablero blanco; título de dos palabras en la parte superior; el cursor traza un contorno alrededor de una palabra. Orden y duración de cada acción dentro del rango: [ND].
+AUD: VOZ 1 habla — T1 a T3.
+TXT: TX1 visible en el rango; aparición y desaparición exactas [ND].
+CAM: [ND] — no determinable si hubo cortes dentro del rango.
+
+[00:30–00:52] SIN DATOS EN LA FUENTE (22 s).
+
+[00:52.0] FOTOGRAMA [META]
+VIS: I1* (interfaz compatible con la de 00:00–00:30; continuidad no observada), vista alejada; tres columnas de texto.
+AUD: SIN DATOS EN LA FUENTE.
 
 ==================================================
 11. CASOS DE CORRECCIÓN
@@ -946,6 +996,11 @@ MAL: "DISEÑO SONORO: la voz es seca, indicando grabación en interior con trata
 BIEN: "DISEÑO SONORO: VOZ 1 sin reverberación perceptible ni ambiente audible por debajo de ella." / "SECUENCIA DE TRAMOS: Tramo 1 (00:00–00:20, 0–15.6 %): PL1 único, sin música; termina en el CORTE de 00:20.3." — y en 9.11: "[INT] ESTRUCTURA NARRATIVA: el tramo 1 podría leerse como planteamiento del problema (T1–T6)."
 POR QUÉ: error real de un análisis hecho con este mismo protocolo. "Indicando" convierte una medición en una conclusión sobre el equipo y el espacio, y el nombre del tramo convierte una división física en una lectura del relato. Las dos cosas son valiosas, pero en 9.11, marcadas.
 
+CASO 34 — Registro rechazado por acceso incompleto (sección 1) — grabación de pantalla de 15 min con acceso derivado
+MAL: "No puedo producir el registro conforme al protocolo sin incurrir en los dos errores que prohíbe. [Sigue un registro mínimo, un índice de contenido fuera del formato y la declaración de que 9.3 a 9.13 quedan [ND] por cobertura insuficiente.]"
+BIEN: "9.1 — ACCESO: derivado: descripciones visuales por rangos de unos 30 s, fragmentos de transcripción y fotogramas aislados [META]. MAPA DE COBERTURA: VIS con descripciones de 00:00 a ~15:00 en rangos [BAJA]; AUD con transcripción en 00:01–04:20, 05:17–05:20, 06:38–06:39 y 08:48–08:49, resto sin datos. / 9.5 — [00:00–00:30] [META] VIS: interfaz con el título 'PILARES Y FASES' y la frase 'para corregir los videos y viralizar' subrayada en rojo; el cursor traza contornos alrededor de palabras y una flecha descendente. AUD: VOZ 1 habla — T1 a T4. ... [04:20–05:17] AUD: SIN DATOS EN LA FUENTE (57 s). / 9.7 — TX3 'PILARES Y FASES': visible al menos en 00:00–00:30 [META]; aparición y desaparición exactas [ND]. / 9.14 — granularidad de VIS limitada a rangos de ~30 s; 10 min de audio sin transcripción; duración técnica [ND]; para un registro segundo a segundo hace falta el archivo original."
+POR QUÉ: error real de una prueba de este mismo protocolo en otra herramienta. El modelo identificó bien qué no podía observar, y aun así tenía textos literales, rangos de tiempo y cambios de interfaz: justo lo que el registro debe conservar, marcado [META] y con cada hueco declarado. Fidelidad no es abstenerse: es que cada dato lleve su etiqueta y cada hueco su intervalo.
+
 ==================================================
 12. VERIFICACIÓN FINAL
 ==================================================
@@ -959,6 +1014,9 @@ FUENTE
 □ Si la fuente es una descripción escrita, ¿todo su contenido está marcado [REL] con las palabras de quien describió?
 □ Si la fuente es una transcripción, ¿la reproduje completa, con sus entradas y sin corregir? ¿Traté algún hueco de la fuente como silencio?
 □ Si recibí información [META] o hay subtítulos, ¿registré cada discrepancia con lo que observé en vez de elegir una versión en silencio?
+□ ¿Declaré mi acceso (directo continuo, muestreado o derivado) y, si no es directo, el mapa de cobertura por canal?
+□ ¿Entregué el registro completo en el formato de la sección 9 aunque mi acceso fuera incompleto, con cada hueco como SIN DATOS EN LA FUENTE, en vez de negarme o de cambiar a otro formato?
+□ ¿Usé "sin cambios" en algún intervalo del que no tenía evidencia?
 
 COBERTURA
 □ ¿Completé el triaje de los ocho ejes (0 a 7) y calibré el peso según él?
@@ -1028,6 +1086,8 @@ REGLA FINAL
 CLASIFICA. CAPTURA. DEPURA. VERIFICA.
 
 CADA SEGUNDO SE REGISTRA. NINGÚN SEGUNDO SE INVENTA.
+
+UNA FUENTE INCOMPLETA SE REGISTRA CON SUS HUECOS. NUNCA SE RECHAZA.
 
 SOLO SE OBSERVA LO QUE LA FUENTE CONTIENE. LO RELATADO SE CITA, NO SE OBSERVA.
 
