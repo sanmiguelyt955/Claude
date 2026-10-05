@@ -118,6 +118,26 @@ function markOverloaded(model: string): number {
   return cooldown
 }
 
+/**
+ * The model that last answered, and when. Measured 5 Oct 2026 (Novato, V6.3):
+ * 17 requests for 5 useful answers — every call walked 3.8 → 3.7 → 3.6 → 3.5
+ * into 503s before reaching the one model that was answering. While a model
+ * keeps answering, it goes first; after this window the normal order returns.
+ */
+const LAST_GOOD_TTL_MS = 20 * 60_000
+let lastGood: { model: string; at: number } | undefined
+
+function markAnswered(model: string): void {
+  overloadByModel.delete(model) // answered again: back to full priority
+  lastGood = { model, at: Date.now() }
+}
+
+/** `models` with the recently answering model moved to the front. */
+function preferLastGood(models: string[]): string[] {
+  if (!lastGood || Date.now() - lastGood.at > LAST_GOOD_TTL_MS || !models.includes(lastGood.model)) return models
+  return [lastGood.model, ...models.filter((m) => m !== lastGood!.model)]
+}
+
 function isCoolingDown(model: string): boolean {
   return (overloadByModel.get(model)?.until ?? 0) > Date.now()
 }
@@ -802,7 +822,7 @@ async function analyzeVideoWindowed(
     const prompt = spec.buildPrompt({ windowIndex: i, windowCount: windows.length, start: window.start, end: window.end, durationSeconds })
     let lastError: Error | undefined
 
-    for (const model of models) {
+    for (const model of preferLastGood(models)) {
       if (failure) return
       if (deadModels.has(model)) continue
       // A cooling-down model is skipped while any other usable model exists;
@@ -820,7 +840,7 @@ async function analyzeVideoWindowed(
         try {
           const out = await runStaticWindow(model, uri, mimeType, prompt, window.start, window.end, spec)
           emit({ model, processingMode: 'STATIC', succeeded: true, usage: out.usage, latencyMs: Date.now() - startedAt })
-          overloadByModel.delete(model) // answered again: back to full priority
+          markAnswered(model)
 
           // Coverage check. A model can stop early with no error at all —
           // observed 3 Oct 2026: a 90-130s window came back covering only
@@ -1068,7 +1088,7 @@ async function callJsonWithRotation<T>(opts: {
   let requests = 0
   let lastError: Error | undefined
 
-  for (const model of opts.models) {
+  for (const model of preferLastGood(opts.models)) {
     if (opts.deadModels.has(model)) continue
     const usable = opts.models.filter((m) => !opts.deadModels.has(m))
     const allCooling = usable.every((m) => isCoolingDown(m))
@@ -1099,7 +1119,7 @@ async function callJsonWithRotation<T>(opts: {
         const value = opts.parse(text)
         const usage = usageFromGenerateContent(response.usageMetadata ?? {})
         opts.emit({ model, processingMode: 'STATIC', succeeded: true, usage, latencyMs: Date.now() - startedAt })
-        overloadByModel.delete(model)
+        markAnswered(model)
         return { value, usage, model, requests }
       } catch (error) {
         const message = controller.signal.aborted

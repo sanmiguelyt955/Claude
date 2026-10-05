@@ -571,12 +571,16 @@ AUDIO: los cambios de estado son sonoros: entra o cesa una capa, cambia el ambie
 9.9 GRAMÁTICA AUDIOVISUAL
 --------------------------------------------------
 
-Cómo está construido el video. Todo aquí debe ser medible u observable, referenciado por timestamp o ID. Los nombres de lo que algo "es" dentro del relato (gancho, problema, clímax, demostración) no van aquí: van en 9.11, marcados [INT].
+Cómo está construido el video. Todo aquí debe ser medible u observable, referenciado por timestamp o ID. Los nombres de lo que algo "es" dentro del relato (gancho, problema, diagnóstico, clímax, demostración, énfasis) no van aquí: van en 9.11, marcados [INT].
+
+Esta sección es la que más se contamina, porque resume. Las tres pruebas aplican a cada frase igual que en la línea de tiempo. Si una frase contiene "indica", "indicando", "sugiere", "denota", "revela", "actúa como", "sirve para" o "con el fin de", es una deducción: el dato físico se queda aquí y la deducción va a 9.11 (CASO 33).
+
+Escribe cada medición con su rótulo exacto, tal como aparece abajo, sin abreviarlo.
 
 RITMO DE MONTAJE: secuencia de duraciones de plano [PL1 2.8s, PL2 0.9s, ...]; si acelera, desacelera o se mantiene, y dónde cambia. Patrón que se repite, si lo hay (por ejemplo, dos planos cortos y uno largo).
 
 ESTRUCTURA TEMPORAL:
-- SECUENCIA DE TRAMOS: la fuente dividida en tramos consecutivos según lo que cambia físicamente (aparición del sujeto principal, cambio de su configuración, entrada o salida de habla o música, aparición de texto, último plano). Cada tramo con inicio, fin y porcentaje de la duración, y lo que lo delimita.
+- SECUENCIA DE TRAMOS: la fuente dividida en tramos consecutivos según lo que cambia físicamente (aparición del sujeto principal, cambio de su configuración, entrada o salida de habla o música, aparición de texto, último plano). Cada tramo con inicio, fin y porcentaje de la duración, y el cambio físico que lo delimita. Sin nombrarlo por su papel en el relato: eso es la ESTRUCTURA NARRATIVA de 9.11.
 - HITOS: primer plano (duración y contenido) · primera aparición del sujeto principal · primer texto · primera voz · último plano.
 
 SINCRONÍA: cortes que coinciden con acentos musicales, palabras o efectos · apariciones de texto que coinciden con cortes o acentos · desincronías visibles.
@@ -601,12 +605,11 @@ SUJETO PRINCIPAL Y MANIPULACIÓN — agregados de lo ya registrado, por ID y tim
 - ZONAS MOSTRADAS: partes del sujeto principal que se ven, en orden de primera aparición, descritas físicamente.
 - VISIBILIDAD: intervalos en que aparece completo y en que aparece parcial, con su número.
 - PLANOS DE DETALLE: cuáles son y qué parte del sujeto principal ocupa el cuadro en cada uno.
-- SECUENCIA DE CONFIGURACIONES: los estados físicos por los que pasa el sujeto principal, en orden y con timestamps (por ejemplo: dentro de un envoltorio → fuera de él; piezas separadas → unidas; sobre una superficie → en contacto con el cuerpo de P1).
-- MANIPULACIÓN: configuraciones de agarre observadas (qué mano, qué dedos, dónde contactan), número de rotaciones con su sentido y su eje, contactos breves que no llegan a agarre, y gestos de señalamiento o enmarcado (un dedo que señala, recorre o rodea una parte del sujeto principal). Uñas visibles, según 9.3. Si no hay manos en cuadro: "No se observa manipulación con manos."
+- MANIPULACIÓN: configuraciones de agarre observadas (qué mano, qué dedos, dónde contactan), número de rotaciones con su sentido y su eje, contactos breves que no llegan a agarre, y gestos de señalamiento o enmarcado (un dedo que señala, recorre o rodea una parte del sujeto principal). Si no hay manos en cuadro: "No se observa manipulación con manos."
 - PRESENCIA DE ROSTRO (humano o no: personaje, muñeco, avatar): número de apariciones y, para cada una: ID, intervalo y duración, porción visible (completo, perfil, parcial, solo ojos o boca, cabeza y hombros, cuerpo entero), escala y ángulo del plano, expresión descrita físicamente, dirección de la mirada (al objetivo, al sujeto principal, fuera de cuadro), interacción física con el sujeto principal (lo sostiene, lo toca, lo mira, ninguna), y si aparece antes de la primera aparición del sujeto principal, junto a él o después. Si no aparece ninguno: "No aparece ningún rostro."
 
 SEGÚN LA FUENTE
-- AUDIO: el RITMO DE MONTAJE se mide sobre los segmentos sonoros (SG#), y se añade RITMO DEL HABLA: palabras por minuto por tramo y pausas de más de 1 s con su timestamp. La APERTURA es sonora (primer sonido, primera palabra y primera capa musical dentro de los primeros 4 s). El SUJETO PRINCIPAL es la voz o fuente sonora que más tiempo suena; sus cambios de estado son cambios sonoros. ZONAS MOSTRADAS, VISIBILIDAD, PLANOS DE DETALLE, SECUENCIA DE CONFIGURACIONES y PRESENCIA DE ROSTRO: NO APLICA. MANIPULACIÓN: solo los sonidos de manipulación audibles, descritos acústicamente.
+- AUDIO: el RITMO DE MONTAJE se mide sobre los segmentos sonoros (SG#), y se añade RITMO DEL HABLA: palabras por minuto por tramo y pausas de más de 1 s con su timestamp. La APERTURA es sonora (primer sonido, primera palabra y primera capa musical dentro de los primeros 4 s). El SUJETO PRINCIPAL es la voz o fuente sonora que más tiempo suena; sus cambios de estado son cambios sonoros. ZONAS MOSTRADAS, VISIBILIDAD, PLANOS DE DETALLE y PRESENCIA DE ROSTRO: NO APLICA. MANIPULACIÓN: solo los sonidos de manipulación audibles, descritos acústicamente.
 - TRANSCRIPCIÓN: la ARQUITECTURA DE RETENCIÓN se mide sobre el texto: primera frase completa, primera pregunta, imperativos, repeticiones, cambios de hablante, posición de cada llamada a la acción. Las posiciones van en tiempo [META] si la fuente lo trae; si no, en % de palabras [BAJA]. Las demás mediciones visuales y sonoras: NO APLICA.
 - DESCRIPCIÓN: solo lo que la descripción relate, marcado [REL]. Los porcentajes se calculan sobre los tiempos que la descripción dé; si no da tiempos, son [ND].
 
@@ -641,7 +644,6 @@ Si el registro lo sostiene, incluye además estas entradas, cada una por separad
 - DISPARADOR: qué, dentro de la APERTURA, podría hacer que alguien deje de desplazarse por el feed.
 - MECANISMO PSICOLÓGICO PRINCIPAL: qué podría sostener la atención o generar deseo a lo largo del video (curiosidad no resuelta, contraste antes y después, satisfacción sensorial, sorpresa, identificación con un problema, ternura, nostalgia, prueba social u otro). Escríbelo como mecanismo aplicable a otro producto, no como resumen del contenido.
 - ESTRUCTURA NARRATIVA: cómo podría leerse la SECUENCIA DE TRAMOS de 9.9 (por ejemplo: problema, presentación, demostración, resultado, cierre), con el timestamp y el % de cada tramo, y dónde podría situarse el clímax, con su % y el criterio usado.
-- FORMATO DE PRESENTACIÓN: desempaque / montaje / demostración de uso / exhibición / comparación / tutorial / reacción / otro, apoyado en la SECUENCIA DE CONFIGURACIONES de 9.9.
 - PAPEL DEL ROSTRO: qué podría aportar cada aparición registrada (conexión humana, confianza, reacción, escala, claridad de la demostración, ternura) y si el video podría funcionar sin ella. Si no aparece ningún rostro, esta entrada no se escribe: la ausencia ya consta en 9.9.
 - ACCIÓN BUSCADA: hacia qué acción podría dirigir el video al espectador, a partir de las LLAMADAS A LA ACCIÓN de 9.9. Si no se registró ninguna: "No hay evidencia de una acción buscada."
 - REGISTRO DE PRODUCCIÓN: si el material se presenta como contenido de usuario, publicación orgánica, anuncio de marca o demostración, y qué elementos registrados lo acercan a uno u otro, apoyado en 9.2 y 9.4.
@@ -939,6 +941,11 @@ MAL: "ILUMINACIÓN: aro de luz frontal y luz de ventana a la izquierda."
 BIEN: "ILUMINACIÓN: reflejo especular circular blanco en ambas pupilas de P1; sombras de bordes difusos bajo la barbilla; la mitad izquierda del rostro, con temperatura aparente más fría que la derecha. [INT] el reflejo circular es compatible con una fuente de luz anular frontal."
 POR QUÉ: el equipo no aparece en cuadro; aparecen sus efectos. Registrar los efectos permite recrear la luz y deja la deducción marcada como tal.
 
+CASO 33 — Deducción dentro de una medición (9.9) — habla a cámara
+MAL: "DISEÑO SONORO: la voz es seca, indicando grabación en interior con tratamiento acústico." / "SECUENCIA DE TRAMOS: Tramo 1 (00:00–00:20) planteamiento del problema; Tramo 2 (00:20–01:03) diagnóstico."
+BIEN: "DISEÑO SONORO: VOZ 1 sin reverberación perceptible ni ambiente audible por debajo de ella." / "SECUENCIA DE TRAMOS: Tramo 1 (00:00–00:20, 0–15.6 %): PL1 único, sin música; termina en el CORTE de 00:20.3." — y en 9.11: "[INT] ESTRUCTURA NARRATIVA: el tramo 1 podría leerse como planteamiento del problema (T1–T6)."
+POR QUÉ: error real de un análisis hecho con este mismo protocolo. "Indicando" convierte una medición en una conclusión sobre el equipo y el espacio, y el nombre del tramo convierte una división física en una lectura del relato. Las dos cosas son valiosas, pero en 9.11, marcadas.
+
 ==================================================
 12. VERIFICACIÓN FINAL
 ==================================================
@@ -978,8 +985,9 @@ DETALLE
 ESTRUCTURA
 □ ¿Medí en 9.9 la apertura de 4 s y sus marcadores de fin, el sujeto principal, los cambios de estado con su %, el estado final visible, el sonido en esos momentos, las llamadas a la acción (también las gestuales) y el cierre?
 □ ¿Dividí la fuente en tramos medibles, con inicio, fin y %?
-□ ¿Agregué zonas mostradas, visibilidad, planos de detalle, secuencia de configuraciones, manipulación y cada aparición de rostro con todos sus campos, o declaré que no existen?
-□ ¿9.11 contiene técnica de apertura, disparador, mecanismo psicológico, estructura narrativa, formato de presentación, papel del rostro, acción buscada y registro de producción, cada una con su evidencia, y declaré en 9.14 las que el registro no sostiene?
+□ ¿Agregué zonas mostradas, visibilidad, planos de detalle, manipulación y cada aparición de rostro con todos sus campos, o declaré que no existen?
+□ ¿Escribí cada medición de 9.9 con su rótulo exacto? ¿Quedó en 9.9 alguna deducción ("indicando", "sugiere", "actúa como") o algún nombre de papel en el relato?
+□ ¿9.11 contiene técnica de apertura, disparador, mecanismo psicológico, estructura narrativa, papel del rostro, acción buscada y registro de producción, cada una con su evidencia, y declaré en 9.14 las que el registro no sostiene?
 □ ¿El plan general de 9.13 permite recrear el video sin verlo, y el perfil para recreación evita identidad y rasgos sensibles?
 
 PRUEBA 1 — SUPERVIVENCIA

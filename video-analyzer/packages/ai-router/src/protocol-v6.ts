@@ -329,19 +329,49 @@ export function parseV6Window(text: string): AnalysisResult {
 
 // ─── Phase 3: synthesis from the record, no video ────────────────────────
 
+/**
+ * 9.9 sub-measurements as [schema key, exact protocol label]. Asked as separate
+ * fields since v6.3: as free text the model abbreviated the labels
+ * ("MARCADORES", "CAMBIOS ESTADO") on 5 Oct 2026, so the app now writes them.
+ */
+const ESTRUCTURA_FIELDS = [
+  ['secuencia_tramos', 'SECUENCIA DE TRAMOS'],
+  ['hitos', 'HITOS'],
+] as const
+const RETENCION_FIELDS = [
+  ['apertura', 'APERTURA (00:00–00:04)'],
+  ['marcadores_fin_apertura', 'MARCADORES DE FIN DE APERTURA'],
+  ['sujeto_principal', 'SUJETO PRINCIPAL'],
+  ['cambios_estado_sujeto', 'CAMBIOS DE ESTADO DEL SUJETO PRINCIPAL'],
+  ['estado_final_visible', 'ESTADO FINAL VISIBLE'],
+  ['sonido_momentos_clave', 'SONIDO EN EL MAYOR CAMBIO Y EN EL ESTADO FINAL VISIBLE'],
+  ['llamadas_accion', 'LLAMADAS A LA ACCIÓN'],
+  ['cierre', 'CIERRE'],
+] as const
+const SUJETO_FIELDS = [
+  ['zonas_mostradas', 'ZONAS MOSTRADAS'],
+  ['visibilidad', 'VISIBILIDAD'],
+  ['planos_detalle', 'PLANOS DE DETALLE'],
+  ['manipulacion', 'MANIPULACIÓN'],
+  ['presencia_rostro', 'PRESENCIA DE ROSTRO'],
+] as const
+
+type LabeledFields = readonly (readonly [string, string])[]
+const fieldsObj = (fields: LabeledFields) => obj(Object.fromEntries(fields.map(([k]) => [k, STR])))
+
 export const V6_PHASE3_SCHEMA = obj({
   resumen_corto: STR,
   temas: STR_ARR,
   cambios_estado: { type: 'array', items: obj({ timestamp: STR, antes: STR, transicion: STR, despues: STR, no_determinable: STR }) },
   gramatica: obj({
     ritmo_montaje: STR,
-    estructura_temporal: STR,
+    estructura_temporal: fieldsObj(ESTRUCTURA_FIELDS),
     sincronia: STR,
     coreografia_texto: STR,
     continuidad: STR,
     diseno_sonoro: STR,
-    arquitectura_retencion: STR,
-    sujeto_principal_manipulacion: STR,
+    arquitectura_retencion: fieldsObj(RETENCION_FIELDS),
+    sujeto_principal_manipulacion: fieldsObj(SUJETO_FIELDS),
   }),
   plan_rodaje: obj({ setup: STR, secuencia: STR, sujetos: STR }),
   funcion: { type: 'array', items: obj({ elemento: STR, evidencia: STR, posible_funcion: STR, no_determinable: STR }) },
@@ -368,10 +398,12 @@ export type V6Phase3 = {
   resumen_corto: string
   temas: string[]
   cambios_estado: Array<Record<'timestamp' | 'antes' | 'transicion' | 'despues' | 'no_determinable', string>>
-  gramatica: Record<'ritmo_montaje' | 'estructura_temporal' | 'sincronia' | 'coreografia_texto' | 'continuidad' | 'diseno_sonoro', string> & {
+  gramatica: Record<'ritmo_montaje' | 'sincronia' | 'coreografia_texto' | 'continuidad' | 'diseno_sonoro', string> & {
+    /** Free text before v6.3; one field per labeled measurement since. */
+    estructura_temporal: string | Record<string, string>
     /** v6.1+ — absent in records produced under v6.0. */
-    arquitectura_retencion?: string
-    sujeto_principal_manipulacion?: string
+    arquitectura_retencion?: string | Record<string, string>
+    sujeto_principal_manipulacion?: string | Record<string, string>
   }
   /** v6.1+ — the general plan that opens 9.13. */
   plan_rodaje?: Record<'setup' | 'secuencia' | 'sujetos', string>
@@ -395,9 +427,10 @@ En esta llamada NO tienes el video. Tienes el registro ya producido en las fases
 
 ENTREGA, en el JSON del esquema dado:
 - cambios_estado → 9.8
-- gramatica → 9.9. "estructura_temporal" incluye la SECUENCIA DE TRAMOS (inicio, fin y % de cada uno) y los HITOS. "arquitectura_retencion": apertura de 00:00 a 00:04, marcadores de fin de apertura, sujeto principal, cambios de estado con su %, estado final visible, sonido en el mayor cambio y en el estado final visible, llamadas a la acción (también gestuales, como [INT]) y cierre. "sujeto_principal_manipulacion": zonas mostradas, visibilidad, planos de detalle, secuencia de configuraciones, manipulación (agarres, rotaciones, gestos de señalamiento, uñas) y presencia de rostro con todos sus campos por aparición. Porcentajes sobre la duración exacta de la metadata.
+- gramatica → 9.9, un campo por medición: cada campo es el contenido de la medición de 9.9 que lleva ese nombre (el rótulo lo pone la app; no lo repitas). Porcentajes sobre la duración exacta de la metadata. 9.9 es OBSERVACIÓN: ninguna deducción ("indica", "sugiere", "actúa como") ni nombre de papel en el relato ("planteamiento", "diagnóstico", "énfasis"); todo eso va a interpretacion (CASO 33).
+- cambios_estado y gramatica: antes de responder, relee cada frase con la PRUEBA 1. Una deducción que quede aquí se marcará [INT] automáticamente y constará como fallo en los límites.
 - funcion → 9.10 (opcional por elemento; para la mayoría la respuesta esperada es NO DETERMINABLE)
-- interpretacion → 9.11, cada entrada marcada [INT] y con su timestamp o ID. Una entrada por cada una de: técnica de apertura, disparador, mecanismo psicológico principal, estructura narrativa (con el % del clímax y su criterio), formato de presentación, papel del rostro (solo si aparece alguno), acción buscada y registro de producción. La que el registro no sostenga no se escribe y se declara en limites.
+- interpretacion → 9.11, cada entrada marcada [INT], con su rótulo ("[INT] DISPARADOR: ...") y con su timestamp o ID. Una entrada por cada una de: técnica de apertura, disparador, mecanismo psicológico principal, estructura narrativa (nombre de cada tramo, y el % del clímax con su criterio), papel del rostro (solo si aparece alguno), acción buscada y registro de producción. La que el registro no sostenga no se escribe y se declara en limites.
 - patrones → 9.12, objetivo 3 o más, cada uno superando la prueba de cambio de sujeto. Si el registro no sostiene 3, entrega los que sí y declara el motivo en limites; nunca inventes uno para llegar a la cifra (CASO 31).
 - plan_rodaje → el PLAN GENERAL con que empieza 9.13 (setup, secuencia con la manipulación, sujetos con su perfil para recreación [INT] y cada aparición de rostro)
 - recreacion → 9.13, una entrada por plano del mapa de planos
@@ -487,6 +520,61 @@ function renderTranscript(r: AnalysisResult): string {
     .join('\n')
 }
 
+/**
+ * Safety net for protocol PRUEBA 1 in the sections that observe (9.8, 9.9):
+ * a sentence that deduces ("indicando grabación en interior", 5 Oct 2026) is
+ * tagged [INT] inline — the data stays, and the reader sees it is a reading,
+ * not a measurement. Returns the text and how many sentences were tagged.
+ */
+const DEDUCTION = /\b(indica|indican|indicando|sugiere|sugieren|sugiriendo|denota|denotan|revela|revelan|actúa como|actúan como|sirve para|sirven para|con el fin de|lo que demuestra|lo que implica)\b/i
+
+function tagDeductions(text: string): { text: string; tagged: number } {
+  let tagged = 0
+  const out = text.replace(/[^.;\n]+[.;]?/g, (sentence) => {
+    if (!DEDUCTION.test(sentence) || /\[INT/.test(sentence)) return sentence
+    tagged++
+    const end = sentence.match(/[.;]$/)?.[0] ?? ''
+    return `${sentence.slice(0, sentence.length - end.length)} [INT — deducción en sección de observación]${end}`
+  })
+  return { text: out, tagged }
+}
+
+/** A 9.9 measurement: free text (before v6.3) or one labeled field each. */
+function labeled(value: string | Record<string, string> | undefined, fields: LabeledFields, legacy: string): string {
+  if (value === undefined) return legacy
+  if (typeof value === 'string') return value
+  return fields.map(([key, label]) => `${label}: ${value[key] ?? '[ND]'}`).join('\n\n')
+}
+
+/** Applies tagDeductions to 9.8 and 9.9, counting what it tagged. */
+function guardObservation(p3: V6Phase3): { p3: V6Phase3; tagged: number } {
+  let tagged = 0
+  const fix = (s: string) => {
+    const r = tagDeductions(s)
+    tagged += r.tagged
+    return r.text
+  }
+  const fixAny = <T extends string | Record<string, string> | undefined>(v: T): T =>
+    (v === undefined ? v : typeof v === 'string' ? fix(v) : Object.fromEntries(Object.entries(v).map(([k, s]) => [k, fix(s)]))) as T
+  const g = p3.gramatica
+  const out: V6Phase3 = {
+    ...p3,
+    cambios_estado: p3.cambios_estado.map((c) => ({ ...c, antes: fix(c.antes), transicion: fix(c.transicion), despues: fix(c.despues) })),
+    gramatica: {
+      ...g,
+      ritmo_montaje: fix(g.ritmo_montaje),
+      estructura_temporal: fixAny(g.estructura_temporal),
+      sincronia: fix(g.sincronia),
+      coreografia_texto: fix(g.coreografia_texto),
+      continuidad: fix(g.continuidad),
+      diseno_sonoro: fix(g.diseno_sonoro),
+      arquitectura_retencion: fixAny(g.arquitectura_retencion),
+      sujeto_principal_manipulacion: fixAny(g.sujeto_principal_manipulacion),
+    },
+  }
+  return { p3: out, tagged }
+}
+
 const bullet = (items: string[], empty: string) => (items.length ? items.map((x) => `- ${x}`).join('\n') : empty)
 
 /** YAML-safe scalar for the frontmatter. */
@@ -507,7 +595,9 @@ export function renderV6Record(input: {
   phase3: V6Phase3
   windowLimits: string[]
 }): string {
-  const { meta, phase1: p1, merged, phase3: p3, windowLimits } = input
+  const { meta, phase1: p1, merged, windowLimits } = input
+  const guarded = guardObservation(input.phase3)
+  const p3 = guarded.p3
   const f = p1.ficha
   const ft = p1.ficha_tecnica
   const lastAnalyzed = merged.scenes.length ? mmss(merged.scenes[merged.scenes.length - 1]!.end_seconds) : 'ND'
@@ -610,7 +700,9 @@ export function renderV6Record(input: {
     '',
     `RITMO DE MONTAJE: ${g.ritmo_montaje}`,
     '',
-    `ESTRUCTURA TEMPORAL: ${g.estructura_temporal}`,
+    `**ESTRUCTURA TEMPORAL**`,
+    '',
+    labeled(g.estructura_temporal, ESTRUCTURA_FIELDS, '[ND]'),
     '',
     `SINCRONÍA: ${g.sincronia}`,
     '',
@@ -622,11 +714,11 @@ export function renderV6Record(input: {
     '',
     '**ARQUITECTURA DE RETENCIÓN**',
     '',
-    g.arquitectura_retencion ?? '[ND] — registro producido con una versión del protocolo anterior a v6.1.',
+    labeled(g.arquitectura_retencion, RETENCION_FIELDS, '[ND] — registro producido con una versión del protocolo anterior a v6.1.'),
     '',
     '**SUJETO PRINCIPAL Y MANIPULACIÓN**',
     '',
-    g.sujeto_principal_manipulacion ?? '[ND] — registro producido con una versión del protocolo anterior a v6.1.',
+    labeled(g.sujeto_principal_manipulacion, SUJETO_FIELDS, '[ND] — registro producido con una versión del protocolo anterior a v6.1.'),
     '',
     '## 9.10 Función / posible uso',
     '',
@@ -671,6 +763,9 @@ export function renderV6Record(input: {
   }
 
   const limits = [...new Set([...p3.limites, ...windowLimits])]
+  if (guarded.tagged) {
+    limits.push(`${guarded.tagged} frase(s) de 9.8/9.9 contenían una deducción ("indica", "sugiere", "actúa como"...) y quedaron marcadas [INT] automáticamente: léanse como interpretación, no como medición.`)
+  }
   out.push('## 9.14 Límites del análisis', '', bullet(limits, 'Sin límites declarados.'), '')
   return out.join('\n')
 }
