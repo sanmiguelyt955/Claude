@@ -1,19 +1,19 @@
-V6.1 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
+V6.2 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
 
 
-Analiza el video adjunto como fuente de evidencia audiovisual y produce un registro permanente de él.
+Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella.
 
 ==================================================
 0. PARA QUÉ EXISTE ESTE REGISTRO
 ==================================================
 
-El registro se archivará en una base de conocimiento y se consultará meses o años después, SIN acceso al video. Servirá para aprender cómo se construyen videos: qué se muestra, cómo se mueve, cuánto dura cada cosa, y cómo se sincronizan imagen, sonido y texto.
+El registro se archivará en una base de conocimiento y se consultará meses o años después, SIN acceso a la fuente. Servirá para aprender cómo se construyen videos: qué se muestra, cómo se mueve, cuánto dura cada cosa, y cómo se sincronizan imagen, sonido y texto.
 
-De ahí salen dos consecuencias:
+De ahí salen tres consecuencias:
 
 1. Cualquier detalle puede ser el que explica por qué un video funciona: un ademán, una vacilación de medio segundo, un fotograma de más antes de un corte, una pausa antes de hablar. No decides qué es importante. Registras.
 
-2. El registro debe sostenerse solo. Quien lo lea no podrá volver al video para comprobar nada.
+2. El registro debe sostenerse solo. Quien lo lea no podrá volver a la fuente para comprobar nada.
 
 3. El registro debe permitir recrear el video sin haberlo visto. La ficha de recreación (9.13) se construye solo con lo registrado: lo que no quedó registrado no se puede recrear.
 
@@ -29,14 +29,28 @@ ERROR 2 — AÑADIR algo que no estaba.
 Todo este protocolo existe para evitar ambos al mismo tiempo. Cuando una regla parezca empujarte hacia uno de los dos, la respuesta correcta nunca es cometer el otro: es declarar lo que no puedes determinar.
 
 ==================================================
-1. ALCANCE
+1. ALCANCE Y TIPO DE FUENTE
 ==================================================
 
-Este protocolo se aplica a CUALQUIER video sin excepción: imagen real o animación, con o sin habla, con o sin personas, de tres segundos o de tres horas, grabado con cámara, capturado de una pantalla, generado por software, o compuesto con varias fuentes.
+Este protocolo se aplica a CUALQUIER fuente sin excepción, de cuatro tipos:
 
-No hay una versión del protocolo por tipo de video. Hay un triaje inicial (sección 7) que decide dónde cae el peso del registro. Las pruebas, el procedimiento y el formato de salida no cambian nunca.
+- VIDEO: imagen con sonido, o imagen sin pista de audio. Imagen real o animación, con o sin habla, con o sin personas, de tres segundos o de tres horas, grabado con cámara, capturado de una pantalla, generado por software, o compuesto con material de varios orígenes.
+- AUDIO: solo sonido —voz, música, ambiente, efectos—, sin imagen.
+- TRANSCRIPCIÓN: texto de lo hablado, con o sin tiempos, con o sin hablantes identificados, hecha por una persona o por una herramienta.
+- DESCRIPCIÓN ESCRITA: relato de un video o de un audio hecho por otra persona, con o sin tiempos ("en el segundo 3 abre la caja").
 
-Si el video no encaja en ninguna categoría mencionada aquí, el protocolo sigue siendo válido: describe lo observable, aplica las tres pruebas y declara lo que no puedas determinar.
+En este protocolo, "el video" designa la fuente analizada, sea del tipo que sea. Las reglas sobre imagen se aplican solo si hay imagen; las reglas sobre sonido, solo si hay sonido.
+
+LA FUENTE DEFINE QUÉ ES OBSERVABLE. Lo que la fuente no contiene no se observa ni se deduce: se declara NO APLICA, una sola vez, en el lugar que le corresponde.
+- De un AUDIO no se describe ninguna imagen. Un sonido de cartón no es "abre la caja": se describe el sonido, y lo que podría haberlo producido va a [INT].
+- De una TRANSCRIPCIÓN no se describe tono, volumen, música ni imagen, salvo que la propia transcripción lo anote ("[risas]", "[música]"); esas anotaciones se registran como [META].
+- De una DESCRIPCIÓN ESCRITA nada es observación directa: todo su contenido se registra como relatado [REL], con las palabras de quien describió. Lo que esa persona interpretó ("se sorprende") sigue siendo una interpretación, ahora ajena.
+
+Si llegan varias fuentes del mismo contenido (por ejemplo, un video y su transcripción), la más directa es la fuente y las demás son [META]: el video prevalece sobre la transcripción, y el audio sobre la transcripción. Las discrepancias entre ellas se registran, nunca se resuelven en silencio.
+
+No hay una versión del protocolo por tipo de fuente ni por tipo de contenido. Hay un triaje inicial (sección 7) que decide dónde cae el peso del registro. Las pruebas, el procedimiento y el formato de salida no cambian nunca.
+
+Si la fuente no encaja en ninguna categoría mencionada aquí, el protocolo sigue siendo válido: describe lo observable, aplica las tres pruebas y declara lo que no puedas determinar.
 
 Todo el registro se escribe en español. Las citas literales (habla y texto en pantalla) se conservan en su idioma original, con traducción aparte cuando no estén en español.
 
@@ -94,8 +108,11 @@ Toda afirmación que no sea observación física directa lleva su etiqueta inlin
 [ID]   identificación probable de qué es algo.
 [FUN]  posible función, sostenida por evidencia de este video.
 [INT]  interpretación.
-[ND]   no determinable.
+[ND]   no determinable: el dato existe en la fuente, pero no se puede determinar.
 [BAJA] registrado, pero con fiabilidad reducida.
+[REL]  relatado: proviene de una descripción escrita por otra persona, no de observación directa. Se cita con sus palabras.
+
+NO APLICA — el canal o la sección no existe en este tipo de fuente (imagen en un audio, tono de voz en una transcripción sin anotaciones). No es lo mismo que [ND]: [ND] es algo que existe y no se puede determinar; NO APLICA es algo que la fuente no contiene.
 
 ==================================================
 4. LÍMITES CONOCIDOS — DECLÁRALOS, NO LOS DISIMULES
@@ -117,6 +134,10 @@ Hay datos que no puedes extraer de forma fiable mirando el video. Fingir precisi
 
 7. INFORMACIÓN EXTERNA. Si junto al video recibes metadata, OCR o transcripción automática, úsalas como fuente [META] en sus campos, y registra cualquier discrepancia con lo que tú observas en lugar de elegir una en silencio.
 
+8. FUENTE SIN IMAGEN (audio, transcripción o descripción). No reconstruyas la imagen a partir del sonido ni del texto. El origen de un sonido solo se afirma si el propio sonido lo hace inequívoco; lo demás va a [INT].
+
+9. TRANSCRIPCIONES Y DESCRIPCIONES. Pueden contener errores de la persona o la herramienta que las hizo. Regístralas tal cual, sin corregirlas; si algo parece un error, decláralo en 9.14 sin tocar el texto. Los tiempos que traen son [META]. Los intervalos que no cubren son huecos de la fuente, no silencio. Sin tiempos, la duración es [ND].
+
 Declarar un límite es información. Ocultarlo es el ERROR 2 disfrazado.
 
 ==================================================
@@ -130,6 +151,14 @@ La LÍNEA DE TIEMPO CANÓNICA (sección 9.5) cubre CADA SEGUNDO del video, del p
 Ningún segundo se omite porque "no pasa nada", porque "es la intro", porque "la acción principal ya terminó" o porque "es igual al anterior". Tú no decides qué segundo importa.
 
 El último intervalo termina en la duración real del archivo, aunque no sea un segundo entero (ej. 00:14–00:14.48 [META]).
+
+UNIDAD DE COBERTURA SEGÚN LA FUENTE
+
+- VIDEO y AUDIO: el segundo, como se describe en esta sección.
+- TRANSCRIPCIÓN o DESCRIPCIÓN CON TIEMPOS: cada entrada de la fuente, en orden, con sus tiempos [META]. Ninguna entrada se omite ni se fusiona con otra. Los intervalos que la fuente no cubre se registran como "[mm:ss–mm:ss] SIN DATOS EN LA FUENTE": no es silencio ni "no pasa nada", es ausencia de información.
+- TRANSCRIPCIÓN o DESCRIPCIÓN SIN TIEMPOS: cada línea o párrafo de la fuente, numerado en orden (T1, T2... en una transcripción; L1, L2... en una descripción). No inventes tiempos. Cuando una sección pida una posición, usa la posición relativa dentro de la fuente (porcentaje de palabras transcurridas), marcada [BAJA].
+
+La regla es la misma en los cuatro casos: toda la fuente se registra, nada se añade.
 
 DENSIDAD VARIABLE
 
@@ -161,7 +190,7 @@ PROHIBIDO
 ==================================================
 
 PASADA 0 — TRIAJE
-Clasifica el video según los siete ejes de la sección 7 antes de describir nada.
+Declara el tipo de fuente (sección 1) y clasifícala según los ejes de la sección 7 antes de describir nada.
 
 PASADA 1 — BARRIDO
 Recorre el video completo registrando todo lo observable, sin filtrar, sin ordenar por relevancia, sin interpretar. Crea el registro de entidades a medida que cada una aparece por primera vez.
@@ -178,11 +207,13 @@ Recorre la lista de la sección 12 antes de entregar.
 7. TRIAJE Y CALIBRACIÓN
 ==================================================
 
-LOS SIETE EJES
+LOS OCHO EJES (0 a 7)
+
+EJE 0 — TIPO DE FUENTE: video / audio / transcripción / descripción escrita. Decide qué canales existen. En una fuente sin imagen, los ejes 1, 2 (en lo visual), 3 y 7 valen "no aplica"; en una transcripción o descripción, el eje 4 se responde solo con lo que la fuente anote.
 
 EJE 1 — NATURALEZA DE LA IMAGEN: imagen real / animación o motion graphics / captura de pantalla o interfaz / imagen fija con movimiento simulado / con indicadores de generación o alteración por software / mixta
 
-EJE 2 — ORIGEN DEL MATERIAL: toma única continua / varias tomas de una misma sesión aparente / compilación de fuentes distintas / material reencuadrado o reutilizado / no determinable
+EJE 2 — ORIGEN DEL MATERIAL: toma única continua / varias tomas de una misma sesión aparente / compilación de material de orígenes distintos / material reencuadrado o reutilizado / no determinable
 
 EJE 3 — CAPAS: cuadro simple / imagen dentro de imagen / pantalla dividida / superposiciones gráficas densas / interfaz de plataforma incrustada en la imagen
 
@@ -196,7 +227,13 @@ EJE 7 — DENSIDAD DE CAMBIO: muy alta (cortes cada pocos fotogramas) / alta / m
 
 CALIBRACIÓN — dónde cae el peso
 
-Ninguna sección se omite nunca. Si no tiene contenido, se declara: "No se observan animales." "No se detecta habla." Un hueco no declarado es indistinguible de un olvido.
+Ninguna sección se omite nunca. Si no tiene contenido, se declara: "No se observan animales." "No se detecta habla." Si no existe en este tipo de fuente: "NO APLICA — fuente sin imagen." Un hueco no declarado es indistinguible de un olvido.
+
+Eje 0:
+- Video: todas las secciones y los cuatro canales de 9.5.
+- Audio: solo el canal AUD. VIS, TXT y CAM se declaran NO APLICA una vez, al inicio de 9.5. Las entidades son voces (VOZ#) y fuentes sonoras recurrentes (S#), descritas acústicamente. El mapa de planos se sustituye por el mapa de segmentos sonoros (9.4). El peso cae en la transcripción, el ritmo del habla, las pausas, la música, el ambiente y los cortes de edición audibles.
+- Transcripción: la fuente es el texto. 9.6 reproduce la transcripción completa, literal y numerada, sin corregirla. 9.5 registra por entrada lo que no es texto: hablante, anotaciones de la fuente [META], cambios de hablante y huecos de tiempo. El peso cae en la estructura del discurso: primera frase, preguntas, imperativos, repeticiones, posición de cada idea.
+- Descripción escrita: como una transcripción, pero todo su contenido va [REL]. 9.5 sigue los momentos que la descripción relata, con sus palabras. Ninguna sección añade un detalle visual o sonoro que la descripción no contenga: lo que falte para un análisis completo va a 9.14 como límite.
 
 Eje 1:
 - Imagen real: vocabulario de cámara, luz y óptica en sentido literal.
@@ -205,7 +242,7 @@ Eje 1:
 - Imagen fija animada: registra qué es fijo, qué se mueve y cómo (desplazamiento, escala, paralaje).
 - Indicadores de generación o alteración: regístralos físicamente en la sección 9.2 (manos o rasgos deformados, texto pseudográfico, bordes que fluctúan, texturas que cambian sin causa, objetos que aparecen o desaparecen sin transición, sombras incoherentes con la luz). La conclusión sobre el origen va solo en interpretación, marcada [INT].
 
-Eje 2: si hay varias fuentes, numéralas (F1, F2...) en el registro de entidades e indica sus intervalos. No asumas que dos clips son de la misma sesión sin evidencia.
+Eje 2: si hay material de varios orígenes, numéralo (F1, F2...) en el registro de entidades e indica sus intervalos. No asumas que dos clips son de la misma sesión sin evidencia.
 
 Eje 3: describe cada capa como entidad propia (C1, C2...). Nunca mezcles en una misma frase lo que ocurre en dos capas distintas; descríbelas por separado y después su relación temporal.
 
@@ -261,10 +298,11 @@ Bloque de metadatos al inicio, en este formato exacto:
 
 ---
 tipo: analisis-video
-protocolo: v6.1
+protocolo: v6.2
 fuente: [nombre del archivo o enlace, si se conoce; si no, vacío]
+fuente_tipo: [video / audio / transcripción / descripción escrita]
 duracion: [valor]
-duracion_origen: [metadata / observada]
+duracion_origen: [metadata / observada / según la fuente / no determinable]
 relacion_aspecto: [vertical / horizontal / cuadrado / variable]
 planos: [n]
 naturaleza: [eje 1]
@@ -274,7 +312,7 @@ idioma_habla: [idioma o "sin habla"]
 tags: [analisis-video, y etiquetas derivadas del triaje]
 ---
 
-No incluyas en este bloque nada que no esté sostenido por el registro.
+No incluyas en este bloque nada que no esté sostenido por el registro. Los campos que no existan en este tipo de fuente llevan "no aplica" (por ejemplo, relacion_aspecto y planos en un audio).
 
 --------------------------------------------------
 9.1 FICHA TÉCNICA Y TRIAJE
@@ -289,13 +327,16 @@ PLANO MÁS LARGO: [PL# + duración]
 PLANO MÁS CORTO: [PL# + duración]
 MAPA DE BLOQUES: [si aplica]
 
-TRIAJE: valor de cada uno de los siete ejes.
+TRIAJE: valor de cada uno de los ocho ejes (0 a 7), con "no aplica" donde el tipo de fuente no lo permita.
 
 --------------------------------------------------
-9.2 PROCEDENCIA Y CALIDAD DE IMAGEN
+9.2 PROCEDENCIA Y CALIDAD DE LA FUENTE
 --------------------------------------------------
 
-Solo lo observable en la propia imagen:
+Si la fuente es AUDIO, solo lo audible en la propia grabación: ruido de fondo, saturación, compresión audible, reverberación, cortes de edición audibles, cambios bruscos de nivel.
+Si es TRANSCRIPCIÓN o DESCRIPCIÓN, solo las características del texto: si trae tiempos, si identifica hablantes, si marca inaudibles o anotaciones, idioma, y los indicios de transcripción automática, estos últimos como [INT].
+
+Si es VIDEO, solo lo observable en la propia imagen (y, si hay pista de audio, lo audible como en el caso anterior):
 - nitidez y nivel de detalle, y dónde varía
 - artefactos de compresión
 - marcas de agua o identificadores persistentes (contenido literal, posición, vigencia)
@@ -313,7 +354,7 @@ Las conclusiones sobre origen, autoría o autenticidad van solo en 9.11, marcada
 Cada elemento que aparece recibe un ID estable en su primera aparición y se describe físicamente UNA sola vez aquí, con todo el detalle. En la línea de tiempo se le menciona solo por su ID, más lo que cambie de él.
 
 PREFIJOS:
-P# personas · A# animales · O# objetos · I# pantallas o interfaces · E# elementos del entorno · C# capas de composición · F# fuentes de material
+P# personas · A# animales · O# objetos · I# pantallas o interfaces · E# elementos del entorno · C# capas de composición · F# orígenes de material (clips de distinta procedencia dentro de la fuente) · VOZ# voces · S# fuentes sonoras (sonidos recurrentes cuyo origen no se ve)
 
 IDENTIDAD TRAS UN CORTE — NOTACIÓN OBLIGATORIA:
 Después de un corte, un elemento visualmente parecido a uno anterior NO recibe el mismo ID sin más. Se escribe con asterisco:
@@ -341,7 +382,13 @@ PANTALLAS E INTERFACES — disposición de elementos, texto de interfaz literal,
 
 ENTORNO — superficies, mobiliario, objetos de fondo, iluminación del espacio, profundidad aparente. Indicadores de condiciones (luz natural o artificial, humedad, vegetación) como observación física, sin concluir hora, lugar o clima. Si no ves una pared, no existe.
 
-CAPAS Y FUENTES — posición, tamaño relativo, vigencia, rasgos que la distinguen.
+CAPAS Y ORÍGENES DE MATERIAL — posición, tamaño relativo, vigencia, rasgos que la distinguen.
+
+VOCES (VOZ#) — tono (agudo, medio, grave), timbre, ritmo, volumen relativo, rasgos de pronunciación descritos acústicamente, muletillas recurrentes. Sin inferir género, edad, identidad ni estado emocional. En video, una VOZ# se vincula a una P# solo si la sincronía labio-voz es visible. En audio, transcripción o descripción, una VOZ# nunca se vincula a una persona física.
+
+FUENTES SONORAS (S#) — propiedades acústicas (duración, tono, timbre, intensidad, ataque, resonancia) y patrón de repetición. Identificación solo como [ID] y solo si el sonido es inequívoco.
+
+En una TRANSCRIPCIÓN, las entidades son los hablantes que la fuente distingue y lo que el texto mencione, marcado [META]. En una DESCRIPCIÓN, lo que la descripción relata, marcado [REL]. Ninguna recibe una descripción física que la fuente no contenga.
 
 --------------------------------------------------
 9.4 MAPA DE PLANOS
@@ -360,11 +407,19 @@ ENTRADA / SALIDA: [corte seco / transición descrita]
 
 Aquí va solo lo que define el plano. Lo que ocurre dentro va en la línea de tiempo.
 
+Si la fuente es AUDIO, esta sección es el MAPA DE SEGMENTOS SONOROS. Un segmento empieza donde cambia la escena sonora: entra o sale una capa, hay un corte de edición audible o cambia el ambiente.
+
+SG[n] — [inicio]–[fin] ([duración])
+CAPAS: [voz / música / ambiente / efectos presentes, con su nivel relativo]
+ENTRADA / SALIDA: [corte audible / fundido / entrada de música / otra — descrita]
+
+Si es TRANSCRIPCIÓN o DESCRIPCIÓN, los segmentos son los que la propia fuente marca (cambios de hablante, saltos de tiempo, separadores). Los cambios de tema solo van como [INT].
+
 --------------------------------------------------
 9.5 LÍNEA DE TIEMPO CANÓNICA
 --------------------------------------------------
 
-El corazón del registro. Cobertura continua según la sección 5: una entrada por segundo, encadenada sin saltos, donde el final de cada entrada es el inicio exacto de la siguiente.
+El corazón del registro. Cobertura continua según la sección 5: una entrada por unidad de cobertura (el segundo, en video y audio), encadenada sin saltos, donde el final de cada entrada es el inicio exacto de la siguiente.
 
 Cada entrada integra los canales en paralelo para conservar la sincronía:
 
@@ -376,6 +431,12 @@ CAM: [cambio de cámara o inicio de un plano nuevo; si no lo hay, "sin cambios"]
 CORTE en [mm:ss.s] → PL[n]   ← línea propia en el punto exacto de cada corte
 
 Cuando un canal no tiene novedades, se escribe "sin cambios", nunca se omite.
+
+CANALES SEGÚN LA FUENTE
+- VIDEO: VIS, AUD, TXT y CAM. Si no hay pista de audio, AUD se declara NO APLICA una vez, al inicio de la sección.
+- AUDIO: solo AUD, segundo a segundo. Al inicio de la sección, una vez: "VIS, TXT y CAM: NO APLICA — fuente de solo audio." En lugar de CORTE, se marca "CAMBIO DE SEGMENTO en [mm:ss.s] → SG[n]".
+- TRANSCRIPCIÓN: una entrada por entrada de la fuente (sección 5), con FUENTE (T#), HABLANTE, ANOTACIONES de la fuente [META] ("[risas]", "[música]", "[inaudible]") o "sin anotaciones", y SALTO DE TIEMPO si lo hay. El texto literal no se repite aquí: está en 9.6.
+- DESCRIPCIÓN: una entrada por momento relatado, con el texto de la descripción literal y marcado [REL]. Ningún canal se completa con lo que "seguramente" se vio o se oyó.
 
 CANAL VIS — MICROACCIONES
 
@@ -406,6 +467,9 @@ Descríbelo de forma independiente de la imagen: no uses lo que ves para decidir
 
 Si no hay habla: "No se detecta habla." Si la hay, es obligatoria y nunca se resume.
 
+Si la fuente ES una transcripción, esta sección la reproduce completa y literal, numerada, sin corregir ortografía ni gramática y sin completar lo que falte, con sus tiempos y anotaciones como [META]. Si no trae tiempos, se numera por línea (T1, T2...) y los tiempos son [ND]; no se inventan.
+Si la fuente es una descripción escrita, aquí solo va el habla que la descripción cite textualmente, marcada [REL]; lo que la descripción resuma ("explica que el producto es barato") no es transcripción y no se convierte en cita.
+
 T[n] — [inicio]–[fin] — VOZ [n]: "[texto literal]"
 
 - palabra por palabra, con muletillas, repeticiones, autocorrecciones y frases cortadas
@@ -432,6 +496,8 @@ Una paráfrasis conserva el contenido y destruye lo que hace funcionar a un vide
 --------------------------------------------------
 
 Si no hay texto: "No aparece texto en pantalla."
+Si la fuente es audio o transcripción: "NO APLICA — fuente sin imagen."
+Si es una descripción escrita: solo el texto en pantalla que la descripción cite, literal y marcado [REL].
 
 TX[n] — aparece [timestamp] / desaparece [timestamp] ([duración])
 TIPO: [rótulo superpuesto / subtítulo / texto dentro de la escena / texto de interfaz / marca de agua]
@@ -457,6 +523,8 @@ NO DETERMINABLE: [lo ocurrido fuera de cámara o no comprobable]
 - Si hay un corte entre ANTES y DESPUÉS, redacta cada estado como si no supieras cuál precede a cuál. Lo único que los relaciona es NO DETERMINABLE.
 - Prohibidos los estados-conclusión (seco, limpio, cocido, terminado, relajado, resuelto) sin evidencia directa en ese instante. Describe la apariencia y manda la conclusión a NO DETERMINABLE.
 - DESPUÉS y NO DETERMINABLE no pueden contradecirse (PRUEBA 2).
+
+En AUDIO, los cambios de estado son sonoros: entra o cesa una capa, cambia el ambiente, cambia la voz que habla. En TRANSCRIPCIÓN, solo los que la fuente anote [META]. En DESCRIPCIÓN, los relatados [REL]; si la descripción afirma un resultado ("queda limpio"), se cita como relatado y la conclusión sigue siendo NO DETERMINABLE para este registro.
 
 --------------------------------------------------
 9.9 GRAMÁTICA AUDIOVISUAL
@@ -490,6 +558,11 @@ SUJETO PRINCIPAL Y MANIPULACIÓN — agregados de lo ya registrado, por ID y tim
 - PLANOS DE DETALLE: cuáles son y qué parte del sujeto principal ocupa el cuadro en cada uno.
 - MANIPULACIÓN: configuraciones de agarre observadas (qué mano, qué dedos, dónde contactan), número de rotaciones con su sentido y su eje, y contactos breves que no llegan a agarre. Si no hay manos en cuadro: "No se observa manipulación con manos."
 - PRESENCIA DE ROSTRO: número de apariciones; para cada una, intervalo, porción visible (completo, perfil, parcial, fuera de cuadro), dirección de la mirada (al objetivo, al sujeto principal, fuera de cuadro) y posición respecto al sujeto principal. Si no aparece ninguno: "No aparece ningún rostro."
+
+SEGÚN LA FUENTE
+- AUDIO: el RITMO DE MONTAJE se mide sobre los segmentos sonoros (SG#), y se añade RITMO DEL HABLA: palabras por minuto por tramo y pausas de más de 1 s con su timestamp. La APERTURA es sonora (primer sonido, primera palabra, primera capa musical). El SUJETO PRINCIPAL es la voz o fuente sonora que más tiempo suena. MANIPULACIÓN y PRESENCIA DE ROSTRO: NO APLICA, salvo sonidos de manipulación audibles, que se describen acústicamente.
+- TRANSCRIPCIÓN: la ARQUITECTURA DE RETENCIÓN se mide sobre el texto: primera frase completa, primera pregunta, imperativos, repeticiones, posición de cada llamada a la acción. Las posiciones van en tiempo [META] si la fuente lo trae; si no, en % de palabras [BAJA]. Las demás mediciones visuales y sonoras: NO APLICA.
+- DESCRIPCIÓN: solo lo que la descripción relate, marcado [REL]. Los porcentajes se calculan sobre los tiempos que la descripción dé; si no da tiempos, son [ND].
 
 --------------------------------------------------
 9.10 FUNCIÓN / POSIBLE USO
@@ -550,7 +623,9 @@ SETUP: superficies, fondo, luz y elementos de entorno comunes a los planos (E#),
 SECUENCIA: los planos en orden, con su duración y el ritmo de corte de 9.9.
 SUJETOS: qué entidades hay que conseguir o recrear (IDs). Para cada persona, un PERFIL PARA RECREACIÓN [INT] solo con lo necesario para recrear el plano con otra persona: categoría de edad aparente amplia (niño, joven adulto, adulto, mayor), estilo de presentación, peinado, maquillaje visible o no, vestuario y accesorios. Nunca identidad, origen étnico ni otros rasgos sensibles.
 
-Después, una ficha por plano:
+Si la fuente es AUDIO, la ficha es por segmento sonoro (SG#): voces con su ritmo, pausas y volumen relativo, capas, efectos y entorno sonoro; el plan general describe el espacio sonoro y la grabación. Si es TRANSCRIPCIÓN o DESCRIPCIÓN, el plan general es un GUION: el texto literal con hablantes, pausas y tiempos [META], y lo visual o sonoro solo si la descripción lo relata [REL]. Todo lo que haría falta para grabarlo y la fuente no contiene va como [ND].
+
+Después, una ficha por plano (o por segmento):
 
 PL[n] ([duración])
 SUJETOS Y ESTADO INICIAL: [IDs y su posición/configuración al inicio del plano]
@@ -572,6 +647,7 @@ Agrupa todo lo que reduce la confiabilidad del registro:
 - datos que requieren verificación externa
 - discrepancias entre información [META] y tu observación
 - secciones declaradas vacías
+- canales y secciones NO APLICA por el tipo de fuente, y lo que la fuente no permitió saber (huecos de la fuente, contenido solo relatado)
 
 Un registro que declara sus límites se puede usar dentro de diez años. Uno que los oculta, no.
 
@@ -747,14 +823,41 @@ MAL: "T30 — 01:30–02:09 — VOZ 1: \"[una sola entrada de 85 palabras para 3
 BIEN: "T30 — 01:30–01:35 — VOZ 1: \"...\" / T31 — 01:35–01:41 — VOZ 1: \"...\" / ... una entrada por frase, ninguna de más de 8 s, hasta 02:09."
 POR QUÉ: una entrada larga oculta las frases omitidas, porque parece cubrir todo el intervalo. Error real: ese mismo tramo, transcrito frase por frase, tenía 130 palabras, no 85.
 
+CASO 26 — Imagen reconstruida desde el sonido (sección 1) — audio de unboxing
+MAL: "[00:04–00:05] P1 abre la caja y saca el producto."
+BIEN: "[00:04–00:05] AUD: sonido seco y breve de intensidad media, seguido de un roce continuo de unos 1.2 s con timbre de papel o cartón. VIS: NO APLICA — fuente de solo audio. [INT] la secuencia sonora podría ser compatible con la apertura de un envase."
+POR QUÉ: en un audio no hay P1, ni caja, ni producto a la vista. Todo eso es imagen inventada a partir de un sonido.
+
+CASO 27 — Tono inferido desde una transcripción (PRUEBA 3) — transcripción de un video hablado
+MAL: "T4 — VOZ 1, con entusiasmo: \"esto me cambió la vida\""
+BIEN: "T4 — 00:12–00:14 [META] — VOZ 1: \"esto me cambió la vida\" — tono, volumen y ritmo: NO APLICA (la transcripción no los anota)."
+POR QUÉ: el entusiasmo no está en el texto; lo pone quien lee. Una transcripción solo sostiene lo que dice y lo que anota.
+
+CASO 28 — Descripción ajena tratada como observación (sección 1) — descripción escrita de un video
+MAL: "[00:03–00:05] VIS: la persona se sorprende al abrir la caja."
+BIEN: "[00:03–00:05] [REL] según la descripción recibida: \"la persona se sorprende al abrir la caja\". No observado directamente; \"se sorprende\" es además una interpretación de quien describió."
+POR QUÉ: lo relatado no es lo visto. Sin la etiqueta, una opinión de tercera mano entra al registro como dato duro.
+
+CASO 29 — Hueco de la fuente tratado como silencio (sección 5) — transcripción con tiempos
+MAL: "[00:12–00:20] Silencio."
+BIEN: "[00:12–00:20] SIN DATOS EN LA FUENTE. La transcripción no cubre este intervalo: no es determinable si hubo habla, silencio u otro sonido [ND]."
+POR QUÉ: el silencio es una observación. Un hueco en la fuente es la ausencia de una observación.
+
 ==================================================
 12. VERIFICACIÓN FINAL
 ==================================================
 
 Si una afirmación falla, reescríbela con la evidencia disponible. No la borres.
 
+FUENTE
+□ ¿Declaré el tipo de fuente (video, audio, transcripción o descripción escrita)?
+□ ¿Describí algún canal que la fuente no contiene, como imagen en un audio o tono en una transcripción?
+□ ¿Declaré NO APLICA una sola vez donde corresponde, y usé [ND] solo para lo que existe pero no puedo determinar?
+□ Si la fuente es una descripción escrita, ¿todo su contenido está marcado [REL] con las palabras de quien describió?
+□ Si la fuente es una transcripción, ¿la reproduje completa y sin corregir? ¿Traté algún hueco de la fuente como silencio?
+
 COBERTURA
-□ ¿Completé el triaje de los siete ejes y calibré el peso según él?
+□ ¿Completé el triaje de los ocho ejes (0 a 7) y calibré el peso según él?
 □ ¿Llegué al final del archivo, o dejé la marca de continuación exacta?
 □ ¿La línea de tiempo forma una cadena ininterrumpida desde 00:00 hasta el final, donde cada entrada empieza donde termina la anterior?
 □ ¿Salté algún segundo por parecerme irrelevante, repetido, "intro" o posterior a la acción principal?
@@ -762,7 +865,7 @@ COBERTURA
 □ ¿Inventé contenido en algún segundo para que no quedara vacío?
 □ ¿Comprimí o resumí algún tramo para que cupiera en la respuesta?
 □ Si agrupé segundos, ¿eran idénticos y declaré rango, duración y motivo?
-□ ¿Cada entrada tiene sus canales VIS, AUD, TXT y CAM, aunque sea con "sin cambios"? ¿Cada línea SIN CAMBIOS deja constancia de VIS, AUD y TXT, y de verdad no cambia ningún canal?
+□ ¿Cada entrada tiene sus canales VIS, AUD, TXT y CAM (los que existan en este tipo de fuente), aunque sea con "sin cambios"? ¿Cada línea SIN CAMBIOS deja constancia de VIS, AUD y TXT, y de verdad no cambia ningún canal?
 
 DETALLE
 □ ¿Registré microacciones y vacilaciones, o solo los movimientos grandes?
@@ -816,6 +919,8 @@ REGLA FINAL
 CLASIFICA. CAPTURA. DEPURA. VERIFICA.
 
 CADA SEGUNDO SE REGISTRA. NINGÚN SEGUNDO SE INVENTA.
+
+SOLO SE OBSERVA LO QUE LA FUENTE CONTIENE. LO RELATADO SE CITA, NO SE OBSERVA.
 
 DESCRIBE, LUEGO IDENTIFICA, LUEGO FUNCIÓN, LUEGO INTERPRETA. NUNCA AL REVÉS.
 

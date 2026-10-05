@@ -21,7 +21,7 @@ import type { AnalysisResult } from './schema.js'
  * rendered separately by renderV6Record().
  */
 
-export const PROTOCOL_VERSION = 'v6.1'
+export const PROTOCOL_VERSION = 'v6.2'
 
 let protocolText: string | undefined
 
@@ -61,6 +61,7 @@ export const V6_PHASE1_SCHEMA = obj({
     plano_mas_corto: STR,
   }),
   triaje: obj({
+    eje0_fuente: STR,
     eje1_naturaleza: STR,
     eje2_origen: STR,
     eje3_capas: STR,
@@ -159,8 +160,8 @@ ${metaBlock(meta)}
 
 El registro se produce en tres fases porque no cabe en una sola respuesta (sección 8: se divide, nunca se resume). En ESTA llamada ves el video COMPLETO y entregas SOLO estas secciones, en el JSON del esquema dado:
 
-- ficha → 9.0 (sin el campo "fuente": lo pone la app). "planos" = número de planos.
-- ficha_tecnica + triaje → 9.1 (los siete ejes de la sección 7).
+- ficha → 9.0 (sin los campos "fuente" ni "fuente_tipo": los pone la app). "planos" = número de planos.
+- ficha_tecnica + triaje → 9.1 (los ocho ejes, 0 a 7, de la sección 7). La fuente de esta llamada es un VIDEO: eje0_fuente = "video".
 - procedencia → 9.2, una observación por elemento de la lista.
 - entidades → 9.3. Asigna aquí los IDs DEFINITIVOS (P#, A#, O#, I#, E#, C#, F#) de TODO el video: la fase 2 los usará tal cual. "apariciones" con la notación de asterisco tras cada corte.
 - planos → 9.4, un elemento por plano, IDs PL1, PL2... en orden. Si no hay cortes, un solo plano.
@@ -511,6 +512,9 @@ export function renderV6Record(input: {
     'tipo: analisis-video',
     `protocolo: ${PROTOCOL_VERSION}`,
     `fuente: ${yamlValue(meta.title)}`,
+    // The app only ingests video files; audio and transcript sources are
+    // covered by the protocol itself when it is used outside the app.
+    'fuente_tipo: video',
     `duracion: ${yamlValue(f.duracion)}`,
     `duracion_origen: ${yamlValue(f.duracion_origen)}`,
     `relacion_aspecto: ${yamlValue(f.relacion_aspecto)}`,
@@ -538,7 +542,7 @@ export function renderV6Record(input: {
     '',
     ...Object.entries(p1.triaje).map(([k, v]) => `- ${k.replace(/_/g, ' ').toUpperCase()}: ${v}`),
     '',
-    '## 9.2 Procedencia y calidad de imagen',
+    '## 9.2 Procedencia y calidad de la fuente',
     '',
     bullet(p1.procedencia, 'Sin observaciones de procedencia registradas.'),
     '',
