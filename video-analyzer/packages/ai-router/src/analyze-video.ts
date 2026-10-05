@@ -113,7 +113,9 @@ const overloadByModel = new Map<string, { strikes: number; until: number }>()
 
 function markOverloaded(model: string): number {
   const strikes = (overloadByModel.get(model)?.strikes ?? 0) + 1
-  const cooldown = Math.min(OVERLOAD_COOLDOWN_MS * 2 ** (strikes - 1), OVERLOAD_COOLDOWN_MAX_MS)
+  // Jittered (±25%) like every other retry wait: Google recommends exponential
+  // backoff WITH jitter, so parallel windows/jobs don't all come back at once.
+  const cooldown = jittered(Math.min(OVERLOAD_COOLDOWN_MS * 2 ** (strikes - 1), OVERLOAD_COOLDOWN_MAX_MS))
   overloadByModel.set(model, { strikes, until: Date.now() + cooldown })
   return cooldown
 }
