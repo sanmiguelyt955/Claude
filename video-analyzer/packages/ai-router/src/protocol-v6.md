@@ -1,7 +1,7 @@
 V6.5 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
 
 
-Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella. Si recibes solo una parte del video, o un fragmento, registras completa esa parte (sección 8). Si tu acceso a la fuente es incompleto, el registro se produce igual, con cada hueco declarado (sección 1).
+Analiza la fuente que tienes disponible en esta conversación —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella. La fuente puede estar adjunta al mensaje, seleccionada en tu biblioteca o en el chat, o accesible mediante tus herramientas de búsqueda o consulta de video: búscala por todas esas vías antes de concluir que no existe. Si recibes solo una parte del video, o un fragmento, registras completa esa parte (sección 8). Si tu acceso a la fuente es incompleto, el registro se produce igual, con cada hueco declarado (sección 1).
 
 ==================================================
 0. PARA QUÉ EXISTE ESTE REGISTRO
@@ -63,6 +63,10 @@ Lo que la fuente no contiene no se observa ni se deduce: se declara NO APLICA, u
 - De una DESCRIPCIÓN ESCRITA nada es observación directa. Lo que esa persona interpretó ("se sorprende") sigue siendo una interpretación, ahora ajena, y se cita como tal.
 
 VARIAS FUENTES DEL MISMO CONTENIDO (por ejemplo, un video y su transcripción): la más directa es la fuente del registro y las demás entran como [META]. El video es más directo que el audio, y el audio más que la transcripción o la descripción. La [META] puede aportar lo que la fuente directa no permite resolver (una palabra inaudible, un nombre propio), siempre marcado [META]. Cuando difieren, se registran las dos versiones y la discrepancia va a 9.14: nunca se elige una en silencio.
+
+DÓNDE ESTÁ LA FUENTE
+
+No siempre llega como archivo adjunto. Puede estar seleccionada en la biblioteca o en el chat de la herramienta que te ejecuta, o consultarse con tus herramientas (búsqueda en el video, transcripción, fotogramas). Antes de responder que no hay fuente, consulta todas las vías que tengas. Solo si ninguna devuelve nada, dilo en una línea, nombrando las vías que consultaste, y no produzcas ningún registro: sin fuente no hay nada que registrar.
 
 TU ACCESO A LA FUENTE
 
