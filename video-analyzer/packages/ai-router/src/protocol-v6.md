@@ -1,7 +1,7 @@
-V6.4 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
+V6.5 — PROTOCOLO MAESTRO DE EXTRACCIÓN AUDIOVISUAL
 
 
-Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella. Si tu acceso a la fuente es incompleto, el registro se produce igual, con cada hueco declarado (sección 1).
+Analiza la fuente adjunta —video, audio, transcripción o descripción escrita— como evidencia y produce un registro permanente de ella. Si recibes solo una parte del video, o un fragmento, registras completa esa parte (sección 8). Si tu acceso a la fuente es incompleto, el registro se produce igual, con cada hueco declarado (sección 1).
 
 ==================================================
 0. PARA QUÉ EXISTE ESTE REGISTRO
@@ -79,6 +79,10 @@ Con acceso MUESTREADO o DERIVADO el protocolo se aplica igual y el registro se e
 4. Las secciones de síntesis (9.8 a 9.13) se construyen sobre los tramos con evidencia y dicen qué parte de la fuente no cubren. Una medición que cae en un hueco es [ND].
 
 Si te falta algo para un registro más fino (el archivo original, la duración técnica, el audio completo), dilo en 9.14 como límite, después de entregar el registro, no en lugar de él.
+
+TU PARTE DE LA FUENTE
+
+Además del tipo y del acceso, el archivo puede ser el video completo o solo una parte de él: porque el video se envía por partes, o porque es un fragmento. Tampoco eso impide el registro: se registra completa la parte recibida, con las reglas de la sección 8.1.
 
 No hay una versión del protocolo por tipo de fuente ni por tipo de contenido. Hay un triaje inicial (sección 7) que decide dónde cae el peso del registro. Las pruebas, el procedimiento y el formato de salida no cambian nunca.
 
@@ -243,7 +247,7 @@ PROHIBIDO
 ==================================================
 
 PASADA 0 — TRIAJE
-Declara el tipo de fuente y tu acceso a ella (sección 1), y clasifícala según los ocho ejes de la sección 7, antes de describir nada.
+Declara el tipo de fuente, tu acceso a ella y su alcance (video completo, parte o fragmento; secciones 1 y 8.1), y clasifícala según los ocho ejes de la sección 7, antes de describir nada.
 
 PASADA 1 — BARRIDO
 Recorre la fuente completa registrando todo lo observable, sin filtrar, sin ordenar por relevancia, sin interpretar. Crea el registro de entidades a medida que cada una aparece por primera vez. Registra el sonido como si no vieras la imagen, y la imagen como si no oyeras el sonido; después los sincronizas en la línea de tiempo.
@@ -262,7 +266,7 @@ Recorre la lista de la sección 12 antes de entregar.
 
 LOS OCHO EJES (0 a 7)
 
-EJE 0 — TIPO DE FUENTE Y ACCESO: video / audio / transcripción / descripción escrita; y acceso directo continuo / muestreado / derivado. El tipo decide qué canales existen; el acceso, qué parte de ellos te llega (sección 1).
+EJE 0 — TIPO, ACCESO Y ALCANCE: video / audio / transcripción / descripción escrita; acceso directo continuo / muestreado / derivado; alcance video completo / parte n de N / fragmento. El tipo decide qué canales existen; el acceso, qué parte de ellos te llega (sección 1); el alcance, qué parte del video original es el archivo (sección 8.1).
 
 EJE 1 — NATURALEZA DE LA IMAGEN: imagen real / animación o motion graphics / captura de pantalla o interfaz / imagen fija con movimiento simulado / con indicadores de generación o alteración por software / mixta
 
@@ -315,15 +319,43 @@ Eje 6:
 - Menos de 10 s: granularidad máxima; subdivide por debajo del segundo siempre que haya cambios.
 - 10–60 s: cobertura segundo a segundo completa. Caso por defecto.
 - 1–10 min: cobertura segundo a segundo completa. A partir de esta duración se permite encadenar segundos consecutivos idénticos en una entrada que declare rango, duración y motivo: "[02:14–02:23] (9 s) SIN CAMBIOS OBSERVABLES. Persisten: [...]". Nunca sin declarar el rango completo, y nunca si dentro del rango cambia cualquier canal.
-- Más de 10 min: cobertura total, entregada por bloques (sección 8), con la misma regla de encadenamiento. Una fuente larga se divide, no se recorta. La transcripción jamás se reduce.
+- Más de 10 min: cobertura total, entregada por bloques (sección 8.2), con la misma regla de encadenamiento. Una fuente larga se divide, no se recorta. La transcripción jamás se reduce.
 
 Eje 7:
 - Densidad muy alta: si los cortes son más rápidos de lo que puedes resolver con fiabilidad, dilo, registra el patrón de ritmo y marca [BAJA] los timestamps individuales.
 - Plano sostenido: el peso pasa a microacciones, deriva de cámara, cambios de luz y evolución del sonido. Un plano fijo de dos minutos no es poca información: es información distinta.
 
 ==================================================
-8. SI LA RESPUESTA SE QUEDA CORTA
+8. VIDEOS POR PARTES, FRAGMENTOS Y REGISTROS QUE NO CABEN
 ==================================================
+
+Hay tres situaciones en que el registro de un video no se produce de una sola vez: el video llega por partes, el video es un fragmento de algo más largo, o el registro no cabe en una respuesta. En las tres rige lo mismo: se divide, nunca se resume, y cada parte se registra con el mismo rigor que un video completo.
+
+--- 8.1 LA FUENTE ES UNA PARTE O UN FRAGMENTO ---
+
+Puede llegarte un archivo que es solo un tramo de un video, porque el video completo se envía en varias partes, o un clip que empieza o termina a mitad de algo. Tu función no cambia: analizas COMPLETO lo que recibes, con todas las secciones de la sección 9.
+
+Declara el ALCANCE del material (eje 0):
+- VIDEO COMPLETO: el archivo es el video entero.
+- PARTE n DE N: quien te lo envía indica qué parte es y, si lo sabe, qué tramo del original cubre ("parte 2 de 4, del 05:00 al 10:00 de un video de 15:12").
+- FRAGMENTO: nadie lo indica, pero el archivo empieza o termina a mitad de una acción, una frase o un plano. Esos indicios se registran en 9.2 y la conclusión va como [INT]. Sin indicios, se trata como video completo.
+
+Reglas para una parte o un fragmento:
+
+1. TIEMPOS. Si conoces el desplazamiento (en qué punto del original empieza el archivo), escribe todos los tiempos en TIEMPO DEL ORIGINAL y declara la equivalencia en 9.1 ("00:00 del archivo = 05:00 del original"). Si no lo conoces, usa el tiempo del archivo y decláralo. Nunca mezcles los dos.
+
+2. LOS BORDES NO SON CORTES. El primer y el último instante del archivo son límites del material, no cortes de montaje: no escribas CORTE en ellos. Lo que ya está en cuadro o sonando en el primer instante se registra como "presente al inicio de la parte", no como su primera aparición en el video. Una frase cortada por el borde se transcribe hasta donde se oye, marcada [CORTADO POR EL LÍMITE DE LA PARTE].
+
+3. IDS. Si te pasan el BLOQUE DE CONTINUIDAD de la parte anterior (8.3), continúa su numeración: T#, TX#, PL# y SG# siguen desde donde quedaron, y las entidades nuevas reciben el siguiente número libre. Un elemento compatible con una entidad del bloque se escribe con su ID y asterisco (P1*): la continuidad entre dos partes no la observaste. Si no te pasan el bloque, numera desde 1 y añade a cada ID el sufijo de la parte (P1-p2, T1-p2, PL1-p2), para que al unir las partes no se confundan elementos distintos.
+
+4. MEDICIONES QUE DEPENDEN DEL VIDEO ENTERO. Algunas mediciones de 9.9 y 9.11 solo existen respecto al video completo.
+   - La APERTURA (primeros 4 s) se mide solo en la parte que contiene el inicio del video; en las demás es NO APLICA. El CIERRE, solo en la que contiene el final.
+   - Los porcentajes se calculan sobre el video completo si conoces el desplazamiento y la duración total. Si no, se calculan sobre la parte y se escriben "% de la parte": nunca se presentan como posición en el video.
+   - El clímax, la estructura narrativa y los patrones (9.11 y 9.12) se escriben sobre la parte y declaran que la lectura es parcial. La lectura del video completo se hace al unir las partes (8.4).
+
+5. Todas las demás secciones se entregan completas para la parte, con el mismo detalle que para un video entero, y la respuesta termina con el BLOQUE DE CONTINUIDAD (8.3).
+
+--- 8.2 LA RESPUESTA NO CABE ---
 
 Tu respuesta tiene un límite de longitud. Un registro completo de una fuente larga puede superarlo. Cuando eso ocurra, la solución NUNCA es comprimir, resumir, agrupar segundos que no son idénticos ni saltar tramos para llegar al final. Eso es el ERROR 1.
 
@@ -331,7 +363,7 @@ Procedimiento:
 
 1. Si por la duración prevés que no cabrá, declara al inicio el MAPA DE BLOQUES: "Bloque 1: 00:00–05:00 / Bloque 2: 05:00–10:00 / ...". En fuentes de más de 10 minutos esto es obligatorio.
 2. Detente siempre al final de una entrada completa de la línea de tiempo, nunca a mitad de una.
-3. Cierra con esta marca exacta:
+3. Cierra con el BLOQUE DE CONTINUIDAD (8.3) y esta marca exacta:
 
 ⟶ CONTINÚA DESDE [mm:ss]
 SECCIONES PENDIENTES: [lista]
@@ -339,6 +371,37 @@ SECCIONES PENDIENTES: [lista]
 4. Cuando se te pida continuar, retoma exactamente en ese timestamp, con los mismos IDs de entidades, sin repetir lo ya entregado y sin resumirlo.
 
 La transcripción (9.6) y el texto en pantalla (9.7) continúan en cada bloque, con su numeración (T#, TX#) sin reiniciarla. Las secciones de síntesis (9.8 en adelante) se entregan una sola vez, al final del último bloque, cubriendo la fuente completa.
+
+Bloques y partes no son lo mismo. Los BLOQUES (8.2) son respuestas sucesivas sobre un mismo archivo, en la misma conversación. Las PARTES (8.1) son archivos distintos, que pueden analizarse en conversaciones o cuentas distintas: por eso cada parte lleva sus propias síntesis, y las partes se unen después (8.4).
+
+--- 8.3 BLOQUE DE CONTINUIDAD ---
+
+Al final de cada parte (8.1) y de cada bloque (8.2), entrega este bloque. Está pensado para pegarse tal cual en la conversación —o en la cuenta— donde se analice lo siguiente, que no tendrá acceso a esta. Todo lo que contiene sale del registro: no añade nada.
+
+⟦CONTINUIDAD⟧
+PARTE: [n de N / fragmento / bloque n]
+TRAMO CUBIERTO: [inicio–fin, en tiempo del original si se conoce; si no, del archivo, indicándolo]
+DURACIÓN TOTAL DEL ORIGINAL: [valor / ND]
+ÚLTIMOS IDS: T[n] · TX[n] · PL[n] · SG[n] (los que existan)
+ENTIDADES: una línea por entidad: [ID] — [descripción física en una frase] — [última aparición]
+VOCES: una línea por VOZ#, con su descripción acústica en una frase
+ESTADO AL FINAL: [qué hay en cuadro, qué suena, qué texto está visible, y si un plano o una frase quedan abiertos en el borde]
+PENDIENTE: [secciones que faltan, si las hay]
+⟦FIN CONTINUIDAD⟧
+
+--- 8.4 UNIR LAS PARTES ---
+
+Si recibes los registros de varias partes de un mismo video para unirlos en uno solo:
+
+1. Ordénalos por tramo y pasa todos los tiempos a tiempo del original.
+2. Encadena las líneas de tiempo. Donde dos partes se solapen, conserva las dos versiones del tramo solapado y declara sus diferencias en 9.14. Donde falte un tramo entre dos partes, regístralo como SIN DATOS EN LA FUENTE.
+3. Unifica la numeración (T#, TX#, PL#, SG#) en una sola secuencia; cada ID nuevo lleva entre paréntesis el que tenía en su parte ("T16 (T1-p2)").
+4. Un borde entre partes no es un CORTE: si el mismo plano sigue al otro lado del borde, es un solo PL.
+5. Unifica entidades con el asterisco: una entidad de una parte compatible con una de la parte anterior pasa a su ID con asterisco (P1*), salvo que el mismo plano continúe sin corte a través del borde.
+6. Recalcula sobre el video completo todo lo que depende de él: 9.1, la ARQUITECTURA DE RETENCIÓN con sus porcentajes, el resto de 9.9, y rehaz 9.8 a 9.13 sobre el registro unido.
+7. 9.14 reúne los límites de todas las partes y añade los de la unión.
+
+Unir reorganiza: no observa. Nada que ninguna parte registró entra en el registro unido.
 
 ==================================================
 9. FORMATO DE SALIDA
@@ -356,10 +419,12 @@ Bloque de metadatos al inicio, en este formato exacto:
 
 ---
 tipo: analisis-video
-protocolo: v6.4
+protocolo: v6.5
 fuente: [nombre del archivo o enlace, si se conoce; si no, vacío]
 fuente_tipo: [video / audio / transcripción / descripción escrita]
 acceso: [directo / muestreado / derivado]
+alcance: [completo / parte n de N / fragmento]
+tramo_original: [inicio–fin en el video original / ND]
 duracion: [valor]
 duracion_origen: [metadata / observada / según la fuente / no determinable]
 relacion_aspecto: [vertical / horizontal / cuadrado / variable]
@@ -385,6 +450,7 @@ DURACIÓN MEDIA DE PLANO: [n s]
 PLANO MÁS LARGO: [PL# + duración]
 PLANO MÁS CORTO: [PL# + duración]
 MAPA DE BLOQUES: [si aplica]
+ALCANCE Y TRAMO: [video completo / parte n de N con el tramo del original que cubre y la equivalencia de tiempos ("00:00 del archivo = 05:00 del original") / fragmento]. Indica si los tiempos del registro son del original o del archivo.
 ACCESO: [directo continuo, con la frecuencia de muestreo si se conoce / muestreado (cada cuánto) / derivado (qué extracciones recibiste)]
 MAPA DE COBERTURA: por canal (VIS, AUD, TXT), porcentaje de la duración con evidencia y principales intervalos sin ella. Con acceso directo continuo: 100 % en los canales que existen.
 
@@ -624,7 +690,7 @@ CONTINUIDAD: cambios de escala entre planos consecutivos · cambios de ubicació
 
 DISEÑO SONORO: capas presentes, su relación de volumen, entradas y salidas, uso del silencio, sonidos de contacto y su sincronía con la imagen.
 
-ARQUITECTURA DE RETENCIÓN — posiciones medidas, no juicios. Cada dato con timestamp y con su porcentaje de la duración total del archivo.
+ARQUITECTURA DE RETENCIÓN — posiciones medidas, no juicios. Cada dato con timestamp y con su porcentaje de la duración total del video. Si el archivo es una parte o un fragmento, la APERTURA, el CIERRE y los porcentajes siguen la regla 4 de la sección 8.1.
 - APERTURA (00:00–00:04): entidades en cuadro, primer movimiento, primer sonido, primera palabra y primer texto, por ID y con referencia a 9.5.
 - MARCADORES DE FIN DE APERTURA: el instante del primer CORTE, del final de T1, de la desaparición de TX1 y del primer cambio de estado del sujeto principal, los que existan. Aquí no decides dónde termina "el gancho": registras los marcadores.
 - SUJETO PRINCIPAL: la entidad que más tiempo ocupa el cuadro (ID y % del tiempo en que es visible), e instante en que aparece completa por primera vez.
@@ -735,6 +801,7 @@ Agrupa todo lo que reduce la confiabilidad del registro:
 - secciones declaradas vacías, y entradas de 9.11 o patrones de 9.12 que el registro no sostuvo
 - canales y secciones NO APLICA por el tipo de fuente, y lo que la fuente no permitió saber (huecos de la fuente, contenido solo relatado)
 - con acceso muestreado o derivado: cada hueco con su intervalo, y qué haría falta para cubrirlo (archivo original, audio completo, metadata técnica)
+- en una parte o un fragmento: las mediciones que dependen del video completo y quedan para la unión de partes (8.4)
 
 Un registro que declara sus límites se puede usar dentro de diez años. Uno que los oculta, no.
 
@@ -822,6 +889,23 @@ CAM: [ND] — no determinable si hubo cortes dentro del rango.
 [00:52.0] FOTOGRAMA [META]
 VIS: I1* (interfaz compatible con la de 00:00–00:30; continuidad no observada), vista alejada; tres columnas de texto.
 AUD: SIN DATOS EN LA FUENTE.
+
+--- EJEMPLO E — PARTE DE UN VIDEO ---
+
+(Recibido: "parte 2 de 3, del 04:00 al 08:00 de un video de 11:30", con el BLOQUE DE CONTINUIDAD de la parte 1, cuyos últimos IDs son T14 · TX5 · PL8.)
+
+9.1 — ALCANCE Y TRAMO: parte 2 de 3; 00:00 del archivo = 04:00 del original. Tiempos del registro: del original.
+
+[04:00–04:01]
+VIS: P1* (compatible con P1 del bloque de continuidad; presente al inicio de la parte) con la mano derecha abierta a la altura del pecho.
+AUD: VOZ 1 habla — T15.
+TXT: TX5 visible, presente al inicio de la parte.
+CAM: PL9 presente al inicio de la parte. No es un corte: es el límite del archivo.
+
+9.6:
+T15 — 04:00–04:02 — VOZ 1: "[CORTADO POR EL LÍMITE DE LA PARTE] ...que es lo que os decía antes."
+
+9.9 — APERTURA: NO APLICA — esta parte no contiene el inicio del video.
 
 ==================================================
 11. CASOS DE CORRECCIÓN
@@ -1001,6 +1085,11 @@ MAL: "No puedo producir el registro conforme al protocolo sin incurrir en los do
 BIEN: "9.1 — ACCESO: derivado: descripciones visuales por rangos de unos 30 s, fragmentos de transcripción y fotogramas aislados [META]. MAPA DE COBERTURA: VIS con descripciones de 00:00 a ~15:00 en rangos [BAJA]; AUD con transcripción en 00:01–04:20, 05:17–05:20, 06:38–06:39 y 08:48–08:49, resto sin datos. / 9.5 — [00:00–00:30] [META] VIS: interfaz con el título 'PILARES Y FASES' y la frase 'para corregir los videos y viralizar' subrayada en rojo; el cursor traza contornos alrededor de palabras y una flecha descendente. AUD: VOZ 1 habla — T1 a T4. ... [04:20–05:17] AUD: SIN DATOS EN LA FUENTE (57 s). / 9.7 — TX3 'PILARES Y FASES': visible al menos en 00:00–00:30 [META]; aparición y desaparición exactas [ND]. / 9.14 — granularidad de VIS limitada a rangos de ~30 s; 10 min de audio sin transcripción; duración técnica [ND]; para un registro segundo a segundo hace falta el archivo original."
 POR QUÉ: error real de una prueba de este mismo protocolo en otra herramienta. El modelo identificó bien qué no podía observar, y aun así tenía textos literales, rangos de tiempo y cambios de interfaz: justo lo que el registro debe conservar, marcado [META] y con cada hueco declarado. Fidelidad no es abstenerse: es que cada dato lleve su etiqueta y cada hueco su intervalo.
 
+CASO 35 — Una parte medida como si fuera el video entero (8.1) — parte 2 de 4 de un video de 15:12, con bloque de continuidad
+MAL: "APERTURA (00:00–00:04): P1 en cuadro, primera palabra 'que'. CORTE en 00:00 → PL1. LLAMADA A LA ACCIÓN en 04:10 (83 %): T6 'escribidme'. CIERRE: P1 mirando a cámara."
+BIEN: "9.1 — ALCANCE Y TRAMO: parte 2 de 4; 00:00 del archivo = 05:00 del original. APERTURA: NO APLICA — esta parte no contiene el inicio del video. PL9 presente al inicio de la parte (límite del archivo, no corte). T16 — 05:00–05:01 — VOZ 1: '[CORTADO POR EL LÍMITE DE LA PARTE] ...que'. LLAMADA A LA ACCIÓN en 09:10 del original (60 % del video): T21 'escribidme'. CIERRE: NO APLICA — esta parte no contiene el final del video."
+POR QUÉ: el primer segundo de una parte no es el gancho del video, el borde del archivo no es un corte, y el 83 % de una parte de 5 minutos no es el 83 % del video. Medida como un video entero, la parte inventa una apertura, un cierre y unas posiciones que no existen en el original.
+
 ==================================================
 12. VERIFICACIÓN FINAL
 ==================================================
@@ -1017,6 +1106,8 @@ FUENTE
 □ ¿Declaré mi acceso (directo continuo, muestreado o derivado) y, si no es directo, el mapa de cobertura por canal?
 □ ¿Entregué el registro completo en el formato de la sección 9 aunque mi acceso fuera incompleto, con cada hueco como SIN DATOS EN LA FUENTE, en vez de negarme o de cambiar a otro formato?
 □ ¿Usé "sin cambios" en algún intervalo del que no tenía evidencia?
+□ Si el archivo es una parte o un fragmento: ¿declaré el alcance y si los tiempos son del original o del archivo? ¿Traté los bordes como límites y no como cortes? ¿Medí la apertura, el cierre y los porcentajes solo donde corresponde? ¿Continué la numeración del bloque de continuidad, o usé el sufijo de parte si no lo tenía?
+□ ¿Terminé la respuesta con el BLOQUE DE CONTINUIDAD, si es una parte o un bloque?
 
 COBERTURA
 □ ¿Completé el triaje de los ocho ejes (0 a 7) y calibré el peso según él?
@@ -1088,6 +1179,8 @@ CLASIFICA. CAPTURA. DEPURA. VERIFICA.
 CADA SEGUNDO SE REGISTRA. NINGÚN SEGUNDO SE INVENTA.
 
 UNA FUENTE INCOMPLETA SE REGISTRA CON SUS HUECOS. NUNCA SE RECHAZA.
+
+SI LLEGA POR PARTES, CADA PARTE SE REGISTRA ENTERA Y LAS PARTES SE UNEN DESPUÉS.
 
 SOLO SE OBSERVA LO QUE LA FUENTE CONTIENE. LO RELATADO SE CITA, NO SE OBSERVA.
 
