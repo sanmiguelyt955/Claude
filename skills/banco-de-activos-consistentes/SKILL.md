@@ -14,6 +14,8 @@ Un activo es una imagen maestra que se genera UNA vez, se revisa, se sube a 2K y
 - **Guion SIEMPRE hablado** (voz en off); el precio no aparece en el video.
 - **Pipeline completo antes de generar video:** validar producto → guion + hook → activos y ángulos → shot list → recién ahí el prompt de video. Nunca improvisar el prompt de generación.
 - **Sin marcas, emblemas, logos ni letras de terceros** en autos, productos o ropa. Describir el objeto, no nombrar marca ni modelo. Revisar el activo a 2K: a esa resolución aparecen insignias diminutas (fender, parrilla, centro del rin) que a 1K no se ven; si aparecen, quitarlas con una edición dirigida y volver a descargar.
+- **Look orgánico, no anuncio, y sin efectos.** El video debe parecer grabado con un celular. Nada de destellos, transiciones generadas, "cinematic" ni "movie trailer", salvo que el usuario lo pida y se vea bien.
+- **El tamaño de los objetos es parte del activo** (ver "Escala de los objetos"): un objeto no cambia de tamaño ni aparece de la nada.
 - **Mostrar el costo en créditos antes de generar video** y confirmar. Las imágenes en Flow con Nano Banana Pro costaron 0 créditos.
 - El producto real manda: si el activo es una recreación o render, avisar al usuario y contrastar con la ficha del proveedor (riesgo de reclamos por publicidad engañosa).
 
@@ -48,6 +50,13 @@ Primero describir el producto con `descripcion-por-imagen-de-producto`, y los á
 ### 4. Artículos secundarios / props
 Miniaturas, cajas, herramientas, ropa. Mismo flujo: generar solo, fondo neutro, 9:16, sin marcas, a 2K. Si el prop es la versión pequeña de otro activo (mini y auto real), generar el grande primero y describir el pequeño a partir de él, para que sean idénticos.
 
+### Escala de los objetos y objetos que "aparecen de la nada"
+- **Fijar el tamaño real en el activo y en el prompt.** Ejemplo del proyecto del calendario: el mini es un auto de colección a escala 1:64, de unos 7 cm, que cabe en la palma de la mano y en un cajón de la misma medida que sus vecinos. Escribirlo así: "a small 1:64 die-cast car, about 7 cm long, fits in the palm of the hand". Sin la medida, el modelo lo infla hasta el largo de un antebrazo.
+- **El cajón o el empaque no cambia de tamaño** al abrirse: "the drawer is the same width as the neighboring drawers".
+- **Un objeto nunca debe aparecer de la nada.** Si el clip lo muestra en la mano, el primer cuadro ya debe tenerlo. Crear una imagen de activo con el objeto en la mano a la escala correcta (edición del último fotograma del clip anterior: "he holds a small 1:64 die-cast black car in his open palm") y usarla como primer cuadro. Si el objeto sale de un cajón, que ese gesto esté dentro del mismo clip.
+- **No mezclar el producto con números junto a otras referencias en el modo Ingredientes:** con calendario + hombre + auto, la cuadrícula salió con más columnas y números repetidos. Los planos del producto numerado se generan en modo Fotogramas, con la maestra 2K como primer cuadro, solos y cortos.
+- Revisar cada clip a velocidad normal y fotograma por fotograma: tamaño del objeto, números, objetos que entran o salen, destellos.
+
 ### 5. Recursos de continuidad
 - **Último fotograma** de un clip aprobado, usado como primer cuadro del siguiente.
 - **Primer cuadro** de producto: la maestra 2K del producto cuando el clip muestra números o detalles impresos (el modelo anima la foto en vez de redibujarla).
@@ -70,7 +79,8 @@ En una sesión, GPT Image 2.5 (Sunburst y Flare) devolvió 408 "system under loa
 ## Encadenar clips y planos múltiples
 
 - **Encadenar:** `ffmpeg -sseof -0.05 -i clip.mp4 -frames:v 1 -q:v 2 ultimo.jpg`, subirlo y usarlo como primer cuadro del siguiente clip. Mantiene al mismo personaje, el mismo lugar y los mismos objetos.
-- **Más energía:** el usuario quiere varios planos dentro de un mismo clip, con cambios de ángulo cada 1 a 1.5 s como en una película (low angle, macro, cenital, whip pan, punch-in). Escribir el prompt por tomas con sus segundos: "Shot 1 (0-1.3s): …", "Shot 2 (1.3-2.6s): …". Pedir "energetic handheld phone footage, quick cuts, whip pans, punch-ins".
+- **Más energía, pero orgánica:** el usuario quiere variedad de ángulos para no aburrir, y que se vea como un video casero, NO como un anuncio. Probado: un solo prompt de 6 tomas con "movie trailer, whip pans, punch-ins" dio look de anuncio, destellos de luz, números deformados, cambios de escala y objetos que aparecen de la nada. Lo que sí funciona: **un clip corto por plano** (4 s), cada uno con su primer cuadro fijo y UNA acción, y los cortes cada 1 a 1.5 s se hacen en la edición (CapCut). Si se usa un prompt multi-toma, máximo 2 o 3 tomas, sin el producto numerado.
+- **Look orgánico:** pedir "shot on a phone, handheld with natural small shakes, slightly off-center framing, mixed indoor lighting, a bit underexposed, no cinematic bokeh, slight grain". NO escribir "cinematic", "movie trailer", "trailer", "lens flare", "light leak", "slow motion", "whip pan" ni "punch-in". Ningún efecto de luz ni transición generada, salvo que el usuario lo pida y quede bien.
 - **Cámara en mano estable:** pedir "keep the framing stable, no tilting up to the ceiling"; sin esa frase el balanceo llegó a mostrar el techo.
 - **Reacciones:** pedir "believable, restrained surprise: eyebrows up, mouth slightly open, not exaggerated, not cartoonish". Para que mire a otra persona, decir hacia dónde mira.
 - **Objetos que cambian de tamaño o se abren:** el modelo puede abrir otro cajón u ocupar varias columnas. Revisar y, si importa, regenerar o recortar.

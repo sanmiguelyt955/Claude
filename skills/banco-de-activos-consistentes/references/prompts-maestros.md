@@ -43,8 +43,9 @@ Ultra-realistic vertical macro photograph, 9:16, close-up of [detail: gold foil 
 ```
 
 ## Video por tomas con varias referencias (Ingredientes)
+Máximo 2 o 3 tomas. NO incluir el producto con números aquí (se deforma): esos planos van en Fotogramas, solos. Los cortes rápidos se hacen en la edición.
 ```
-Fast-paced multi-shot sequence, vertical 9:16, energetic handheld phone footage, quick cuts every 1 to 1.5 seconds like a movie trailer, whip pans and punch-ins, warm mixed lighting, slight grain. References: the first image is [avatar and place], the second image is [product], the third image is [prop or vehicle]. Shot 1 (0-1.3s): … Shot 2 (1.3-2.6s): … Shot 3 (2.6-3.9s): … Keep [objects] exactly as in the references: no badges, no logos. No speech, no music, only [ambient sounds].
+Vertical 9:16, shot on a phone, handheld with natural small shakes, slightly off-center framing, mixed indoor lighting, a bit underexposed, no cinematic bokeh, slight grain. References: the first image is [avatar and place], the second image is [prop or vehicle]. Shot 1 (0-2s): … Shot 2 (2-4s): … Keep [objects] exactly as in the references, same size: [object] is about [size] and fits in the palm of the hand. No badges, no logos, no light effects, no lens flare. No speech, no music, only [ambient sounds].
 ```
 
 ## Video continuo desde un fotograma (Fotogramas)
