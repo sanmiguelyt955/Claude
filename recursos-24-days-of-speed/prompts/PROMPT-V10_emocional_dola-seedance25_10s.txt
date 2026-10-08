@@ -1,0 +1,62 @@
+PROMPT V10 - emocional - Dola / Dreamina Seedance 2.5 - 10 s - 9:16
+Referencias de imagen: 1 = portada del calendario 24 Days of Speed (PR-01); 2 = auto negro satinado (PP-01).
+Sin imagen de persona: los personajes se describen solo en texto.
+
+IDEA CENTRAL (la reacción es el video; el calendario solo la provoca)
+- Hook de curiosidad en los primeros 2 s: el padre dice que no quiere nada para Navidad.
+- Giro emocional a la mitad: la hija llega con un regalo que parece cualquier cosa.
+- Clímax emocional a ~70 % (7-8 s): el padre reconoce el mini igual a su auto. Sorpresa genuina, luego sonrisa contenida. Silencio.
+- Cierre (8-10 s): la hija lo mira, él se queda con el auto en la mano. Plano quieto para que el espectador lea la emoción.
+
+LOOK Y CÁMARA
+- Vertical 9:16, 10 s exactos, un solo video continuo.
+- Grabado como si fuera un celular sostenido a mano por alguien de la familia: encuadre levemente descentrado, micro-temblores naturales, sin zoom digital, sin paneos, sin cortes de estilo película, sin efectos, sin filtros, sin texto ni logos.
+- Cámara a la altura de los ojos de un adulto de pie. Todo en un solo plano medio y dos planos de detalle (capó y mano).
+- Luz real de garaje: lámparas de techo cálidas, un poco de contraluz desde la puerta entreabierta a la izquierda. Nada de luz de estudio.
+
+ESCENARIO
+- Garaje residencial, paredes crema, gabinetes de pared de madera oscura al fondo, una puerta blanca entreabierta a la izquierda.
+- Piso de concreto con un tapete de goma negra frente al auto.
+- Auto: sedán negro satinado de frente, faros apagados, sin marcas ni logos visibles.
+- Calendario: caja bordó con borde dorado, título "24 Days of Speed" y "Collector's Garage" en letras doradas, portada con un auto rojo. Por dentro, 24 cajones (4 filas por 6 columnas), numerados. Pesa poco y se sostiene con dos manos.
+
+PERSONAJES (solo texto)
+- El padre: unos 55 años, cabello gris corto hacia atrás, barba corta gris, camisa de manga corta gris lisa, pantalón oscuro, reloj plateado en la muñeca izquierda. Está cansado y un poco gruñón al inicio; después se le abre la cara.
+- La hija: unos 20 años, cabello castaño largo ondulado, vestido de manga larga bordó con ribete blanco, sin maquillaje fuerte. Nerviosa y emocionada, sonríe con los labios apretados mientras espera la reacción.
+
+CRONOLOGÍA (intención emocional + acción visible)
+
+0.0 - 2.0 s | HOOK. Plano medio del padre de pie junto al lado del conductor, pasando un trapo de microfibra amarillo sobre el capó con cara de fastidio. Mira hacia la cámara, con voz baja y gruñona: "Ya te dije que no quiero nada esta Navidad." Se oye el trapo y el zumbido de la lámpara. Esto genera curiosidad: ¿por qué no quiere nada?
+
+2.0 - 3.5 s | Corte a un plano medio donde el padre mira hacia la puerta. La hija entra por la izquierda con la caja del calendario apretada contra el pecho, con una sonrisa que intenta disimular. Ella se detiene a un paso de él.
+
+3.5 - 5.0 s | Ella extiende la caja hacia él con las dos manos. Él la mira con desconfianza, levanta una ceja. Ella dice "Ábrelo" con los labios, sin voz fuerte. Él la sostiene con la mano derecha y la apoya en el capó, a la derecha del faro, mientras sigue sin entusiasmo.
+
+5.0 - 6.2 s | Plano de detalle del calendario sobre el capó. El padre se inclina y usa el índice para abrir el cajón 16 (tercera fila, cuarta columna) tirando del tirador hacia afuera. Se abre un poco y adentro hay algo negro pequeño. Movimiento lento, sin prisas.
+
+6.2 - 7.0 s | Plano de la mano del padre: saca el mini auto con el pulgar y el índice y lo sostiene frente a la cara. Escala Hot Wheels, unos 7,5 cm; del tamaño de la falange de un dedo. Se ve que es idéntico en forma al auto real.
+
+7.0 - 8.0 s | CLÍMAX. Plano medio: el padre levanta el mini a la altura de los ojos y lo compara con el auto real que tiene a un lado. Se le abre la boca, sonríe de golpe, incrédulo. Mira a la hija. La hija se muerde el labio y se ríe bajito. SILENCIO: solo se oye la lámpara.
+
+8.0 - 9.0 s | Plano de detalle del capó: el padre posa el mini sobre el capó, junto al faro izquierdo del auto real, de frente al lente. El mini queda siempre más pequeño que el faro. La mano se retira del cuadro.
+
+9.0 - 10.0 s | Plano fijo final, medio: el padre con la mano en la cintura y la mirada en el mini; la hija a un lado, sonriendo. Pausa de un segundo, sin música. Termina.
+
+AUDIO
+- Ambiente de garaje constante, bajo: zumbido de la lámpara, trapo sobre la pintura.
+- 0-2 s: la voz del padre, cansada, sin música.
+- 7-8 s: silencio casi total. Es el momento que el espectador escucha.
+- Sin música, sin voz en off, sin efectos exagerados.
+
+REGLAS DE CONSISTENCIA
+- El mini nunca es más grande que el faro del auto real.
+- El calendario tiene 24 cajones (4 x 6), numerados; no se agregan ni quitan.
+- El auto real se mantiene idéntico a la referencia 2: negro satinado.
+- Vestuario fijo: padre en camisa gris, hija en vestido bordó.
+- Ningún objeto aparece de la nada; el mini sale del cajón 16.
+
+NEGATIVOS
+- Sin zoom, sin paneos, sin movimiento de cámara en cuadros amplios, sin cortes de estilo trailer.
+- Sin texto, subtítulos, marcas de agua, logos, precios.
+- Sin música, sin efectos de luz, sin brillos ni destellos.
+- Sin personas adicionales, sin mini más grande que el faro.

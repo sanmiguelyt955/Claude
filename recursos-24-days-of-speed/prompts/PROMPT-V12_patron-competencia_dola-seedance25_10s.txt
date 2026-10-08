@@ -1,0 +1,32 @@
+PROMPT V12 - basado en el patrón de los videos de competencia - Dola / Seedance 2.5 - 10 s - 9:16
+Referencias de imagen: 1 = portada del calendario (PR-01); 2 = auto negro (PP-01). Sin imagen de persona.
+
+PATRÓN QUE SE COPIA (de los análisis guardados)
+- Hook en 0-2 s con curiosidad o contraste, no con explicación.
+- Un solo gesto de activación del producto, visible y repetido (abrir cajón).
+- Recompensa emocional en la segunda mitad (sorpresa y reconocimiento), con silencio para que se lea.
+- Cierre en plano quieto. Nada de música ni voz en off para que el espectador sienta la emoción.
+- Look de celular real, cámara fija, sin efectos.
+
+EMOCIÓN QUE DISPARA LA COMPRA
+- Reconocimiento: "tiene uno igualito a mi auto". Es el mismo deseo que lleva a comprar un regalo para papá coleccionista.
+
+GUIÓN (10 s, sin texto en pantalla)
+0.0 - 2.0 s | Plano medio, cámara fija a la altura del pecho. Un hombre de camisa gris limpia el capó negro con un trapo amarillo. Mira a cámara y dice bajo: "No quiero nada esta Navidad." (curiosidad)
+2.0 - 3.5 s | Corte. Plano medio: una joven de vestido bordó entra por la izquierda con la caja del calendario de adviento apretada contra el pecho.
+3.5 - 5.0 s | Ella le entrega el calendario. Él lo apoya en el capó, junto al faro. Expresión de desconfianza que se deshace en curiosidad.
+5.0 - 6.2 s | Plano de detalle: el calendario sobre el capó. El dedo del hombre abre el cajón 16 (tercera fila, cuarta columna). Adentro, algo negro pequeño.
+6.2 - 7.0 s | Plano de detalle: la mano saca un mini auto negro, escala Hot Wheels (unos 7,5 cm), idéntico al auto real.
+7.0 - 8.0 s | CLÍMAX (70 %): plano medio. Él levanta el mini a la altura de los ojos y lo compara con el auto real. Sorpresa y sonrisa. Ella se ríe bajito. Silencio: solo el zumbido de la lámpara.
+8.0 - 9.0 s | Plano detalle del capó: él posa el mini junto al faro del auto real, de frente a la cámara. Siempre más pequeño que el faro.
+9.0 - 10.0 s | Plano fijo: él con la mano en la cadera mirando el mini; ella sonríe a un lado. Un segundo de quietud y termina.
+
+AUDIO
+- Ambiente de garaje bajo. 0-2 s: voz del hombre. 7-8 s: silencio. Sin música ni voz en off.
+
+REGLAS
+- El mini nunca es más grande que el faro. El calendario tiene 24 cajones (4 x 6). El auto es igual a la referencia 2.
+- Vestuario fijo: camisa gris y vestido bordó.
+
+NEGATIVOS
+- Sin zoom, sin paneos, sin cortes de estilo trailer. Sin texto, marcas, logos ni música. Sin personas extra.

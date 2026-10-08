@@ -78,7 +78,7 @@ const WINDOW_CALL_DELAY_MS = Number(process.env.GEMINI_WINDOW_CALL_DELAY_MS ?? 1
  * a 5-minute video took 13 minutes. The per-model pacer below still enforces
  * Google's RPM, so this only fills the idle time, it never exceeds the limit.
  */
-const WINDOW_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_WINDOW_CONCURRENCY ?? 4))
+const WINDOW_CONCURRENCY = Math.max(1, Number(process.env.GEMINI_WINDOW_CONCURRENCY ?? 1))
 
 /**
  * Google's free tier enforces RPM per model and per project

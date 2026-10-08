@@ -1,0 +1,63 @@
+PROMPT DETALLADO V9 - Dola / Dreamina Seedance 2.5 - 10 s - 9:16
+Referencias: imagen 1 = portada del calendario 24 Days of Speed (PR-01); imagen 2 = auto negro satinado (PP-01).
+Nota: no se adjunta imagen de persona. El hombre se describe solo en texto para evitar el bloqueo de personas reales.
+
+FORMATO Y CÁMARA
+- Formato vertical 9:16, duración exacta 10 segundos, una sola toma continua en varios planos encadenados por corte limpio.
+- Estilo: video casero realista tipo celular, sin efectos, sin filtros, sin texto en pantalla, sin música, sin logos.
+- Cámara fija a la altura de la cintura en los planos del garaje; en el plano del capó, cámara fija a la altura del capó. Sin zoom, sin paneos, sin movimiento de cámara. Cero efectos de cámara.
+- Profundidad de campo media: el auto y el calendario quedan nítidos, el fondo del garaje levemente desenfocado.
+
+ESCENARIO
+- Garaje residencial amplio, paredes color crema cálido, gabinetes de madera oscura en la pared del fondo, una puerta blanca de garaje cerrada a la izquierda.
+- Piso de concreto pulido con un tapete de goma negra frente al auto.
+- Iluminación: luz cálida de lámparas de techo (tungsteno, aprox. 2700 K), una lámpara lineal blanca del techo, nada de luz azul ni frías.
+- Auto: sedán deportivo negro satinado, parado de frente al espectador en el plano del capó; faros delanteros encendidos en tono ámbar, la rejilla con acabado oscuro.
+
+PERSONAJES (solo texto)
+- Hombre: unos 55 años, cabello gris corto peinado hacia atrás, barba de tres días gris, camisa de manga corta gris lisa, pantalón oscuro, reloj de pulsera plateado en la muñeca izquierda. Expresión seria, luego resignada y después curiosa.
+- Hija: unos 20 años, cabello castaño largo y ondulado, vestido de manga larga color bordó con ribete blanco en el dobladillo, zapatos negros. Sonrisa suave.
+
+OBJETOS
+- Calendario de adviento: caja bordó con borde dorado, título "24 Days of Speed" y subtítulo "Collector's Garage", con un auto rojo en la portada. Gabinete de 24 cajones en 4 filas de 6 columnas, numerados del 1 al 24. Mide aproximadamente 30 cm de alto. Lo apoya en el capó del auto, a la derecha del faro.
+- Cajón 16: tercera fila, cuarta columna. Se abre tirando del tirador hacia afuera, una corta distancia.
+- Mini auto: escala Hot Wheels, unos 7,5 cm de largo, negro, idéntico en forma al auto real pero en miniatura. Entra en la mano del hombre completamente.
+- Trapo amarillo de microfibra en la mano izquierda del hombre al inicio.
+
+CRONOLOGÍA SEGUNDO A SEGUNDO
+
+0.0 - 1.5 s: Plano medio del hombre de frente a la cámara, de pie junto al lado del conductor del auto. Limpia el capó con el trapo amarillo con movimientos circulares lentos. Mira el auto. Dice en voz baja: "Ya te dije que no quiero nada esta Navidad." Se oye el trapo sobre la pintura y el ambiente del garaje.
+
+1.5 - 3.0 s: Corte. Plano medio del mismo hombre, ahora mirando hacia la puerta del garaje, la mano del trapo baja. La puerta blanca de la izquierda está entreabierta, entra luz blanca. Gesto de resignación: suspira y sonríe apenas.
+
+3.0 - 4.5 s: Plano medio de la hija entrando por la izquierda, sosteniendo la caja del calendario con ambas manos a la altura del pecho. Camina tres pasos, se detiene junto al auto, del lado del copiloto. Le entrega la caja al hombre. Él la toma con la mano derecha y la apoya en el capó, a la derecha del faro.
+
+4.5 - 6.0 s: Plano medio del calendario sobre el capó, con el auto al fondo. Cámara fija. El hombre se inclina y mete los dedos en el cajón 16 (tercera fila, cuarta columna), lo abre tirando hacia afuera. El cajón se abre sin mover los demás. Dentro hay un mini auto negro. Se ve el mini sobre el fondo oscuro del cajón.
+
+6.0 - 7.2 s: Primer plano de la mano del hombre sacando el mini auto del cajón con el pulgar y el índice. Lo gira una vez para mostrar que es idéntico al auto real. Escala visible: el mini ocupa la altura de la falange del pulgar.
+
+7.2 - 8.4 s: Plano medio del hombre levantando el mini a la altura de los ojos, con la otra mano abierta debajo como sosteniéndolo. Mira el mini unos segundos, con expresión de sorpresa contenida. Silencio: solo se oye el ambiente del garaje.
+
+8.4 - 9.4 s: Plano de detalle sobre el capó: el mini se baja y se posa en el capó, al lado del faro izquierdo del auto real. El mini queda de frente al lente, a escala Hot Wheels, siempre más pequeño que el faro. La mano se retira hacia afuera del cuadro. Silencio absoluto.
+
+9.4 - 10.0 s: Plano fijo final de la escena completa: el calendario abierto en la cajonera, el auto negro con el mini en el capó, el hombre a un lado y la hija mirando. Se mantiene el plano un segundo y termina.
+
+AUDIO
+- Ambiente de garaje constante: un zumbido bajo de la lámpara, el sonido del trapo sobre la pintura.
+- En 0.0-1.5 s: el hombre habla en voz baja, sin música.
+- En 7.2-9.4 s: silencio casi total, solo el ambiente. Este silencio es el momento clave del mini.
+- Sin música, sin efectos de sonido exagerados, sin voces en off.
+
+CONTINUIDAD Y CONSISTENCIA (importante)
+- El mini auto es siempre del mismo tamaño: nunca más grande que el faro del auto real ni que la caja del calendario en proporción.
+- El calendario conserva 24 cajones, 4 filas x 6 columnas, numerados. No se deben agregar ni quitar cajones.
+- El auto real es el de la referencia 2: negro satinado, sin marcas, sin logos.
+- Mismo vestuario durante todo el video: el hombre con camisa gris, la hija con vestido bordó.
+- Nada de objetos que aparezcan o desaparezcan de la nada.
+
+NEGATIVOS (no incluir)
+- Sin zoom, sin paneo, sin cámara en movimiento, sin cortes rápidos fuera de los indicados.
+- Sin texto, subtítulos, marcas de agua, logos, precios.
+- Sin música, sin voz en off, sin efectos de luz, sin brillos ni destellos.
+- Sin mini auto más grande que el faro, sin autos de otro color, sin personas adicionales.
+- Sin cambiar la portada del calendario ni el número de cajones.

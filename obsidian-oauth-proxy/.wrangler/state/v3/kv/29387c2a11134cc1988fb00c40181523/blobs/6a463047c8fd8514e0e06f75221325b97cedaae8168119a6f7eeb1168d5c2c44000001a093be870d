@@ -1,0 +1,1 @@
+{"clientId":"mPB0za64hB82_bem","redirectUris":["https://claude.ai/api/mcp/auth_callback"],"clientName":"test","grantTypes":["authorization_code"],"responseTypes":["code"],"registrationDate":1789185132,"tokenEndpointAuthMethod":"client_secret_basic","clientSecret":"a9750a38cff1f844fc0b536341752b440fe6cc480ce1bad49af4c225d807da89"}

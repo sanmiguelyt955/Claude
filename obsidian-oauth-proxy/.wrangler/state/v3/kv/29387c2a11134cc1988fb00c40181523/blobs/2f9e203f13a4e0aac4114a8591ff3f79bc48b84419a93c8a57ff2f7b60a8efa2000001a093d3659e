@@ -1,0 +1,1 @@
+{"clientId":"zWgHei81L99TmQoq","redirectUris":["https://claude.ai/api/mcp/auth_callback"],"clientName":"verify-tools","grantTypes":["authorization_code"],"responseTypes":["code"],"registrationDate":1789186499,"tokenEndpointAuthMethod":"none","authMethodExplicit":true}

@@ -1,0 +1,5 @@
+[mcp_servers.graphify]
+url = "https://api.graphify.net/mcp"
+
+[mcp_servers.graphify.http_headers]
+Authorization = "Bearer $GRAPHIFY_API_KEY"
