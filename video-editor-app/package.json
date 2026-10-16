@@ -1,0 +1,12 @@
+{
+  "name": "video-editor-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Editor de video web: importar, cortar, ordenar, añadir texto y exportar MP4 con FFmpeg",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": { "node": ">=18" }
+}

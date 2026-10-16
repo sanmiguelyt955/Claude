@@ -1,0 +1,119 @@
+:root {
+  --bg: #15161a;
+  --panel: #1f2026;
+  --panel-2: #272932;
+  --text: #ecedf1;
+  --muted: #9a9ca8;
+  --accent: #7c5cff;
+  --danger: #e5484d;
+  --clip: #3a6ea5;
+  --clip-sel: #5b8fd6;
+  --text-track: #8a5a2b;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --panel-2: #eceef2;
+    --text: #1b1c21;
+    --muted: #666a77;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: var(--panel);
+  border-bottom: 1px solid var(--panel-2);
+}
+.topbar strong { font-size: 15px; }
+.status { color: var(--muted); flex: 1; }
+
+.layout {
+  display: grid;
+  grid-template-columns: 220px 1fr 260px;
+  grid-template-rows: 1fr auto;
+  gap: 10px; padding: 10px;
+  height: calc(100vh - 56px);
+  min-height: 560px;
+}
+
+.panel {
+  background: var(--panel); border-radius: 10px; padding: 12px;
+  overflow: auto; min-width: 0;
+}
+.panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 4px 0 10px; }
+
+.bin { grid-row: 1; }
+.preview { grid-row: 1; display: flex; flex-direction: column; gap: 8px; }
+.inspector { grid-row: 1; }
+.timeline { grid-column: 1 / -1; grid-row: 2; min-height: 200px; }
+
+video {
+  width: 100%; max-height: 52vh; background: #000; border-radius: 8px;
+  aspect-ratio: 16 / 9; object-fit: contain;
+}
+
+.transport, .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.transport { justify-content: space-between; }
+#timecode { font-variant-numeric: tabular-nums; color: var(--muted); }
+
+input[type="range"] { width: 100%; }
+input[type="text"], input[type="number"] {
+  background: var(--panel-2); color: var(--text); border: 1px solid transparent;
+  border-radius: 6px; padding: 6px 8px; min-width: 0; flex: 1;
+}
+input[type="number"] { flex: 0 0 90px; }
+label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+
+button {
+  background: var(--panel-2); color: var(--text); border: 0; border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; font: inherit;
+}
+button:hover { filter: brightness(1.15); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: #fff; }
+button.danger { background: var(--danger); color: #fff; }
+
+.upload {
+  display: block; text-align: center; padding: 10px; border: 1px dashed var(--muted);
+  border-radius: 8px; cursor: pointer; color: var(--muted); margin-bottom: 10px;
+}
+
+.list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.list li {
+  background: var(--panel-2); border-radius: 6px; padding: 6px 8px;
+  display: flex; justify-content: space-between; gap: 8px; align-items: center;
+}
+.list li button { padding: 3px 8px; }
+.muted { color: var(--muted); }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tracks { display: flex; flex-direction: column; gap: 8px; }
+.track { display: flex; gap: 6px; align-items: stretch; min-height: 44px; }
+.track-label { width: 64px; flex: 0 0 64px; color: var(--muted); font-size: 12px; align-self: center; }
+.track-body { position: relative; flex: 1; display: flex; gap: 4px; background: var(--panel-2); border-radius: 6px; padding: 4px; min-height: 44px; overflow-x: auto; }
+.track-body { height: 44px; }
+.block {
+  position: absolute; top: 4px; height: 36px; box-sizing: border-box;
+  background: var(--clip); color: #fff; border-radius: 5px; padding: 4px 8px;
+  min-width: 24px; cursor: pointer; border: 2px solid transparent;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px;
+}
+.block.selected { border-color: #fff; background: var(--clip-sel); }
+.block.text { background: var(--text-track); }
+.block small { display: block; opacity: .8; }
+.empty-track { color: var(--muted); align-self: center; padding: 0 8px; }
+
+.result { margin-top: 6px; }
+.result a { color: var(--accent); }
