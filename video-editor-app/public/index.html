@@ -2,66 +2,134 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c11">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Editor">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Editor de video</title>
-  <link rel="icon" href="data:,">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header class="topbar">
-    <strong>Editor de video</strong>
-    <span id="status" class="status"></span>
-    <button id="exportBtn" class="primary">Exportar MP4</button>
+    <div class="brand" title="Editor de video">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg></span>
+      <span>Editor</span>
+    </div>
+    <input id="projectName" class="project-name" type="text" aria-label="Nombre del proyecto" title="Nombre del proyecto" value="Proyecto sin título">
+    <div class="top-actions">
+      <button id="undoBtn" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶ <span class="lbl">Deshacer</span></button>
+      <button id="redoBtn" title="Rehacer (Ctrl+Shift+Z)" aria-label="Rehacer">↷ <span class="lbl">Rehacer</span></button>
+      <span class="sep" aria-hidden="true"></span>
+      <label class="ratio" title="Proporción del video final">
+        <span class="lbl">Formato</span>
+        <select id="ratioSelect" aria-label="Formato del video">
+          <option value="16:9">16:9 · YouTube</option>
+          <option value="9:16">9:16 · TikTok / Reels</option>
+          <option value="1:1">1:1 · Cuadrado</option>
+          <option value="4:5">4:5 · Instagram</option>
+        </select>
+      </label>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="newBtn" title="Empezar un proyecto nuevo">Nuevo</button>
+      <button id="openBtn" title="Abrir un proyecto guardado">Abrir</button>
+      <button id="saveBtn" title="Guardar el proyecto (Ctrl+S)">Guardar</button>
+      <button id="exportBtn" class="primary" title="Crear el archivo de video MP4">Exportar video</button>
+    </div>
   </header>
 
-  <main class="layout">
-    <aside class="panel bin">
-      <h2>Biblioteca</h2>
-      <label class="upload">
-        <input id="fileInput" type="file" accept="video/*" multiple hidden>
-        <span>+ Importar videos</span>
-      </label>
-      <ul id="mediaList" class="list"></ul>
-    </aside>
+  <dialog id="openDialog" aria-labelledby="openTitle">
+    <h3 id="openTitle">Tus proyectos guardados</h3>
+    <ul id="projectList" class="list"></ul>
+    <div class="row end"><button id="closeOpen">Cerrar</button></div>
+  </dialog>
 
-    <section class="panel preview">
-      <video id="video" playsinline></video>
-      <div class="transport">
-        <button id="playBtn">▶ Reproducir</button>
-        <span id="timecode">00:00.0 / 00:00.0</span>
+  <main class="app">
+    <section class="panel media" aria-label="Tus archivos">
+      <div class="panel-head">
+        <h2>1 · Tus archivos</h2>
       </div>
-      <input id="playhead" type="range" min="0" max="0" step="0.01" value="0">
-      <div class="row">
-        <button id="splitBtn">✂ Cortar en el cursor</button>
-      </div>
+      <label class="import-card" title="Sube videos, fotos o audios desde tu dispositivo">
+        <span aria-hidden="true">⬆</span> Subir archivos
+        <input id="fileInput" type="file" accept="video/*,audio/*,image/*" multiple hidden>
+      </label>
+      <p class="hint">Videos, fotos (PNG/JPG) y audios. Luego toca <b>+</b> para ponerlos en la línea de tiempo.</p>
+      <ul id="mediaList" class="list"></ul>
     </section>
 
-    <section class="panel inspector">
-      <h2>Clip seleccionado</h2>
-      <div id="clipInfo" class="muted">Selecciona un clip en la línea de tiempo.</div>
-      <div id="clipControls" hidden>
-        <label>Inicio (s) <input id="clipStart" type="number" step="0.1" min="0"></label>
-        <label>Fin (s) <input id="clipEnd" type="number" step="0.1" min="0"></label>
-        <div class="row">
-          <button id="moveLeft">← Mover</button>
-          <button id="moveRight">Mover →</button>
-          <button id="deleteClip" class="danger">Quitar</button>
+    <section class="panel stage-panel" aria-label="Vista previa">
+      <div class="panel-head">
+        <h2>Vista previa</h2>
+        <span class="hint-inline">Así se verá tu video</span>
+      </div>
+      <div class="stage-wrap">
+        <div id="stage" class="stage"></div>
+        <div id="welcome" class="welcome" hidden>
+          <h3>¡Vamos a crear tu video!</h3>
+          <ol>
+            <li><b>Sube</b> tus archivos a la izquierda.</li>
+            <li><b>Toca +</b> para añadirlos a la línea de tiempo abajo.</li>
+            <li><b>Ajusta</b> cortes, textos y efectos.</li>
+            <li><b>Exporta</b> arriba a la derecha.</li>
+          </ol>
         </div>
       </div>
-
-      <h2>Textos</h2>
-      <div class="row">
-        <input id="textInput" type="text" placeholder="Escribe un texto">
-        <button id="addText">Añadir</button>
+      <div class="transport">
+        <button id="toStartBtn" class="icon" title="Volver al inicio" aria-label="Volver al inicio">⏮</button>
+        <button id="playBtn" class="primary play" title="Reproducir / pausar (Espacio)" aria-label="Reproducir">▶</button>
+        <button id="splitBtn" title="Cortar el clip en la posición de la línea roja (S)">✂ Cortar aquí</button>
+        <button id="dupBtn" title="Copiar el clip seleccionado (Ctrl+D)">⧉ Duplicar</button>
+        <button id="delBtn" class="danger" title="Quitar el clip seleccionado (Supr)">🗑 Quitar</button>
+        <span id="timecode" class="timecode">00:00.0 <span>/ 00:00.0</span></span>
       </div>
-      <ul id="textList" class="list"></ul>
     </section>
 
-    <section class="panel timeline">
-      <div id="tracks" class="tracks"></div>
+    <section class="panel inspector" id="inspector" aria-label="Ajustes del clip seleccionado">
+      <div class="panel-head">
+        <h2>3 · Ajustes del clip</h2>
+        <span id="clipBadge" class="badge" hidden></span>
+      </div>
+      <div id="inspectorBody"></div>
+    </section>
+
+    <section class="panel timeline" aria-label="Línea de tiempo">
+      <div class="timeline-bar">
+        <div class="add-tracks">
+          <span class="hint-inline">2 · Añadir:</span>
+          <button data-add-track="video" class="chip chip-video" title="Crear una pista para videos e imágenes">+ Pista de video</button>
+          <button data-add-track="audio" class="chip chip-audio" title="Crear una pista para música o voz">+ Pista de audio</button>
+          <button data-add-track="text" class="chip chip-text" title="Crear una pista para textos">+ Pista de texto</button>
+          <button data-add-track="graphic" class="chip chip-graphic" title="Crear una pista para formas">+ Pista de formas</button>
+          <button id="addTextBtn" title="Añadir un texto en la posición de la línea roja">T Añadir texto</button>
+          <button id="addShapeBtn" title="Añadir un rectángulo de color">▭ Añadir forma</button>
+        </div>
+        <label class="zoom" title="Acercar o alejar la línea de tiempo">Zoom
+          <input id="zoom" type="range" min="20" max="220" value="70" aria-label="Zoom de la línea de tiempo">
+        </label>
+      </div>
+      <div id="timeline" class="timeline-scroll">
+        <div id="timelineInner" class="timeline-inner"></div>
+      </div>
+      <p class="tips" aria-label="Atajos">
+        <span><kbd>Espacio</kbd> reproducir</span>
+        <span><kbd>S</kbd> cortar</span>
+        <span>Arrastra un clip para moverlo</span>
+        <span>Arrastra sus bordes para recortarlo</span>
+        <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> deshacer</span>
+      </p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
   </main>
 
+  <script src="/lib/model.js"></script>
+  <script src="/preview.js"></script>
   <script src="/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  </script>
 </body>
 </html>
