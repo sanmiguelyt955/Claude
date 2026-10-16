@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BeatForge · DAW</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">BeatForge</div>
+    <input id="projectName" class="pname-input" title="Nombre del proyecto">
+
+    <div class="transport">
+      <button id="btnPlay" class="play" title="Reproducir / detener (Espacio)">▶</button>
+      <button id="btnStop" title="Detener">■</button>
+      <div id="position" class="lcd" title="Compás.tiempo.semicorchea">1.1.1</div>
+      <label class="bpm">BPM <input id="bpm" type="number" min="20" max="300" step="0.1"></label>
+      <div class="seg" id="modeSeg">
+        <button data-mode="pattern">Patrón</button>
+        <button data-mode="song">Canción</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="metro"> Metrónomo</label>
+      <label class="chk"><input type="checkbox" id="loopOn"> Loop</label>
+      <button id="btnRec" title="Grabar teclado en el patrón (R)">● Grabar</button>
+      <div class="meter" title="Nivel de salida"><div id="meterBar"></div></div>
+    </div>
+
+    <div class="actions">
+      <button id="btnUndo" title="Deshacer (Ctrl+Z)">↶</button>
+      <button id="btnRedo" title="Rehacer (Ctrl+Shift+Z)">↷</button>
+      <button id="btnNew">Nuevo</button>
+      <button id="btnOpen">Abrir</button>
+      <button id="btnSave" title="Guardar archivo (Ctrl+S)">Guardar</button>
+      <button id="btnWav">Exportar WAV</button>
+      <button id="btnMidi">Exportar MIDI</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="rack">
+      <div class="panel-head">
+        <span>Rack de canales</span>
+        <span class="add">
+          <button data-add="synth">+ Synth</button>
+          <button data-add="drum">+ Batería</button>
+          <button data-add="sample">+ Sample</button>
+        </span>
+      </div>
+      <div id="channels"></div>
+
+      <div class="panel-head">
+        <span>Patrones</span>
+        <span class="add">
+          <button id="btnPatAdd" title="Nuevo patrón">+</button>
+          <button id="btnPatDup" title="Duplicar">Dup</button>
+          <button id="btnPatDel" title="Eliminar">Del</button>
+        </span>
+      </div>
+      <div id="patterns"></div>
+      <div class="row small">
+        <label>Compases <input id="patBars" type="number" min="1" max="64" value="4"></label>
+      </div>
+    </aside>
+
+    <main class="main">
+      <nav class="tabs">
+        <button data-tab="step" class="on">Secuenciador de pasos</button>
+        <button data-tab="roll">Piano roll</button>
+        <button data-tab="playlist">Playlist</button>
+        <button data-tab="instrument">Instrumento</button>
+      </nav>
+
+      <section id="view-step" class="view" data-view="step"></section>
+
+      <section id="view-roll" class="view" data-view="roll" hidden>
+        <div class="row toolbar">
+          <label>Snap
+            <select id="rollSnap">
+              <option value="1">1/16</option>
+              <option value="2">1/8</option>
+              <option value="4" selected>1/4</option>
+              <option value="8">1/2</option>
+              <option value="16">1 compás</option>
+            </select>
+          </label>
+          <label>Zoom
+            <select id="rollZoom">
+              <option value="8">Lejos</option>
+              <option value="14" selected>Normal</option>
+              <option value="20">Cerca</option>
+              <option value="28">Muy cerca</option>
+            </select>
+          </label>
+          <button id="rollAll">Seleccionar todo</button>
+          <button id="rollQuant">Cuantizar</button>
+          <button id="rollDel">Borrar selección</button>
+          <button id="rollClear" class="danger">Vaciar canal</button>
+          <span class="hint">Clic: añadir/mover · borde derecho: largo · clic derecho: borrar · Shift: multiselección · clic en teclas: probar</span>
+        </div>
+        <div class="sgwrap rollwrap"><canvas id="rollCanvas"></canvas></div>
+      </section>
+
+      <section id="view-playlist" class="view" data-view="playlist" hidden></section>
+      <section id="view-instrument" class="view" data-view="instrument" hidden></section>
+    </main>
+  </div>
+
+  <section class="mixer" id="mixer" aria-label="Mezclador"></section>
+
+  <footer class="bottom">
+    <span id="status">Cargando…</span>
+    <span class="hint">Proyecto guardado automáticamente en este navegador.</span>
+  </footer>
+
+  <input type="file" id="fileOpen" accept=".json,application/json" hidden>
+  <input type="file" id="fileSample" accept="audio/*" hidden>
+
+  <script src="js/core.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
