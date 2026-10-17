@@ -110,9 +110,24 @@ export async function downloadWithYtDlp(url: string, dir: string): Promise<Socia
   return { filePath, title: title && title !== 'NA' ? title : null, sizeBytes: (await stat(filePath)).size, captionsPath }
 }
 
-/** `python -m yt_dlp` plus the options every call shares (ffmpeg, cookies). */
+/**
+ * `python -m yt_dlp` plus the options every call shares: ffmpeg, cookies,
+ * and patient retries. TikTok and Instagram answer the page request with
+ * transient "unable to extract" errors under load; yt-dlp's README offers
+ * extractor retries and exponential sleeps for that (default is 3 retries
+ * with no pause). YTDLP_IMPERSONATE=chrome forces a browser fingerprint on
+ * every request; it stays opt-in because the README warns it can slow and
+ * destabilise downloads, and the TikTok extractor already impersonates where
+ * it needs to when curl_cffi is installed.
+ */
 function ytDlpBase(): string[] {
-  const args = ['-m', 'yt_dlp']
+  const args = [
+    '-m', 'yt_dlp',
+    '--extractor-retries', '5',
+    '--retry-sleep', 'exp=1:30',
+    '--retry-sleep', 'extractor:exp=1:30',
+  ]
+  if (process.env.YTDLP_IMPERSONATE) args.push('--impersonate', process.env.YTDLP_IMPERSONATE)
   if (process.env.FFMPEG_PATH) args.push('--ffmpeg-location', process.env.FFMPEG_PATH)
   if (process.env.YTDLP_COOKIES_FROM_BROWSER) args.push('--cookies-from-browser', process.env.YTDLP_COOKIES_FROM_BROWSER)
   if (process.env.YTDLP_COOKIES_FILE) args.push('--cookies', process.env.YTDLP_COOKIES_FILE)
