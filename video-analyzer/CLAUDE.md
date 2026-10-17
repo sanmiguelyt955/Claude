@@ -29,6 +29,14 @@ No cambiar sin preguntar primero:
 5. **Nada bloqueante en la UI.** El análisis corre en el worker; la interfaz muestra progreso en vivo y sigue navegable.
 6. **Sincronización audio-video es requisito, no extra.** Todo evento del análisis lleva su timestamp y relaciona lo visual con lo hablado.
 
+## Cómo trabajar (adaptado de andrej-karpathy-skills, MIT)
+
+- Di tus suposiciones en voz alta. Si algo no está claro, pregunta.
+- Nada de funciones que no se pidieron ni abstracciones para código de un solo uso.
+- Toca solo lo necesario: no "mejores" código, comentarios o formato vecinos. Cada línea cambiada debe venir de lo que se pidió.
+- "Arregla el bug" → primero un test que lo reproduzca, luego hazlo pasar. En tareas de varios pasos: "1. [paso] → verificar: [comprobación]".
+- No pegues archivos o logs enteros en la conversación: referéncialos con Read o pega solo las últimas ~50 líneas del error (de ahorra-tokens-claude, MIT).
+
 ## Convenciones
 
 - Código, nombres de variables y comentarios en **inglés**. Textos de la interfaz en **español**.
