@@ -15,17 +15,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
-def run_propio(wav: str, model: str, language: str | None) -> dict:
+def run_propio(wav: str, model: str, language: str | None, beam_size: int) -> dict:
     from nuestro_whisper import transcribe
 
-    return transcribe(wav, model=model, language=language)
+    return transcribe(wav, model=model, language=language, beam_size=beam_size)
 
 
-def run_faster_whisper(wav: str, model: str, language: str | None, device: str, compute_type: str) -> dict:
+def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: int, device: str, compute_type: str) -> dict:
     from faster_whisper import WhisperModel
 
     fw = WhisperModel(model, device=device, compute_type=compute_type)
-    segments, info = fw.transcribe(wav, language=language, vad_filter=True)
+    segments, info = fw.transcribe(wav, language=language, beam_size=beam_size, vad_filter=True)
     return {
         "language": info.language,
         "segments": [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments],
@@ -38,14 +38,15 @@ def main() -> None:
     parser.add_argument("--model", default="small")
     parser.add_argument("--language", default=None)
     parser.add_argument("--engine", default=os.environ.get("WHISPER_ENGINE", "propio"), choices=["propio", "faster-whisper"])
+    parser.add_argument("--beam-size", type=int, default=int(os.environ.get("WHISPER_BEAM_SIZE", "5")))
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--compute-type", default="int8")
     args = parser.parse_args()
 
     if args.engine == "propio":
-        out = run_propio(args.wav, args.model, args.language)
+        out = run_propio(args.wav, args.model, args.language, args.beam_size)
     else:
-        out = run_faster_whisper(args.wav, args.model, args.language, args.device, args.compute_type)
+        out = run_faster_whisper(args.wav, args.model, args.language, args.beam_size, args.device, args.compute_type)
     json.dump(out, sys.stdout, ensure_ascii=False)
 
 

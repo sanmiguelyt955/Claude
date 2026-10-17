@@ -12,7 +12,7 @@ motor por defecto de la etapa "escuchar" del pipeline.
 | Lector de pesos `.safetensors` | Nuestro |
 | Transformer: convoluciones, atención, MLP, LayerNorm, GELU | Nuestro |
 | Detokenizador BPE a nivel de bytes | Nuestro |
-| Búsqueda greedy con reglas de marcas de tiempo | Nuestro |
+| Búsqueda greedy y beam search con reglas de marcas de tiempo | Nuestro |
 | Ventanas de 30 s con avance ("seek"), detección de idioma y de silencio | Nuestro |
 | **Pesos entrenados** | `openai/whisper-*` en Hugging Face |
 
@@ -36,9 +36,16 @@ audio etiquetado y GPUs; por eso se reutilizan los pesos públicos.
    (pasos de 20 ms). La gramática se impone al decodificar: empieza con una
    marca (≤ 1 s), las marcas van en pares y nunca retroceden, y si la masa de
    probabilidad de "alguna marca" supera a la mejor palabra, se fuerza una.
-6. **Audio largo.** La siguiente ventana empieza donde terminó el último
+6. **Beam search.** En vez de quedarse con la palabra más probable en cada
+   paso, mantiene las 5 mejores transcripciones parciales. Cada una propone
+   sus 6 mejores siguientes tokens; las 5 mejores propuestas siguen y las que
+   terminan en `<|endoftext|>` se apartan. Al juntar 5 terminadas gana la de
+   mejor log-probabilidad **por token** (así una frase larga no pierde solo
+   por tener más palabras). Los 5 haces pasan por el decoder en un mismo lote
+   y la caché de atención se reordena cuando un haz se ramifica.
+7. **Audio largo.** La siguiente ventana empieza donde terminó el último
    segmento completo, así una frase cortada en el borde se vuelve a leer.
-7. **Silencio.** Si `<|nocaptions|>`/`<|nospeech|>` supera 0.6 y la confianza
+8. **Silencio.** Si `<|nocaptions|>`/`<|nospeech|>` supera 0.6 y la confianza
    media es baja, la ventana se descarta (evita alucinaciones).
 
 ## Verificación
@@ -55,12 +62,15 @@ Contra faster-whisper (CTranslate2) con los mismos pesos y búsqueda greedy:
 - **Con `small`:** misma frase de prueba sin los errores de `tiny`
   ("mochila", "la abrimos", "cabe").
 
-## Rendimiento (CPU, 4 núcleos)
+- **Beam search (5 haces):** idéntico a faster-whisper con `beam_size=5`:
+  18 de 18 segmentos con `tiny` y 13 de 13 con `small`, texto y marcas.
 
-| Modelo | 59 s de audio |
-|---|---|
-| tiny | ~4 s |
-| small | ~26 s |
+## Rendimiento (CPU, 4 núcleos, 59 s de audio)
+
+| Modelo | greedy (`WHISPER_BEAM_SIZE=1`) | beam search (5, por defecto) |
+|---|---|---|
+| tiny | ~4 s | ~8 s |
+| small | ~25 s | ~45 s |
 
 faster-whisper sigue siendo más rápido en CPU (kernels optimizados, int8).
 Para usarlo: `WHISPER_ENGINE=faster-whisper` y `pip install faster-whisper`.
@@ -83,6 +93,6 @@ Dependencias: `pip install -r packages/perception/scripts/requirements.txt`
 
 ## Pendiente
 
-- Búsqueda por haz (beam search) y respaldo por temperatura cuando el texto
-  se repite: mejoran la precisión con audio difícil.
+- Respaldo por temperatura cuando el texto se repite o tiene baja confianza:
+  mejora la precisión con audio difícil.
 - Diarización (quién habla): Whisper no la hace; hace falta otro modelo.

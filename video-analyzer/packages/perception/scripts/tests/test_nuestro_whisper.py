@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from nuestro_whisper.audio import N_FRAMES, log_mel_spectrogram, mel_filters, pad_or_trim  # noqa: E402
-from nuestro_whisper.decoding import TimestampRules  # noqa: E402
+from nuestro_whisper.decoding import TimestampRules, beam_search_decode, greedy_decode  # noqa: E402
 from nuestro_whisper.model import gelu, layer_norm  # noqa: E402
 
 FIXTURE = os.path.join(HERE, "..", "..", "test", "fixtures-speech.wav")
@@ -113,20 +113,90 @@ class TimestampRulesTest(unittest.TestCase):
         self.assertTrue(np.isinf(out[: self.tb]).all())
 
 
+class PassRules:
+    """No timestamp grammar: lets the search tests look at the search alone."""
+
+    def apply(self, logits, generated):
+        return logits
+
+
+class ToyModel:
+    """A 'model' whose next-token distribution depends only on the last token.
+
+    After the prompt: A (0.6) or B (0.4). After A the mass is spread thin, the
+    best continuation is C (0.3), and after C <|endoftext|> is again only 0.3.
+    After B, <|endoftext|> has 0.95. Greedy takes A, C, end: log(0.6*0.3*0.3)
+    = -2.92, or -1.46 per token. Beam search keeps B alive and finds
+    log(0.4*0.95) = -0.97 per token, the better transcript even after the
+    length normalisation that ranks finished beams.
+    """
+
+    A, B, C = 10, 11, 12
+
+    def __init__(self, tok):
+        self.tok = tok
+        self.rows = []
+
+    def _dist(self, last):
+        out = np.full(FakeTok.vocab, -np.inf, dtype=np.float32)
+        table = {
+            self.tok.transcribe: {self.A: 0.6, self.B: 0.4},
+            self.A: {self.C: 0.3, self.tok.eot: 0.29, 20: 0.21, 21: 0.2},
+            self.B: {self.tok.eot: 0.95, self.C: 0.05},
+            self.C: {self.tok.eot: 0.3, 22: 0.25, 23: 0.25, 24: 0.2},
+        }.get(last, {self.tok.eot: 1.0})
+        for t, prob in table.items():
+            out[t] = np.log(prob)
+        return out
+
+    def new_cache(self, _features):
+        return {"rows": None}
+
+    @staticmethod
+    def reorder_cache(cache, source):
+        cache["source"] = list(source)
+
+    def decode(self, tokens, cache):
+        rows = [tokens] if tokens and not isinstance(tokens[0], list) else tokens
+        return np.stack([self._dist(r[-1]) for r in rows])
+
+
+class BeamSearchTest(unittest.TestCase):
+    def setUp(self):
+        self.tok = FakeTok()
+        self.tok.no_speech = None
+        self.model = ToyModel(self.tok)
+
+    def test_beam_search_escapes_the_greedy_trap(self):
+        greedy, _, _ = greedy_decode(self.model, self.tok, PassRules(), None, language=50259)
+        beam, beam_lp, _ = beam_search_decode(self.model, self.tok, PassRules(), None, language=50259, beam_size=3)
+        self.assertEqual(greedy, [ToyModel.A, ToyModel.C])
+        self.assertEqual(beam, [ToyModel.B])
+        self.assertAlmostEqual(beam_lp * 2, np.log(0.4 * 0.95), places=4)
+
+    def test_beam_size_one_is_greedy(self):
+        greedy = greedy_decode(self.model, self.tok, PassRules(), None, language=50259)
+        same = beam_search_decode(self.model, self.tok, PassRules(), None, language=50259, beam_size=1)
+        self.assertEqual(greedy[0], same[0])
+
+
 class EndToEndTest(unittest.TestCase):
     def test_transcribes_the_fixture(self):
         if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):
             self.skipTest("descarga desactivada")
         from nuestro_whisper import transcribe
 
-        out = transcribe(FIXTURE, model=os.environ.get("NUESTRO_WHISPER_TEST_MODEL", "tiny"), language="en")
-        text = " ".join(s["text"] for s in out["segments"]).lower()
-        self.assertIn("quick test sentence", text)
-        self.assertIn("seen and heard", text)
-        first = out["segments"][0]
-        self.assertLess(first["start"], 0.5)
-        self.assertGreater(first["end"], 2.5)
-        self.assertLess(first["end"], 4.5)
+        model = os.environ.get("NUESTRO_WHISPER_TEST_MODEL", "tiny")
+        for beam_size in (1, 5):
+            with self.subTest(beam_size=beam_size):
+                out = transcribe(FIXTURE, model=model, language="en", beam_size=beam_size)
+                text = " ".join(s["text"] for s in out["segments"]).lower()
+                self.assertIn("quick test sentence", text)
+                self.assertIn("seen and heard", text)
+                first = out["segments"][0]
+                self.assertLess(first["start"], 0.5)
+                self.assertGreater(first["end"], 2.5)
+                self.assertLess(first["end"], 4.5)
 
     def test_detects_language(self):
         if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):

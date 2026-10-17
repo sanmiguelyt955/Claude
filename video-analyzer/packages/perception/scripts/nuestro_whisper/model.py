@@ -47,6 +47,8 @@ def conv1d(x: np.ndarray, w: np.ndarray, b: np.ndarray, stride: int = 1) -> np.n
 
 
 class Attention:
+    """Multi-head attention over batched inputs: x is (B, T, d_model)."""
+
     def __init__(self, p: dict, prefix: str, n_heads: int):
         self.wq, self.bq = p[f"{prefix}.q_proj.weight"], p[f"{prefix}.q_proj.bias"]
         self.wk = p[f"{prefix}.k_proj.weight"]  # Whisper's key projection has no bias
@@ -56,19 +58,21 @@ class Attention:
         self.head_dim = self.wq.shape[0] // n_heads
 
     def split(self, x: np.ndarray) -> np.ndarray:
-        return x.reshape(x.shape[0], self.n_heads, self.head_dim).transpose(1, 0, 2)  # (H, T, D)
+        b, t, _ = x.shape
+        return x.reshape(b, t, self.n_heads, self.head_dim).transpose(0, 2, 1, 3)  # (B, H, T, D)
 
     def keys_values(self, x: np.ndarray):
         return self.split(x @ self.wk.T), self.split(x @ self.wv.T + self.bv)
 
     def __call__(self, x: np.ndarray, k: np.ndarray, v: np.ndarray, mask: np.ndarray | None = None) -> np.ndarray:
+        # k/v may have batch 1 (cross-attention over one audio) and broadcast over beams.
         q = self.split((x @ self.wq.T + self.bq) * self.head_dim**-0.5)
-        scores = q @ k.transpose(0, 2, 1)
+        scores = q @ k.transpose(0, 1, 3, 2)
         if mask is not None:
             scores = scores + mask
-        out = softmax(scores) @ v  # (H, T, D)
-        out = out.transpose(1, 0, 2).reshape(x.shape[0], -1)
-        return out @ self.wo.T + self.bo
+        out = softmax(scores) @ v  # (B, H, T, D)
+        b, _, t, _ = out.shape
+        return out.transpose(0, 2, 1, 3).reshape(b, t, -1) @ self.wo.T + self.bo
 
 
 class Whisper:
@@ -96,7 +100,7 @@ class Whisper:
         p, e = self.p, "model.encoder"
         x = gelu(conv1d(mel, p[f"{e}.conv1.weight"], p[f"{e}.conv1.bias"]))
         x = gelu(conv1d(x, p[f"{e}.conv2.weight"], p[f"{e}.conv2.bias"], stride=2))
-        x = x.T + p[f"{e}.embed_positions.weight"][: x.shape[1]]
+        x = (x.T + p[f"{e}.embed_positions.weight"][: x.shape[1]])[None]  # batch of one
         for i, attn in enumerate(self.enc_attn):
             pre = f"{e}.layers.{i}"
             h = layer_norm(x, p[f"{pre}.self_attn_layer_norm.weight"], p[f"{pre}.self_attn_layer_norm.bias"])
@@ -104,23 +108,34 @@ class Whisper:
             x = x + attn(h, k, v)
             h = layer_norm(x, p[f"{pre}.final_layer_norm.weight"], p[f"{pre}.final_layer_norm.bias"])
             x = x + self._mlp(h, pre)
-        return layer_norm(x, p[f"{e}.layer_norm.weight"], p[f"{e}.layer_norm.bias"]).astype(np.float32)
+        return layer_norm(x[0], p[f"{e}.layer_norm.weight"], p[f"{e}.layer_norm.bias"]).astype(np.float32)
 
     def new_cache(self, audio_features: np.ndarray) -> dict:
-        """Cross-attention keys/values are computed once per window; self-attention
-        keys/values grow by one position per generated token."""
+        """Cross-attention keys/values are computed once per window and shared by
+        every beam; self-attention keys/values grow by one position per step and
+        hold one row per beam."""
         return {
-            "cross": [a.keys_values(audio_features) for a in self.dec_cross],
+            "cross": [a.keys_values(audio_features[None]) for a in self.dec_cross],
             "self": [None] * self.n_dec,
             "length": 0,
         }
 
-    def decode(self, tokens: list, cache: dict) -> np.ndarray:
-        """Feeds `tokens` after what the cache already holds; returns the logits
-        for the last one, shape (vocab,)."""
+    @staticmethod
+    def reorder_cache(cache: dict, source: list[int]) -> None:
+        """Beam search: row j of the cache now continues beam `source[j]`."""
+        idx = np.asarray(source)
+        cache["self"] = [(k[idx], v[idx]) for k, v in cache["self"]]
+
+    def decode(self, tokens, cache: dict) -> np.ndarray:
+        """Feeds `tokens` (B, n) after what the cache already holds and returns the
+        logits for the last position of each row, shape (B, vocab). A flat list
+        is taken as a single row."""
+        tokens = np.asarray(tokens, dtype=np.int64)
+        if tokens.ndim == 1:
+            tokens = tokens[None]
         p, d = self.p, "model.decoder"
         offset = cache["length"]
-        n = len(tokens)
+        n = tokens.shape[1]
         if offset + n > self.n_ctx:
             raise ValueError("Se excedió el contexto del decoder (448 tokens).")
         x = self.tok_emb[tokens] + self.dec_pos[offset : offset + n]
@@ -132,8 +147,8 @@ class Whisper:
             k_new, v_new = self.dec_self[i].keys_values(h)
             if cache["self"][i] is not None:
                 k_old, v_old = cache["self"][i]
-                k_new = np.concatenate([k_old, k_new], axis=1)
-                v_new = np.concatenate([v_old, v_new], axis=1)
+                k_new = np.concatenate([k_old, k_new], axis=2)
+                v_new = np.concatenate([v_old, v_new], axis=2)
             cache["self"][i] = (k_new, v_new)
             x = x + self.dec_self[i](h, k_new, v_new, mask)
             h = layer_norm(x, p[f"{pre}.encoder_attn_layer_norm.weight"], p[f"{pre}.encoder_attn_layer_norm.bias"])
@@ -142,5 +157,5 @@ class Whisper:
             h = layer_norm(x, p[f"{pre}.final_layer_norm.weight"], p[f"{pre}.final_layer_norm.bias"])
             x = x + self._mlp(h, pre)
         cache["length"] = offset + n
-        x = layer_norm(x[-1:], p[f"{d}.layer_norm.weight"], p[f"{d}.layer_norm.bias"])
-        return (x @ self.tok_emb.T)[0]  # output projection tied to the embedding
+        x = layer_norm(x[:, -1], p[f"{d}.layer_norm.weight"], p[f"{d}.layer_norm.bias"])
+        return x @ self.tok_emb.T  # output projection tied to the embedding

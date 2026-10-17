@@ -69,9 +69,9 @@ class TimestampRules:
 def greedy_decode(model, tok: Tokenizer, rules: TimestampRules, audio_features: np.ndarray, language: int):
     """Decodes one window. Returns (generated tokens, mean logprob, no-speech prob)."""
     cache = model.new_cache(audio_features)
-    first = model.decode([tok.sot], cache)
+    first = model.decode([tok.sot], cache)[0]
     no_speech = float(np.exp(_log_softmax(first)[tok.no_speech])) if tok.no_speech is not None else 0.0
-    logits = model.decode([language, tok.transcribe], cache)
+    logits = model.decode([language, tok.transcribe], cache)[0]
 
     generated: list[int] = []
     total_logprob = 0.0
@@ -82,13 +82,91 @@ def greedy_decode(model, tok: Tokenizer, rules: TimestampRules, audio_features: 
         if nxt == tok.eot:
             break
         generated.append(nxt)
-        logits = model.decode([nxt], cache)
+        logits = model.decode([nxt], cache)[0]
     return generated, total_logprob / max(len(generated) + 1, 1), no_speech
 
 
 def detect_language(model, tok: Tokenizer, audio_features: np.ndarray) -> str:
     """Most likely language after <|startoftranscript|>, among language tokens only."""
-    logits = model.decode([tok.sot], model.new_cache(audio_features))
+    logits = model.decode([tok.sot], model.new_cache(audio_features))[0]
     codes = list(tok.languages)
     ids = np.array([tok.languages[c] for c in codes])
     return codes[int(np.argmax(logits[ids]))]
+
+
+def beam_search_decode(
+    model,
+    tok: Tokenizer,
+    rules: TimestampRules,
+    audio_features: np.ndarray,
+    language: int,
+    beam_size: int = 5,
+    patience: float = 1.0,
+):
+    """Beam search, as in OpenAI's BeamSearchDecoder.
+
+    Keeps the `beam_size` best partial transcripts. At each step every beam
+    proposes its `beam_size + 1` best next tokens (after the timestamp rules);
+    the best proposals overall become the new beams, and proposals that end
+    with <|endoftext|> are set aside as finished. Decoding stops once
+    `beam_size * patience` transcripts have finished. The winner is the
+    finished transcript with the best log-probability per token, so longer
+    transcripts are not penalised just for having more tokens.
+
+    All beams run through the decoder as one batch; when beams branch, the
+    self-attention cache is reordered so each row keeps its own history.
+    Returns (tokens, mean logprob, no-speech prob) like greedy_decode.
+    """
+    if beam_size <= 1:
+        return greedy_decode(model, tok, rules, audio_features, language)
+
+    cache = model.new_cache(audio_features)
+    first = model.decode([tok.sot], cache)[0]
+    no_speech = float(np.exp(_log_softmax(first)[tok.no_speech])) if tok.no_speech is not None else 0.0
+    logits = model.decode([language, tok.transcribe], cache)  # (1, vocab): one beam to start
+
+    beams: list[tuple[list[int], float]] = [([], 0.0)]
+    finished: dict[tuple[int, ...], float] = {}
+    max_finished = max(1, round(beam_size * patience))
+
+    for _ in range(SAMPLE_LEN):
+        candidates: dict[tuple[int, ...], tuple[float, int]] = {}
+        for row, (seq, score) in enumerate(beams):
+            logprobs = _log_softmax(rules.apply(logits[row], seq))
+            top = np.argpartition(-logprobs, beam_size)[: beam_size + 1]
+            for token in top:
+                lp = float(logprobs[token])
+                if np.isfinite(lp):
+                    key = (*seq, int(token))
+                    if key not in candidates or candidates[key][0] < score + lp:
+                        candidates[key] = (score + lp, row)
+
+        next_beams: list[tuple[list[int], float]] = []
+        source: list[int] = []
+        newly_finished: dict[tuple[int, ...], float] = {}
+        for key, (score, row) in sorted(candidates.items(), key=lambda kv: kv[1][0], reverse=True):
+            if key[-1] == tok.eot:
+                newly_finished[key[:-1]] = score
+            else:
+                next_beams.append((list(key), score))
+                source.append(row)
+                if len(next_beams) == beam_size:
+                    break
+
+        for key in sorted(newly_finished, key=newly_finished.get, reverse=True):
+            if len(finished) >= max_finished:
+                break
+            finished.setdefault(key, newly_finished[key])
+
+        if len(finished) >= max_finished or not next_beams:
+            break
+        model.reorder_cache(cache, source)
+        beams = next_beams
+        logits = model.decode([[seq[-1]] for seq, _ in beams], cache)
+
+    if len(finished) < max_finished:  # ran out of length: unfinished beams compete too
+        for seq, score in beams:
+            finished.setdefault(tuple(seq), score)
+
+    best, best_score = max(finished.items(), key=lambda kv: kv[1] / max(len(kv[0]), 1))
+    return list(best), best_score / (len(best) + 1), no_speech

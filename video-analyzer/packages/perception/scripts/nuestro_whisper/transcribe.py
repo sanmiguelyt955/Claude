@@ -10,7 +10,7 @@ import os
 import numpy as np
 
 from .audio import HOP_LENGTH, N_FRAMES, SAMPLE_RATE, load_audio, log_mel_spectrogram, pad_or_trim
-from .decoding import TimestampRules, detect_language, greedy_decode
+from .decoding import TimestampRules, beam_search_decode, detect_language
 from .model import Whisper
 from .tokenizer import Tokenizer
 from .weights import model_dir, read_safetensors
@@ -75,8 +75,11 @@ def _segments(tokens: list[int], tok: Tokenizer, offset: float):
     return segments, None
 
 
-def transcribe(path_or_audio, model: str = "tiny", language: str | None = None) -> dict:
-    """Returns {"language": code, "segments": [{"start", "end", "text"}]}."""
+def transcribe(path_or_audio, model: str = "tiny", language: str | None = None, beam_size: int = 5) -> dict:
+    """Returns {"language": code, "segments": [{"start", "end", "text"}]}.
+
+    beam_size=5 is Whisper's usual setting; 1 is plain greedy decoding
+    (faster, slightly less accurate on hard audio)."""
     whisper, tok, rules, _ = load_model(model)
     audio = load_audio(path_or_audio) if isinstance(path_or_audio, str) else np.asarray(path_or_audio, np.float32)
     mel = log_mel_spectrogram(audio)
@@ -90,7 +93,9 @@ def transcribe(path_or_audio, model: str = "tiny", language: str | None = None) 
         features = whisper.encode(pad_or_trim(mel[:, seek : seek + N_FRAMES]))
         if lang_code is None:
             lang_code = detect_language(whisper, tok, features)
-        tokens, avg_logprob, no_speech = greedy_decode(whisper, tok, rules, features, tok.language_token(lang_code))
+        tokens, avg_logprob, no_speech = beam_search_decode(
+            whisper, tok, rules, features, tok.language_token(lang_code), beam_size=beam_size
+        )
 
         offset = seek * SECONDS_PER_FRAME
         if no_speech > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD:
