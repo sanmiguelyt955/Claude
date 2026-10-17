@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Gemini</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>Video Gemini</h1>
+      <p class="sub">Sube un video: Gemini lo ve y lo escucha completo, y puedes preguntarle lo que quieras.</p>
+    </header>
+
+    <main>
+      <section class="card">
+        <label id="drop" class="drop" tabindex="0">
+          <input id="file" type="file" accept="video/*,audio/*" hidden />
+          <span class="drop-title">Elige un video o arrástralo aquí</span>
+          <span class="drop-hint">mp4, mov, webm, mpeg, avi, 3gp · hasta 2 GB</span>
+        </label>
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <video id="player" class="player" controls hidden></video>
+        <button id="reanalyze" class="btn" type="button" hidden>Volver a analizar</button>
+      </section>
+
+      <section id="result" class="card" hidden>
+        <h2>Análisis</h2>
+        <p id="summary" class="summary"></p>
+        <p id="meta" class="meta"></p>
+
+        <h3>Escenas</h3>
+        <ol id="scenes" class="list"></ol>
+
+        <h3>Transcripción</h3>
+        <ol id="transcript" class="list"></ol>
+
+        <h3>Audio</h3>
+        <dl id="audio" class="audio"></dl>
+      </section>
+
+      <section id="chat-card" class="card" hidden>
+        <h2>Pregunta sobre el video</h2>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <input id="question" type="text" maxlength="4000" placeholder="¿Qué pasa en el minuto 1?" autocomplete="off" required />
+          <button class="btn" type="submit">Enviar</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

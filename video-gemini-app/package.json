@@ -1,0 +1,14 @@
+{
+  "name": "video-gemini-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sube un video y Gemini lo ve y lo escucha; analiza su contenido y permite preguntarle sobre él.",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.9"
+  }
+}
