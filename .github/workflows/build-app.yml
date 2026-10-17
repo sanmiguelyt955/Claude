@@ -1,0 +1,59 @@
+# Construye los instaladores de la app de escritorio en la nube (Mac y Windows).
+# Resultado: se descargan desde la pestaña Actions → la ejecución → "Artifacts".
+name: Construir app de escritorio
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [video-editor-app]
+    paths:
+      - 'video-editor-app/**'
+      - '.github/workflows/build-app.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+            artifact: editor-de-video-mac
+            pattern: '*.dmg'
+          - os: windows-latest
+            script: dist:win
+            artifact: editor-de-video-windows
+            pattern: '*.exe'
+    defaults:
+      run:
+        working-directory: video-editor-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: video-editor-app/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Probar el motor
+        run: npm test
+
+      - name: Generar instalador
+        run: npm run ${{ matrix.script }}
+
+      - name: Subir instalador
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: video-editor-app/release/${{ matrix.pattern }}
+          if-no-files-found: error
+          retention-days: 14
