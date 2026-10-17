@@ -41,6 +41,37 @@ documento** y la **barra de progreso real** del análisis local.
 - **Ejecución en segundo plano** para el motor de video completo: el motor
   local ya usa streaming, que resuelve el mismo corte de 60 s.
 - **Búsqueda exacta de palabras:** ya existe (FTS5 junto a sqlite-vec).
-- **Separar hablantes:** necesita un modelo de diarización que nuestro Whisper
-  no tiene; queda pendiente.
+- **Separar hablantes:** hecho después; ver la sección siguiente.
 - **Batch API:** útil solo para reanalizar muchos videos sin prisa.
+
+## Separar quién habla (nuestras_voces)
+
+Con REA se leyó el código de WeSpeaker (`wespeaker/cli/speaker.py`) y el de
+agrupación de pyannote (`pipelines/clustering.py`); la configuración de
+pyannote 3.1 está cerrada tras inicio de sesión. REA no abre modelos ONNX
+(`inspect-artifact`: formato no soportado), así que el modelo se revisó con
+onnxruntime: entrada `feats [B, T, 80]`, salida `embs [B, 256]`.
+
+Cómo funciona (`packages/perception/scripts/nuestras_voces`):
+
+1. Banco de filtros de Kaldi escrito en NumPy, con los parámetros de WeSpeaker
+   (80 bandas, 25/10 ms, ventana Hamming, sin dither). Coincide con
+   kaldi-native-fbank hasta 0,00016.
+2. Ventanas de 1,5 s cada 0,75 s sobre lo que transcribió Whisper (o los
+   subtítulos), sin las que son casi todo silencio.
+3. Huella de voz de cada ventana con WeSpeaker ResNet34 (VoxCeleb2,
+   CC-BY-4.0, `Wespeaker/wespeaker-voxceleb-resnet34-LM`).
+4. Agrupación espectral: el salto entre valores propios da el número de
+   personas; luego se juntan los grupos que suenan igual (similitud ≥ 0,7).
+5. Cada frase toma la voz de la mayoría de sus ventanas.
+
+Comprobado con REA (`capture-process` del trabajo real, `inspect-sqlite-database`
+de lo guardado y `capture-web-screenshot` de la pestaña Transcripción) sobre
+la muestra de dos personas de pyannote: con los turnos reales acierta 10 de
+10; con las frases de Whisper, 9 de 10 (la que falla mezcla a las dos
+personas en una misma frase). Una sola voz da un solo hablante (130 s de un
+lector de LibriSpeech).
+
+Límites: solo en el motor local (`ANALYSIS_ENGINE=perception`); una frase en
+la que hablan dos personas queda con una sola; voces muy parecidas pueden
+juntarse.

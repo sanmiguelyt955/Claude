@@ -52,6 +52,8 @@ test('perceive runs frames, speech and windowed vision end to end', { timeout: 3
 
   assert.ok(result.transcript.length >= 1, 'speech was transcribed')
   assert.match(result.transcript.map((t) => t.text).join(' ').toLowerCase(), /quick test sentence/)
+  assert.deepEqual(new Set(result.transcript.map((t) => t.speaker)), new Set(['Hablante 1']), 'one voice, one speaker')
+  assert.ok(steps.some((p) => p.label === 'Separando quién habla...'))
   assert.ok(result.scenes.length >= 4, `scenes from frames: ${result.scenes.length}`)
   assert.deepEqual(result.scenes.map((s) => s.index), result.scenes.map((_, i) => i))
   assert.equal(result.summary.short_summary, 'Prueba')
@@ -127,11 +129,35 @@ test('platform captions replace Whisper and reach the model', { timeout: 300_000
   const calls: VisionRequest[] = []
   const captions = { language: 'es', segments: [{ start: 0.5, end: 2, text: 'Frase de los subtítulos' }] }
   // A Whisper model that does not exist: transcribing would throw.
-  const result = await perceive(video, work, { providers: [fakeProvider(calls)], whisperModel: 'no-such-model', captions })
+  const result = await perceive(video, work, { providers: [fakeProvider(calls)], whisperModel: 'no-such-model', captions, diarize: false })
   assert.deepEqual(result.transcript.map((t) => t.text), ['Frase de los subtítulos'])
   assert.equal(result.transcript[0]!.language, 'es')
   assert.ok(calls.some((c) => /Frase de los subtítulos/.test(c.transcript ?? '')))
   assert.equal(existsSync(path.join(work, 'audio.wav')), false, 'no audio extracted for Whisper')
+
+  // With speakers on, the audio is extracted for them alone and the captions get labels.
+  const labelled = await perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-captions-')), {
+    providers: [fakeProvider([])], whisperModel: 'no-such-model', captions,
+  })
+  assert.equal(labelled.transcript[0]!.speaker, 'Hablante 1')
+})
+
+test('a failed speaker step leaves the analysis complete, without labels', { timeout: 300_000 }, async () => {
+  const video = makeVideo()
+  const saved = process.env.DIARIZATION_MODEL_PATH
+  process.env.DIARIZATION_MODEL_PATH = '/no/such/model.onnx'
+  const logs: string[] = []
+  try {
+    const result = await perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-nodiar-')), {
+      providers: [fakeProvider([])], whisperModel: 'tiny', language: 'en', log: (m) => logs.push(m),
+    })
+    assert.ok(result.transcript.length >= 1)
+    assert.ok(result.transcript.every((t) => t.speaker === null))
+    assert.ok(logs.some((m) => /no se pudo separar quién habla/.test(m)))
+  } finally {
+    if (saved === undefined) delete process.env.DIARIZATION_MODEL_PATH
+    else process.env.DIARIZATION_MODEL_PATH = saved
+  }
 })
 
 test('a video without audio is analyzed from frames alone', { timeout: 300_000 }, async () => {

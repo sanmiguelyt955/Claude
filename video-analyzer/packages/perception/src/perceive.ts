@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import type { AnalysisResult } from '@cva/ai-router'
 import { extractAudio, extractFrames, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
 import { transcribe, type Transcript } from './transcribe.js'
+import { diarize } from './diarize.js'
 import { describeWithFallback } from './chain.js'
 import { claude } from './providers/claude.js'
 import { geminiProviders } from './providers/gemini.js'
@@ -28,6 +29,11 @@ export type PerceiveOptions = {
    * and they come split into sentences.
    */
   captions?: Transcript
+  /**
+   * Tell the speakers apart ("Hablante 1", "Hablante 2"...). Default: on,
+   * unless DIARIZATION=0. A failure only costs the labels, never the analysis.
+   */
+  diarize?: boolean
   log?: (msg: string) => void
   /**
    * Where the analysis is, in Spanish for the progress bar: the stage, and
@@ -79,7 +85,7 @@ const WINDOW_INSTRUCTION = `Mira estos fotogramas en orden (cada uno tiene su ma
 Devuelve SOLO JSON con esta forma:
 {"scenes":[{"start_seconds":number,"end_seconds":number,"title":string,"description":string,"audio_description":string|null}],
  "elements":[{"kind":"object"|"on_screen_text"|"action"|"person"|"relation","label":string,"detail":string|null,"start_seconds":number,"end_seconds":number|null}]}
-Usa segundos absolutos del video. Describe qué pasa en pantalla y qué se escucha. Responde en español.`
+Usa segundos absolutos del video. Describe qué pasa en pantalla y qué se escucha. Si la transcripción dice quién habla (Hablante 1, Hablante 2...), usa esos nombres en audio_description y, si se ve quién es, dilo. Responde en español.`
 
 const SUMMARY_INSTRUCTION = `Con estas escenas y la transcripción del video, devuelve SOLO JSON:
 {"short_summary":string,"full_summary":string,"topics":string[],"language":string}
@@ -198,11 +204,14 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
 
   const captions = hasAudio && opts.captions?.segments.length ? opts.captions : null
   const needsWhisper = hasAudio && !captions && !checkpoint.transcript
-  log(needsWhisper ? 'extrayendo frames y audio' : 'extrayendo frames')
+  const alreadyLabelled = checkpoint.transcript?.segments.some((s) => s.speaker !== undefined) ?? false
+  const wantsSpeakers = hasAudio && (opts.diarize ?? process.env.DIARIZATION !== '0') && !alreadyLabelled
+  const needsAudio = needsWhisper || wantsSpeakers
+  log(needsAudio ? 'extrayendo frames y audio' : 'extrayendo frames')
   progress({ label: 'Extrayendo fotogramas...' })
   const [frames] = await Promise.all([
     extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS),
-    needsWhisper ? extractAudio(file, wavPath) : Promise.resolve(null),
+    needsAudio ? extractAudio(file, wavPath) : Promise.resolve(null),
   ])
   if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
 
@@ -221,18 +230,33 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     save()
   }
 
+  if (wantsSpeakers && speech.segments.length > 0) {
+    progress({ label: 'Separando quién habla...' })
+    try {
+      speech = await diarize(wavPath, speech)
+      const voices = new Set(speech.segments.map((s) => s.speaker).filter(Boolean)).size
+      log(voices ? `${voices} ${voices === 1 ? 'voz' : 'voces'} distintas` : 'no se pudo distinguir ninguna voz')
+    } catch (err) {
+      // The labels are a bonus: without them the analysis is still complete.
+      log(`no se pudo separar quién habla: ${(err as Error).message.slice(0, 200)}`)
+      speech = { ...speech, segments: speech.segments.map((s) => ({ ...s, speaker: null })) }
+    }
+    checkpoint.transcript = speech
+    save()
+  }
+
   const transcript: AnalysisResult['transcript'] = speech.segments.map((s, i) => ({
     index: i,
     start_seconds: s.start,
     end_seconds: s.end,
-    speaker: null,
+    speaker: s.speaker ?? null,
     text: s.text,
     language: speech.language ?? null,
   }))
   const speechIn = (start: number, end: number) =>
     speech.segments
       .filter((s) => s.end >= start && s.start <= end)
-      .map((s) => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text}`)
+      .map((s) => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.speaker ? `${s.speaker}: ` : ''}${s.text}`)
       .join('\n')
 
   const scenes: Scene[] = []
@@ -268,7 +292,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     providers,
     {
       frames: [],
-      transcript: `Escenas:\n${sceneLines}\n\nTranscripción:\n${transcript.map((t) => t.text).join(' ') || '(sin voz)'}`,
+      transcript: `Escenas:\n${sceneLines}\n\nTranscripción:\n${transcript.map((t) => (t.speaker ? `${t.speaker}: ${t.text}` : t.text)).join('\n') || '(sin voz)'}`,
       instruction: SUMMARY_INSTRUCTION,
     },
     { log, parse: (text) => parseSummaryReply(text, speech.language) },

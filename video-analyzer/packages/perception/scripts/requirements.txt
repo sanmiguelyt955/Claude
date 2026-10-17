@@ -5,5 +5,7 @@ huggingface_hub>=0.20
 # curl_cffi deja a yt-dlp presentarse como un navegador real, que TikTok exige.
 yt-dlp>=2025.1.1
 curl_cffi>=0.7
+# Separar quién habla (nuestras_voces): el modelo de voces WeSpeaker en ONNX.
+onnxruntime>=1.17
 # Opcional: WHISPER_ENGINE=faster-whisper
 # faster-whisper>=1.0

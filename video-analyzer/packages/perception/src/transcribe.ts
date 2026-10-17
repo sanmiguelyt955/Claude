@@ -6,7 +6,13 @@ import path from 'node:path'
 const run = promisify(execFile)
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
 
-export type Segment = { start: number; end: number; text: string }
+export type Segment = {
+  start: number
+  end: number
+  text: string
+  /** "Hablante N" once diarize() ran; absent before or when nobody could be told apart. */
+  speaker?: string | null
+}
 export type Transcript = { language: string; segments: Segment[] }
 
 /**
