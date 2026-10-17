@@ -15,6 +15,7 @@ import type { Db, JobRow, JobType } from '@cva/memory-engine'
 import { runProbeJob } from './jobs/probe.js'
 import { runAnalyzeJob } from './jobs/analyze.js'
 import { runAnalyzeBatchJob } from './jobs/analyze-batch.js'
+import { runAnalyzePerceptionJob } from './jobs/analyze-perception.js'
 import { runEmbedJob } from './jobs/embed.js'
 import { runDetectSkillsJob } from './jobs/detect-skills.js'
 import { runGenerateSkillJob } from './jobs/generate-skill.js'
@@ -33,6 +34,12 @@ const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   // videos in a single Gemini request), anything else is the single-video
   // path. Keeping one type avoids migrating the jobs.type CHECK constraint.
   analyze: async (job, db) => {
+    // ANALYSIS_ENGINE=perception routes single videos through @cva/perception.
+    // Batches stay on the Gemini path: perception analyzes one video at a time.
+    if (process.env.ANALYSIS_ENGINE === 'perception') {
+      const single = JSON.parse(job.payload_json) as { videoIds?: string[] }
+      if (!Array.isArray(single.videoIds)) return runAnalyzePerceptionJob(job, db)
+    }
     const payload = JSON.parse(job.payload_json) as { videoIds?: string[] }
     return Array.isArray(payload.videoIds) && payload.videoIds.length > 1
       ? runAnalyzeBatchJob(job, db)
