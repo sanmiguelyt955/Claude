@@ -116,6 +116,19 @@ test('a retry resumes from the checkpoint without transcribing or asking again',
   assert.ok(logs.some((m) => /retomada del intento anterior/.test(m)))
 })
 
+test('platform captions replace Whisper and reach the model', { timeout: 300_000 }, async () => {
+  const video = makeVideo()
+  const work = mkdtempSync(path.join(tmpdir(), 'perception-captions-'))
+  const calls: VisionRequest[] = []
+  const captions = { language: 'es', segments: [{ start: 0.5, end: 2, text: 'Frase de los subtítulos' }] }
+  // A Whisper model that does not exist: transcribing would throw.
+  const result = await perceive(video, work, { providers: [fakeProvider(calls)], whisperModel: 'no-such-model', captions })
+  assert.deepEqual(result.transcript.map((t) => t.text), ['Frase de los subtítulos'])
+  assert.equal(result.transcript[0]!.language, 'es')
+  assert.ok(calls.some((c) => /Frase de los subtítulos/.test(c.transcript ?? '')))
+  assert.equal(existsSync(path.join(work, 'audio.wav')), false, 'no audio extracted for Whisper')
+})
+
 test('a video without audio is analyzed from frames alone', { timeout: 300_000 }, async () => {
   const video = makeVideo({ silent: true })
   const work = mkdtempSync(path.join(tmpdir(), 'perception-silent-'))

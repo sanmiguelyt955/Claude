@@ -5,7 +5,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -153,6 +153,21 @@ test('a failed analysis leaves a checkpoint and the retry reuses it', { timeout:
   assert.deepEqual(imagesPerCall, [0])
   assert.equal(me.getVideo(id, db)!.status, 'ready')
   assert.ok(countRows('scenes', id) >= 2)
+})
+
+test('captions saved by the download are used instead of Whisper', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  const { id, job } = queueVideo('con subtítulos')
+  writeFileSync(path.join(root, 'videos', id, 'captions.vtt'), 'WEBVTT\nLanguage: es\n\n00:00:00.500 --> 00:00:02.000\nLo que dice el subtítulo\n')
+  const saved = process.env.WHISPER_MODEL
+  process.env.WHISPER_MODEL = 'no-such-model' // transcribing would throw
+  try {
+    await runAnalyzePerceptionJob(job, db)
+  } finally {
+    process.env.WHISPER_MODEL = saved
+  }
+  const rows = db.prepare('SELECT text, language FROM transcript_chunks WHERE video_id = ?').all(id) as Array<{ text: string; language: string }>
+  assert.deepEqual(rows, [{ text: 'Lo que dice el subtítulo', language: 'es' }])
 })
 
 test('the chat history is stored per video and goes away with the video', { timeout: 300_000 }, async () => {

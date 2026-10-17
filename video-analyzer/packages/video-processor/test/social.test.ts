@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { downloadWithYtDlp, explainYtDlpError, isSocialVideoUrl, socialPlatformOf } from '../src/social.ts'
+import { downloadWithYtDlp, explainYtDlpError, isSocialVideoUrl, pickCaptionTrack, socialPlatformOf } from '../src/social.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const speech = path.resolve(here, '..', '..', 'perception', 'test', 'fixtures-speech.wav')
@@ -58,6 +58,60 @@ test('downloads with yt-dlp into <dir>/source.mp4 with audio, using the app ffmp
     assert.match(streams, /video/)
     assert.match(streams, /audio/)
   } finally {
+    server.close()
+  }
+})
+
+test('picks written captions in the spoken language, else the original automatic track', () => {
+  const t = [{ ext: 'vtt' }]
+  assert.deepEqual(pickCaptionTrack({ language: 'es', subtitles: { en: t, 'es-419': t }, automatic_captions: { 'es-orig': t } }), { lang: 'es-419', auto: false })
+  assert.deepEqual(pickCaptionTrack({ language: 'en', subtitles: { es: t }, automatic_captions: { es: t, 'en-orig': t, en: t } }), { lang: 'en-orig', auto: true })
+  assert.deepEqual(pickCaptionTrack({ language: 'pt', automatic_captions: { en: t, pt: t } }), { lang: 'pt', auto: true })
+  assert.deepEqual(pickCaptionTrack({ subtitles: { 'eng-US': t } }), { lang: 'eng-US', auto: false }, 'TikTok gives no language')
+  assert.equal(pickCaptionTrack({ language: 'en', automatic_captions: { fr: t, de: t } }), null, 'only translations')
+  assert.equal(pickCaptionTrack({ subtitles: { live_chat: t } }), null)
+  assert.equal(pickCaptionTrack({}), null)
+})
+
+test('saves the page captions as captions.vtt next to the video', { timeout: 120_000 }, async () => {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ytdlp-subs-'))
+  const clip = path.join(work, 'clip.mp4')
+  execFileSync('ffmpeg', [
+    '-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=320x180:d=3:r=30', '-i', speech,
+    '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', clip,
+  ])
+  const vtt = 'WEBVTT\n\n00:00:00.500 --> 00:00:02.000\nHola desde los subtítulos\n'
+  // A page with an HTML5 <video> and a <track>: yt-dlp's generic extractor
+  // lists the track as a subtitle, like a TikTok or YouTube page would.
+  const server = http.createServer((req, res) => {
+    if (req.url === '/clip.mp4') {
+      res.writeHead(200, { 'content-type': 'video/mp4' })
+      return fs.createReadStream(clip).pipe(res)
+    }
+    if (req.url === '/subs.vtt') {
+      res.writeHead(200, { 'content-type': 'text/vtt' })
+      return res.end(vtt)
+    }
+    res.writeHead(200, { 'content-type': 'text/html' })
+    res.end('<html><head><title>Con subtitulos</title></head><body><video controls><source src="/clip.mp4" type="video/mp4"><track kind="subtitles" srclang="es" src="/subs.vtt"></video></body></html>')
+  })
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+  const out = path.join(work, 'out')
+  fs.mkdirSync(out)
+  try {
+    const got = await downloadWithYtDlp(`http://127.0.0.1:${(server.address() as { port: number }).port}/pagina`, out)
+    assert.equal(got.captionsPath, path.join(out, 'captions.vtt'))
+    assert.match(fs.readFileSync(got.captionsPath!, 'utf8'), /Hola desde los subtítulos/)
+    assert.deepEqual(fs.readdirSync(out).sort(), ['captions.vtt', 'source.mp4'], 'the info JSON is removed')
+
+    // Turned off: same page, no captions.
+    process.env.USE_PLATFORM_CAPTIONS = '0'
+    const plain = path.join(work, 'plain')
+    fs.mkdirSync(plain)
+    const again = await downloadWithYtDlp(`http://127.0.0.1:${(server.address() as { port: number }).port}/pagina`, plain)
+    assert.equal(again.captionsPath, null)
+  } finally {
+    delete process.env.USE_PLATFORM_CAPTIONS
     server.close()
   }
 })

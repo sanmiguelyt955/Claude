@@ -22,6 +22,12 @@ export type PerceiveOptions = {
   providers?: VisionProvider[]
   whisperModel?: string
   language?: string
+  /**
+   * What is said, already written by the platform (TikTok/YouTube captions).
+   * When it has any line, Whisper is skipped: reading captions takes no time
+   * and they come split into sentences.
+   */
+  captions?: Transcript
   log?: (msg: string) => void
   /** Progress saved by an earlier attempt on the same video; finished work is reused. */
   checkpoint?: PerceptionCheckpoint
@@ -183,15 +189,20 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const { duration, hasAudio } = await probeMedia(file)
   const wavPath = path.join(workDir, 'audio.wav')
 
-  log(hasAudio ? 'extrayendo frames y audio' : 'extrayendo frames (el video no tiene audio)')
+  const captions = hasAudio && opts.captions?.segments.length ? opts.captions : null
+  const needsWhisper = hasAudio && !captions && !checkpoint.transcript
+  log(needsWhisper ? 'extrayendo frames y audio' : 'extrayendo frames')
   const [frames] = await Promise.all([
     extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS),
-    hasAudio ? extractAudio(file, wavPath) : Promise.resolve(null),
+    needsWhisper ? extractAudio(file, wavPath) : Promise.resolve(null),
   ])
   if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
 
   let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
-  if (hasAudio && checkpoint.transcript) {
+  if (captions) {
+    log(`${frames.length} frames únicos; ${captions.segments.length} frases de los subtítulos de la plataforma, sin transcribir`)
+    speech = captions
+  } else if (hasAudio && checkpoint.transcript) {
     log(`${frames.length} frames únicos; transcripción retomada del intento anterior`)
     speech = checkpoint.transcript
   } else if (hasAudio) {

@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { execa } from 'execa'
 
 /**
@@ -56,7 +56,13 @@ export function explainYtDlpError(stderr: string, url: string): string {
   return `No se pudo descargar el video de ${platform}. Detalle: ${raw}`
 }
 
-export type SocialDownload = { filePath: string; title: string | null; sizeBytes: number }
+export type SocialDownload = {
+  filePath: string
+  title: string | null
+  sizeBytes: number
+  /** `<dir>/captions.vtt` when the platform has subtitles for the video. */
+  captionsPath: string | null
+}
 
 /**
  * Downloads the video behind a TikTok/Instagram/YouTube page with yt-dlp,
@@ -71,7 +77,7 @@ export type SocialDownload = { filePath: string; title: string | null; sizeBytes
 export async function downloadWithYtDlp(url: string, dir: string): Promise<SocialDownload> {
   const python = process.env.PYTHON_BIN || 'python3'
   const args = [
-    '-m', 'yt_dlp',
+    ...ytDlpBase(),
     '--no-playlist',
     '--no-progress',
     '--no-simulate',
@@ -84,10 +90,10 @@ export async function downloadWithYtDlp(url: string, dir: string): Promise<Socia
     '--remux-video', 'mp4',
     '-o', path.join(dir, 'source.%(ext)s'),
     '--print', 'after_move:%(title).200s',
+    // The page's metadata, kept so the captions step does not extract it again.
+    '--write-info-json',
+    '-o', `infojson:${path.join(dir, 'info')}`,
   ]
-  if (process.env.FFMPEG_PATH) args.push('--ffmpeg-location', process.env.FFMPEG_PATH)
-  if (process.env.YTDLP_COOKIES_FROM_BROWSER) args.push('--cookies-from-browser', process.env.YTDLP_COOKIES_FROM_BROWSER)
-  if (process.env.YTDLP_COOKIES_FILE) args.push('--cookies', process.env.YTDLP_COOKIES_FILE)
   args.push('--', url)
 
   const result = await execa(python, args, { reject: false, timeout: 10 * 60_000, windowsHide: true })
@@ -95,10 +101,88 @@ export async function downloadWithYtDlp(url: string, dir: string): Promise<Socia
     throw new Error(explainYtDlpError(`${result.stderr ?? ''}\n${result.stdout ?? ''}`, url))
   }
 
-  const files = (await readdir(dir)).filter((f) => f.startsWith('source.') && !f.endsWith('.part'))
+  const files = (await readdir(dir)).filter((f) => f.startsWith('source.') && !f.endsWith('.part') && !f.endsWith('.json'))
   const file = files.find((f) => f === 'source.mp4') ?? files[0]
   if (!file) throw new Error(`yt-dlp terminó sin dejar el video en ${dir}`)
   const filePath = path.join(dir, file)
   const title = String(result.stdout ?? '').trim().split('\n').pop()?.trim() || null
-  return { filePath, title: title && title !== 'NA' ? title : null, sizeBytes: (await stat(filePath)).size }
+  const captionsPath = await downloadCaptions(dir).catch(() => null)
+  return { filePath, title: title && title !== 'NA' ? title : null, sizeBytes: (await stat(filePath)).size, captionsPath }
+}
+
+/** `python -m yt_dlp` plus the options every call shares (ffmpeg, cookies). */
+function ytDlpBase(): string[] {
+  const args = ['-m', 'yt_dlp']
+  if (process.env.FFMPEG_PATH) args.push('--ffmpeg-location', process.env.FFMPEG_PATH)
+  if (process.env.YTDLP_COOKIES_FROM_BROWSER) args.push('--cookies-from-browser', process.env.YTDLP_COOKIES_FROM_BROWSER)
+  if (process.env.YTDLP_COOKIES_FILE) args.push('--cookies', process.env.YTDLP_COOKIES_FILE)
+  return args
+}
+
+type SubtitleTracks = Record<string, Array<{ ext?: string }> | undefined>
+type VideoInfo = { language?: string | null; subtitles?: SubtitleTracks; automatic_captions?: SubtitleTracks }
+
+/**
+ * The caption track worth reading instead of transcribing, in /watch's
+ * order: subtitles someone wrote beat automatic ones, and the video's own
+ * language beats a translation. Automatic captions only count in the
+ * original language (YouTube offers machine translations into every other
+ * one, and "<lang>-orig" is the untranslated track). Live chat replays are
+ * not captions.
+ */
+export function pickCaptionTrack(info: VideoInfo): { lang: string; auto: boolean } | null {
+  const usable = (tracks: SubtitleTracks | undefined) =>
+    Object.keys(tracks ?? {}).filter((l) => l !== 'live_chat' && (tracks?.[l]?.length ?? 0) > 0)
+  const base = (l: string) => l.toLowerCase().split(/[-_]/)[0]!
+  const spoken = info.language ? base(info.language) : null
+
+  const manual = usable(info.subtitles)
+  const manualPick = (spoken && manual.find((l) => base(l) === spoken)) || (spoken ? null : manual[0])
+  if (manualPick) return { lang: manualPick, auto: false }
+
+  const auto = usable(info.automatic_captions)
+  const autoPick = auto.find((l) => l.endsWith('-orig')) ?? (spoken ? auto.find((l) => l.toLowerCase() === spoken) : undefined)
+  return autoPick ? { lang: autoPick, auto: true } : null
+}
+
+/**
+ * Saves the platform's captions next to the video as `<dir>/captions.vtt`,
+ * so the analysis can read what is said instead of transcribing it. Best
+ * effort and separate from the video download: a caption request that fails
+ * (YouTube rate-limits them on its own) never costs the video. Returns null
+ * when there is no usable track or USE_PLATFORM_CAPTIONS=0.
+ */
+export async function downloadCaptions(dir: string): Promise<string | null> {
+  const infoName = (await readdir(dir)).find((f) => f.endsWith('.info.json'))
+  if (!infoName) return null
+  const infoPath = path.join(dir, infoName)
+  try {
+    if (process.env.USE_PLATFORM_CAPTIONS === '0') return null
+    const track = pickCaptionTrack(JSON.parse(await readFile(infoPath, 'utf8')) as VideoInfo)
+    if (!track) return null
+
+    const python = process.env.PYTHON_BIN || 'python3'
+    const result = await execa(
+      python,
+      [
+        ...ytDlpBase(),
+        '--load-info-json', infoPath,
+        '--skip-download', '--quiet', '--no-warnings',
+        track.auto ? '--write-auto-subs' : '--write-subs',
+        '--sub-langs', track.lang,
+        '--sub-format', 'vtt/best',
+        '--convert-subs', 'vtt',
+        '-o', `subtitle:${path.join(dir, 'captions')}`,
+      ],
+      { reject: false, timeout: 2 * 60_000, windowsHide: true },
+    )
+    if (result.exitCode !== 0) return null
+    const written = (await readdir(dir)).find((f) => f.startsWith('captions.') && f.endsWith('.vtt'))
+    if (!written) return null
+    const target = path.join(dir, 'captions.vtt')
+    await rename(path.join(dir, written), target)
+    return target
+  } finally {
+    await rm(infoPath, { force: true })
+  }
 }

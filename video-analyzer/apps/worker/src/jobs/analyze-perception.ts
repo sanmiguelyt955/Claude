@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { readFile } from 'node:fs/promises'
 import {
   getVideo,
   setVideoStatus,
@@ -11,7 +12,7 @@ import {
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { perceive, parseCheckpoint } from '@cva/perception'
+import { perceive, parseCheckpoint, parseVtt, type Transcript } from '@cva/perception'
 
 type AnalyzeJobPayload = { videoId: string }
 
@@ -38,9 +39,13 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
   // "Reintentar" button) picks up the one its failed predecessor left.
   const checkpoint = parseCheckpoint(job.result_json) ?? parseCheckpoint(getLatestFailedAnalyzeCheckpoint(video.id, db))
 
+  const file = resolveDataPath(video.stored_path)
+  const captions = await readCaptions(path.join(path.dirname(file), 'captions.vtt'))
+
   try {
-    const result = await perceive(resolveDataPath(video.stored_path), workDir, {
+    const result = await perceive(file, workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
+      captions,
       checkpoint,
       onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
     })
@@ -126,5 +131,14 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     // Status stays 'analyzing' so the retry passes the guard above;
     // retryOrFailJob marks the video 'failed' once retries run out.
     throw error
+  }
+}
+
+/** The platform captions the download saved next to the video, if any. */
+async function readCaptions(vttPath: string): Promise<Transcript | undefined> {
+  try {
+    return parseVtt(await readFile(vttPath, 'utf8'), 'es')
+  } catch {
+    return undefined
   }
 }
