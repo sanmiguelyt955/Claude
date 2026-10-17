@@ -118,8 +118,36 @@ body {
     font-family: var(--font-mono);
     font-size: 0.72rem;
     font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
   button.timestamp:hover {
     background: color-mix(in oklch, var(--color-accent) 26%, transparent);
+  }
+}
+
+/* Accessibility rules from the ui-ux-pro-max-skill design database (MIT):
+   a visible keyboard focus ring, pointer cursors on clickable controls and no
+   motion for people who ask their system for less of it. Text fields keep
+   their own border highlight, which reads better inside the pill inputs. */
+:focus-visible:not(input, textarea, select) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+button:not(:disabled),
+[role='button'],
+summary {
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .btn-primary:hover {
+    transform: none;
   }
 }
