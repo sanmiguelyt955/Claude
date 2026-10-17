@@ -1,0 +1,57 @@
+name: video-analyzer
+
+on:
+  push:
+    paths:
+      - "video-analyzer/**"
+      - ".github/workflows/video-analyzer.yml"
+  pull_request:
+    paths:
+      - "video-analyzer/**"
+      - ".github/workflows/video-analyzer.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Typecheck y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: video-analyzer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: video-analyzer/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: video-analyzer/packages/perception/scripts/requirements.txt
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Dependencias de Node
+        run: npm ci
+
+      - name: Dependencias de Python
+        # faster-whisper solo para la prueba que compara nuestro espectrograma con el suyo.
+        run: pip install -r packages/perception/scripts/requirements.txt faster-whisper
+
+      - name: Caché de pesos de Whisper
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whisper-tiny-v1
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Pruebas (Whisper, pipeline y worker)
+        run: npm test

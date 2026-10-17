@@ -12,7 +12,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from nuestro_whisper.audio import N_FRAMES, log_mel_spectrogram, mel_filters, pad_or_trim  # noqa: E402
-from nuestro_whisper.decoding import TimestampRules, beam_search_decode, greedy_decode  # noqa: E402
+from nuestro_whisper.decoding import (  # noqa: E402
+    TimestampRules,
+    beam_search_decode,
+    compression_ratio,
+    decode_with_fallback,
+    greedy_decode,
+    sample_decode,
+)
 from nuestro_whisper.model import gelu, layer_norm  # noqa: E402
 
 FIXTURE = os.path.join(HERE, "..", "..", "test", "fixtures-speech.wav")
@@ -178,6 +185,100 @@ class BeamSearchTest(unittest.TestCase):
         greedy = greedy_decode(self.model, self.tok, PassRules(), None, language=50259)
         same = beam_search_decode(self.model, self.tok, PassRules(), None, language=50259, beam_size=1)
         self.assertEqual(greedy[0], same[0])
+
+
+class LoopModel:
+    """Gets stuck repeating one word at temperature 0, like Whisper on noise.
+
+    Confident mode, after any token: X 0.5, four other words 0.11 each, and
+    <|endoftext|> only 0.06. With beam_size=3 every beam proposes its 4 best
+    tokens, so <|endoftext|> never makes the cut: beam search runs to the
+    224-token limit and the best beam is "la la la ...", a repetition loop.
+    Unsure mode spreads the probability over 300 words, so anything it writes
+    has a low log-probability. `no_speech` is the model's belief that the
+    window is silent.
+    """
+
+    X = 10
+
+    def __init__(self, tok, no_speech=0.1, confident=True):
+        self.tok, self.no_speech, self.confident = tok, no_speech, confident
+
+    def _dist(self, last):
+        out = np.full(FakeTok.vocab, -np.inf, dtype=np.float32)
+        if last == self.tok.sot:
+            table = {self.tok.no_speech: self.no_speech, self.tok.eot: 1 - self.no_speech}
+        elif self.confident:
+            table = {self.X: 0.5, 20: 0.11, 21: 0.11, 22: 0.11, 23: 0.11, self.tok.eot: 0.06}
+        else:
+            table = {t: 0.9 / 300 for t in range(100, 400)} | {self.tok.eot: 0.1}
+        for t, prob in table.items():
+            out[t] = np.log(prob)
+        return out
+
+    def new_cache(self, _features):
+        return {}
+
+    @staticmethod
+    def reorder_cache(cache, source):
+        pass
+
+    def decode(self, tokens, cache):
+        rows = [tokens] if tokens and not isinstance(tokens[0], list) else tokens
+        return np.stack([self._dist(r[-1]) for r in rows])
+
+
+class LoopTok(FakeTok):
+    no_speech = 50362
+
+    def decode(self, ids):
+        return " ".join("la" if i == LoopModel.X else f"w{i}" for i in ids if i < self.eot)
+
+
+class TemperatureFallbackTest(unittest.TestCase):
+    def setUp(self):
+        self.tok = LoopTok()
+
+    def run_fallback(self, model, **kw):
+        return decode_with_fallback(model, self.tok, PassRules(), None, 50259, beam_size=3, **kw)
+
+    def test_compression_ratio_flags_repetition(self):
+        self.assertGreater(compression_ratio("gracias " * 50), 2.4)
+        self.assertLess(compression_ratio("Hola, este es un video de prueba para la aplicación."), 2.4)
+        self.assertEqual(compression_ratio(""), 0.0)
+
+    def test_repetition_loop_triggers_a_retry(self):
+        model = LoopModel(self.tok)
+        stuck, avg_logprob, _ = beam_search_decode(model, self.tok, PassRules(), None, 50259, beam_size=3)
+        self.assertEqual(len(stuck), 224)  # the trap is real: beam search never stops
+        self.assertGreater(compression_ratio(self.tok.decode(stuck)), 2.4)
+        self.assertGreater(avg_logprob, -1.0)  # and it is confident about it
+        self.assertGreater(self.run_fallback(model)["temperature"], 0)
+
+    def test_confident_loop_is_retried_even_if_no_speech_is_high(self):
+        # Regression: found on noisy audio, where Whisper looped with no_speech
+        # 0.69. A confident loop is not silence and must be retried.
+        self.assertGreater(self.run_fallback(LoopModel(self.tok, no_speech=0.9))["temperature"], 0)
+
+    def test_unsure_window_walks_the_whole_ladder(self):
+        out = self.run_fallback(LoopModel(self.tok, confident=False))
+        self.assertEqual(out["temperature"], 1.0)  # every temperature failed: last attempt kept
+        self.assertLess(out["avg_logprob"], -1.0)
+
+    def test_silence_is_not_retried(self):
+        out = self.run_fallback(LoopModel(self.tok, no_speech=0.9, confident=False))
+        self.assertEqual(out["temperature"], 0.0)
+
+    def test_retries_disabled_with_a_single_temperature(self):
+        out = self.run_fallback(LoopModel(self.tok), temperatures=(0.0,))
+        self.assertEqual(out["temperature"], 0.0)
+        self.assertGreater(out["compression_ratio"], 2.4)
+
+    def test_sampling_is_reproducible_with_a_seed(self):
+        model = LoopModel(self.tok)
+        a = sample_decode(model, self.tok, PassRules(), None, 50259, 0.8, rng=np.random.default_rng(42))
+        b = sample_decode(model, self.tok, PassRules(), None, 50259, 0.8, rng=np.random.default_rng(42))
+        self.assertEqual(a, b)
 
 
 class EndToEndTest(unittest.TestCase):

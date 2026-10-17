@@ -12,7 +12,8 @@ motor por defecto de la etapa "escuchar" del pipeline.
 | Lector de pesos `.safetensors` | Nuestro |
 | Transformer: convoluciones, atención, MLP, LayerNorm, GELU | Nuestro |
 | Detokenizador BPE a nivel de bytes | Nuestro |
-| Búsqueda greedy y beam search con reglas de marcas de tiempo | Nuestro |
+| Búsqueda greedy, beam search y muestreo con reglas de marcas de tiempo | Nuestro |
+| Reintento con temperatura para bucles y baja confianza | Nuestro |
 | Ventanas de 30 s con avance ("seek"), detección de idioma y de silencio | Nuestro |
 | **Pesos entrenados** | `openai/whisper-*` en Hugging Face |
 
@@ -43,9 +44,17 @@ audio etiquetado y GPUs; por eso se reutilizan los pesos públicos.
    mejor log-probabilidad **por token** (así una frase larga no pierde solo
    por tener más palabras). Los 5 haces pasan por el decoder en un mismo lote
    y la caché de atención se reordena cuando un haz se ramifica.
-7. **Audio largo.** La siguiente ventana empieza donde terminó el último
+7. **Reintento con temperatura.** Con ruido o música Whisper puede quedar en
+   bucle ("de la creación de la creación…"). Si el texto de una ventana se
+   comprime con zlib más de 2.4 veces (repetición) o su log-probabilidad media
+   es menor que −1 (baja confianza), se decodifica otra vez muestreando a
+   temperatura 0.2, 0.4 … 1.0; en cada una se sacan 5 candidatos y gana el de
+   mejor log-probabilidad por token. No se reintenta lo que parece silencio
+   (probabilidad de "sin voz" > 0.6 **y** baja confianza): un bucle seguro de
+   sí mismo no es silencio. El muestreo usa una semilla fija (reproducible).
+8. **Audio largo.** La siguiente ventana empieza donde terminó el último
    segmento completo, así una frase cortada en el borde se vuelve a leer.
-8. **Silencio.** Si `<|nocaptions|>`/`<|nospeech|>` supera 0.6 y la confianza
+9. **Silencio.** Si `<|nocaptions|>`/`<|nospeech|>` supera 0.6 y la confianza
    media es baja, la ventana se descarta (evita alucinaciones).
 
 ## Verificación
@@ -64,6 +73,13 @@ Contra faster-whisper (CTranslate2) con los mismos pesos y búsqueda greedy:
 
 - **Beam search (5 haces):** idéntico a faster-whisper con `beam_size=5`:
   18 de 18 segmentos con `tiny` y 13 de 13 con `small`, texto y marcas.
+
+- **Reintento con temperatura:** con voz limpia nunca se activa (todas las
+  ventanas a temperatura 0, ~5 % de costo extra). Con ruido rosa fuerte, la
+  primera ventana entra en bucle (compresión 11.99): se reintenta y, como
+  faster-whisper, se descarta por ruido; la segunda no necesita reintento en
+  ninguno de los dos. Encontró un error: la excepción de silencio no debe
+  aplicarse a un bucle con confianza alta.
 
 ## Rendimiento (CPU, 4 núcleos, 59 s de audio)
 
@@ -93,6 +109,4 @@ Dependencias: `pip install -r packages/perception/scripts/requirements.txt`
 
 ## Pendiente
 
-- Respaldo por temperatura cuando el texto se repite o tiene baja confianza:
-  mejora la precisión con audio difícil.
 - Diarización (quién habla): Whisper no la hace; hace falta otro modelo.

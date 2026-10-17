@@ -7,6 +7,8 @@ backwards, the first token is a timestamp, and when the model puts more
 probability on "some timestamp" than on any single text token, a timestamp
 is forced.
 """
+import zlib
+
 import numpy as np
 
 from .tokenizer import Tokenizer
@@ -170,3 +172,114 @@ def beam_search_decode(
 
     best, best_score = max(finished.items(), key=lambda kv: kv[1] / max(len(kv[0]), 1))
     return list(best), best_score / (len(best) + 1), no_speech
+
+
+def sample_decode(
+    model,
+    tok: Tokenizer,
+    rules: TimestampRules,
+    audio_features: np.ndarray,
+    language: int,
+    temperature: float,
+    best_of: int = 5,
+    rng: np.random.Generator | None = None,
+):
+    """Draws `best_of` transcripts at `temperature` and keeps the best one.
+
+    Sampling uses the Gumbel-max trick (argmax of logits / T plus Gumbel
+    noise), which draws from softmax(logits / T) for all candidates at once.
+    Like Whisper, candidates are ranked by their log-probability under the
+    model itself (not the tempered one), per token.
+    """
+    rng = rng or np.random.default_rng(0)
+    cache = model.new_cache(audio_features)
+    first = model.decode([tok.sot], cache)[0]
+    no_speech = float(np.exp(_log_softmax(first)[tok.no_speech])) if tok.no_speech is not None else 0.0
+    logits = model.decode([language, tok.transcribe], cache)
+    model.reorder_cache(cache, [0] * best_of)
+    logits = np.repeat(logits, best_of, axis=0)
+
+    seqs: list[list[int]] = [[] for _ in range(best_of)]
+    scores = [0.0] * best_of
+    active = list(range(best_of))  # candidate index of each cache row
+    for _ in range(SAMPLE_LEN):
+        filtered = np.stack([rules.apply(logits[row], seqs[c]) for row, c in enumerate(active)])
+        gumbel = -np.log(-np.log(rng.uniform(1e-12, 1.0, size=filtered.shape)))
+        picks = np.argmax(filtered / temperature + gumbel, axis=-1)
+
+        keep_rows, keep = [], []
+        for row, c in enumerate(active):
+            token = int(picks[row])
+            scores[c] += float(_log_softmax(filtered[row])[token])
+            if token == tok.eot:
+                continue
+            seqs[c].append(token)
+            keep_rows.append(row)
+            keep.append(c)
+        if not keep:
+            break
+        model.reorder_cache(cache, keep_rows)
+        active = keep
+        logits = model.decode([[seqs[c][-1]] for c in active], cache)
+
+    best = max(range(best_of), key=lambda c: scores[c] / max(len(seqs[c]), 1))
+    return seqs[best], scores[best] / (len(seqs[best]) + 1), no_speech
+
+
+def compression_ratio(text: str) -> float:
+    """How much zlib shrinks the text. Repetition loops ("gracias gracias
+    gracias...") compress very well, so a high ratio flags a stuck decoder."""
+    data = text.encode("utf-8")
+    return len(data) / len(zlib.compress(data)) if data else 0.0
+
+
+# Whisper's defaults for when a window must be decoded again.
+TEMPERATURES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+COMPRESSION_RATIO_THRESHOLD = 2.4
+LOGPROB_THRESHOLD = -1.0
+NO_SPEECH_THRESHOLD = 0.6
+
+
+def decode_with_fallback(
+    model,
+    tok: Tokenizer,
+    rules: TimestampRules,
+    audio_features: np.ndarray,
+    language: int,
+    beam_size: int = 5,
+    best_of: int = 5,
+    temperatures=TEMPERATURES,
+    rng: np.random.Generator | None = None,
+) -> dict:
+    """Decodes a window, retrying at higher temperatures when the result looks
+    broken: too repetitive (compression ratio above 2.4) or too unsure (mean
+    log-probability below -1). Temperature 0 uses beam search; higher ones
+    sample `best_of` candidates. A window that looks like silence (high
+    no-speech probability and low confidence) is not retried. If every
+    temperature fails, the last attempt is returned, as Whisper does."""
+    rng = rng or np.random.default_rng(0)
+    result = None
+    for temperature in temperatures:
+        if temperature == 0:
+            tokens, avg_logprob, no_speech = beam_search_decode(model, tok, rules, audio_features, language, beam_size)
+        else:
+            tokens, avg_logprob, no_speech = sample_decode(
+                model, tok, rules, audio_features, language, temperature, best_of, rng
+            )
+        ratio = compression_ratio(tok.decode(tokens))
+        result = {
+            "tokens": tokens,
+            "avg_logprob": avg_logprob,
+            "no_speech_prob": no_speech,
+            "compression_ratio": ratio,
+            "temperature": temperature,
+        }
+        needs_fallback = ratio > COMPRESSION_RATIO_THRESHOLD or avg_logprob < LOGPROB_THRESHOLD
+        # Silence (the model expects no speech AND is unsure of what it wrote):
+        # a higher temperature cannot help. A confident repetition loop is not
+        # silence, even when no_speech is high, and must be retried.
+        if no_speech > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD:
+            needs_fallback = False
+        if not needs_fallback:
+            break
+    return result

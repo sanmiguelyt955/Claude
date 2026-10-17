@@ -10,15 +10,18 @@ import os
 import numpy as np
 
 from .audio import HOP_LENGTH, N_FRAMES, SAMPLE_RATE, load_audio, log_mel_spectrogram, pad_or_trim
-from .decoding import TimestampRules, beam_search_decode, detect_language
+from .decoding import (
+    LOGPROB_THRESHOLD,
+    NO_SPEECH_THRESHOLD,
+    TEMPERATURES,
+    TimestampRules,
+    decode_with_fallback,
+    detect_language,
+)
 from .model import Whisper
 from .tokenizer import Tokenizer
 from .weights import model_dir, read_safetensors
 
-# Window skipped as silence when the model is this sure there is no speech
-# and the decoded text is low-confidence (Whisper's own defaults).
-NO_SPEECH_THRESHOLD = 0.6
-LOGPROB_THRESHOLD = -1.0
 SECONDS_PER_FRAME = HOP_LENGTH / SAMPLE_RATE  # 0.01 s per mel frame
 INPUT_STRIDE = 2  # conv2 halves the frames: one timestamp step (0.02 s) = 2 mel frames
 
@@ -75,11 +78,22 @@ def _segments(tokens: list[int], tok: Tokenizer, offset: float):
     return segments, None
 
 
-def transcribe(path_or_audio, model: str = "tiny", language: str | None = None, beam_size: int = 5) -> dict:
-    """Returns {"language": code, "segments": [{"start", "end", "text"}]}.
+def transcribe(
+    path_or_audio,
+    model: str = "tiny",
+    language: str | None = None,
+    beam_size: int = 5,
+    temperatures=TEMPERATURES,
+    best_of: int = 5,
+    seed: int = 0,
+) -> dict:
+    """Returns {"language": code, "segments": [{"start", "end", "text", "temperature"}]}.
 
     beam_size=5 is Whisper's usual setting; 1 is plain greedy decoding
-    (faster, slightly less accurate on hard audio)."""
+    (faster, slightly less accurate on hard audio). `temperatures` is the
+    retry ladder for windows that come out repetitive or unsure; pass (0.0,)
+    to disable retries. `seed` makes the sampled retries reproducible."""
+    rng = np.random.default_rng(seed)
     whisper, tok, rules, _ = load_model(model)
     audio = load_audio(path_or_audio) if isinstance(path_or_audio, str) else np.asarray(path_or_audio, np.float32)
     mel = log_mel_spectrogram(audio)
@@ -93,9 +107,11 @@ def transcribe(path_or_audio, model: str = "tiny", language: str | None = None, 
         features = whisper.encode(pad_or_trim(mel[:, seek : seek + N_FRAMES]))
         if lang_code is None:
             lang_code = detect_language(whisper, tok, features)
-        tokens, avg_logprob, no_speech = beam_search_decode(
-            whisper, tok, rules, features, tok.language_token(lang_code), beam_size=beam_size
+        decoded = decode_with_fallback(
+            whisper, tok, rules, features, tok.language_token(lang_code),
+            beam_size=beam_size, best_of=best_of, temperatures=temperatures, rng=rng,
         )
+        tokens, avg_logprob, no_speech = decoded["tokens"], decoded["avg_logprob"], decoded["no_speech_prob"]
 
         offset = seek * SECONDS_PER_FRAME
         if no_speech > NO_SPEECH_THRESHOLD and avg_logprob < LOGPROB_THRESHOLD:
@@ -105,6 +121,7 @@ def transcribe(path_or_audio, model: str = "tiny", language: str | None = None, 
         found, consumed = _segments(tokens, tok, offset)
         window_end = offset + window_frames * SECONDS_PER_FRAME
         for s in found:
+            s["temperature"] = decoded["temperature"]
             s["end"] = min(s["end"], round(window_end, 2))
             if s["end"] < s["start"]:
                 s["end"] = s["start"]
