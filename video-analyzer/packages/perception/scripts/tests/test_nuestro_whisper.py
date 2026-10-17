@@ -299,6 +299,32 @@ class EndToEndTest(unittest.TestCase):
                 self.assertGreater(first["end"], 2.5)
                 self.assertLess(first["end"], 4.5)
 
+    def test_silence_before_and_after_is_skipped(self):
+        if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):
+            self.skipTest("descarga desactivada")
+        from nuestro_whisper import transcribe
+        from nuestro_whisper.audio import load_audio
+
+        speech = load_audio(FIXTURE)
+        silence = np.zeros(16000 * 40, np.float32)  # 40 s: more than a whole window
+        out = transcribe(np.concatenate([silence, speech, silence]), model="tiny", language="en")
+        text = " ".join(s["text"] for s in out["segments"]).lower()
+        self.assertIn("quick test sentence", text)
+        first = out["segments"][0]
+        self.assertGreater(first["start"], 39.5)  # times stay absolute after the jump
+        self.assertLess(first["start"], 40.5)
+        self.assertLess(out["segments"][-1]["end"], 40 + len(speech) / 16000 + 1)
+
+    def test_voiced_frames_ignores_silence_but_not_a_soft_voice(self):
+        from nuestro_whisper.transcribe import voiced_frames
+
+        t = np.arange(16000) / 16000
+        soft = (0.01 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)  # about -43 dBFS
+        audio = np.concatenate([np.zeros(16000, np.float32), soft])
+        voiced = voiced_frames(audio)
+        self.assertEqual(int(voiced[0]), 100)
+        self.assertEqual(len(voiced), 100)
+
     def test_detects_language(self):
         if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):
             self.skipTest("descarga desactivada")

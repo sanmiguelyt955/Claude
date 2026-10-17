@@ -27,7 +27,12 @@ def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: in
     from faster_whisper import WhisperModel
 
     fw = WhisperModel(model, device=device, compute_type=compute_type)
-    segments, info = fw.transcribe(wav, language=language, beam_size=beam_size, vad_filter=True)
+    # Silero VAD only drops silences over 2 s by default (faster-whisper
+    # README); 0.5 s also skips the pauses between sentences.
+    segments, info = fw.transcribe(
+        wav, language=language, beam_size=beam_size, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500},
+    )
     return {
         "language": info.language,
         "segments": [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segments],
