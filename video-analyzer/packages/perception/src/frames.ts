@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, readdir, rm, unlink } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 const run = promisify(execFile)
@@ -19,6 +19,13 @@ export type FrameOptions = {
   maxFrames: number
   /** Output width in px; height follows the aspect ratio. */
   width: number
+  /**
+   * Drop a frame when its 16x16 colour thumbnail differs from the last kept
+   * one by at most this mean per-channel value (0..255). 0 keeps every frame.
+   */
+  dedupThreshold: number
+  /** A near-duplicate is still kept when the last kept frame is this many seconds old. */
+  maxGapSeconds: number
 }
 
 export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
@@ -27,7 +34,17 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   keyframeEverySeconds: 1,
   maxFrames: 1200,
   width: 768,
+  dedupThreshold: 2,
+  maxGapSeconds: 10,
 }
+
+/**
+ * Thumbnails used to spot near-duplicate frames: 16x16 RGB. Colour, not
+ * grayscale, because a cut between two colours of equal brightness (pure red
+ * and dark green) looks identical in gray.
+ */
+const THUMB = 16
+const THUMB_BYTES = THUMB * THUMB * 3
 
 /**
  * "Ver": samples the video at up to `fps` but keeps only frames whose content
@@ -44,16 +61,24 @@ export async function extractFrames(
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
-  const vf = [
-    `fps=${opts.fps}`,
+  // One pass, two outputs of the same selected frames: the JPGs the model
+  // sees and a raw 16x16 RGB strip used to drop near-duplicates (the
+  // 1 s keyframes of a static shot are otherwise all sent).
+  const graph = [
+    `[0:v]fps=${opts.fps}`,
     `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.round(opts.fps * opts.keyframeEverySeconds)}))'`,
     'showinfo',
-    `scale=${opts.width}:-2`,
-  ].join(',')
+    'split=2[big][small];',
+  ].join(',') + `[big]scale=${opts.width}:-2[jpg];[small]scale=${THUMB}:${THUMB},format=rgb24[thumb]`
+  const thumbsPath = path.join(outDir, 'thumbs.rgb')
 
   const { stderr } = await run(
     ffmpegBin(),
-    ['-hide_banner', '-v', 'info', '-i', file, '-vf', vf, '-vsync', '0', '-q:v', '4', path.join(outDir, '%06d.jpg')],
+    [
+      '-hide_banner', '-v', 'info', '-i', file, '-filter_complex', graph,
+      '-map', '[jpg]', '-vsync', '0', '-q:v', '4', path.join(outDir, '%06d.jpg'),
+      '-map', '[thumb]', '-vsync', '0', '-f', 'rawvideo', thumbsPath,
+    ],
     { maxBuffer: 256 * 1024 * 1024 },
   )
 
@@ -67,6 +92,14 @@ export async function extractFrames(
     time: times[i] ?? 0,
   }))
 
+  const thumbs = await readFile(thumbsPath)
+  await unlink(thumbsPath)
+  if (opts.dedupThreshold > 0 && thumbs.length >= count * THUMB_BYTES) {
+    const keep = dedupFrames(frames, (i) => thumbs.subarray(i * THUMB_BYTES, (i + 1) * THUMB_BYTES), opts)
+    await Promise.all(frames.filter((_, i) => !keep.has(i)).map((f) => unlink(f.path)))
+    frames = frames.filter((_, i) => keep.has(i))
+  }
+
   if (frames.length > opts.maxFrames) {
     const keep = new Set<number>()
     for (let i = 0; i < opts.maxFrames; i++) {
@@ -77,6 +110,33 @@ export async function extractFrames(
     frames = frames.filter((_, i) => keep.has(i))
   }
   return frames
+}
+
+/**
+ * Indexes of the frames worth keeping: the first one, then each frame whose
+ * thumbnail differs enough from the last kept one, plus one every
+ * maxGapSeconds so a long static shot still has a frame on the timeline.
+ */
+export function dedupFrames(
+  frames: Frame[],
+  thumbOf: (index: number) => Uint8Array,
+  opts: Pick<FrameOptions, 'dedupThreshold' | 'maxGapSeconds'>,
+): Set<number> {
+  const keep = new Set<number>()
+  let last = -1
+  for (let i = 0; i < frames.length; i++) {
+    if (last < 0 || frames[i]!.time - frames[last]!.time >= opts.maxGapSeconds || meanDiff(thumbOf(i), thumbOf(last)) > opts.dedupThreshold) {
+      keep.add(i)
+      last = i
+    }
+  }
+  return keep
+}
+
+function meanDiff(a: Uint8Array, b: Uint8Array): number {
+  let sum = 0
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i]! - (b[i] ?? 0))
+  return a.length ? sum / a.length : 0
 }
 
 /** "Escuchar" prep: mono 16 kHz WAV, the input format speech models expect. */

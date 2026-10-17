@@ -25,7 +25,7 @@ try {
     frameOptions: {
       ...DEFAULT_FRAME_OPTIONS,
       fps,
-      ...(everyFrame ? { keyframeEverySeconds: 1 / fps, maxFrames: Number.MAX_SAFE_INTEGER } : {}),
+      ...(everyFrame ? { keyframeEverySeconds: 1 / fps, maxFrames: Number.MAX_SAFE_INTEGER, dedupThreshold: 0 } : {}),
     },
     log: (m) => console.error(`[perception] ${m}`),
   })
