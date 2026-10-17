@@ -106,6 +106,7 @@ export function inspectSchema(db: Db = getDb()): SchemaStatus {
     'vec_memory_chunks',
     'skills',
     'skill_improvements',
+    'video_chat_messages',
   ]
   const present = new Set(
     (

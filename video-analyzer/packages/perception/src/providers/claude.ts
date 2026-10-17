@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { frameLabel, postJson, type VisionProvider, type VisionRequest } from './types.js'
+import { frameLabel, postJson, speechPreamble, type VisionProvider, type VisionRequest } from './types.js'
 
 // Claude does not process audio: it sees the frames, and the speech arrives as
 // text from the transcription stage. Frames are interleaved with their time
@@ -18,10 +18,7 @@ export const claude: VisionProvider = {
     }
     content.push({
       type: 'text',
-      text: [
-        transcript ? `Transcripción del audio en este tramo (lo que se escucha):\n${transcript}` : 'Este tramo no tiene voz.',
-        instruction,
-      ].join('\n\n'),
+      text: [...speechPreamble(transcript), instruction].join('\n\n'),
     })
 
     const base = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'

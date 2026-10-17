@@ -5,14 +5,16 @@ import { useEffect, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
+import { VideoChat } from './VideoChat'
 import { formatDuration, formatSize } from '@/lib/format'
 import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
 import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
-type Tab = 'resumen' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
+type Tab = 'resumen' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
 
 const TABS: Array<{ value: Tab; label: string }> = [
   { value: 'resumen', label: 'Resumen' },
+  { value: 'chat', label: 'Chat' },
   { value: 'timeline', label: 'Timeline' },
   { value: 'transcripcion', label: 'Transcripcion' },
   { value: 'objetos', label: 'Objetos' },
@@ -327,6 +329,8 @@ export function VideoDetailClient({ id }: { id: string }) {
           </div>
 
           <SegmentedControl options={TABS} value={tab} onChange={setTab} />
+
+          {tab === 'chat' && <VideoChat videoId={id} ready={video.status === 'ready'} />}
 
           {tab === 'resumen' && summary && (
             <div className="flex flex-col gap-3">

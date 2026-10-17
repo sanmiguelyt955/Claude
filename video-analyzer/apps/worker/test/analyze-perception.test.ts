@@ -126,3 +126,24 @@ test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, as
   assert.equal(overloadNext, 0)
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
 })
+
+test('the chat history is stored per video and goes away with the video', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  const { id } = queueVideo('chat')
+  me.addChatMessage({ videoId: id, role: 'user', text: '¿Cuánto cuesta?' }, db)
+  me.addChatMessage({ videoId: id, role: 'assistant', text: '29 dólares [0:20].', provider: 'claude' }, db)
+  me.addChatMessage({ videoId: id, role: 'user', text: '¿Y el envío?' }, db)
+
+  const chat = me.listChatMessages(id, db)
+  assert.deepEqual(chat.map((m) => m.role), ['user', 'assistant', 'user']) // oldest first
+  assert.equal(chat[1]!.provider, 'claude')
+  assert.throws(() => me.addChatMessage({ videoId: id, role: 'system' as 'user', text: 'x' }, db), /CHECK/)
+
+  assert.equal(me.clearChatMessages(id, db), 3)
+  assert.equal(me.listChatMessages(id, db).length, 0)
+
+  me.addChatMessage({ videoId: id, role: 'user', text: 'otra' }, db)
+  me.deleteVideo(id, db)
+  const left = db.prepare('SELECT count(*) AS n FROM video_chat_messages WHERE video_id = ?').get(id) as { n: number }
+  assert.equal(left.n, 0)
+})

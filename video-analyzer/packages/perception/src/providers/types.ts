@@ -3,10 +3,22 @@ import type { Frame } from '../frames.js'
 export type VisionRequest = {
   /** Frames to look at, in time order. May be empty for text-only calls. */
   frames: Frame[]
-  /** Speech in the same time range, already transcribed. */
-  transcript: string
-  /** Full instruction; the reply must be JSON. */
+  /**
+   * Speech in the same time range, already transcribed ('' when the range has
+   * no voice). Omitted for text-only calls whose instruction carries all the
+   * context (the video chat), so no "this window has no voice" note is added.
+   */
+  transcript?: string
+  /** Full instruction. */
   instruction: string
+  /** Ask for a JSON reply (default). False for free-text answers. */
+  json?: boolean
+}
+
+/** The speech preamble shared by every provider; empty for text-only calls. */
+export function speechPreamble(transcript: string | undefined): string[] {
+  if (transcript === undefined) return []
+  return [transcript ? `Transcripción del audio en este tramo (lo que se escucha):\n${transcript}` : 'Este tramo no tiene voz.']
 }
 
 export interface VisionProvider {
