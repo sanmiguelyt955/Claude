@@ -30,7 +30,9 @@ async function parseMultipart(request: Request, videoId: string): Promise<Parsed
   await mkdir(destDir, { recursive: true })
 
   return new Promise<ParsedUpload>((resolve, reject) => {
-    const busboy = Busboy({ headers: { 'content-type': contentType }, limits: { files: 1 } })
+    // Browsers send the file name as UTF-8; busboy reads it as Latin-1 unless
+    // told otherwise, which turned "ACLARACIÓN" into "ACLARACIÃ\u0093N".
+    const busboy = Busboy({ headers: { 'content-type': contentType }, limits: { files: 1 }, defParamCharset: 'utf8' })
 
     let fieldTitle: string | undefined
     let savedPath: string | undefined
