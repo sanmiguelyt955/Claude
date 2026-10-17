@@ -1,12 +1,55 @@
 {
-  "name": "video-editor-app",
-  "version": "0.1.0",
+  "name": "editor-de-video",
+  "productName": "Editor de video",
+  "version": "1.0.0",
   "private": true,
-  "description": "Editor de video web: importar, cortar, ordenar, añadir texto y exportar MP4 con FFmpeg",
-  "main": "server.js",
+  "description": "Editor de video: cortes, capas, texto, velocidad, filtros y exportación MP4",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "app": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.sanmiguelyt955.editordevideo",
+    "productName": "Editor de video",
+    "directories": { "output": "release" },
+    "files": [
+      "electron/**/*",
+      "lib/**/*",
+      "public/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/ffprobe-static/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": ["dmg"]
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "linux": {
+      "target": ["AppImage"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "engines": { "node": ">=18" }
 }

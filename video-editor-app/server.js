@@ -15,6 +15,10 @@ const { normalizeProject } = require('./lib/model');
 
 const execFileP = promisify(execFile);
 
+// Rutas de FFmpeg: la app de escritorio puede traer sus propios binarios.
+const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+const FFPROBE = process.env.FFPROBE_PATH || 'ffprobe';
+
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
 const PUBLIC = path.join(ROOT, 'public');
@@ -97,7 +101,7 @@ function readJson(req, limit = MAX_JSON) {
 }
 
 async function probe(file) {
-  const { stdout } = await execFileP('ffprobe', [
+  const { stdout } = await execFileP(FFPROBE, [
     '-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file,
   ]);
   const info = JSON.parse(stdout);
@@ -317,7 +321,7 @@ async function handleExport(req, res) {
     const args = buildFfmpegArgs(project, media, outPath);
 
     await new Promise((resolve, reject) => {
-      const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...args]);
+      const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', ...args]);
       let stderr = '';
       ff.stderr.on('data', (c) => { stderr += c; });
       ff.on('error', reject);
@@ -392,8 +396,19 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-if (require.main === module) {
-  server.listen(PORT, () => console.log(`Editor de video en http://localhost:${PORT}`));
+// Arranca el servidor y devuelve la URL. Con port 0 el sistema elige un puerto libre.
+function start({ port = PORT, host = '127.0.0.1' } = {}) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, () => {
+      const { port: actual } = server.address();
+      resolve(`http://${host}:${actual}`);
+    });
+  });
 }
 
-module.exports = { server };
+if (require.main === module) {
+  start({ host: '0.0.0.0' }).then((url) => console.log(`Editor de video en ${url}`));
+}
+
+module.exports = { server, start };
