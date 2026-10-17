@@ -65,7 +65,7 @@ export default function CargarPage() {
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold tracking-tight">Cargar video</h1>
         <p className="text-sm text-(--color-ink-soft)">
-          Un archivo local o una URL directa. FFmpeg y Gemini se encargan del resto.
+          Un archivo local, un enlace de TikTok, Instagram o YouTube, o una URL directa a un video.
         </p>
       </header>
 
@@ -119,7 +119,7 @@ export default function CargarPage() {
             type="url"
             value={urlValue}
             onChange={(e) => setUrlValue(e.target.value)}
-            placeholder="https://..."
+            placeholder="https://www.tiktok.com/@usuario/video/..."
             className="rounded-md border border-(--color-line) bg-transparent px-3 py-2.5 text-sm outline-none focus:border-(--color-accent)"
             disabled={busy}
           />
@@ -132,7 +132,8 @@ export default function CargarPage() {
           </button>
         </form>
         <p className="text-xs text-(--color-ink-soft)">
-          Una URL de YouTube se procesa directo por Gemini, sin descargarla.
+          TikTok, Instagram y YouTube se descargan solos. Si Instagram pide iniciar sesión, configura
+          YTDLP_COOKIES_FROM_BROWSER con el navegador donde tienes tu sesión abierta.
         </p>
       </section>
     </main>

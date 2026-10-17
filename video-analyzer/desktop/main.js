@@ -23,6 +23,9 @@ ANTHROPIC_API_KEY=
 GEMINI_API_KEY=
 
 # Opcional
+# Instagram y algunos TikTok piden sesión iniciada: el navegador donde la
+# tienes abierta (firefox, edge, chrome o safari).
+# YTDLP_COOKIES_FROM_BROWSER=firefox
 # CLAUDE_VISION_MODEL=claude-sonnet-5-5
 # WHISPER_MODEL=small
 # OBSIDIAN_VAULT_PATH=C:\\Users\\tu-usuario\\Documents\\MiVault

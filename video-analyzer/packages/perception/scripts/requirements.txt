@@ -1,5 +1,9 @@
 # Nuestro Whisper (motor por defecto): solo NumPy y la descarga de pesos.
 numpy>=1.26
 huggingface_hub>=0.20
+# Descarga de videos de TikTok e Instagram (y YouTube en modo perception).
+# curl_cffi deja a yt-dlp presentarse como un navegador real, que TikTok exige.
+yt-dlp>=2025.1.1
+curl_cffi>=0.7
 # Opcional: WHISPER_ENGINE=faster-whisper
 # faster-whisper>=1.0

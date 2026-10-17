@@ -12,7 +12,16 @@ import {
   VIDEOS_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { probe, hashFile, downloadToFile, isYoutubeUrl, isSupportedExtension } from '@cva/video-processor'
+import {
+  probe,
+  hashFile,
+  downloadToFile,
+  downloadWithYtDlp,
+  isSocialVideoUrl,
+  socialPlatformOf,
+  isYoutubeUrl,
+  isSupportedExtension,
+} from '@cva/video-processor'
 
 type ProbeJobPayload = { videoId: string }
 
@@ -29,6 +38,15 @@ async function fetchYoutubeTitle(url: string): Promise<string | null> {
     return data.title ?? null
   } catch {
     return null
+  }
+}
+
+/** The title the from-url route gives a video when the user typed none. */
+function titleFromUrl(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? url)
+  } catch {
+    return url
   }
 }
 
@@ -57,7 +75,10 @@ export async function runProbeJob(job: JobRow, db: Db): Promise<void> {
 
   setVideoStatus(video.id, 'probing', null, db)
 
-  if (video.source_kind === 'url' && video.source_url && isYoutubeUrl(video.source_url)) {
+  // The perception engine analyzes local frames and audio, so a YouTube video
+  // is downloaded like a TikTok; the Gemini engine reads YouTube URLs itself.
+  const localYoutube = process.env.ANALYSIS_ENGINE === 'perception'
+  if (video.source_kind === 'url' && video.source_url && isYoutubeUrl(video.source_url) && !localYoutube) {
     updateJobProgress(job.id, { label: 'Obteniendo datos de YouTube...' }, db)
     const title = await fetchYoutubeTitle(video.source_url)
     if (title) setVideoTitle(video.id, title, db)
@@ -70,11 +91,25 @@ export async function runProbeJob(job: JobRow, db: Db): Promise<void> {
     // File upload: the route handler already wrote the bytes to disk.
     absolutePath = resolveDataPath(video.stored_path)
   } else if (video.source_kind === 'url' && video.source_url) {
-    updateJobProgress(job.id, { label: 'Descargando video...' }, db)
     const dir = path.join(VIDEOS_DIR, video.id)
     await mkdir(dir, { recursive: true })
-    absolutePath = path.join(dir, `source${guessExtensionFromUrl(video.source_url)}`)
-    await downloadToFile(video.source_url, absolutePath)
+    if (isSocialVideoUrl(video.source_url) || isYoutubeUrl(video.source_url)) {
+      // A page, not a file: yt-dlp extracts the video (TikTok, Instagram, YouTube).
+      const social = socialPlatformOf(video.source_url)
+      const platform = social === 'tiktok' ? 'TikTok' : social === 'instagram' ? 'Instagram' : 'YouTube'
+      updateJobProgress(job.id, { label: `Descargando de ${platform}...` }, db)
+      const download = await downloadWithYtDlp(video.source_url, dir)
+      absolutePath = download.filePath
+      // Replace the placeholder title (the URL's last segment, e.g. a numeric
+      // TikTok id) with the post's real title; a title the user typed stays.
+      if (download.title && video.title === titleFromUrl(video.source_url)) {
+        setVideoTitle(video.id, download.title, db)
+      }
+    } else {
+      updateJobProgress(job.id, { label: 'Descargando video...' }, db)
+      absolutePath = path.join(dir, `source${guessExtensionFromUrl(video.source_url)}`)
+      await downloadToFile(video.source_url, absolutePath)
+    }
     setVideoStoredPath(video.id, toDataRelativePath(absolutePath), db)
   } else {
     throw new Error('El video no tiene ni archivo ni URL asociados.')
