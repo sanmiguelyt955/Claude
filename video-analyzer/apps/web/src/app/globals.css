@@ -1,32 +1,43 @@
 @import 'tailwindcss';
 
-/* Base tokens for the iOS-like look of PROJECT.md §20. The full design system
-   lands with the real screens in bloque 5; this is only enough to keep the
-   scaffolding from looking like unstyled HTML. */
+/* Design tokens. Light by default, dark with the system setting. The accent
+   is a blue-violet pair used as a gradient on primary actions and the logo. */
 @theme {
-  --color-canvas: oklch(0.985 0.002 250);
+  --color-canvas: oklch(0.982 0.004 265);
   --color-surface: oklch(1 0 0);
-  --color-line: oklch(0.92 0.004 250);
-  --color-ink: oklch(0.22 0.01 260);
-  --color-ink-soft: oklch(0.55 0.012 260);
-  --color-accent: oklch(0.62 0.19 258);
-  --color-ok: oklch(0.68 0.16 155);
-  --color-warn: oklch(0.75 0.16 70);
+  --color-surface-2: oklch(0.965 0.006 265);
+  --color-line: oklch(0.915 0.008 265);
+  --color-ink: oklch(0.2 0.02 265);
+  --color-ink-soft: oklch(0.52 0.02 265);
+  --color-accent: oklch(0.6 0.2 268);
+  --color-accent-2: oklch(0.62 0.22 300);
+  --color-ok: oklch(0.66 0.15 155);
+  --color-warn: oklch(0.74 0.16 70);
+  --color-danger: oklch(0.62 0.22 25);
 
-  --radius-card: 1rem;
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 8px 24px oklch(0.2 0.02 265 / 0.06);
+  --shadow-lift: 0 2px 4px oklch(0.2 0.02 265 / 0.08), 0 16px 40px oklch(0.2 0.02 265 / 0.12);
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+    'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
     system-ui, sans-serif;
   --font-mono: 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
 }
 
+/* Plain :root overrides, not a second @theme: Tailwind hoists every @theme
+   block to :root unconditionally, which left the app dark even in light mode. */
 @media (prefers-color-scheme: dark) {
-  @theme {
-    --color-canvas: oklch(0.17 0.008 260);
-    --color-surface: oklch(0.22 0.01 260);
-    --color-line: oklch(0.3 0.012 260);
-    --color-ink: oklch(0.96 0.003 250);
-    --color-ink-soft: oklch(0.68 0.012 260);
+  :root {
+    --color-canvas: oklch(0.155 0.012 270);
+    --color-surface: oklch(0.205 0.015 270);
+    --color-surface-2: oklch(0.245 0.017 270);
+    --color-line: oklch(0.3 0.018 270);
+    --color-ink: oklch(0.965 0.004 265);
+    --color-ink-soft: oklch(0.7 0.018 265);
+    --color-accent: oklch(0.68 0.18 268);
+    --color-accent-2: oklch(0.7 0.2 300);
+    --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.25);
+    --shadow-lift: 0 2px 6px oklch(0 0 0 / 0.35), 0 18px 44px oklch(0 0 0 / 0.4);
   }
 }
 
@@ -35,8 +46,80 @@ html {
 }
 
 body {
-  background: var(--color-canvas);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, color-mix(in oklch, var(--color-accent) 12%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, color-mix(in oklch, var(--color-accent-2) 10%, transparent), transparent 55%),
+    var(--color-canvas);
+  background-attachment: fixed;
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Shared building blocks, so every screen uses the same buttons and cards. */
+@layer components {
+  .card {
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 9999px;
+    padding: 0.6rem 1.15rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: white;
+    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+    box-shadow: 0 6px 18px color-mix(in oklch, var(--color-accent) 35%, transparent);
+    transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  }
+  .btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 24px color-mix(in oklch, var(--color-accent) 45%, transparent);
+  }
+  .btn-primary:disabled {
+    opacity: 0.5;
+    transform: none;
+  }
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid var(--color-line);
+    background: var(--color-surface);
+    padding: 0.55rem 1.05rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .btn-ghost:hover {
+    border-color: var(--color-accent);
+  }
+  .btn-ghost:disabled {
+    opacity: 0.5;
+  }
+  .chip {
+    border-radius: 9999px;
+    border: 1px solid var(--color-line);
+    background: var(--color-surface-2);
+    padding: 0.2rem 0.65rem;
+    font-size: 0.75rem;
+  }
+  .timestamp {
+    border-radius: 0.4rem;
+    background: color-mix(in oklch, var(--color-accent) 14%, transparent);
+    color: var(--color-accent);
+    padding: 0.05rem 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+  button.timestamp:hover {
+    background: color-mix(in oklch, var(--color-accent) 26%, transparent);
+  }
 }

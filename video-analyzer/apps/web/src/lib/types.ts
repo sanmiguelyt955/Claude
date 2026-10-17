@@ -17,6 +17,8 @@ export type VideoRow = {
   title: string
   source_kind: 'file' | 'url'
   source_url: string | null
+  /** Set once the file is on disk; the player and the thumbnail need it. */
+  stored_path: string | null
   status: VideoStatus
   duration_seconds: number | null
   width: number | null

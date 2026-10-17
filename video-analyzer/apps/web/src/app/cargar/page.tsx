@@ -61,10 +61,10 @@ export default function CargarPage() {
   const busy = uploading || urlSubmitting
 
   return (
-    <main className="mx-auto flex max-w-lg flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Cargar video</h1>
-        <p className="text-sm text-(--color-ink-soft)">
+    <main className="mx-auto flex max-w-xl flex-col gap-6 px-4 py-10 sm:px-6">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight">Cargar video</h1>
+        <p className="text-(--color-ink-soft)">
           Un archivo local, un enlace de TikTok, Instagram o YouTube, o una URL directa a un video.
         </p>
       </header>
@@ -73,16 +73,25 @@ export default function CargarPage() {
         <div
           role="alert"
           className="rounded-(--radius-card) border px-4 py-3 text-sm"
-          style={{ borderColor: 'oklch(0.62 0.22 25)', color: 'oklch(0.62 0.22 25)' }}
+          style={{ borderColor: 'var(--color-danger)', color: 'var(--color-danger)', background: 'color-mix(in oklch, var(--color-danger) 8%, transparent)' }}
         >
           {errorMessage}
         </div>
       )}
 
-      <section className="flex flex-col gap-4 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-5">
-        <h2 className="text-sm font-semibold">Subir archivo</h2>
+      <section className="card flex flex-col gap-4 p-5">
+        <h2 className="font-semibold">Subir archivo</h2>
         <form onSubmit={handleFileSubmit} className="flex flex-col gap-3">
-          <label className="flex cursor-pointer flex-col items-center gap-2 rounded-(--radius-card) border border-dashed border-(--color-line) px-4 py-8 text-center hover:border-(--color-accent)">
+          <label className="flex cursor-pointer flex-col items-center gap-3 rounded-(--radius-card) border-2 border-dashed border-(--color-line) bg-(--color-surface-2) px-4 py-10 text-center transition-colors hover:border-(--color-accent)">
+            <span
+              aria-hidden
+              className="grid size-12 place-items-center rounded-2xl text-white"
+              style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
+            >
+              <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+            </span>
             <input
               ref={fileInputRef}
               type="file"
@@ -91,9 +100,7 @@ export default function CargarPage() {
               disabled={busy}
               onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
             />
-            <span className="text-sm font-medium text-(--color-accent)">
-              {fileName ?? 'Elegir archivo...'}
-            </span>
+            <span className="text-sm font-semibold">{fileName ?? 'Elige un video de tu computadora'}</span>
             <span className="text-xs text-(--color-ink-soft)">
               MP4, MOV, MKV, AVI, WebM, MP3, WAV, M4A, AAC, OGG, FLAC
             </span>
@@ -101,9 +108,9 @@ export default function CargarPage() {
           <button
             type="submit"
             disabled={busy || !fileName}
-            className="rounded-full bg-(--color-accent) px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+            className="btn-primary justify-center"
           >
-            {uploading ? 'Subiendo...' : 'Subir y analizar'}
+            {uploading ? 'Subiendo…' : 'Subir y analizar'}
           </button>
         </form>
       </section>
@@ -112,23 +119,23 @@ export default function CargarPage() {
         <div className="h-px flex-1 bg-(--color-line)" />o<div className="h-px flex-1 bg-(--color-line)" />
       </div>
 
-      <section className="flex flex-col gap-4 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-5">
-        <h2 className="text-sm font-semibold">Pegar URL</h2>
+      <section className="card flex flex-col gap-4 p-5">
+        <h2 className="font-semibold">Pegar enlace</h2>
         <form onSubmit={handleUrlSubmit} className="flex flex-col gap-3">
           <input
             type="url"
             value={urlValue}
             onChange={(e) => setUrlValue(e.target.value)}
             placeholder="https://www.tiktok.com/@usuario/video/..."
-            className="rounded-md border border-(--color-line) bg-transparent px-3 py-2.5 text-sm outline-none focus:border-(--color-accent)"
+            className="rounded-full border border-(--color-line) bg-(--color-surface-2) px-4 py-2.5 text-sm outline-none focus:border-(--color-accent)"
             disabled={busy}
           />
           <button
             type="submit"
             disabled={busy || !urlValue.trim()}
-            className="rounded-full bg-(--color-accent) px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+            className="btn-primary justify-center"
           >
-            {urlSubmitting ? 'Enviando...' : 'Agregar y analizar'}
+            {urlSubmitting ? 'Enviando…' : 'Agregar y analizar'}
           </button>
         </form>
         <p className="text-xs text-(--color-ink-soft)">

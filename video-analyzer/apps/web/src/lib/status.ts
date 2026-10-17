@@ -15,7 +15,7 @@ export const STATUS_COLOR: Record<VideoStatus, string> = {
   queued: 'var(--color-ok)',
   analyzing: 'var(--color-accent)',
   ready: 'var(--color-ok)',
-  failed: 'oklch(0.62 0.22 25)',
+  failed: 'var(--color-danger)',
 }
 
 export const ELEMENT_KIND_LABEL: Record<ElementKind, string> = {

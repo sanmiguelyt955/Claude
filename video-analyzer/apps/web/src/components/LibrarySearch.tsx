@@ -50,26 +50,30 @@ export function LibrarySearch() {
 
   return (
     <div className="flex flex-col gap-3">
-      <form onSubmit={handleSubmit} className="flex gap-2">
+      <form
+        onSubmit={handleSubmit}
+        className="card flex items-center gap-2 !rounded-full p-1.5 pl-4 focus-within:border-(--color-accent)"
+      >
+        <svg aria-hidden viewBox="0 0 24 24" className="size-5 shrink-0 text-(--color-ink-soft)" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+        </svg>
         <input
           type="text"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Buscar en toda la biblioteca..."
-          className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
+          placeholder="Busca en todos tus videos…"
+          aria-label="Buscar en toda la biblioteca"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] outline-none placeholder:text-(--color-ink-soft)"
         />
-        <button
-          type="submit"
-          disabled={searching || !value.trim()}
-          className="rounded-md bg-(--color-accent) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
-          {searching ? 'Buscando...' : 'Buscar'}
+        <button type="submit" disabled={searching || !value.trim()} className="btn-primary !py-2">
+          {searching ? 'Buscando…' : 'Buscar'}
         </button>
       </form>
 
       {notice && <p className="text-sm text-(--color-ink-soft)">{notice}</p>}
       {error && (
-        <p role="alert" className="text-sm" style={{ color: 'oklch(0.62 0.22 25)' }}>
+        <p role="alert" className="text-sm" style={{ color: 'var(--color-danger)' }}>
           {error}
         </p>
       )}
@@ -77,21 +81,20 @@ export function LibrarySearch() {
       {results && (
         <ul className="flex flex-col gap-2">
           {results.map((result) => (
-            <li key={result.id} className="rounded-(--radius-card) border border-(--color-line) p-3 text-sm">
+            <li key={result.id} className="card p-4 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Link
-                  href={`/videos/${result.video_id}`}
-                  className="font-medium hover:text-(--color-accent)"
+                  href={`/videos/${result.video_id}${result.start_seconds !== null ? `?t=${Math.floor(result.start_seconds)}` : ''}`}
+                  className="font-semibold hover:text-(--color-accent)"
                 >
                   {result.video_title}
                 </Link>
                 <StatusBadge status={result.video_status} />
               </div>
-              <p className="mt-1 font-mono text-xs text-(--color-ink-soft)">
-                {SOURCE_LABEL[result.source]}
-                {result.start_seconds !== null && ` · ${formatDuration(result.start_seconds)}`}
-                {' · '}
-                {MATCH_LABEL[result.match_type]}
+              <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-(--color-ink-soft)">
+                {result.start_seconds !== null && <span className="timestamp">{formatDuration(result.start_seconds)}</span>}
+                <span>{SOURCE_LABEL[result.source]}</span>
+                <span>· {MATCH_LABEL[result.match_type]}</span>
               </p>
               <p className="mt-1">{result.text}</p>
             </li>

@@ -6,6 +6,31 @@ import { StatusBadge } from './StatusBadge'
 import { formatDuration, formatRelativeTime } from '@/lib/format'
 import type { VideoRow } from '@/lib/types'
 
+/** The video's still, or a placeholder until the file is on disk (or if FFmpeg cannot read it). */
+function Thumbnail({ video }: { video: VideoRow }) {
+  const [broken, setBroken] = useState(false)
+  if (!video.stored_path || broken) {
+    return (
+      <div className="grid size-full place-items-center text-(--color-ink-soft)">
+        <svg viewBox="0 0 24 24" className="size-10 opacity-40" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <rect x="3" y="5" width="18" height="14" rx="3" />
+          <path d="M10 9.5v5l4.5-2.5L10 9.5Z" fill="currentColor" />
+        </svg>
+      </div>
+    )
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- a local API route, nothing for next/image to optimise
+    <img
+      src={`/api/videos/${video.id}/thumbnail`}
+      alt=""
+      loading="lazy"
+      onError={() => setBroken(true)}
+      className="size-full object-cover transition duration-300 group-hover:scale-[1.03]"
+    />
+  )
+}
+
 export function BibliotecaGrid() {
   const [videos, setVideos] = useState<VideoRow[] | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -68,12 +93,21 @@ export function BibliotecaGrid() {
 
   if (videos.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-3 rounded-(--radius-card) border border-dashed border-(--color-line) py-16 text-center">
-        <p className="text-(--color-ink-soft)">Todavia no analizaste ningun video.</p>
-        <Link
-          href="/cargar"
-          className="rounded-full bg-(--color-accent) px-4 py-2 text-sm font-medium text-white"
+      <div className="card flex flex-col items-center gap-4 border-dashed px-6 py-16 text-center">
+        <span
+          aria-hidden
+          className="grid size-14 place-items-center rounded-2xl text-white"
+          style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
         >
+          <svg viewBox="0 0 24 24" className="size-6" fill="currentColor">
+            <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" />
+          </svg>
+        </span>
+        <div>
+          <p className="text-lg font-semibold">Tu biblioteca está vacía</p>
+          <p className="mt-1 text-sm text-(--color-ink-soft)">Sube un video o pega un enlace de TikTok, Instagram o YouTube.</p>
+        </div>
+        <Link href="/cargar" className="btn-primary">
           Cargar tu primer video
         </Link>
       </div>
@@ -93,8 +127,8 @@ export function BibliotecaGrid() {
       aria-pressed={activeFolder === value}
       className={
         activeFolder === value
-          ? 'rounded-full bg-(--color-accent) px-3 py-1 text-xs font-medium text-white'
-          : 'rounded-full border border-(--color-line) px-3 py-1 text-xs hover:border-(--color-accent)'
+          ? 'rounded-full bg-(--color-ink) px-3 py-1 text-xs font-medium text-(--color-canvas)'
+          : 'rounded-full border border-(--color-line) bg-(--color-surface) px-3 py-1 text-xs hover:border-(--color-accent)'
       }
     >
       {label} <span className="opacity-70">{count}</span>
@@ -113,7 +147,7 @@ export function BibliotecaGrid() {
       )}
 
       {selectable.length > 1 && (
-        <div className="flex flex-wrap items-center gap-3 rounded-(--radius-card) border border-(--color-line) px-4 py-3 text-sm">
+        <div className="card flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
           <span className="text-(--color-ink-soft)">
             {selected.size > 0
               ? `${selected.size} seleccionados`
@@ -123,7 +157,7 @@ export function BibliotecaGrid() {
             type="button"
             onClick={analyzeTogether}
             disabled={batchBusy || selected.size < 2}
-            className="rounded-full bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            className="btn-primary !py-1.5"
           >
             {batchBusy ? 'Encolando...' : 'Analizar juntos (1 peticion)'}
           </button>
@@ -131,49 +165,60 @@ export function BibliotecaGrid() {
         </div>
       )}
 
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {shown.map((video) => (
-        <li key={video.id}>
-          <Link
-            href={`/videos/${video.id}`}
-            className="flex h-full flex-col gap-2 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-4 transition-shadow hover:shadow-md"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <p className="line-clamp-2 text-sm font-medium">{video.title}</p>
-              <StatusBadge status={video.status} />
-            </div>
-            {video.status === 'queued' && (
-              <label
-                className="flex w-fit items-center gap-2 text-xs text-(--color-ink-soft)"
-                onClick={(e) => {
-                  // The whole card is a link; keep the click on the checkbox.
-                  e.preventDefault()
-                  e.stopPropagation()
-                  toggle(video.id)
-                }}
-              >
-                <input type="checkbox" readOnly checked={selected.has(video.id)} />
-                Incluir en el lote
-              </label>
-            )}
-            <div className="mt-auto flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-(--color-ink-soft)">
-              {video.duration_seconds !== null && <span>{formatDuration(video.duration_seconds)}</span>}
-              {video.width && video.height && (
-                <span>
-                  {video.width}x{video.height}
+      <ul className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {shown.map((video) => (
+          <li key={video.id}>
+            <Link
+              href={`/videos/${video.id}`}
+              className="card group flex h-full flex-col overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:shadow-(--shadow-lift)"
+            >
+              <div className="relative aspect-video overflow-hidden bg-(--color-surface-2)">
+                <Thumbnail video={video} />
+                <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/55 to-transparent" />
+                {video.duration_seconds !== null && (
+                  <span className="absolute bottom-2 right-2 rounded-md bg-black/70 px-1.5 py-0.5 font-mono text-[11px] font-medium text-white">
+                    {formatDuration(video.duration_seconds)}
+                  </span>
+                )}
+                <span className="absolute left-2 top-2">
+                  <StatusBadge status={video.status} solid />
                 </span>
-              )}
-              <span>{formatRelativeTime(video.created_at)}</span>
-              {video.folder && activeFolder === null && <span>📁 {video.folder}</span>}
-            </div>
-            {video.activeJob?.progressLabel && (
-              <p className="text-xs" style={{ color: 'var(--color-warn)' }}>
-                {video.activeJob.progressLabel}
-              </p>
-            )}
-          </Link>
-        </li>
-      ))}
+                {video.status === 'queued' && (
+                  <label
+                    className="absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2 py-1 text-[11px] text-white backdrop-blur"
+                    onClick={(e) => {
+                      // The whole card is a link; keep the click on the checkbox.
+                      e.preventDefault()
+                      e.stopPropagation()
+                      toggle(video.id)
+                    }}
+                  >
+                    <input type="checkbox" readOnly checked={selected.has(video.id)} className="accent-(--color-accent)" />
+                    Lote
+                  </label>
+                )}
+              </div>
+              <div className="flex flex-1 flex-col gap-2 p-4">
+                <p className="line-clamp-2 text-[15px] font-semibold leading-snug">{video.title}</p>
+                <div className="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--color-ink-soft)">
+                  <span>{formatRelativeTime(video.created_at)}</span>
+                  {video.width && video.height && (
+                    <span className="font-mono">
+                      {video.width}×{video.height}
+                    </span>
+                  )}
+                  {video.folder && activeFolder === null && <span className="chip">📁 {video.folder}</span>}
+                </div>
+                {video.activeJob?.progressLabel && (
+                  <p className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-accent)' }}>
+                    <span className="size-1.5 animate-pulse rounded-full bg-current" />
+                    {video.activeJob.progressLabel}
+                  </p>
+                )}
+              </div>
+            </Link>
+          </li>
+        ))}
       </ul>
     </div>
   )

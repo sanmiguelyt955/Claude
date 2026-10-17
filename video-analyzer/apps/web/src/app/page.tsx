@@ -23,7 +23,7 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
     // Daily capacity is per model, so what matters is the sum across every
     // configured model, not the 20 of whichever one happens to be first.
     const maxRpd = Number(process.env.GEMINI_MAX_RPD ?? 20)
-    const models = (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
+    const models = (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.8-flash')
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean)
@@ -77,17 +77,17 @@ export default function HomePage() {
   const { checks, problems } = readSystemStatus()
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Biblioteca</h1>
-        <p className="text-sm text-(--color-ink-soft)">Tus videos analizados y su memoria buscable.</p>
+    <main className="mx-auto flex max-w-6xl flex-col gap-7 px-4 py-10 sm:px-6">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Biblioteca</h1>
+        <p className="text-(--color-ink-soft)">Lo que se ve y se escucha en tus videos, guardado y listo para buscar.</p>
       </header>
 
       <LibrarySearch />
 
       <BibliotecaGrid />
 
-      <details className="mt-6 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) text-sm">
+      <details className="card mt-6 text-sm">
         <summary className="cursor-pointer select-none px-5 py-3 font-medium text-(--color-ink-soft)">
           Estado del sistema
         </summary>

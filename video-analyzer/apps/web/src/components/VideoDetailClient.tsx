@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
@@ -17,7 +17,7 @@ const TABS: Array<{ value: Tab; label: string }> = [
   { value: 'resumen', label: 'Resumen' },
   { value: 'chat', label: 'Chat' },
   { value: 'timeline', label: 'Timeline' },
-  { value: 'transcripcion', label: 'Transcripcion' },
+  { value: 'transcripcion', label: 'Transcripción' },
   { value: 'objetos', label: 'Objetos' },
   { value: 'texto', label: 'Texto' },
   { value: 'skills', label: 'Skills' },
@@ -25,6 +25,13 @@ const TABS: Array<{ value: Tab; label: string }> = [
 ]
 
 const OBJECT_KINDS = new Set(['object', 'person', 'action', 'relation'])
+
+// One steady colour per "Hablante N", so a conversation reads at a glance.
+const SPEAKER_COLORS = ['var(--color-accent)', 'oklch(0.66 0.16 155)', 'oklch(0.7 0.16 60)', 'var(--color-accent-2)', 'oklch(0.65 0.17 20)']
+function speakerColor(speaker: string): string {
+  const n = Number(/(\d+)/.exec(speaker)?.[1] ?? 0)
+  return SPEAKER_COLORS[(Math.max(n, 1) - 1) % SPEAKER_COLORS.length]!
+}
 
 export function VideoDetailClient({ id }: { id: string }) {
   const [data, setData] = useState<VideoDetailResponse | null>(null)
@@ -39,6 +46,28 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [exportedNote, setExportedNote] = useState<string | null>(null)
   const [improveSkillId, setImproveSkillId] = useState('')
   const [improveExternalPath, setImproveExternalPath] = useState('')
+  const playerRef = useRef<HTMLVideoElement>(null)
+  // ?t=SECONDS (from a library search hit) opens the video at that moment.
+  const startAt = useRef<number | null>(null)
+  useEffect(() => {
+    const t = Number(new URLSearchParams(window.location.search).get('t'))
+    if (Number.isFinite(t) && t > 0) startAt.current = t
+  }, [])
+
+  /** Jumps the player to a moment cited anywhere on the page. */
+  function seek(seconds: number) {
+    const player = playerRef.current
+    if (!player) return
+    player.currentTime = Math.max(0, seconds)
+    void player.play().catch(() => {})
+    player.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
+  const At = ({ seconds }: { seconds: number | null }) =>
+    seconds === null ? null : (
+      <button type="button" className="timestamp" onClick={() => seek(seconds)} title="Ver en el video">
+        {formatDuration(seconds)}
+      </button>
+    )
 
   async function refresh() {
     try {
@@ -239,34 +268,70 @@ export function VideoDetailClient({ id }: { id: string }) {
   const topics = summary ? (JSON.parse(summary.topics_json) as string[]) : []
 
   return (
-    <main className="mx-auto flex max-w-3xl flex-col gap-6 px-6 py-10">
-      <Link href="/" className="text-sm text-(--color-ink-soft) hover:text-(--color-ink)">
+    <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
+      <Link href="/" className="w-fit text-sm text-(--color-ink-soft) hover:text-(--color-ink)">
         ← Biblioteca
       </Link>
 
-      <header className="flex flex-col gap-2">
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">{video.title}</h1>
-          <StatusBadge status={video.status} />
-        </div>
-        <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-(--color-ink-soft)">
-          <span>{video.source_kind === 'url' ? video.source_url : 'archivo local'}</span>
-          {video.duration_seconds !== null && <span>{formatDuration(video.duration_seconds)}</span>}
-          {video.width && video.height && (
-            <span>
-              {video.width}x{video.height}
-              {video.fps ? ` @ ${video.fps.toFixed(1)}fps` : ''}
-            </span>
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <div className="card overflow-hidden bg-black">
+          {video.stored_path ? (
+            <video
+              ref={playerRef}
+              src={`/api/videos/${video.id}/media`}
+              poster={`/api/videos/${video.id}/thumbnail`}
+              controls
+              preload="metadata"
+              onLoadedMetadata={() => {
+                if (startAt.current !== null) {
+                  seek(startAt.current)
+                  startAt.current = null
+                }
+              }}
+              className="aspect-video w-full bg-black"
+            />
+          ) : (
+            <div className="grid aspect-video place-items-center text-sm text-white/60">
+              {video.source_kind === 'url' ? 'El video se ve desde su enlace original.' : 'Preparando el video…'}
+            </div>
           )}
         </div>
-        <FolderField videoId={video.id} folder={video.folder} />
-      </header>
+
+        <header className="flex flex-col gap-4">
+          <div className="flex flex-col items-start gap-3">
+            <StatusBadge status={video.status} />
+            <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{video.title}</h1>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-(--color-ink-soft)">
+            {video.duration_seconds !== null && <span className="chip">⏱ {formatDuration(video.duration_seconds)}</span>}
+            {video.width && video.height && (
+              <span className="chip font-mono">
+                {video.width}×{video.height}
+                {video.fps ? ` · ${video.fps.toFixed(0)} fps` : ''}
+              </span>
+            )}
+            <span className="chip max-w-full truncate">
+              {video.source_kind === 'url' && video.source_url ? (
+                <a href={video.source_url} target="_blank" rel="noreferrer" className="hover:text-(--color-accent)">
+                  🔗 {new URL(video.source_url).hostname.replace(/^www\./, '')}
+                </a>
+              ) : (
+                '💾 Archivo local'
+              )}
+            </span>
+          </div>
+          <FolderField videoId={video.id} folder={video.folder} />
+          {video.status === 'ready' && summary && (
+            <p className="text-[15px] leading-relaxed text-(--color-ink-soft)">{summary.short_summary}</p>
+          )}
+        </header>
+      </section>
 
       {errorMessage && (
         <div
           role="alert"
           className="rounded-(--radius-card) border px-4 py-3 text-sm"
-          style={{ borderColor: 'oklch(0.62 0.22 25)', color: 'oklch(0.62 0.22 25)' }}
+          style={{ borderColor: 'var(--color-danger)', color: 'var(--color-danger)', background: 'color-mix(in oklch, var(--color-danger) 8%, transparent)' }}
         >
           {errorMessage}
         </div>
@@ -281,9 +346,9 @@ export function VideoDetailClient({ id }: { id: string }) {
           type="button"
           onClick={handleAnalyze}
           disabled={actionBusy}
-          className="w-fit rounded-full bg-(--color-accent) px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          className="btn-primary w-fit"
         >
-          {actionBusy ? 'Iniciando...' : 'Generar analisis del video'}
+          {actionBusy ? 'Iniciando…' : '✨ Analizar el video'}
         </button>
       )}
 
@@ -297,16 +362,12 @@ export function VideoDetailClient({ id }: { id: string }) {
       )}
 
       {video.status === 'failed' && (
-        <div className="flex flex-col gap-3 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-4">
-          <p className="text-sm" style={{ color: 'oklch(0.62 0.22 25)' }}>
-            {video.error_message}
+        <div className="card flex flex-col gap-3 p-5" style={{ borderColor: 'color-mix(in oklch, var(--color-danger) 45%, var(--color-line))' }}>
+          <p className="font-semibold" style={{ color: 'var(--color-danger)' }}>
+            El análisis no se pudo completar
           </p>
-          <button
-            type="button"
-            onClick={handleRetry}
-            disabled={actionBusy}
-            className="w-fit rounded-full border border-(--color-line) px-4 py-2 text-sm font-medium disabled:opacity-50"
-          >
+          <p className="break-words font-mono text-xs leading-relaxed text-(--color-ink-soft)">{video.error_message}</p>
+          <button type="button" onClick={handleRetry} disabled={actionBusy} className="btn-primary w-fit">
             {actionBusy ? 'Reintentando...' : 'Reintentar'}
           </button>
         </div>
@@ -319,9 +380,9 @@ export function VideoDetailClient({ id }: { id: string }) {
               type="button"
               onClick={handleExportVault}
               disabled={actionBusy}
-              className="w-fit rounded-full border border-(--color-line) px-4 py-2 text-sm font-medium disabled:opacity-50"
+              className="btn-ghost w-fit"
             >
-              {actionBusy ? 'Exportando...' : 'Exportar todo a Obsidian'}
+              {actionBusy ? 'Exportando…' : 'Exportar todo a Obsidian'}
             </button>
             {exportedNote && (
               <span className="text-sm" style={{ color: 'var(--color-ok)' }}>
@@ -332,42 +393,51 @@ export function VideoDetailClient({ id }: { id: string }) {
 
           <SegmentedControl options={TABS} value={tab} onChange={setTab} />
 
-          {tab === 'chat' && <VideoChat videoId={id} ready={video.status === 'ready'} />}
+          {tab === 'chat' && <VideoChat videoId={id} ready={video.status === 'ready'} onSeek={video.stored_path ? seek : undefined} />}
 
           {tab === 'resumen' && summary && (
             <div className="flex flex-col gap-3">
-              <p className="font-medium">{summary.short_summary}</p>
-              <p className="text-(--color-ink-soft)">{summary.full_summary}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {topics.map((topic) => (
-                  <span key={topic} className="rounded-full border border-(--color-line) px-2.5 py-1 text-xs">
-                    {topic}
-                  </span>
-                ))}
+              <div className="card flex flex-col gap-3 p-5">
+                <p className="text-lg font-semibold leading-snug">{summary.short_summary}</p>
+                <p className="leading-relaxed text-(--color-ink-soft)">{summary.full_summary}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {topics.map((topic) => (
+                    <span key={topic} className="chip">
+                      #{topic}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-col gap-1 border-t border-(--color-line) pt-3">
+              <div className="flex flex-wrap gap-1.5 text-xs text-(--color-ink-soft)">
                 {analysisRuns
-                  .filter((r) => r.succeeded)
+                  .filter((r) => r.succeeded && r.model !== 'perception')
                   .map((run, i) => (
-                    <p key={i} className="font-mono text-xs text-(--color-ink-soft)">
-                      {run.phase} · {run.model}
-                      {run.processing_mode ? ` (${run.processing_mode})` : ''}:{' '}
-                      {(run.input_tokens ?? 0) + (run.output_tokens ?? 0)} tokens · $
-                      {(run.estimated_cost_usd ?? 0).toFixed(4)}
-                    </p>
+                    <span key={i} className="chip font-mono">
+                      {run.model}
+                      {run.processing_mode ? ` (${run.processing_mode})` : ''}
+                      {(run.input_tokens ?? 0) + (run.output_tokens ?? 0) > 0
+                        ? ` · ${(run.input_tokens ?? 0) + (run.output_tokens ?? 0)} tokens`
+                        : ''}
+                      {(run.estimated_cost_usd ?? 0) > 0 ? ` · $${(run.estimated_cost_usd ?? 0).toFixed(4)}` : ''}
+                    </span>
                   ))}
               </div>
             </div>
           )}
 
           {tab === 'timeline' && (
-            <ol className="flex flex-col gap-3">
+            <ol className="relative flex flex-col gap-4 border-l-2 border-(--color-line) pl-5">
               {scenes.map((scene) => (
-                <li key={scene.scene_index} className="border-l-2 border-(--color-accent) pl-3">
-                  <p className="font-mono text-xs text-(--color-ink-soft)">
-                    {formatDuration(scene.start_seconds)} – {formatDuration(scene.end_seconds)}
+                <li key={scene.scene_index} className="relative">
+                  <span
+                    aria-hidden
+                    className="absolute -left-[27px] top-1.5 size-3 rounded-full ring-4 ring-(--color-canvas)"
+                    style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
+                  />
+                  <p className="flex items-center gap-1.5 text-xs text-(--color-ink-soft)">
+                    <At seconds={scene.start_seconds} /> – {formatDuration(scene.end_seconds)}
                   </p>
-                  <p className="font-medium">{scene.title}</p>
+                  <p className="mt-1 font-semibold">{scene.title}</p>
                   <p className="text-(--color-ink-soft)">{scene.description}</p>
                   {scene.audio_description && (
                     <p className="text-xs italic text-(--color-ink-soft)">Audio: {scene.audio_description}</p>
@@ -378,15 +448,21 @@ export function VideoDetailClient({ id }: { id: string }) {
           )}
 
           {tab === 'transcripcion' && (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1">
               {transcript.map((chunk) => (
-                <p key={chunk.chunk_index}>
-                  <span className="font-mono text-xs text-(--color-ink-soft)">
-                    {formatDuration(chunk.start_seconds)}
-                  </span>{' '}
-                  {chunk.speaker && <span className="font-medium">{chunk.speaker}: </span>}
-                  {chunk.text}
-                </p>
+                <div key={chunk.chunk_index} className="flex gap-3 rounded-xl px-2 py-1.5 hover:bg-(--color-surface-2)">
+                  <span className="pt-0.5">
+                    <At seconds={chunk.start_seconds} />
+                  </span>
+                  <p className="leading-relaxed">
+                    {chunk.speaker && (
+                      <span className="mr-1.5 font-semibold" style={{ color: speakerColor(chunk.speaker) }}>
+                        {chunk.speaker}
+                      </span>
+                    )}
+                    {chunk.text}
+                  </p>
+                </div>
               ))}
               {transcript.length === 0 && (
                 <p className="text-sm text-(--color-ink-soft)">Este video no tiene dialogo detectado.</p>
@@ -397,13 +473,9 @@ export function VideoDetailClient({ id }: { id: string }) {
           {tab === 'objetos' && (
             <ul className="flex flex-col gap-2">
               {objectElements.map((el, i) => (
-                <li key={i} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-mono text-xs text-(--color-ink-soft)">
-                    {formatDuration(el.start_seconds)}
-                  </span>
-                  <span className="rounded-full border border-(--color-line) px-1.5 py-0.5 text-xs">
-                    {ELEMENT_KIND_LABEL[el.kind]}
-                  </span>
+                <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <At seconds={el.start_seconds} />
+                  <span className="chip">{ELEMENT_KIND_LABEL[el.kind]}</span>
                   <span className="font-medium">{el.label}</span>
                   {el.detail && <span className="text-(--color-ink-soft)">— {el.detail}</span>}
                 </li>
@@ -417,10 +489,8 @@ export function VideoDetailClient({ id }: { id: string }) {
           {tab === 'texto' && (
             <ul className="flex flex-col gap-2">
               {textElements.map((el, i) => (
-                <li key={i} className="flex flex-wrap items-baseline gap-x-2">
-                  <span className="font-mono text-xs text-(--color-ink-soft)">
-                    {formatDuration(el.start_seconds)}
-                  </span>
+                <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <At seconds={el.start_seconds} />
                   <span className="font-medium">{el.label}</span>
                   {el.detail && <span className="text-(--color-ink-soft)">— {el.detail}</span>}
                 </li>
