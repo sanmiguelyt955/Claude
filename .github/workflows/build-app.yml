@@ -44,6 +44,15 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
+      - name: Instalar FFmpeg (Mac)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Instalar FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ffmpeg -y --no-progress
+
       - name: Probar el motor
         run: npm test
 
