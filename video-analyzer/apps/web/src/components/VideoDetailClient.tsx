@@ -31,6 +31,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [searchValue, setSearchValue] = useState('')
   const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [searchNotice, setSearchNotice] = useState<string | null>(null)
   const [generatedSkills, setGeneratedSkills] = useState<SkillDetail[]>([])
   const [exportedNote, setExportedNote] = useState<string | null>(null)
   const [improveSkillId, setImproveSkillId] = useState('')
@@ -210,9 +211,10 @@ export function VideoDetailClient({ id }: { id: string }) {
     setSearching(true)
     try {
       const res = await fetch(`/api/videos/${id}/search?q=${encodeURIComponent(searchValue.trim())}`)
-      const body = (await res.json()) as { results?: SemanticSearchResult[]; error?: string }
+      const body = (await res.json()) as { results?: SemanticSearchResult[]; error?: string; notice?: string | null }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo buscar.')
       setSearchResults(body.results ?? [])
+      setSearchNotice(body.notice ?? null)
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
@@ -342,7 +344,8 @@ export function VideoDetailClient({ id }: { id: string }) {
                   .filter((r) => r.succeeded)
                   .map((run, i) => (
                     <p key={i} className="font-mono text-xs text-(--color-ink-soft)">
-                      {run.phase} · {run.model} ({run.processing_mode ?? '?'}):{' '}
+                      {run.phase} · {run.model}
+                      {run.processing_mode ? ` (${run.processing_mode})` : ''}:{' '}
                       {(run.input_tokens ?? 0) + (run.output_tokens ?? 0)} tokens · $
                       {(run.estimated_cost_usd ?? 0).toFixed(4)}
                     </p>
@@ -631,6 +634,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                 {searching ? 'Buscando...' : 'Buscar'}
               </button>
             </form>
+            {searchNotice && <p className="text-sm text-(--color-ink-soft)">{searchNotice}</p>}
             {searchResults && (
               <ul className="flex flex-col gap-2">
                 {searchResults.map((result) => (

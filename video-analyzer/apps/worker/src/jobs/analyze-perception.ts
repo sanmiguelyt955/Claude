@@ -5,6 +5,7 @@ import {
   resolveDataPath,
   insertAnalysisRun,
   saveAnalysisResult,
+  enqueueJob,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
@@ -91,6 +92,8 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
       db,
     )
     setVideoStatus(video.id, 'ready', null, db)
+    // Same as the Gemini path: index the new analysis for library search.
+    enqueueJob({ type: 'embed', videoId: video.id }, db)
     console.log(`[perception] ${video.id}: ${result.scenes.length} escenas, ${result.transcript.length} frases.`)
   } catch (error) {
     insertAnalysisRun(

@@ -107,6 +107,16 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   // The invented kind "logo" was mapped instead of breaking the CHECK constraint.
   assert.equal(countRows('video_elements', id), 1)
   assert.ok(imagesPerCall.some((n) => n > 0) && imagesPerCall.some((n) => n === 0))
+  // The analysis is queued for embedding, so it shows up in library search.
+  const embedJobs = me.getDb().prepare("SELECT count(*) AS n FROM jobs WHERE type = 'embed' AND video_id = ?").get(id) as { n: number }
+  assert.equal(embedJobs.n, 1)
+
+  // Without embeddings (no Gemini), search still works on keywords alone.
+  const inVideo = me.searchVideoKeywords(id, 'quick sentence', 8)
+  assert.ok(inVideo.some((r) => r.source === 'transcript' && /quick test sentence/i.test(r.text)))
+  assert.equal(me.searchVideoKeywords(id, 'palabrainexistente', 8).length, 0)
+  const library = me.searchLibrary(null, 'heard', 15)
+  assert.ok(library.some((r) => r.video_id === id && r.match_type === 'keyword'))
 })
 
 test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, async () => {

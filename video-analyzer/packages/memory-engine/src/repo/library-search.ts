@@ -55,12 +55,13 @@ const DISTANCE_FOR_KEYWORD_ONLY = 1 // vec0 cosine distance is in [0, 2]; treat 
  * on a query, so this just scans across every video's vectors.
  */
 export function searchLibrary(
-  queryEmbedding: number[],
+  /** null = keyword-only (no embedding available, e.g. Gemini down or no key). */
+  queryEmbedding: number[] | null,
   queryText: string,
   limit: number,
   db: Db = getDb(),
 ): LibrarySearchResult[] {
-  const vectorRows = db
+  const vectorRows = !queryEmbedding ? [] : db
     .prepare(
       `SELECT mc.*, v.title AS video_title, v.status AS video_status, knn.distance AS distance
          FROM (
@@ -112,4 +113,30 @@ export function searchLibrary(
       return (a.distance ?? DISTANCE_FOR_KEYWORD_ONLY) - (b.distance ?? DISTANCE_FOR_KEYWORD_ONLY)
     })
     .slice(0, limit)
+}
+
+/**
+ * Keyword-only (FTS5) search scoped to one video: the fallback for the
+ * per-video semantic search when no query embedding can be made. Same
+ * literal-term matching as the keyword half of searchLibrary.
+ */
+export function searchVideoKeywords(
+  videoId: string,
+  queryText: string,
+  limit: number,
+  db: Db = getDb(),
+): Array<MemoryChunkRow & { distance: number }> {
+  const ftsQuery = buildFtsQuery(queryText)
+  if (!ftsQuery) return []
+  const rows = db
+    .prepare(
+      `SELECT mc.*
+         FROM memory_chunks_fts
+         JOIN memory_chunks mc ON mc.rowid = memory_chunks_fts.rowid
+        WHERE memory_chunks_fts MATCH ? AND mc.video_id = ?
+        ORDER BY rank
+        LIMIT ?`,
+    )
+    .all(ftsQuery, videoId, limit) as MemoryChunkRow[]
+  return rows.map((row) => ({ ...row, distance: DISTANCE_FOR_KEYWORD_ONLY }))
 }
