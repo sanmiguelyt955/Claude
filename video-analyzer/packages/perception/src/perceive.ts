@@ -265,24 +265,43 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const elements: Element[] = []
   const windows = windowsOf(frames, duration)
   const steps = windows.length + 1 // + the summary
-  for (const [n, w] of windows.entries()) {
-    progress({ label: `Mirando el video: tramo ${n + 1} de ${windows.length}...`, current: n, total: steps })
-    const key = windowKey(w)
-    let done = checkpoint.windows[key]
-    if (done) {
-      log(`ventana ${n + 1}/${windows.length} retomada del intento anterior`)
-    } else {
-      log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
-      const { provider, value } = await describeWithFallback(
-        providers,
-        { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION, thinking: 'low' },
-        { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt },
-      )
-      log(`ventana ${n + 1} respondida por ${provider}`)
-      done = value
-      checkpoint.windows[key] = value
-      save()
+  // Windows are independent, so several go to the model at once instead of
+  // one after another: on a long video the waits add up to most of the
+  // analysis. VISION_CONCURRENCY=1 restores the old one-by-one order.
+  const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 3) || 1)
+  const results: Array<{ scenes: Scene[]; elements: Element[] }> = new Array(windows.length)
+  let finished = 0
+  const report = () =>
+    progress({ label: `Mirando el video: ${finished} de ${windows.length} tramos listos...`, current: finished, total: steps })
+  report()
+  let next = 0
+  const worker = async () => {
+    while (next < windows.length) {
+      const n = next++
+      const w = windows[n]!
+      const key = windowKey(w)
+      let done = checkpoint.windows[key]
+      if (done) {
+        log(`ventana ${n + 1}/${windows.length} retomada del intento anterior`)
+      } else {
+        log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
+        const { provider, value } = await describeWithFallback(
+          providers,
+          { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION, thinking: 'low' },
+          { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt },
+        )
+        log(`ventana ${n + 1} respondida por ${provider}`)
+        done = value
+        checkpoint.windows[key] = value
+        save()
+      }
+      results[n] = done
+      finished++
+      report()
     }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, windows.length) }, worker))
+  for (const done of results) {
     scenes.push(...done.scenes)
     elements.push(...done.elements)
   }

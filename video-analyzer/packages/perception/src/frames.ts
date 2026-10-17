@@ -61,14 +61,19 @@ export async function extractFrames(
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
+  // Sampling above the video's own frame rate only makes FFmpeg duplicate
+  // frames (a 30 fps video read at 120 fps is four copies of each) and score
+  // every copy for scene changes, which made long videos crawl.
+  const fps = Math.min(opts.fps, (await sourceFps(file)) ?? opts.fps)
+
   // -fps_mode passthrough keeps exactly the selected frames (no duplicates
   // to fill the timeline). It replaced -vsync 0, which FFmpeg 9 removed.
   // One pass, two outputs of the same selected frames: the JPGs the model
   // sees and a raw 16x16 RGB strip used to drop near-duplicates (the
   // 1 s keyframes of a static shot are otherwise all sent).
   const graph = [
-    `[0:v]fps=${opts.fps}`,
-    `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.round(opts.fps * opts.keyframeEverySeconds)}))'`,
+    `[0:v]fps=${fps}`,
+    `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.max(1, Math.round(fps * opts.keyframeEverySeconds))}))'`,
     'showinfo',
     'split=2[big][small];',
   ].join(',') + `[big]scale=${opts.width}:-2[jpg];[small]scale=${THUMB}:${THUMB},format=rgb24[thumb]`
@@ -139,6 +144,19 @@ function meanDiff(a: Uint8Array, b: Uint8Array): number {
   let sum = 0
   for (let i = 0; i < a.length; i++) sum += Math.abs(a[i]! - (b[i] ?? 0))
   return a.length ? sum / a.length : 0
+}
+
+/** The video stream's average frame rate, or null when FFprobe cannot tell. */
+export async function sourceFps(file: string): Promise<number | null> {
+  try {
+    const bin = process.env.FFPROBE_PATH || 'ffprobe'
+    const { stdout } = await run(bin, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=avg_frame_rate', '-of', 'csv=p=0', file])
+    const [num, den] = String(stdout).trim().split('/').map(Number)
+    const rate = den ? num! / den : num!
+    return Number.isFinite(rate) && rate > 0 ? rate : null
+  } catch {
+    return null
+  }
 }
 
 /** "Escuchar" prep: mono 16 kHz WAV, the input format speech models expect. */

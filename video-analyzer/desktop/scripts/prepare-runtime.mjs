@@ -101,7 +101,7 @@ async function preparePython() {
   const python = isWin ? path.join(RUNTIME, 'python', 'python.exe') : path.join(RUNTIME, 'python', 'bin', 'python3')
   const requirements = path.join(ROOT, 'packages', 'perception', 'scripts', 'requirements.txt')
   sh(python, ['-m', 'pip', 'install', '--disable-pip-version-check', '--no-cache-dir', '-q', '-r', requirements])
-  sh(python, ['-c', 'import numpy, huggingface_hub, yt_dlp, curl_cffi, onnxruntime; print("  numpy", numpy.__version__, "| yt-dlp", yt_dlp.version.__version__)'])
+  sh(python, ['-c', 'import numpy, huggingface_hub, yt_dlp, curl_cffi, onnxruntime, faster_whisper; print("  numpy", numpy.__version__, "| yt-dlp", yt_dlp.version.__version__)'])
   trimPython()
 }
 

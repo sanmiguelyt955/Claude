@@ -171,6 +171,19 @@ if (-not (Test-Path $envLocal)) {
   Start-Process notepad.exe $envLocal -Wait
 }
 
+# Settings that older templates wrote and that now slow the app down:
+# WHISPER_ENGINE=propio forced the NumPy Whisper (~14 min per 15 min of voice)
+# over batched faster-whisper (~1.5 min). Empty means "the fast one if
+# installed". Done once: whoever sets propio again afterwards keeps it.
+if (Test-Changed 'env-fast-whisper' 'v1') {
+  $envText = Get-Content $envLocal
+  if ($envText -contains 'WHISPER_ENGINE=propio') {
+    ($envText -replace '^WHISPER_ENGINE=propio$', 'WHISPER_ENGINE=') | Set-Content $envLocal
+    Say 'Whisper rapido activado (faster-whisper por lotes).'
+  }
+  Save-State 'env-fast-whisper' 'v1'
+}
+
 Say 'Actualizando la base de datos...'
 Run 'La migracion de la base de datos' { & npm run --silent db:migrate }
 
