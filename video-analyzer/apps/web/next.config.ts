@@ -17,6 +17,9 @@ if (existsSync(rootEnvLocal)) {
 type WebpackConfig = Parameters<NonNullable<NextConfig['webpack']>>[0]
 
 const config: NextConfig = {
+  // The desktop app (desktop/) ships a self-contained server: `next build`
+  // with NEXT_OUTPUT=standalone copies only the files the server needs.
+  ...(process.env.NEXT_OUTPUT === 'standalone' ? { output: 'standalone' as const } : {}),
   // better-sqlite3 and sqlite-vec ship native .node binaries; Next's bundler
   // must leave them alone or the server build fails at require time.
   serverExternalPackages: ['better-sqlite3', 'sqlite-vec'],
