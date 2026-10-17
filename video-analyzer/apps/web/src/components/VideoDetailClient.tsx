@@ -5,14 +5,16 @@ import { useEffect, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
+import { VideoChat } from './VideoChat'
 import { formatDuration, formatSize } from '@/lib/format'
 import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
 import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
-type Tab = 'resumen' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
+type Tab = 'resumen' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
 
 const TABS: Array<{ value: Tab; label: string }> = [
   { value: 'resumen', label: 'Resumen' },
+  { value: 'chat', label: 'Chat' },
   { value: 'timeline', label: 'Timeline' },
   { value: 'transcripcion', label: 'Transcripcion' },
   { value: 'objetos', label: 'Objetos' },
@@ -31,6 +33,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [searchValue, setSearchValue] = useState('')
   const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
+  const [searchNotice, setSearchNotice] = useState<string | null>(null)
   const [generatedSkills, setGeneratedSkills] = useState<SkillDetail[]>([])
   const [exportedNote, setExportedNote] = useState<string | null>(null)
   const [improveSkillId, setImproveSkillId] = useState('')
@@ -210,9 +213,10 @@ export function VideoDetailClient({ id }: { id: string }) {
     setSearching(true)
     try {
       const res = await fetch(`/api/videos/${id}/search?q=${encodeURIComponent(searchValue.trim())}`)
-      const body = (await res.json()) as { results?: SemanticSearchResult[]; error?: string }
+      const body = (await res.json()) as { results?: SemanticSearchResult[]; error?: string; notice?: string | null }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo buscar.')
       setSearchResults(body.results ?? [])
+      setSearchNotice(body.notice ?? null)
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
@@ -326,6 +330,8 @@ export function VideoDetailClient({ id }: { id: string }) {
 
           <SegmentedControl options={TABS} value={tab} onChange={setTab} />
 
+          {tab === 'chat' && <VideoChat videoId={id} ready={video.status === 'ready'} />}
+
           {tab === 'resumen' && summary && (
             <div className="flex flex-col gap-3">
               <p className="font-medium">{summary.short_summary}</p>
@@ -342,7 +348,8 @@ export function VideoDetailClient({ id }: { id: string }) {
                   .filter((r) => r.succeeded)
                   .map((run, i) => (
                     <p key={i} className="font-mono text-xs text-(--color-ink-soft)">
-                      {run.phase} · {run.model} ({run.processing_mode ?? '?'}):{' '}
+                      {run.phase} · {run.model}
+                      {run.processing_mode ? ` (${run.processing_mode})` : ''}:{' '}
                       {(run.input_tokens ?? 0) + (run.output_tokens ?? 0)} tokens · $
                       {(run.estimated_cost_usd ?? 0).toFixed(4)}
                     </p>
@@ -631,6 +638,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                 {searching ? 'Buscando...' : 'Buscar'}
               </button>
             </form>
+            {searchNotice && <p className="text-sm text-(--color-ink-soft)">{searchNotice}</p>}
             {searchResults && (
               <ul className="flex flex-col gap-2">
                 {searchResults.map((result) => (

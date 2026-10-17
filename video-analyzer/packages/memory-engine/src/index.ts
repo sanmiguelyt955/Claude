@@ -87,7 +87,7 @@ export {
   isAnotherWorkerAlive,
   requeueOrphanedJobs,
 } from './repo/worker-lifecycle.js'
-export { searchLibrary } from './repo/library-search.js'
+export { searchLibrary, searchVideoKeywords } from './repo/library-search.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 
 export {
@@ -109,3 +109,5 @@ export {
   setSkillImprovementStatus,
 } from './repo/skill-improvements.js'
 export type { SkillImprovementInput } from './repo/skill-improvements.js'
+export { listChatMessages, addChatMessage, clearChatMessages } from './repo/chat.js'
+export type { ChatMessageRow } from './repo/chat.js'

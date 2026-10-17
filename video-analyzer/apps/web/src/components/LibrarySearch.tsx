@@ -26,6 +26,7 @@ export function LibrarySearch() {
   const [results, setResults] = useState<LibrarySearchResult[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -33,11 +34,13 @@ export function LibrarySearch() {
     if (!q) return
     setSearching(true)
     setError(null)
+    setNotice(null)
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
-      const body = (await res.json()) as { results?: LibrarySearchResult[]; error?: string }
+      const body = (await res.json()) as { results?: LibrarySearchResult[]; error?: string; notice?: string | null }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo buscar.')
       setResults(body.results ?? [])
+      setNotice(body.notice ?? null)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -64,6 +67,7 @@ export function LibrarySearch() {
         </button>
       </form>
 
+      {notice && <p className="text-sm text-(--color-ink-soft)">{notice}</p>}
       {error && (
         <p role="alert" className="text-sm" style={{ color: 'oklch(0.62 0.22 25)' }}>
           {error}

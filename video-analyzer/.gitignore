@@ -19,6 +19,9 @@ data/db/*
 data/skills-generadas/*
 !data/skills-generadas/.gitkeep
 data/tmp/
+# Fotogramas y audio que extrae el pipeline de percepcion, y estado del lanzador
+data/perception/
+data/launcher/
 
 *.log
 .DS_Store
@@ -26,3 +29,7 @@ Thumbs.db
 
 # scratch temporal
 /*.cjs
+
+# Python
+__pycache__/
+*.pyc

@@ -12,6 +12,7 @@
     "@cva/video-processor": "*",
     "@cva/ai-router": "*",
     "@cva/skill-engine": "*",
-    "@cva/vault-export": "*"
+    "@cva/vault-export": "*",
+    "@cva/perception": "*"
   }
 }
