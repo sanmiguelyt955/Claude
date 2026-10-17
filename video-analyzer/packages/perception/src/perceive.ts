@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import type { AnalysisResult } from '@cva/ai-router'
+import { captionCoverage, MIN_CAPTION_COVERAGE } from './captions.js'
 import { extractAudio, extractFrames, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
 import { transcribe, type Transcript } from './transcribe.js'
 import { diarize } from './diarize.js'
@@ -25,8 +26,8 @@ export type PerceiveOptions = {
   language?: string
   /**
    * What is said, already written by the platform (TikTok/YouTube captions).
-   * When it has any line, Whisper is skipped: reading captions takes no time
-   * and they come split into sentences.
+   * When they cover at least half the video, Whisper is skipped: reading
+   * captions takes no time and they come split into sentences.
    */
   captions?: Transcript
   /**
@@ -204,7 +205,11 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const { duration, hasAudio } = await probeMedia(file)
   const wavPath = path.join(workDir, 'audio.wav')
 
-  const captions = hasAudio && opts.captions?.segments.length ? opts.captions : null
+  const coverage = opts.captions ? captionCoverage(opts.captions.segments, duration) : 0
+  const captions = hasAudio && opts.captions?.segments.length && coverage >= MIN_CAPTION_COVERAGE ? opts.captions : null
+  if (hasAudio && opts.captions?.segments.length && !captions) {
+    log(`los subtítulos de la plataforma cubren solo el ${Math.round(coverage * 100)} % del video; se transcribe con Whisper`)
+  }
   const needsWhisper = hasAudio && !captions && !checkpoint.transcript
   const alreadyLabelled = checkpoint.transcript?.segments.some((s) => s.speaker !== undefined) ?? false
   const wantsSpeakers = hasAudio && (opts.diarize ?? process.env.DIARIZATION !== '0') && !alreadyLabelled

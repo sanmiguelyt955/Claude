@@ -45,3 +45,23 @@ export function parseVtt(vtt: string, fallbackLanguage: string): Transcript {
   }
   return { language, segments }
 }
+
+/**
+ * Share of the video (0..1) the captions actually cover, counting overlaps
+ * once. Platform captions are sometimes only the first minute or a lyric
+ * snippet; below half the video they are worse than transcribing.
+ */
+export function captionCoverage(segments: Segment[], duration: number): number {
+  if (!(duration > 0)) return segments.length ? 1 : 0
+  let covered = 0
+  let reach = 0
+  for (const s of [...segments].sort((a, b) => a.start - b.start)) {
+    const start = Math.max(s.start, reach)
+    if (s.end > start) covered += s.end - start
+    reach = Math.max(reach, s.end)
+  }
+  return Math.min(1, covered / duration)
+}
+
+/** Minimum coverage for captions to replace Whisper (rule from claude-video-vision, MIT). */
+export const MIN_CAPTION_COVERAGE = 0.5

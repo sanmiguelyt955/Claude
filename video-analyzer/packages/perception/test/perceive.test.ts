@@ -127,7 +127,7 @@ test('platform captions replace Whisper and reach the model', { timeout: 300_000
   const video = makeVideo()
   const work = mkdtempSync(path.join(tmpdir(), 'perception-captions-'))
   const calls: VisionRequest[] = []
-  const captions = { language: 'es', segments: [{ start: 0.5, end: 2, text: 'Frase de los subtítulos' }] }
+  const captions = { language: 'es', segments: [{ start: 0.5, end: 6, text: 'Frase de los subtítulos' }] }
   // A Whisper model that does not exist: transcribing would throw.
   const result = await perceive(video, work, { providers: [fakeProvider(calls)], whisperModel: 'no-such-model', captions, diarize: false })
   assert.deepEqual(result.transcript.map((t) => t.text), ['Frase de los subtítulos'])
@@ -140,6 +140,13 @@ test('platform captions replace Whisper and reach the model', { timeout: 300_000
     providers: [fakeProvider([])], whisperModel: 'no-such-model', captions,
   })
   assert.equal(labelled.transcript[0]!.speaker, 'Hablante 1')
+
+  // Captions covering under half the video are not trusted: Whisper runs (and
+  // here fails, since its model does not exist).
+  const partial = { language: 'es', segments: [{ start: 0.5, end: 2, text: 'Solo el principio' }] }
+  await assert.rejects(perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-captions-')), {
+    providers: [fakeProvider([])], whisperModel: 'no-such-model', captions: partial, diarize: false,
+  }))
 })
 
 test('a failed speaker step leaves the analysis complete, without labels', { timeout: 300_000 }, async () => {

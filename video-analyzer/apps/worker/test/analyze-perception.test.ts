@@ -168,7 +168,7 @@ test('a failed analysis leaves a checkpoint and the retry reuses it', { timeout:
 test('captions saved by the download are used instead of Whisper', { timeout: 300_000 }, async () => {
   const db = me.getDb()
   const { id, job } = queueVideo('con subtítulos')
-  writeFileSync(path.join(root, 'videos', id, 'captions.vtt'), 'WEBVTT\nLanguage: es\n\n00:00:00.500 --> 00:00:02.000\nLo que dice el subtítulo\n')
+  writeFileSync(path.join(root, 'videos', id, 'captions.vtt'), 'WEBVTT\nLanguage: es\n\n00:00:00.500 --> 00:00:03.000\nLo que dice el subtítulo\n')
   const saved = process.env.WHISPER_MODEL
   process.env.WHISPER_MODEL = 'no-such-model' // transcribing would throw
   try {

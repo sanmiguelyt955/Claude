@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseVtt } from '../src/captions.ts'
+import { captionCoverage, parseVtt } from '../src/captions.ts'
 
 test('reads written captions with hours, tags and entities', () => {
   const t = parseVtt(
@@ -41,4 +41,12 @@ welcome back
     { start: 0.16, end: 2.27, text: 'hello everyone and' },
     { start: 2.28, end: 4.99, text: 'welcome back' },
   ])
+})
+
+test('caption coverage counts overlapping lines once', () => {
+  const seg = (start: number, end: number) => ({ start, end, text: 'x' })
+  assert.equal(captionCoverage([seg(0, 10), seg(5, 15), seg(50, 60)], 100), 0.25)
+  assert.equal(captionCoverage([seg(0, 30)], 600), 0.05)
+  assert.equal(captionCoverage([], 60), 0)
+  assert.equal(captionCoverage([seg(0, 1)], 0), 1)
 })
