@@ -43,7 +43,12 @@ test('perceive runs frames, speech and windowed vision end to end', { timeout: 3
   const calls: VisionRequest[] = []
   const fakeVision = fakeProvider(calls)
 
-  const result = await perceive(video, work, { providers: [fakeVision], whisperModel: 'tiny', language: 'en' })
+  const steps: Array<{ label: string; current?: number; total?: number }> = []
+  const result = await perceive(video, work, { providers: [fakeVision], whisperModel: 'tiny', language: 'en', onProgress: (p) => steps.push(p) })
+  assert.deepEqual(steps.slice(0, 2).map((p) => p.label), ['Extrayendo fotogramas...', 'Transcribiendo el audio...'])
+  const last = steps.at(-1)!
+  assert.equal(last.label, 'Escribiendo el resumen...')
+  assert.equal(last.current, last.total! - 1, 'the bar never reads 100% before the summary is in')
 
   assert.ok(result.transcript.length >= 1, 'speech was transcribed')
   assert.match(result.transcript.map((t) => t.text).join(' ').toLowerCase(), /quick test sentence/)

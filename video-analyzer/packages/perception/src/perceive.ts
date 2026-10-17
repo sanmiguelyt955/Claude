@@ -29,6 +29,12 @@ export type PerceiveOptions = {
    */
   captions?: Transcript
   log?: (msg: string) => void
+  /**
+   * Where the analysis is, in Spanish for the progress bar: the stage, and
+   * windows done out of the total once the frames are known (the summary
+   * counts as the last step).
+   */
+  onProgress?: (progress: { label: string; current?: number; total?: number }) => void
   /** Progress saved by an earlier attempt on the same video; finished work is reused. */
   checkpoint?: PerceptionCheckpoint
   /** Called after the transcript and after every window, with everything done so far. */
@@ -176,6 +182,7 @@ function windowsOf(frames: Frame[], duration: number) {
  */
 export async function perceive(file: string, workDir: string, opts: PerceiveOptions = {}): Promise<AnalysisResult> {
   const log = opts.log ?? (() => {})
+  const progress = opts.onProgress ?? (() => {})
   const providers = opts.providers ?? defaultVisionProviders()
   const checkpoint: PerceptionCheckpoint = {
     engine: 'perception',
@@ -192,6 +199,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const captions = hasAudio && opts.captions?.segments.length ? opts.captions : null
   const needsWhisper = hasAudio && !captions && !checkpoint.transcript
   log(needsWhisper ? 'extrayendo frames y audio' : 'extrayendo frames')
+  progress({ label: 'Extrayendo fotogramas...' })
   const [frames] = await Promise.all([
     extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS),
     needsWhisper ? extractAudio(file, wavPath) : Promise.resolve(null),
@@ -207,6 +215,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     speech = checkpoint.transcript
   } else if (hasAudio) {
     log(`${frames.length} frames únicos; transcribiendo audio`)
+    progress({ label: 'Transcribiendo el audio...' })
     speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
     checkpoint.transcript = speech
     save()
@@ -229,7 +238,9 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const scenes: Scene[] = []
   const elements: Element[] = []
   const windows = windowsOf(frames, duration)
+  const steps = windows.length + 1 // + the summary
   for (const [n, w] of windows.entries()) {
+    progress({ label: `Mirando el video: tramo ${n + 1} de ${windows.length}...`, current: n, total: steps })
     const key = windowKey(w)
     let done = checkpoint.windows[key]
     if (done) {
@@ -251,6 +262,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   }
 
   scenes.sort((a, b) => a.start_seconds - b.start_seconds)
+  progress({ label: 'Escribiendo el resumen...', current: windows.length, total: steps })
   const sceneLines = scenes.map((s) => `${s.start_seconds}-${s.end_seconds}s ${s.title}: ${s.description}`).join('\n')
   const { value: summary } = await describeWithFallback(
     providers,

@@ -8,6 +8,7 @@ import {
   saveAnalysisResult,
   enqueueJob,
   saveJobCheckpoint,
+  updateJobProgress,
   getLatestFailedAnalyzeCheckpoint,
   DATA_DIR,
 } from '@cva/memory-engine'
@@ -45,6 +46,7 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
   try {
     const result = await perceive(file, workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
+      onProgress: (p) => updateJobProgress(job.id, p, db),
       captions,
       checkpoint,
       onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
