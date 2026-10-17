@@ -55,6 +55,8 @@ export type VideoRow = {
   content_hash: string | null
   status: VideoStatus
   error_message: string | null
+  /** Library folder; null = sin carpeta. */
+  folder: string | null
   created_at: string
   updated_at: string
 }

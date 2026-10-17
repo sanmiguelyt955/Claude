@@ -9,6 +9,7 @@ import {
   listSkillsForVideo,
   listSkillImprovementsForVideo,
   getActiveJobForVideo,
+  setVideoFolder,
 } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
@@ -50,4 +51,18 @@ export async function GET(
     skills: listSkillsForVideo(id),
     skillImprovements: listSkillImprovementsForVideo(id),
   })
+}
+
+/** Edits the video's library data; today only `folder` (null or "" = sin carpeta). */
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await context.params
+  if (!getVideo(id)) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  const body = (await request.json().catch(() => ({}))) as { folder?: unknown }
+  if (body.folder !== null && typeof body.folder !== 'string') {
+    return NextResponse.json({ error: 'Indica el nombre de la carpeta.' }, { status: 400 })
+  }
+  return NextResponse.json({ folder: setVideoFolder(id, body.folder) })
 }

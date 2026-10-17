@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
+import { FolderField } from './FolderField'
 import { VideoChat } from './VideoChat'
 import { formatDuration, formatSize } from '@/lib/format'
 import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
@@ -258,6 +259,7 @@ export function VideoDetailClient({ id }: { id: string }) {
             </span>
           )}
         </div>
+        <FolderField videoId={video.id} folder={video.folder} />
       </header>
 
       {errorMessage && (

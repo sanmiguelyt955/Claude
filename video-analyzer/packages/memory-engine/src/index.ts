@@ -37,6 +37,8 @@ export {
   setVideoStoredPath,
   applyVideoMetadata,
   setVideoTitle,
+  setVideoFolder,
+  MAX_FOLDER_CHARS,
   deleteVideo,
 } from './repo/videos.js'
 export type { CreateVideoInput } from './repo/videos.js'

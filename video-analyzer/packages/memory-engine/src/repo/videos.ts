@@ -100,6 +100,15 @@ export function setVideoTitle(id: string, title: string, db: Db = getDb()): void
   db.prepare('UPDATE videos SET title = ? WHERE id = ?').run(title, id)
 }
 
+export const MAX_FOLDER_CHARS = 60
+
+/** Moves the video to a folder (trimmed); empty or null takes it out of any. */
+export function setVideoFolder(id: string, folder: string | null, db: Db = getDb()): string | null {
+  const name = folder?.replace(/\s+/g, ' ').trim().slice(0, MAX_FOLDER_CHARS) || null
+  db.prepare('UPDATE videos SET folder = ? WHERE id = ?').run(name, id)
+  return name
+}
+
 export function deleteVideo(id: string, db: Db = getDb()): void {
   db.prepare('DELETE FROM videos WHERE id = ?').run(id)
 }

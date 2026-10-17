@@ -29,6 +29,7 @@ export type VideoRow = {
   size_bytes: number | null
   content_hash: string | null
   error_message: string | null
+  folder: string | null
   created_at: string
   updated_at: string
   activeJob: ActiveJob

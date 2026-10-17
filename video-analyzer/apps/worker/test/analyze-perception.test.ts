@@ -195,3 +195,15 @@ test('the chat history is stored per video and goes away with the video', { time
   const left = db.prepare('SELECT count(*) AS n FROM video_chat_messages WHERE video_id = ?').get(id) as { n: number }
   assert.equal(left.n, 0)
 })
+
+test('folders: a trimmed name per video, empty takes it out', () => {
+  const db = me.getDb()
+  const id = crypto.randomUUID()
+  me.createVideo({ id, title: 'carpeta', sourceKind: 'file', }, db)
+  assert.equal(me.getVideo(id, db)!.folder, null)
+  assert.equal(me.setVideoFolder(id, '  Recetas   de  cocina ', db), 'Recetas de cocina')
+  assert.equal(me.getVideo(id, db)!.folder, 'Recetas de cocina')
+  assert.equal(me.setVideoFolder(id, 'x'.repeat(100), db)!.length, me.MAX_FOLDER_CHARS)
+  assert.equal(me.setVideoFolder(id, '   ', db), null)
+  assert.equal(me.getVideo(id, db)!.folder, null)
+})

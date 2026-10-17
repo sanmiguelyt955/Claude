@@ -11,6 +11,8 @@ export function BibliotecaGrid() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchMessage, setBatchMessage] = useState<string | null>(null)
+  // null = todas; '' = sin carpeta; otherwise a folder name.
+  const [folder, setFolder] = useState<string | null>(null)
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -78,10 +80,38 @@ export function BibliotecaGrid() {
     )
   }
 
-  const selectable = videos.filter((v) => v.status === 'queued')
+  const folders = [...new Set(videos.map((v) => v.folder).filter((f): f is string => !!f))].sort((a, b) => a.localeCompare(b, 'es'))
+  const activeFolder = folder !== null && folder !== '' && !folders.includes(folder) ? null : folder
+  const shown = activeFolder === null ? videos : videos.filter((v) => (v.folder ?? '') === activeFolder)
+  const selectable = shown.filter((v) => v.status === 'queued')
+
+  const chip = (value: string | null, label: string, count: number) => (
+    <button
+      key={label}
+      type="button"
+      onClick={() => setFolder(value)}
+      aria-pressed={activeFolder === value}
+      className={
+        activeFolder === value
+          ? 'rounded-full bg-(--color-accent) px-3 py-1 text-xs font-medium text-white'
+          : 'rounded-full border border-(--color-line) px-3 py-1 text-xs hover:border-(--color-accent)'
+      }
+    >
+      {label} <span className="opacity-70">{count}</span>
+    </button>
+  )
+  const unfiled = videos.filter((v) => !v.folder).length
 
   return (
     <div className="flex flex-col gap-3">
+      {folders.length > 0 && (
+        <nav aria-label="Carpetas" className="flex flex-wrap gap-2">
+          {chip(null, 'Todas', videos.length)}
+          {folders.map((f) => chip(f, f, videos.filter((v) => v.folder === f).length))}
+          {unfiled > 0 && chip('', 'Sin carpeta', unfiled)}
+        </nav>
+      )}
+
       {selectable.length > 1 && (
         <div className="flex flex-wrap items-center gap-3 rounded-(--radius-card) border border-(--color-line) px-4 py-3 text-sm">
           <span className="text-(--color-ink-soft)">
@@ -102,7 +132,7 @@ export function BibliotecaGrid() {
       )}
 
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {videos.map((video) => (
+      {shown.map((video) => (
         <li key={video.id}>
           <Link
             href={`/videos/${video.id}`}
@@ -134,6 +164,7 @@ export function BibliotecaGrid() {
                 </span>
               )}
               <span>{formatRelativeTime(video.created_at)}</span>
+              {video.folder && activeFolder === null && <span>📁 {video.folder}</span>}
             </div>
             {video.activeJob?.progressLabel && (
               <p className="text-xs" style={{ color: 'var(--color-warn)' }}>
