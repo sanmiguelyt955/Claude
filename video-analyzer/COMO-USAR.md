@@ -27,6 +27,19 @@ de datos**).
 La primera vez que analizas un video tarda un poco más: descarga los pesos de
 Whisper (unos 500 MB para el modelo `small`) y los guarda para siempre.
 
+### Videos de TikTok, Instagram y YouTube
+
+En **+ Cargar video → Pegar URL** pega el enlace de la publicación (también
+los cortos, como `vm.tiktok.com/...`). La app descarga el video sola, con el
+título real de la publicación.
+
+Instagram (y algunos TikTok) solo dejan descargar si tienes la sesión
+iniciada. Si la app te lo dice, abre **Archivo → Configuración**, agrega la
+línea `YTDLP_COOKIES_FROM_BROWSER=firefox` (o `edge`, `chrome`, `safari`: el
+navegador donde tienes tu sesión de Instagram abierta), guarda y reinicia la
+app. Con Chrome en Windows a veces no funciona porque Chrome protege sus
+cookies; en ese caso usa Firefox o Edge.
+
 ---
 
 ## Alternativa: el lanzador `.bat` (Windows, para desarrollo)
@@ -76,7 +89,8 @@ Las siguientes veces abre en segundos.
 
 ### 4. Pruébala
 
-1. **+ Cargar video** → sube un video (MP4, MOV…).
+1. **+ Cargar video** → sube un video (MP4, MOV…) o pega el enlace de un
+   TikTok, Instagram o YouTube.
 2. Cuando diga "listo para analizar", pulsa **Analizar**. El análisis corre en
    segundo plano: puedes seguir usando la app.
 3. Al terminar, en la página del video:
