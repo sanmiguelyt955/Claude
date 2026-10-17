@@ -22,6 +22,11 @@ export type FallbackOptions<T> = {
   parse?: (text: string) => T
   log?: (msg: string) => void
   sleep?: (ms: number) => Promise<void>
+  /**
+   * Called for every request actually sent to a provider, answered or not.
+   * Quotas count requests, so the caller records each one under its model.
+   */
+  onAttempt?: (attempt: { provider: string; ok: boolean; error?: string; latencyMs: number }) => void
 }
 
 /**
@@ -54,9 +59,12 @@ export async function describeWithFallback<T = string>(
     for (const p of usable) {
       if ((pausedUntil.get(p.name) ?? 0) > Date.now()) continue
       let text: string
+      const started = Date.now()
       try {
         text = await p.describe(req)
+        opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: Date.now() - started })
       } catch (err) {
+        opts.onAttempt?.({ provider: p.name, ok: false, error: String(err), latencyMs: Date.now() - started })
         if (!shouldFallback(err)) throw err
         const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? cooldownMs
         pausedUntil.set(p.name, Date.now() + pause)

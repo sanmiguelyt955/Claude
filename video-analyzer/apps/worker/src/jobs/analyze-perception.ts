@@ -47,6 +47,7 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     const result = await perceive(file, workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
       onProgress: (p) => updateJobProgress(job.id, p, db),
+      onAttempt: (a) => recordProviderRequest(video.id, job.id, a, db),
       captions,
       checkpoint,
       onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
@@ -134,6 +135,38 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     // retryOrFailJob marks the video 'failed' once retries run out.
     throw error
   }
+}
+
+/**
+ * One row per request sent to a provider, under the model's own name, so the
+ * per-model daily quota (checkQuota) and the analysis history both count it.
+ * The job's summary row keeps request_count 0 to avoid counting twice.
+ */
+function recordProviderRequest(
+  videoId: string,
+  jobId: string,
+  a: { provider: string; ok: boolean; error?: string; latencyMs: number },
+  db: Db,
+): void {
+  insertAnalysisRun(
+    {
+      videoId,
+      jobId,
+      phase: 'first_pass',
+      model: a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider,
+      processingMode: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      thoughtTokens: 0,
+      estimatedCostUsd: 0,
+      latencyMs: a.latencyMs,
+      succeeded: a.ok,
+      errorMessage: a.error ?? null,
+      requestCount: 1,
+    },
+    db,
+  )
 }
 
 /** The platform captions the download saved next to the video, if any. */

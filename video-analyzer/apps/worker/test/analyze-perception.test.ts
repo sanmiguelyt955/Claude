@@ -128,10 +128,20 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
 
 test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, async () => {
   overloadNext = 1
+  imagesPerCall.length = 0
   const { id, job } = queueVideo('claude saturado')
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(overloadNext, 0)
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
+
+  // Every request is counted under its model: the 529 and each answered call.
+  const rows = me.getDb().prepare("SELECT succeeded, request_count FROM analysis_runs WHERE video_id = ? AND model = 'claude'").all(id) as Array<{ succeeded: number; request_count: number }>
+  assert.equal(rows.length, imagesPerCall.length + 1, 'the answered windows and summary, plus the failed 529')
+  assert.equal(rows.filter((r) => r.succeeded === 0).length, 1)
+  assert.ok(rows.every((r) => r.request_count === 1))
+  // The job's own row stays at 0 requests, so nothing is counted twice.
+  const summary = me.getDb().prepare("SELECT request_count FROM analysis_runs WHERE video_id = ? AND model = 'perception'").get(id) as { request_count: number }
+  assert.equal(summary.request_count, 0)
 })
 
 test('a failed analysis leaves a checkpoint and the retry reuses it', { timeout: 300_000 }, async () => {

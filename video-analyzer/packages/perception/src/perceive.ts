@@ -4,7 +4,7 @@ import type { AnalysisResult } from '@cva/ai-router'
 import { extractAudio, extractFrames, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
 import { transcribe, type Transcript } from './transcribe.js'
 import { diarize } from './diarize.js'
-import { describeWithFallback } from './chain.js'
+import { describeWithFallback, type FallbackOptions } from './chain.js'
 import { claude } from './providers/claude.js'
 import { geminiProviders } from './providers/gemini.js'
 import type { VisionProvider } from './providers/types.js'
@@ -43,6 +43,8 @@ export type PerceiveOptions = {
   onProgress?: (progress: { label: string; current?: number; total?: number }) => void
   /** Progress saved by an earlier attempt on the same video; finished work is reused. */
   checkpoint?: PerceptionCheckpoint
+  /** Every request sent to a vision provider (see describeWithFallback). */
+  onAttempt?: FallbackOptions<unknown>['onAttempt']
   /** Called after the transcript and after every window, with everything done so far. */
   onCheckpoint?: (checkpoint: PerceptionCheckpoint) => void
 }
@@ -274,7 +276,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
       const { provider, value } = await describeWithFallback(
         providers,
         { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION, thinking: 'low' },
-        { log, parse: (text) => parseWindowReply(text, w) },
+        { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt },
       )
       log(`ventana ${n + 1} respondida por ${provider}`)
       done = value
@@ -295,7 +297,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
       transcript: `Escenas:\n${sceneLines}\n\nTranscripción:\n${transcript.map((t) => (t.speaker ? `${t.speaker}: ${t.text}` : t.text)).join('\n') || '(sin voz)'}`,
       instruction: SUMMARY_INSTRUCTION,
     },
-    { log, parse: (text) => parseSummaryReply(text, speech.language) },
+    { log, parse: (text) => parseSummaryReply(text, speech.language), onAttempt: opts.onAttempt },
   )
 
   return {
