@@ -1,0 +1,12 @@
+# Render Blueprint: defines the hosted services for this repo.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: gcp-analysis
+    runtime: docker
+    rootDir: gcp-analysis
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    # Render injects PORT; the Dockerfile reads it.
+    autoDeploy: true
