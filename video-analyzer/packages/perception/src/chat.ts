@@ -1,6 +1,6 @@
 import { describeWithFallback } from './chain.js'
 import { claude } from './providers/claude.js'
-import { gemini } from './providers/gemini.js'
+import { geminiProviders } from './providers/gemini.js'
 import type { VisionProvider } from './providers/types.js'
 
 /** What the chat knows about a video: its stored analysis, nothing re-processed. */
@@ -167,7 +167,7 @@ export async function askVideo(input: {
   log?: (msg: string) => void
 }): Promise<{ answer: string; provider: string }> {
   const { value, provider } = await describeWithFallback(
-    input.providers ?? [gemini, claude],
+    input.providers ?? [...geminiProviders(), claude],
     { frames: [], instruction: buildInstruction(input.video, input.history ?? [], input.question), json: false },
     {
       log: input.log,

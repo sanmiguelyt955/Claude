@@ -5,7 +5,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 function models(): string[] {
-  return (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
+  return (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.8-flash')
     .split(',')
     .map((m) => m.trim())
     .filter(Boolean)

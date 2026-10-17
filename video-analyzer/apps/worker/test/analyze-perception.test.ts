@@ -27,6 +27,7 @@ let me: MemoryEngine
 let runAnalyzePerceptionJob: typeof import('../src/jobs/analyze-perception.ts').runAnalyzePerceptionJob
 let server: http.Server
 let overloadNext = 0
+let rejectSummaryNext = 0
 const imagesPerCall: number[] = []
 
 before(async () => {
@@ -45,6 +46,12 @@ before(async () => {
         return
       }
       const content = JSON.parse(body).messages[0].content as Array<{ type: string; text?: string }>
+      if (rejectSummaryNext > 0 && !content.some((c) => c.type === 'image')) {
+        rejectSummaryNext--
+        res.writeHead(400)
+        res.end('{"type":"error","error":{"type":"invalid_request_error","message":"rechazado"}}')
+        return
+      }
       imagesPerCall.push(content.filter((c) => c.type === 'image').length)
       const times = content
         .filter((c) => c.type === 'text' && c.text!.startsWith('[t='))
@@ -125,6 +132,27 @@ test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, as
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(overloadNext, 0)
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
+})
+
+test('a failed analysis leaves a checkpoint and the retry reuses it', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  rejectSummaryNext = 1
+  const { id, job } = queueVideo('reintento')
+  await assert.rejects(runAnalyzePerceptionJob(job, db), /HTTP 400/)
+  const saved = JSON.parse(me.getJob(job.id, db)!.result_json!)
+  assert.equal(saved.engine, 'perception')
+  assert.ok(saved.transcript.segments.length >= 1)
+  assert.ok(Object.keys(saved.windows).length >= 1)
+
+  // "Reintentar" creates a new job: it picks up the failed one's checkpoint
+  // and only the summary is asked again.
+  db.prepare("UPDATE jobs SET status = 'failed' WHERE id = ?").run(job.id)
+  const retry = me.enqueueJob({ type: 'analyze', videoId: id }, db)
+  imagesPerCall.length = 0
+  await runAnalyzePerceptionJob(retry, db)
+  assert.deepEqual(imagesPerCall, [0])
+  assert.equal(me.getVideo(id, db)!.status, 'ready')
+  assert.ok(countRows('scenes', id) >= 2)
 })
 
 test('the chat history is stored per video and goes away with the video', { timeout: 300_000 }, async () => {

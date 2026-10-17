@@ -13,7 +13,7 @@ import { JobDeferred } from '../deferred.js'
 
 type DetectSkillsPayload = { videoId: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.7-flash'
+const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.8-flash'
 
 /**
  * Handles 'detect_skills' (PROJECT.md §12): a text-only Gemini call over the

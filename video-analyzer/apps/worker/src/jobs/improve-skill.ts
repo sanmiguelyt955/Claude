@@ -14,7 +14,7 @@ import { JobDeferred } from '../deferred.js'
 
 type ImproveSkillPayload = { videoId: string; skillId?: string; sourceSkillPath?: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.7-flash'
+const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.8-flash'
 
 /**
  * Handles 'improve_skill' (PROJECT.md §13): compares an already-generated

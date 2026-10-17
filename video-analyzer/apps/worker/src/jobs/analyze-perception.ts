@@ -6,10 +6,12 @@ import {
   insertAnalysisRun,
   saveAnalysisResult,
   enqueueJob,
+  saveJobCheckpoint,
+  getLatestFailedAnalyzeCheckpoint,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { perceive } from '@cva/perception'
+import { perceive, parseCheckpoint } from '@cva/perception'
 
 type AnalyzeJobPayload = { videoId: string }
 
@@ -32,9 +34,15 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
   const startedAt = Date.now()
   const workDir = path.join(DATA_DIR, 'perception', video.id)
 
+  // A retry of this job keeps its own checkpoint; a new analyze job (the
+  // "Reintentar" button) picks up the one its failed predecessor left.
+  const checkpoint = parseCheckpoint(job.result_json) ?? parseCheckpoint(getLatestFailedAnalyzeCheckpoint(video.id, db))
+
   try {
     const result = await perceive(resolveDataPath(video.stored_path), workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
+      checkpoint,
+      onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
     })
 
     insertAnalysisRun(

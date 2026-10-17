@@ -5,7 +5,7 @@ import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { perceive, parseJsonReply, parseWindowReply, WINDOW_FRAMES } from '../src/perceive.ts'
+import { perceive, parseCheckpoint, parseJsonReply, parseWindowReply, WINDOW_FRAMES, type PerceptionCheckpoint } from '../src/perceive.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -80,6 +80,41 @@ function fakeProvider(calls: VisionRequest[]): VisionProvider {
     },
   }
 }
+
+test('a retry resumes from the checkpoint without transcribing or asking again', { timeout: 300_000 }, async () => {
+  const video = makeVideo()
+  const work = mkdtempSync(path.join(tmpdir(), 'perception-resume-'))
+  let saved: PerceptionCheckpoint | undefined
+  const first = await perceive(video, work, {
+    providers: [fakeProvider([])],
+    whisperModel: 'tiny',
+    language: 'en',
+    onCheckpoint: (cp) => (saved = structuredClone(cp)),
+  })
+  assert.ok(saved?.transcript && Object.keys(saved.windows).length >= 1)
+
+  // The checkpoint survives the trip through the jobs table as JSON.
+  const checkpoint = parseCheckpoint(JSON.stringify(saved))
+  assert.ok(checkpoint)
+  assert.equal(parseCheckpoint('{"windows":[]}'), undefined, 'the Gemini engine checkpoint is not ours')
+
+  // Only the summary may reach the model now; a window call would throw.
+  const calls: VisionRequest[] = []
+  const summaryOnly = fakeProvider(calls)
+  const logs: string[] = []
+  const again = await perceive(video, work, {
+    providers: [{ ...summaryOnly, describe: (r) => (r.frames.length ? Promise.reject(new Error('ventana repetida')) : summaryOnly.describe(r)) }],
+    whisperModel: 'no-such-model',
+    language: 'en',
+    checkpoint,
+    log: (m) => logs.push(m),
+  })
+  assert.deepEqual(again.scenes, first.scenes)
+  assert.deepEqual(again.transcript, first.transcript)
+  assert.equal(calls.length, 1)
+  assert.ok(logs.some((m) => /transcripción retomada/.test(m)))
+  assert.ok(logs.some((m) => /retomada del intento anterior/.test(m)))
+})
 
 test('a video without audio is analyzed from frames alone', { timeout: 300_000 }, async () => {
   const video = makeVideo({ silent: true })

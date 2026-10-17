@@ -14,7 +14,7 @@ import { JobDeferred } from '../deferred.js'
 
 type GenerateSkillPayload = { skillId: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.7-flash'
+const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.8-flash'
 
 /**
  * Handles 'generate_skill' (PROJECT.md §12, "Crear Skill" button): writes

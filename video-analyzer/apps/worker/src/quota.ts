@@ -122,13 +122,11 @@ const DEFAULT_VIDEO_MODELS = [
   // retiro. Dejarlos aqui solo gasta 2 peticiones inutiles (intento + retry)
   // en cada rotacion, en el peor momento posible: cuando ya se esta cayendo
   // en cascada por otros modelos con problemas reales.
-  // Orden por generacion distinta: 3.7 y 3.8 se saturaron a la vez en sep-oct 2026
-  // (foro oficial de Google AI), asi que 3.6 va entre ambos para no gastar dos
-  // intentos seguidos contra la misma capacidad caida.
+  // gemini-3.7-flash y gemini-3.5-flash salieron por lo mismo: ya no aparecen
+  // en la lista de modelos de Google (ai.google.dev/gemini-api/docs/models,
+  // revisada el 17 oct 2026).
   'gemini-3.8-flash',
   'gemini-3.6-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
   'gemini-3-flash-preview',
   // Flash Lite: calidad menor pero 500/dia los de 3.x — es donde vive la
   // capacidad real, asi que van al final como caballo de batalla.

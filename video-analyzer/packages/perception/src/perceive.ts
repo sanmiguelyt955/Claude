@@ -5,20 +5,60 @@ import { extractAudio, extractFrames, probeMedia, type Frame, type FrameOptions,
 import { transcribe, type Transcript } from './transcribe.js'
 import { describeWithFallback } from './chain.js'
 import { claude } from './providers/claude.js'
-import { gemini } from './providers/gemini.js'
+import { geminiProviders } from './providers/gemini.js'
 import type { VisionProvider } from './providers/types.js'
+
+/** Every configured Gemini model in order, then Claude. */
+export function defaultVisionProviders(): VisionProvider[] {
+  return [...geminiProviders(), claude]
+}
 
 /** Claude accepts at most 100 images per request; keep every window under it. */
 export const WINDOW_FRAMES = 100
 
 export type PerceiveOptions = {
   frameOptions?: FrameOptions
-  /** Order = priority. Defaults to Gemini then Claude; unconfigured ones are skipped. */
+  /** Order = priority. Defaults to defaultVisionProviders(); unconfigured ones are skipped. */
   providers?: VisionProvider[]
   whisperModel?: string
   language?: string
   log?: (msg: string) => void
+  /** Progress saved by an earlier attempt on the same video; finished work is reused. */
+  checkpoint?: PerceptionCheckpoint
+  /** Called after the transcript and after every window, with everything done so far. */
+  onCheckpoint?: (checkpoint: PerceptionCheckpoint) => void
 }
+
+/**
+ * What a failed analysis keeps, so the retry starts where it stopped instead
+ * of transcribing again and paying again for every window already answered.
+ * Windows are keyed by their time span and frame count: if the frames come
+ * out different on the retry (other options), the key misses and that window
+ * is simply redone.
+ */
+export type PerceptionCheckpoint = {
+  engine: 'perception'
+  version: 1
+  transcript?: Transcript
+  windows: Record<string, { scenes: Scene[]; elements: Element[] }>
+}
+
+/** Reads a checkpoint back from the jobs table; anything else (e.g. the Gemini engine's) is ignored. */
+export function parseCheckpoint(json: string | null | undefined): PerceptionCheckpoint | undefined {
+  if (!json) return undefined
+  try {
+    const value = JSON.parse(json) as Partial<PerceptionCheckpoint>
+    if (value.engine !== 'perception' || value.version !== 1 || typeof value.windows !== 'object' || !value.windows) {
+      return undefined
+    }
+    return value as PerceptionCheckpoint
+  } catch {
+    return undefined
+  }
+}
+
+const windowKey = (w: { start: number; end: number; frames: Frame[] }) =>
+  `${w.start.toFixed(3)}-${w.end.toFixed(3)}-${w.frames.length}`
 
 const ELEMENT_KINDS = ['object', 'on_screen_text', 'action', 'person', 'relation'] as const
 type ElementKind = (typeof ELEMENT_KINDS)[number]
@@ -130,7 +170,14 @@ function windowsOf(frames: Frame[], duration: number) {
  */
 export async function perceive(file: string, workDir: string, opts: PerceiveOptions = {}): Promise<AnalysisResult> {
   const log = opts.log ?? (() => {})
-  const providers = opts.providers ?? [gemini, claude]
+  const providers = opts.providers ?? defaultVisionProviders()
+  const checkpoint: PerceptionCheckpoint = {
+    engine: 'perception',
+    version: 1,
+    transcript: opts.checkpoint?.transcript,
+    windows: { ...opts.checkpoint?.windows },
+  }
+  const save = () => opts.onCheckpoint?.(checkpoint)
   await mkdir(workDir, { recursive: true })
 
   const { duration, hasAudio } = await probeMedia(file)
@@ -144,9 +191,14 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
 
   let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
-  if (hasAudio) {
+  if (hasAudio && checkpoint.transcript) {
+    log(`${frames.length} frames únicos; transcripción retomada del intento anterior`)
+    speech = checkpoint.transcript
+  } else if (hasAudio) {
     log(`${frames.length} frames únicos; transcribiendo audio`)
     speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
+    checkpoint.transcript = speech
+    save()
   }
 
   const transcript: AnalysisResult['transcript'] = speech.segments.map((s, i) => ({
@@ -167,15 +219,24 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const elements: Element[] = []
   const windows = windowsOf(frames, duration)
   for (const [n, w] of windows.entries()) {
-    log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
-    const { provider, value } = await describeWithFallback(
-      providers,
-      { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION },
-      { log, parse: (text) => parseWindowReply(text, w) },
-    )
-    log(`ventana ${n + 1} respondida por ${provider}`)
-    scenes.push(...value.scenes)
-    elements.push(...value.elements)
+    const key = windowKey(w)
+    let done = checkpoint.windows[key]
+    if (done) {
+      log(`ventana ${n + 1}/${windows.length} retomada del intento anterior`)
+    } else {
+      log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
+      const { provider, value } = await describeWithFallback(
+        providers,
+        { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION },
+        { log, parse: (text) => parseWindowReply(text, w) },
+      )
+      log(`ventana ${n + 1} respondida por ${provider}`)
+      done = value
+      checkpoint.windows[key] = value
+      save()
+    }
+    scenes.push(...done.scenes)
+    elements.push(...done.elements)
   }
 
   scenes.sort((a, b) => a.start_seconds - b.start_seconds)
