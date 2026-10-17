@@ -12,6 +12,27 @@ type ChatMessage = {
 
 const SUGGESTIONS = ['¿De qué trata el video?', '¿Qué producto se muestra?', '¿En qué momento mencionan el precio?']
 
+// Ready-made documents from the video, like memories.ai's summary templates.
+// The answer stays in the chat, so it can be exported with the rest.
+const TEMPLATES: Array<{ label: string; prompt: string }> = [
+  {
+    label: 'Pasos a seguir',
+    prompt: 'Escribe los pasos que se siguen en el video como una lista numerada, cada paso con su momento [m:ss] y lo necesario (materiales, herramientas, datos).',
+  },
+  {
+    label: 'Notas de reunión',
+    prompt: 'Haz notas de reunión del video: participantes o voces, temas tratados, decisiones, tareas pendientes con responsable si se dice, y el momento [m:ss] de cada punto.',
+  },
+  {
+    label: 'Capítulos',
+    prompt: 'Divide el video en capítulos: para cada uno, el momento de inicio [m:ss], un título corto y una frase de qué pasa.',
+  },
+  {
+    label: 'Puntos clave',
+    prompt: 'Resume el video en 5 a 8 puntos clave, cada uno con el momento [m:ss] donde se ve o se dice.',
+  },
+]
+
 // [0:14], [1:02–1:10] or [1:02:05]: the timestamps the assistant cites.
 const TIMESTAMP = /(\[\d{1,2}:\d{2}(?::\d{2})?(?:\s*[–-]\s*\d{1,2}:\d{2}(?::\d{2})?)?\])/g
 
@@ -114,6 +135,21 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
           ))}
         </div>
       )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-(--color-ink-soft)">Plantillas:</span>
+        {TEMPLATES.map((t) => (
+          <button
+            key={t.label}
+            type="button"
+            disabled={asking}
+            onClick={() => ask(t.prompt)}
+            className="rounded-md border border-(--color-line) px-2 py-0.5 text-xs hover:border-(--color-accent) disabled:opacity-50"
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       <div className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">
         {messages.map((m) => (
