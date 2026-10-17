@@ -1,0 +1,845 @@
+{
+ "accesscontextmanager": {
+  "title": "Access Context Manager API",
+  "version": "v1",
+  "rootUrl": "https://accesscontextmanager.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 42,
+  "resources": 11,
+  "schemas": 68
+ },
+ "aiplatform": {
+  "title": "Agent Platform API",
+  "version": "v1",
+  "rootUrl": "https://aiplatform.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 1128,
+  "resources": 275,
+  "schemas": 1497
+ },
+ "alloydb": {
+  "title": "AlloyDB API",
+  "version": "v1",
+  "rootUrl": "https://alloydb.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 40,
+  "resources": 8,
+  "schemas": 130
+ },
+ "apigateway": {
+  "title": "API Gateway API",
+  "version": "v1",
+  "rootUrl": "https://apigateway.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 30,
+  "resources": 6,
+  "schemas": 26
+ },
+ "apigee": {
+  "title": "Apigee API",
+  "version": "v1",
+  "rootUrl": "https://apigee.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 374,
+  "resources": 99,
+  "schemas": 349
+ },
+ "appengine": {
+  "title": "App Engine Admin API",
+  "version": "v1",
+  "rootUrl": "https://appengine.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 59,
+  "resources": 20,
+  "schemas": 82
+ },
+ "apphub": {
+  "title": "App Hub API",
+  "version": "v1",
+  "rootUrl": "https://apphub.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 40,
+  "resources": 10,
+  "schemas": 50
+ },
+ "artifactregistry": {
+  "title": "Artifact Registry API",
+  "version": "v1",
+  "rootUrl": "https://artifactregistry.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 69,
+  "resources": 21,
+  "schemas": 128
+ },
+ "baremetalsolution": {
+  "title": "Bare Metal Solution API",
+  "version": "v2",
+  "rootUrl": "https://baremetalsolution.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 52,
+  "resources": 13,
+  "schemas": 71
+ },
+ "batch": {
+  "title": "Batch API",
+  "version": "v1",
+  "rootUrl": "https://batch.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 14,
+  "resources": 7,
+  "schemas": 63
+ },
+ "beyondcorp": {
+  "title": "BeyondCorp API",
+  "version": "v1",
+  "rootUrl": "https://beyondcorp.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 52,
+  "resources": 11,
+  "schemas": 81
+ },
+ "bigquery": {
+  "title": "BigQuery API",
+  "version": "v2",
+  "rootUrl": "https://bigquery.googleapis.com/",
+  "servicePath": "bigquery/v2/",
+  "auth_scopes": 7,
+  "methods": 47,
+  "resources": 8,
+  "schemas": 227
+ },
+ "bigquerydatatransfer": {
+  "title": "BigQuery Data Transfer API",
+  "version": "v1",
+  "rootUrl": "https://bigquerydatatransfer.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 37,
+  "resources": 12,
+  "schemas": 42
+ },
+ "bigqueryreservation": {
+  "title": "BigQuery Reservation API",
+  "version": "v1",
+  "rootUrl": "https://bigqueryreservation.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 33,
+  "resources": 6,
+  "schemas": 30
+ },
+ "bigtableadmin": {
+  "title": "Cloud Bigtable Admin API",
+  "version": "v2",
+  "rootUrl": "https://bigtableadmin.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 9,
+  "methods": 82,
+  "resources": 16,
+  "schemas": 154
+ },
+ "billingbudgets": {
+  "title": "Cloud Billing Budget API",
+  "version": "v1",
+  "rootUrl": "https://billingbudgets.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 5,
+  "resources": 2,
+  "schemas": 12
+ },
+ "binaryauthorization": {
+  "title": "Binary Authorization API",
+  "version": "v1",
+  "rootUrl": "https://binaryauthorization.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 21,
+  "resources": 8,
+  "schemas": 49
+ },
+ "certificatemanager": {
+  "title": "Certificate Manager API",
+  "version": "v1",
+  "rootUrl": "https://certificatemanager.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 36,
+  "resources": 9,
+  "schemas": 38
+ },
+ "cloudasset": {
+  "title": "Cloud Asset API",
+  "version": "v1",
+  "rootUrl": "https://cloudasset.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 24,
+  "resources": 6,
+  "schemas": 145
+ },
+ "cloudbilling": {
+  "title": "Cloud Billing API",
+  "version": "v1",
+  "rootUrl": "https://cloudbilling.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 28,
+  "resources": 12,
+  "schemas": 63
+ },
+ "cloudbuild": {
+  "title": "Cloud Build API",
+  "version": "v2",
+  "rootUrl": "https://cloudbuild.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 22,
+  "resources": 5,
+  "schemas": 79
+ },
+ "clouddeploy": {
+  "title": "Cloud Deploy API",
+  "version": "v1",
+  "rootUrl": "https://clouddeploy.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 61,
+  "resources": 12,
+  "schemas": 185
+ },
+ "cloudfunctions": {
+  "title": "Cloud Functions API",
+  "version": "v2",
+  "rootUrl": "https://cloudfunctions.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 21,
+  "resources": 5,
+  "schemas": 51
+ },
+ "cloudkms": {
+  "title": "Cloud Key Management Service (KMS) API",
+  "version": "v1",
+  "rootUrl": "https://cloudkms.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 87,
+  "resources": 15,
+  "schemas": 96
+ },
+ "cloudresourcemanager": {
+  "title": "Cloud Resource Manager API",
+  "version": "v3",
+  "rootUrl": "https://cloudresourcemanager.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 78,
+  "resources": 18,
+  "schemas": 79
+ },
+ "cloudscheduler": {
+  "title": "Cloud Scheduler API",
+  "version": "v1",
+  "rootUrl": "https://cloudscheduler.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 16,
+  "resources": 4,
+  "schemas": 22
+ },
+ "cloudtasks": {
+  "title": "Cloud Tasks API",
+  "version": "v2",
+  "rootUrl": "https://cloudtasks.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 24,
+  "resources": 5,
+  "schemas": 43
+ },
+ "cloudtrace": {
+  "title": "Cloud Trace API",
+  "version": "v2",
+  "rootUrl": "https://cloudtrace.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 2,
+  "resources": 3,
+  "schemas": 17
+ },
+ "composer": {
+  "title": "Cloud Composer API",
+  "version": "v1",
+  "rootUrl": "https://composer.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 29,
+  "resources": 8,
+  "schemas": 64
+ },
+ "compute": {
+  "title": "Compute Engine API",
+  "version": "v1",
+  "rootUrl": "https://compute.googleapis.com/",
+  "servicePath": "compute/v1/",
+  "auth_scopes": 6,
+  "methods": 1018,
+  "resources": 131,
+  "schemas": 1065
+ },
+ "container": {
+  "title": "Kubernetes Engine API",
+  "version": "v1",
+  "rootUrl": "https://container.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 71,
+  "resources": 12,
+  "schemas": 262
+ },
+ "datacatalog": {
+  "title": "Google Cloud Data Catalog API",
+  "version": "v1",
+  "rootUrl": "https://datacatalog.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 71,
+  "resources": 16,
+  "schemas": 123
+ },
+ "dataflow": {
+  "title": "Dataflow API",
+  "version": "v1b3",
+  "rootUrl": "https://dataflow.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 57,
+  "resources": 24,
+  "schemas": 202
+ },
+ "dataform": {
+  "title": "Dataform API",
+  "version": "v1",
+  "rootUrl": "https://dataform.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 88,
+  "resources": 11,
+  "schemas": 139
+ },
+ "datalabeling": {
+  "error": "HTTP Error 404: Not Found"
+ },
+ "dataplex": {
+  "title": "Cloud Dataplex API",
+  "version": "v1",
+  "rootUrl": "https://dataplex.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 4,
+  "methods": 206,
+  "resources": 40,
+  "schemas": 292
+ },
+ "dataproc": {
+  "title": "Cloud Dataproc API",
+  "version": "v1",
+  "rootUrl": "https://dataproc.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 136,
+  "resources": 17,
+  "schemas": 277
+ },
+ "datastream": {
+  "title": "Datastream API",
+  "version": "v1",
+  "rootUrl": "https://datastream.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 32,
+  "resources": 8,
+  "schemas": 177
+ },
+ "dialogflow": {
+  "title": "Dialogflow API",
+  "version": "v3",
+  "rootUrl": "https://dialogflow.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 158,
+  "resources": 31,
+  "schemas": 695
+ },
+ "discoveryengine": {
+  "title": "Discovery Engine API",
+  "version": "v1",
+  "rootUrl": "https://discoveryengine.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 5,
+  "methods": 278,
+  "resources": 85,
+  "schemas": 990
+ },
+ "dns": {
+  "title": "Cloud DNS API",
+  "version": "v1",
+  "rootUrl": "https://dns.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 4,
+  "methods": 51,
+  "resources": 12,
+  "schemas": 78
+ },
+ "documentai": {
+  "title": "Cloud Document AI API",
+  "version": "v1",
+  "rootUrl": "https://documentai.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 42,
+  "resources": 12,
+  "schemas": 326
+ },
+ "eventarc": {
+  "title": "Eventarc API",
+  "version": "v1",
+  "rootUrl": "https://eventarc.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 66,
+  "resources": 11,
+  "schemas": 62
+ },
+ "firebasehosting": {
+  "title": "Firebase Hosting API",
+  "version": "v1",
+  "rootUrl": "https://firebasehosting.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 5,
+  "resources": 5,
+  "schemas": 12
+ },
+ "firestore": {
+  "title": "Cloud Firestore API",
+  "version": "v1",
+  "rootUrl": "https://firestore.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 60,
+  "resources": 12,
+  "schemas": 143
+ },
+ "gkebackup": {
+  "title": "Backup for GKE API",
+  "version": "v1",
+  "rootUrl": "https://gkebackup.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 67,
+  "resources": 13,
+  "schemas": 76
+ },
+ "gkehub": {
+  "title": "GKE Hub API",
+  "version": "v2",
+  "rootUrl": "https://gkehub.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 10,
+  "resources": 5,
+  "schemas": 97
+ },
+ "healthcare": {
+  "title": "Cloud Healthcare API",
+  "version": "v1",
+  "rootUrl": "https://healthcare.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 154,
+  "resources": 27,
+  "schemas": 177
+ },
+ "iam": {
+  "title": "Identity and Access Management (IAM) API",
+  "version": "v2",
+  "rootUrl": "https://iam.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 6,
+  "resources": 2,
+  "schemas": 20
+ },
+ "iap": {
+  "title": "Cloud Identity-Aware Proxy API",
+  "version": "v1",
+  "rootUrl": "https://iap.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 19,
+  "resources": 7,
+  "schemas": 37
+ },
+ "ids": {
+  "title": "Cloud IDS API",
+  "version": "v1",
+  "rootUrl": "https://ids.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 11,
+  "resources": 4,
+  "schemas": 10
+ },
+ "language": {
+  "title": "Cloud Natural Language API",
+  "version": "v2",
+  "rootUrl": "https://language.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 5,
+  "resources": 1,
+  "schemas": 138
+ },
+ "logging": {
+  "title": "Cloud Logging API",
+  "version": "v2",
+  "rootUrl": "https://logging.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 5,
+  "methods": 254,
+  "resources": 63,
+  "schemas": 94
+ },
+ "looker": {
+  "title": "Looker (Google Cloud core) API",
+  "version": "v1",
+  "rootUrl": "https://looker.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 20,
+  "resources": 5,
+  "schemas": 39
+ },
+ "memcache": {
+  "title": "Cloud Memorystore for Memcached API",
+  "version": "v1",
+  "rootUrl": "https://memcache.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 17,
+  "resources": 4,
+  "schemas": 48
+ },
+ "monitoring": {
+  "title": "Cloud Monitoring API",
+  "version": "v3",
+  "rootUrl": "https://monitoring.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 4,
+  "methods": 56,
+  "resources": 20,
+  "schemas": 131
+ },
+ "networkconnectivity": {
+  "title": "Network Connectivity API",
+  "version": "v1",
+  "rootUrl": "https://networkconnectivity.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 108,
+  "resources": 24,
+  "schemas": 109
+ },
+ "networksecurity": {
+  "title": "Network Security API",
+  "version": "v1",
+  "rootUrl": "https://networksecurity.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 185,
+  "resources": 37,
+  "schemas": 136
+ },
+ "networkservices": {
+  "title": "Network Services API",
+  "version": "v1",
+  "rootUrl": "https://networkservices.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 122,
+  "resources": 29,
+  "schemas": 134
+ },
+ "notebooks": {
+  "title": "Notebooks API",
+  "version": "v2",
+  "rootUrl": "https://notebooks.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 28,
+  "resources": 4,
+  "schemas": 52
+ },
+ "orgpolicy": {
+  "title": "Organization Policy API",
+  "version": "v2",
+  "rootUrl": "https://orgpolicy.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 26,
+  "resources": 10,
+  "schemas": 17
+ },
+ "osconfig": {
+  "title": "OS Config API",
+  "version": "v2",
+  "rootUrl": "https://osconfig.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 27,
+  "resources": 15,
+  "schemas": 49
+ },
+ "oslogin": {
+  "title": "Cloud OS Login API",
+  "version": "v1",
+  "rootUrl": "https://oslogin.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 4,
+  "methods": 9,
+  "resources": 5,
+  "schemas": 8
+ },
+ "privateca": {
+  "title": "Certificate Authority API",
+  "version": "v1",
+  "rootUrl": "https://privateca.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 44,
+  "resources": 8,
+  "schemas": 71
+ },
+ "pubsub": {
+  "title": "Cloud Pub/Sub API",
+  "version": "v1",
+  "rootUrl": "https://pubsub.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 46,
+  "resources": 7,
+  "schemas": 76
+ },
+ "recaptchaenterprise": {
+  "title": "reCAPTCHA Enterprise API",
+  "version": "v1",
+  "rootUrl": "https://recaptchaenterprise.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 24,
+  "resources": 7,
+  "schemas": 89
+ },
+ "recommender": {
+  "title": "Recommender API",
+  "version": "v1",
+  "rootUrl": "https://recommender.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 48,
+  "resources": 24,
+  "schemas": 37
+ },
+ "redis": {
+  "title": "Google Cloud Memorystore for Redis API",
+  "version": "v1",
+  "rootUrl": "https://redis.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 47,
+  "resources": 11,
+  "schemas": 117
+ },
+ "run": {
+  "title": "Cloud Run Admin API",
+  "version": "v2",
+  "rootUrl": "https://run.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 59,
+  "resources": 13,
+  "schemas": 145
+ },
+ "secretmanager": {
+  "title": "Secret Manager API",
+  "version": "v1",
+  "rootUrl": "https://secretmanager.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 36,
+  "resources": 6,
+  "schemas": 42
+ },
+ "securitycenter": {
+  "title": "Security Command Center API",
+  "version": "v1",
+  "rootUrl": "https://securitycenter.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 172,
+  "resources": 62,
+  "schemas": 384
+ },
+ "servicemanagement": {
+  "title": "Service Management API",
+  "version": "v1",
+  "rootUrl": "https://servicemanagement.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 4,
+  "methods": 22,
+  "resources": 5,
+  "schemas": 110
+ },
+ "serviceusage": {
+  "title": "Service Usage API",
+  "version": "v1",
+  "rootUrl": "https://serviceusage.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 10,
+  "resources": 2,
+  "schemas": 144
+ },
+ "spanner": {
+  "title": "Cloud Spanner API",
+  "version": "v1",
+  "rootUrl": "https://spanner.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 3,
+  "methods": 99,
+  "resources": 21,
+  "schemas": 180
+ },
+ "speech": {
+  "title": "Cloud Speech-to-Text API",
+  "version": "v1",
+  "rootUrl": "https://speech.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 14,
+  "resources": 6,
+  "schemas": 31
+ },
+ "sqladmin": {
+  "title": "Cloud SQL Admin API",
+  "version": "v1",
+  "rootUrl": "https://sqladmin.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 85,
+  "resources": 14,
+  "schemas": 159
+ },
+ "storage": {
+  "title": "Cloud Storage JSON API",
+  "version": "v1",
+  "rootUrl": "https://storage.googleapis.com/",
+  "servicePath": "storage/v1/",
+  "auth_scopes": 5,
+  "methods": 87,
+  "resources": 14,
+  "schemas": 38
+ },
+ "tpu": {
+  "title": "Cloud TPU API",
+  "version": "v2",
+  "rootUrl": "https://tpu.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 24,
+  "resources": 7,
+  "schemas": 54
+ },
+ "translate": {
+  "title": "Cloud Translation API",
+  "version": "v3",
+  "rootUrl": "https://translation.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 51,
+  "resources": 12,
+  "schemas": 76
+ },
+ "videointelligence": {
+  "title": "Cloud Video Intelligence API",
+  "version": "v1",
+  "rootUrl": "https://videointelligence.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 8,
+  "resources": 8,
+  "schemas": 187
+ },
+ "vision": {
+  "title": "Cloud Vision API",
+  "version": "v1",
+  "rootUrl": "https://vision.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 2,
+  "methods": 38,
+  "resources": 17,
+  "schemas": 281
+ },
+ "vmmigration": {
+  "title": "VM Migration API",
+  "version": "v1",
+  "rootUrl": "https://vmmigration.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 68,
+  "resources": 15,
+  "schemas": 132
+ },
+ "websecurityscanner": {
+  "title": "Web Security Scanner API",
+  "version": "v1",
+  "rootUrl": "https://websecurityscanner.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 13,
+  "resources": 6,
+  "schemas": 30
+ },
+ "workflows": {
+  "title": "Workflows API",
+  "version": "v1",
+  "rootUrl": "https://workflows.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 11,
+  "resources": 4,
+  "schemas": 11
+ },
+ "workstations": {
+  "title": "Cloud Workstations API",
+  "version": "v1",
+  "rootUrl": "https://workstations.googleapis.com/",
+  "servicePath": "",
+  "auth_scopes": 1,
+  "methods": 33,
+  "resources": 6,
+  "schemas": 50
+ }
+}
