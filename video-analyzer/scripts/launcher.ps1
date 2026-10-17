@@ -144,7 +144,10 @@ if (-not (Test-Path (Join-Path $Root 'package-lock.json'))) { Fail "No encuentro
 $lockHash = Get-Hash (Join-Path $Root 'package-lock.json')
 if (-not (Test-Path (Join-Path $Root 'node_modules')) -or (Test-Changed 'npm' $lockHash)) {
   Say 'Instalando dependencias de Node (la primera vez tarda unos minutos)...'
-  Run 'npm ci' { & npm ci --no-audit --no-fund }
+  # --ignore-scripts: better-sqlite3 ships prebuilt binaries, but npm would
+  # still try to compile it (it has a binding.gyp) and that needs Visual
+  # Studio, which a normal Windows PC does not have.
+  Run 'npm ci' { & npm ci --no-audit --no-fund --ignore-scripts }
   Save-State 'npm' $lockHash
 }
 

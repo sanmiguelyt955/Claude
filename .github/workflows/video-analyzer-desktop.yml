@@ -60,7 +60,11 @@ jobs:
             video-analyzer/desktop/package-lock.json
 
       - name: Dependencias de la app
-        run: npm ci
+        # --ignore-scripts: better-sqlite3 ships prebuilt binaries for every
+        # OS, but because it has a binding.gyp npm would still try to compile
+        # it, which needs a C++ toolchain (Windows runners have no Visual
+        # Studio). The prebuilt binary is the one the app ships.
+        run: npm ci --ignore-scripts
 
       - name: Compilar la web (standalone)
         env:
