@@ -61,6 +61,8 @@ export async function extractFrames(
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
+  // -fps_mode passthrough keeps exactly the selected frames (no duplicates
+  // to fill the timeline). It replaced -vsync 0, which FFmpeg 9 removed.
   // One pass, two outputs of the same selected frames: the JPGs the model
   // sees and a raw 16x16 RGB strip used to drop near-duplicates (the
   // 1 s keyframes of a static shot are otherwise all sent).
@@ -76,8 +78,8 @@ export async function extractFrames(
     ffmpegBin(),
     [
       '-hide_banner', '-v', 'info', '-i', file, '-filter_complex', graph,
-      '-map', '[jpg]', '-vsync', '0', '-q:v', '4', path.join(outDir, '%06d.jpg'),
-      '-map', '[thumb]', '-vsync', '0', '-f', 'rawvideo', thumbsPath,
+      '-map', '[jpg]', '-fps_mode', 'passthrough', '-q:v', '4', path.join(outDir, '%06d.jpg'),
+      '-map', '[thumb]', '-fps_mode', 'passthrough', '-f', 'rawvideo', thumbsPath,
     ],
     { maxBuffer: 256 * 1024 * 1024 },
   )
