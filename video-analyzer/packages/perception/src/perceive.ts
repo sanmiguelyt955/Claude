@@ -238,7 +238,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
       log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
       const { provider, value } = await describeWithFallback(
         providers,
-        { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION },
+        { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION, thinking: 'low' },
         { log, parse: (text) => parseWindowReply(text, w) },
       )
       log(`ventana ${n + 1} respondida por ${provider}`)

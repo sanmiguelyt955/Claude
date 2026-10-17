@@ -13,6 +13,11 @@ export type VisionRequest = {
   instruction: string
   /** Ask for a JSON reply (default). False for free-text answers. */
   json?: boolean
+  /**
+   * 'low' when the task is describing, not reasoning (frame windows): less
+   * thinking means a faster answer. Providers without the setting ignore it.
+   */
+  thinking?: 'low'
 }
 
 /** The speech preamble shared by every provider; empty for text-only calls. */

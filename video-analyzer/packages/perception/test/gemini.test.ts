@@ -5,6 +5,9 @@ import type { AddressInfo } from 'node:net'
 import { geminiModel, geminiProviders } from '../src/providers/gemini.ts'
 import { ProviderOverloadedError } from '../src/providers/types.ts'
 import { describeWithFallback } from '../src/chain.ts'
+import { writeFileSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 
 // A fake Gemini API: each model name in the URL picks a behaviour.
 const requests: Array<{ url: string; key: string | undefined; body: Record<string, unknown> }> = []
@@ -31,6 +34,11 @@ const server = http.createServer((req, res) => {
       res.writeHead(400)
       return res.end('{"error":{"code":400,"message":"bad request"}}')
     }
+    if (model === 'picky' && /thinkingConfig/.test(raw)) {
+      res.writeHead(400)
+      return res.end('{"error":{"code":400,"message":"Unknown name \\"thinkingConfig\\" at generation_config"}}')
+    }
+    if (model === 'picky') return sse(res, [textChunk('{"ok":true}')])
     if (model === 'silent') {
       res.writeHead(200, { 'content-type': 'text/event-stream' })
       return // never writes: the idle timeout must cut it
@@ -108,4 +116,37 @@ test('without a list, the defaults are models on Google’s current list', () =>
     'gemini:gemini-3.6-flash',
     'gemini:gemini-3.5-flash-lite',
   ])
+})
+
+const framePath = path.join(mkdtempSync(path.join(tmpdir(), 'gemini-frame-')), 'f.jpg')
+writeFileSync(framePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+const withFrames = { frames: [{ path: framePath, time: 1.5 }], transcript: '', instruction: 'describe', thinking: 'low' as const }
+
+test('frame windows go at medium resolution with little thinking', async () => {
+  requests.length = 0
+  await geminiModel('ok').describe(withFrames)
+  assert.deepEqual(requests[0]!.body.generationConfig, {
+    responseMimeType: 'application/json',
+    mediaResolution: 'MEDIA_RESOLUTION_MEDIUM',
+    thinkingConfig: { thinkingLevel: 'low' },
+  })
+  process.env.GEMINI_MEDIA_RESOLUTION = ''
+  try {
+    requests.length = 0
+    await geminiModel('ok').describe({ ...withFrames, thinking: undefined })
+    assert.deepEqual(requests[0]!.body.generationConfig, { responseMimeType: 'application/json' }, 'empty leaves Google defaults')
+  } finally {
+    delete process.env.GEMINI_MEDIA_RESOLUTION
+  }
+})
+
+test('a model that rejects a cost setting is asked again without it', async () => {
+  requests.length = 0
+  assert.equal(await geminiModel('picky').describe(withFrames), '{"ok":true}')
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests[1]!.body.generationConfig, { responseMimeType: 'application/json' })
+  // Any other 400 is still a real error, asked once.
+  requests.length = 0
+  await assert.rejects(geminiModel('bad').describe(withFrames), /HTTP 400/)
+  assert.equal(requests.length, 1)
 })

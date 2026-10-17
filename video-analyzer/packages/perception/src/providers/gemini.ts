@@ -46,7 +46,7 @@ export function geminiModel(model: string): VisionProvider {
   return {
     name,
     available: () => Boolean(process.env.GEMINI_API_KEY),
-    async describe({ frames, transcript, instruction, json = true }: VisionRequest) {
+    async describe({ frames, transcript, instruction, json = true, thinking }: VisionRequest) {
       const parts: unknown[] = []
       for (const f of frames) {
         parts.push({ text: `[t=${frameLabel(f.time)}]` })
@@ -55,15 +55,30 @@ export function geminiModel(model: string): VisionProvider {
       parts.push({ text: [...speechPreamble(transcript), instruction].join('\n\n') })
 
       const base = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com'
-      const events = await postSse(
-        name,
-        `${base}/v1beta/models/${model}:streamGenerateContent?alt=sse`,
-        { 'x-goog-api-key': process.env.GEMINI_API_KEY || '' },
-        {
-          contents: [{ role: 'user', parts }],
-          ...(json ? { generationConfig: { responseMimeType: 'application/json' } } : {}),
-        },
-      )
+      const resolution = frames.length ? mediaResolution() : ''
+      const generationConfig = (tuned: boolean) => ({
+        ...(json ? { responseMimeType: 'application/json' } : {}),
+        ...(tuned && resolution ? { mediaResolution: resolution } : {}),
+        ...(tuned && thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
+      })
+      const send = (tuned: boolean) =>
+        postSse(
+          name,
+          `${base}/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+          { 'x-goog-api-key': process.env.GEMINI_API_KEY || '' },
+          { contents: [{ role: 'user', parts }], generationConfig: generationConfig(tuned) },
+        )
+
+      let events: string[]
+      try {
+        events = await send(true)
+      } catch (err) {
+        // A model that does not take one of the cost settings rejects the
+        // whole request with a 400 naming it; the request is fine without it.
+        const tuned = Boolean(resolution || thinking)
+        if (!tuned || !/HTTP 400/.test(String(err)) || !/resolution|thinking/i.test(String(err))) throw err
+        events = await send(false)
+      }
 
       let text = ''
       for (const raw of events) {
@@ -83,6 +98,17 @@ export function geminiModel(model: string): VisionProvider {
       return text
     },
   }
+}
+
+/**
+ * Tokens per image. Gemini 3+ reads each picture at "high" (1,120 tokens) by
+ * default; "medium" (560) is where Google says reading text saturates, so on-
+ * screen text survives and a 100-frame window costs half. Set
+ * GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_LOW (280) to save more, or empty
+ * to leave Google's default.
+ */
+function mediaResolution(): string {
+  return (process.env.GEMINI_MEDIA_RESOLUTION ?? 'MEDIA_RESOLUTION_MEDIUM').trim()
 }
 
 export function geminiProviders(): VisionProvider[] {
