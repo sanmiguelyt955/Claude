@@ -1,0 +1,576 @@
+{
+ "accesscontextmanager": {
+  "iam": 18,
+  "networkconnectivity": 4,
+  "bigquery": 1,
+  "storage": 1
+ },
+ "aiplatform": {
+  "iam": 27,
+  "container": 7,
+  "storage": 126,
+  "artifactregistry": 9,
+  "bigquery": 67,
+  "discoveryengine": 16,
+  "spanner": 7,
+  "compute": 17,
+  "dns": 6,
+  "tpu": 2,
+  "secretmanager": 6,
+  "logging": 13,
+  "dataform": 3,
+  "cloudtrace": 7,
+  "bigtableadmin": 13,
+  "cloudkms": 1,
+  "cloudbuild": 2,
+  "dataplex": 2,
+  "pubsub": 1,
+  "run": 1,
+  "documentai": 3,
+  "networkconnectivity": 1,
+  "dataflow": 1
+ },
+ "alloydb": {
+  "compute": 2,
+  "sqladmin": 1,
+  "storage": 3,
+  "dataplex": 3,
+  "networkconnectivity": 6,
+  "cloudkms": 2
+ },
+ "apigateway": {
+  "iam": 10,
+  "run": 1,
+  "iap": 1
+ },
+ "apigee": {
+  "storage": 15,
+  "iam": 92,
+  "bigquery": 3,
+  "pubsub": 7,
+  "compute": 3,
+  "cloudkms": 9,
+  "accesscontextmanager": 1
+ },
+ "appengine": {
+  "iap": 3,
+  "storage": 7,
+  "iam": 1,
+  "artifactregistry": 2,
+  "compute": 5,
+  "cloudkms": 1,
+  "composer": 1,
+  "cloudbuild": 5,
+  "firestore": 1,
+  "servicemanagement": 4,
+  "cloudbilling": 1
+ },
+ "apphub": {
+  "container": 2,
+  "iam": 8
+ },
+ "artifactregistry": {
+  "iam": 9,
+  "cloudkms": 1,
+  "storage": 15,
+  "secretmanager": 1
+ },
+ "baremetalsolution": {},
+ "batch": {
+  "secretmanager": 4,
+  "compute": 6,
+  "logging": 4,
+  "storage": 4,
+  "oslogin": 1,
+  "pubsub": 2
+ },
+ "beyondcorp": {
+  "iam": 11,
+  "compute": 1,
+  "iap": 1,
+  "logging": 2,
+  "pubsub": 3
+ },
+ "bigquery": {
+  "storage": 21,
+  "iam": 57,
+  "cloudresourcemanager": 2,
+  "cloudkms": 10,
+  "logging": 2,
+  "firestore": 9,
+  "bigtableadmin": 14,
+  "aiplatform": 6,
+  "dataproc": 1
+ },
+ "bigquerydatatransfer": {
+  "bigquery": 20,
+  "dataplex": 3,
+  "secretmanager": 2,
+  "storage": 3,
+  "pubsub": 3
+ },
+ "bigqueryreservation": {
+  "iam": 14,
+  "bigquery": 9
+ },
+ "bigtableadmin": {
+  "cloudkms": 5,
+  "iam": 7,
+  "bigquery": 3
+ },
+ "billingbudgets": {
+  "cloudbilling": 3,
+  "iam": 3,
+  "monitoring": 2,
+  "pubsub": 2
+ },
+ "binaryauthorization": {
+  "container": 5,
+  "run": 1,
+  "cloudbuild": 2,
+  "iam": 9,
+  "artifactregistry": 1
+ },
+ "certificatemanager": {},
+ "cloudasset": {
+  "iam": 79,
+  "compute": 6,
+  "cloudresourcemanager": 4,
+  "cloudkms": 3,
+  "securitycenter": 1,
+  "bigtableadmin": 4,
+  "bigquery": 26,
+  "container": 4,
+  "storage": 11,
+  "pubsub": 4,
+  "networkconnectivity": 4,
+  "osconfig": 1
+ },
+ "cloudbilling": {
+  "iam": 12
+ },
+ "cloudbuild": {
+  "workflows": 1,
+  "iam": 8
+ },
+ "clouddeploy": {
+  "iam": 12,
+  "storage": 7,
+  "cloudbuild": 19,
+  "pubsub": 15,
+  "run": 22,
+  "container": 11,
+  "monitoring": 3
+ },
+ "cloudfunctions": {
+  "cloudbuild": 5,
+  "artifactregistry": 2,
+  "run": 10,
+  "storage": 11,
+  "iam": 8,
+  "eventarc": 3,
+  "cloudkms": 1,
+  "compute": 2,
+  "pubsub": 1
+ },
+ "cloudkms": {
+  "iam": 11
+ },
+ "cloudresourcemanager": {
+  "iam": 12,
+  "appengine": 1
+ },
+ "cloudscheduler": {
+  "run": 2,
+  "appengine": 8,
+  "cloudkms": 1,
+  "pubsub": 5
+ },
+ "cloudtasks": {
+  "cloudkms": 1,
+  "appengine": 16,
+  "iam": 15,
+  "run": 3
+ },
+ "cloudtrace": {
+  "appengine": 1
+ },
+ "composer": {
+  "storage": 7,
+  "container": 20,
+  "compute": 9,
+  "appengine": 3,
+  "sqladmin": 7,
+  "artifactregistry": 1,
+  "networkconnectivity": 1,
+  "cloudkms": 1
+ },
+ "compute": {
+  "run": 4,
+  "networkconnectivity": 31,
+  "monitoring": 2,
+  "storage": 18,
+  "iam": 40,
+  "cloudresourcemanager": 3,
+  "artifactregistry": 1,
+  "spanner": 1,
+  "bigquery": 1,
+  "pubsub": 1,
+  "logging": 3,
+  "appengine": 3,
+  "tpu": 4,
+  "iap": 3,
+  "dns": 2,
+  "container": 1,
+  "cloudkms": 1,
+  "cloudfunctions": 1,
+  "certificatemanager": 1,
+  "accesscontextmanager": 1
+ },
+ "container": {
+  "tpu": 4,
+  "privateca": 4,
+  "cloudkms": 7,
+  "compute": 96,
+  "monitoring": 4,
+  "logging": 4,
+  "secretmanager": 8,
+  "binaryauthorization": 3,
+  "pubsub": 4,
+  "bigquery": 4,
+  "storage": 9,
+  "iam": 3,
+  "cloudresourcemanager": 1,
+  "artifactregistry": 1,
+  "run": 4
+ },
+ "datacatalog": {
+  "iam": 23,
+  "storage": 12,
+  "dataplex": 24,
+  "spanner": 5,
+  "bigquery": 37,
+  "bigtableadmin": 3,
+  "aiplatform": 2,
+  "sqladmin": 4,
+  "pubsub": 9,
+  "dataproc": 8
+ },
+ "dataflow": {
+  "storage": 24,
+  "bigtableadmin": 2,
+  "compute": 21,
+  "cloudkms": 3,
+  "bigquery": 6,
+  "pubsub": 3,
+  "secretmanager": 2,
+  "spanner": 2,
+  "logging": 1,
+  "monitoring": 1,
+  "iam": 24
+ },
+ "dataform": {
+  "bigquery": 23,
+  "iam": 19,
+  "storage": 9,
+  "secretmanager": 3
+ },
+ "dataplex": {
+  "iam": 41,
+  "bigquery": 57,
+  "storage": 31,
+  "cloudkms": 1,
+  "dataproc": 6,
+  "logging": 1,
+  "datacatalog": 1,
+  "accesscontextmanager": 4
+ },
+ "dataproc": {
+  "container": 16,
+  "cloudkms": 4,
+  "compute": 36,
+  "storage": 17,
+  "iam": 8,
+  "cloudresourcemanager": 1
+ },
+ "datastream": {
+  "secretmanager": 11,
+  "spanner": 25,
+  "storage": 9,
+  "bigquery": 10,
+  "cloudkms": 1,
+  "compute": 1,
+  "container": 1
+ },
+ "dialogflow": {},
+ "discoveryengine": {
+  "aiplatform": 25,
+  "bigquery": 16,
+  "storage": 28,
+  "iam": 23,
+  "cloudbilling": 6,
+  "firestore": 6,
+  "sqladmin": 8,
+  "alloydb": 38,
+  "accesscontextmanager": 2,
+  "bigtableadmin": 9,
+  "spanner": 7,
+  "secretmanager": 2,
+  "compute": 3,
+  "datastream": 1,
+  "cloudkms": 3,
+  "batch": 1
+ },
+ "dns": {
+  "iam": 7,
+  "container": 8,
+  "logging": 1
+ },
+ "documentai": {
+  "storage": 36
+ },
+ "eventarc": {
+  "iam": 14,
+  "pubsub": 6,
+  "container": 6,
+  "cloudfunctions": 2,
+  "run": 8,
+  "storage": 2,
+  "compute": 1,
+  "dns": 1
+ },
+ "firebasehosting": {},
+ "firestore": {
+  "cloudkms": 2,
+  "storage": 2,
+  "appengine": 2
+ },
+ "gkebackup": {
+  "iam": 12,
+  "cloudkms": 1,
+  "container": 11
+ },
+ "gkehub": {
+  "cloudbuild": 1,
+  "container": 4,
+  "monitoring": 3,
+  "iam": 1
+ },
+ "healthcare": {
+  "bigquery": 19,
+  "logging": 21,
+  "storage": 34,
+  "iam": 27,
+  "pubsub": 19
+ },
+ "iam": {},
+ "iap": {
+  "iam": 19
+ },
+ "ids": {},
+ "language": {
+  "storage": 11,
+  "spanner": 1,
+  "tpu": 3
+ },
+ "logging": {
+  "iam": 14,
+  "bigquery": 21,
+  "storage": 5,
+  "compute": 5,
+  "sqladmin": 3,
+  "cloudtrace": 2,
+  "pubsub": 2,
+  "datastream": 1,
+  "cloudkms": 5,
+  "appengine": 3
+ },
+ "looker": {
+  "networkconnectivity": 2,
+  "storage": 3,
+  "bigquery": 1
+ },
+ "memcache": {
+  "compute": 3,
+  "redis": 3,
+  "apigee": 1,
+  "logging": 1,
+  "sqladmin": 1
+ },
+ "monitoring": {
+  "sqladmin": 3,
+  "compute": 6,
+  "run": 4,
+  "container": 7,
+  "appengine": 4,
+  "cloudfunctions": 1,
+  "logging": 1
+ },
+ "networkconnectivity": {
+  "compute": 3,
+  "iam": 14,
+  "dns": 2,
+  "spanner": 1
+ },
+ "networksecurity": {
+  "iam": 12,
+  "iap": 4,
+  "privateca": 2
+ },
+ "networkservices": {
+  "iam": 9,
+  "logging": 4,
+  "run": 2,
+  "eventarc": 1,
+  "dns": 1,
+  "artifactregistry": 4,
+  "networkconnectivity": 1,
+  "compute": 1
+ },
+ "notebooks": {
+  "iam": 7,
+  "compute": 8,
+  "storage": 3
+ },
+ "orgpolicy": {
+  "cloudresourcemanager": 5,
+  "compute": 1
+ },
+ "osconfig": {
+  "storage": 6,
+  "cloudresourcemanager": 1,
+  "compute": 1,
+  "logging": 1
+ },
+ "oslogin": {
+  "compute": 5,
+  "appengine": 1,
+  "run": 1,
+  "iam": 1
+ },
+ "privateca": {
+  "iam": 9,
+  "storage": 3,
+  "cloudkms": 4
+ },
+ "pubsub": {
+  "iam": 10,
+  "storage": 23,
+  "aiplatform": 3,
+  "cloudkms": 1,
+  "bigtableadmin": 5,
+  "bigquery": 6
+ },
+ "recaptchaenterprise": {
+  "iam": 1
+ },
+ "recommender": {
+  "iam": 37
+ },
+ "redis": {
+  "storage": 14,
+  "networkconnectivity": 2,
+  "iam": 2,
+  "compute": 4,
+  "bigquery": 2,
+  "sqladmin": 2,
+  "alloydb": 2,
+  "cloudresourcemanager": 2,
+  "bigtableadmin": 1,
+  "appengine": 1
+ },
+ "run": {
+  "iam": 27,
+  "storage": 34,
+  "cloudbuild": 14,
+  "cloudkms": 7,
+  "compute": 1,
+  "pubsub": 1,
+  "sqladmin": 4,
+  "artifactregistry": 45,
+  "binaryauthorization": 5,
+  "secretmanager": 9,
+  "iap": 2
+ },
+ "secretmanager": {
+  "iam": 10,
+  "sqladmin": 9,
+  "pubsub": 4,
+  "cloudkms": 2
+ },
+ "securitycenter": {},
+ "servicemanagement": {
+  "pubsub": 2,
+  "iam": 8,
+  "compute": 1,
+  "sqladmin": 3,
+  "logging": 1
+ },
+ "serviceusage": {
+  "sqladmin": 3,
+  "compute": 1,
+  "pubsub": 2,
+  "servicemanagement": 1,
+  "iam": 1,
+  "cloudasset": 1
+ },
+ "spanner": {
+  "cloudkms": 10,
+  "bigtableadmin": 1,
+  "iam": 6
+ },
+ "speech": {
+  "storage": 2
+ },
+ "sqladmin": {
+  "storage": 14,
+  "privateca": 5,
+  "compute": 5,
+  "appengine": 3,
+  "iam": 5,
+  "networkconnectivity": 7,
+  "monitoring": 1,
+  "secretmanager": 1,
+  "bigquery": 1,
+  "dataplex": 1,
+  "aiplatform": 1
+ },
+ "storage": {
+  "cloudkms": 6,
+  "iam": 15,
+  "pubsub": 4
+ },
+ "tpu": {
+  "compute": 3,
+  "cloudkms": 1
+ },
+ "translate": {
+  "storage": 19
+ },
+ "videointelligence": {
+  "storage": 14
+ },
+ "vision": {
+  "storage": 51
+ },
+ "vmmigration": {
+  "compute": 32,
+  "storage": 2,
+  "cloudkms": 1
+ },
+ "websecurityscanner": {
+  "iap": 5,
+  "securitycenter": 1,
+  "appengine": 1
+ },
+ "workflows": {},
+ "workstations": {
+  "compute": 28,
+  "iam": 9,
+  "artifactregistry": 3,
+  "logging": 2,
+  "storage": 1,
+  "cloudkms": 3,
+  "networkconnectivity": 1
+ }
+}
