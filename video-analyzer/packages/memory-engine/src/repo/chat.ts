@@ -37,3 +37,18 @@ export function addChatMessage(
 export function clearChatMessages(videoId: string, db: Db = getDb()): number {
   return db.prepare('DELETE FROM video_chat_messages WHERE video_id = ?').run(videoId).changes
 }
+
+/**
+ * The conversation as a Markdown document, for the "Exportar" button
+ * (memories.ai offers the same per chat). Timestamps the assistant cited
+ * stay as written, e.g. [1:02].
+ */
+export function chatToMarkdown(title: string, messages: Array<Pick<ChatMessageRow, 'role' | 'text' | 'provider' | 'created_at'>>): string {
+  const lines = [`# Chat: ${title}`, '']
+  for (const m of messages) {
+    const who = m.role === 'user' ? 'Tú' : `Asistente${m.provider ? ` (${m.provider})` : ''}`
+    lines.push(`**${who}** · ${m.created_at}`, '', m.text.trim(), '')
+  }
+  if (messages.length === 0) lines.push('_Sin mensajes._', '')
+  return lines.join('\n')
+}

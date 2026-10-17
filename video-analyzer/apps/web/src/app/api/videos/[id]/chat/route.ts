@@ -8,6 +8,7 @@ import {
   listChatMessages,
   addChatMessage,
   clearChatMessages,
+  chatToMarkdown,
 } from '@cva/memory-engine'
 import { askVideo, type ChatVideo } from '@cva/perception/chat'
 
@@ -53,10 +54,20 @@ function chatVideo(id: string, title: string, durationSeconds: number | null): C
   }
 }
 
-/** The conversation so far. */
-export async function GET(_request: Request, context: Params): Promise<NextResponse> {
+/** The conversation so far; `?format=md` downloads it as Markdown. */
+export async function GET(request: Request, context: Params): Promise<NextResponse> {
   const { id } = await context.params
-  if (!getVideo(id)) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  const video = getVideo(id)
+  if (!video) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  if (new URL(request.url).searchParams.get('format') === 'md') {
+    const file = `chat-${video.title.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 60) || id}.md`
+    return new NextResponse(chatToMarkdown(video.title, listChatMessages(id)), {
+      headers: {
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file)}`,
+      },
+    })
+  }
   return NextResponse.json({ messages: listChatMessages(id) })
 }
 

@@ -182,6 +182,11 @@ test('the chat history is stored per video and goes away with the video', { time
   assert.equal(chat[1]!.provider, 'claude')
   assert.throws(() => me.addChatMessage({ videoId: id, role: 'system' as 'user', text: 'x' }, db), /CHECK/)
 
+  const md = me.chatToMarkdown('chat', chat)
+  assert.match(md, /^# Chat: chat\n/)
+  assert.match(md, /\*\*Tú\*\* · .*\n\n¿Cuánto cuesta\?/)
+  assert.match(md, /\*\*Asistente \(claude\)\*\* · .*\n\n29 dólares \[0:20\]\./)
+
   assert.equal(me.clearChatMessages(id, db), 3)
   assert.equal(me.listChatMessages(id, db).length, 0)
 

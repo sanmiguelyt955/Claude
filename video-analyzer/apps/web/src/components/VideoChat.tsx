@@ -89,9 +89,14 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
           Pregunta lo que quieras sobre lo que se ve y se escucha. Las respuestas citan el momento del video.
         </p>
         {messages.length > 0 && (
-          <button type="button" onClick={clear} className="text-xs text-(--color-ink-soft) underline">
-            Borrar conversación
-          </button>
+          <div className="flex shrink-0 gap-3">
+            <a href={`/api/videos/${videoId}/chat?format=md`} className="text-xs text-(--color-ink-soft) underline">
+              Exportar
+            </a>
+            <button type="button" onClick={clear} className="text-xs text-(--color-ink-soft) underline">
+              Borrar conversación
+            </button>
+          </div>
         )}
       </div>
 
