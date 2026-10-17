@@ -16,15 +16,65 @@ export interface VisionProvider {
   describe(req: VisionRequest): Promise<string>
 }
 
-/** Saturation or quota: the chain should move on to the next provider. */
+/**
+ * Saturation, quota, timeout or a dropped connection: the request itself was
+ * fine, the provider just could not answer now. The chain moves on to the
+ * next provider and pauses this one (for `retryAfterMs` when the provider
+ * said how long, via Retry-After).
+ */
 export class ProviderOverloadedError extends Error {
-  constructor(provider: string, status: number | string, detail: string) {
-    super(`${provider} saturado (${status}): ${detail.slice(0, 200)}`)
+  constructor(
+    provider: string,
+    status: number | string,
+    detail: string,
+    public readonly retryAfterMs?: number,
+  ) {
+    super(`${provider} no disponible (${status}): ${detail.slice(0, 200)}`)
     this.name = 'ProviderOverloadedError'
   }
 }
 
-export const isOverloadStatus = (status: number) => status === 429 || status === 503 || status === 529
+// 529 is Anthropic's "overloaded"; 500/502/504 are transient on both APIs.
+const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504, 529])
+
+/** Retry-After as milliseconds: either delta-seconds or an HTTP date. */
+export function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const date = Date.parse(value)
+  return Number.isNaN(date) ? undefined : Math.max(0, date - Date.now())
+}
+
+/**
+ * POST JSON with a timeout, mapping every "try again later" outcome to
+ * ProviderOverloadedError so the chain can fall over. A real request error
+ * (bad image, bad key) is thrown as a plain Error and stops the job.
+ */
+export async function postJson(provider: string, url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
+  const timeoutMs = Number(process.env.VISION_TIMEOUT_MS ?? 240_000)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (err) {
+    const name = (err as Error).name
+    const reason = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'red'
+    throw new ProviderOverloadedError(provider, reason, String((err as Error).message))
+  }
+  if (!res.ok) {
+    const text = await res.text()
+    if (TRANSIENT_STATUS.has(res.status)) {
+      throw new ProviderOverloadedError(provider, res.status, text, parseRetryAfter(res.headers.get('retry-after')))
+    }
+    throw new Error(`${provider} HTTP ${res.status}: ${text.slice(0, 300)}`)
+  }
+  return res.json()
+}
 
 export function frameLabel(time: number): string {
   const m = Math.floor(time / 60)

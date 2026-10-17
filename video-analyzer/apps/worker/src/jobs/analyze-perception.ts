@@ -112,7 +112,8 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
       },
       db,
     )
-    setVideoStatus(video.id, 'failed', (error as Error).message, db)
+    // Status stays 'analyzing' so the retry passes the guard above;
+    // retryOrFailJob marks the video 'failed' once retries run out.
     throw error
   }
 }

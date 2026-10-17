@@ -85,8 +85,13 @@ export async function extractAudio(file: string, outWav: string): Promise<string
   return outWav
 }
 
-export async function probeDuration(file: string): Promise<number> {
+/** Duration and whether there is an audio track (silent/ASMR videos have none). */
+export async function probeMedia(file: string): Promise<{ duration: number; hasAudio: boolean }> {
   const bin = process.env.FFPROBE_PATH || 'ffprobe'
-  const { stdout } = await run(bin, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file])
-  return Number(String(stdout).trim()) || 0
+  const { stdout } = await run(bin, ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type', '-of', 'json', file])
+  const data = JSON.parse(String(stdout)) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string }> }
+  return {
+    duration: Number(data.format?.duration) || 0,
+    hasAudio: (data.streams ?? []).some((s) => s.codec_type === 'audio'),
+  }
 }
