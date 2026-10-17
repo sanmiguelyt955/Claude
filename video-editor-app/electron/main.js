@@ -59,6 +59,7 @@ async function boot() {
       serverUrl = await start({ port: 0, host: '127.0.0.1' });
     }
     await createWindow(serverUrl);
+    require('./updater').setupUpdates();
   } catch (err) {
     dialog.showErrorBox('No se pudo iniciar el editor', String(err && err.message || err));
     app.quit();

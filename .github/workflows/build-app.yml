@@ -1,5 +1,5 @@
-# Construye los instaladores de la app de escritorio en la nube (Mac y Windows).
-# Resultado: se descargan desde la pestaña Actions → la ejecución → "Artifacts".
+# Construye los instaladores de la app de escritorio (Mac y Windows) y publica una
+# versión nueva en Releases. La app instalada detecta esa versión y se actualiza sola.
 name: Construir app de escritorio
 
 on:
@@ -24,11 +24,9 @@ jobs:
           - os: macos-latest
             script: dist:mac
             artifact: editor-de-video-mac
-            pattern: '*.dmg'
           - os: windows-latest
             script: dist:win
             artifact: editor-de-video-windows
-            pattern: '*.exe'
     defaults:
       run:
         working-directory: video-editor-app
@@ -45,8 +43,7 @@ jobs:
         run: npm ci
 
       - name: Usar el FFmpeg incluido en la app
-        # Las pruebas y la app usan el mismo binario (ffmpeg-static, con drawtext),
-        # no el FFmpeg del sistema del runner.
+        # Las pruebas y la app usan el mismo binario (ffmpeg-static, con drawtext).
         shell: bash
         run: |
           echo "$(node -p "require('path').resolve(require('path').dirname(require('ffmpeg-static')))")" >> "$GITHUB_PATH"
@@ -58,6 +55,10 @@ jobs:
           ffmpeg -hide_banner -filters | grep -q drawtext && echo "drawtext OK"
           npm test
 
+      - name: Número de versión
+        # 1.0.<número de ejecución>: cada construcción es más nueva que la anterior.
+        run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version --allow-same-version
+
       - name: Generar instalador
         run: npm run ${{ matrix.script }}
 
@@ -65,6 +66,34 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: video-editor-app/release/${{ matrix.pattern }}
+          path: |
+            video-editor-app/release/*.dmg
+            video-editor-app/release/*.exe
+            video-editor-app/release/*.blockmap
+            video-editor-app/release/latest*.yml
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+  release:
+    name: Publicar versión
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Crear versión en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Editor de video 1.0.${{ github.run_number }}
+          body: Versión generada automáticamente. La app instalada se actualiza sola a partir de esta versión.
+          files: |
+            dist/*.dmg
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml
