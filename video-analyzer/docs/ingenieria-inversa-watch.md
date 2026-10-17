@@ -71,7 +71,8 @@ sin procesos huérfanos.
 
 Estado: el 1 y el 2 ya están en la app; el 3 ya lo usaba el motor Gemini
 de video completo (`packages/ai-router/src/upload.ts`); el 4 no hace falta
-porque el análisis local guarda un fotograma por segundo como mínimo.
+porque el análisis local mira un fotograma por segundo y solo descarta los
+que no cambian (si la imagen no cambia, no hay nada nuevo que ver).
 
 Lo que Video Analyzer ya hace mejor: escucha sin claves ni descargas grandes
 (nuestro Whisper), reintenta y cambia de modelo ante saturación, y guarda el
