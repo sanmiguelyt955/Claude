@@ -17,6 +17,7 @@ function configureEnvironment() {
   try {
     process.env.FFMPEG_PATH = binaryPath(require('ffmpeg-static'));
     process.env.FFPROBE_PATH = binaryPath(require('ffprobe-static').path);
+    process.env.VE_FONT_PATH = binaryPath(path.join(__dirname, '..', 'assets', 'fonts', 'Inter-Bold.otf'));
   } catch (_) {
     // Sin binarios empaquetados se usa el FFmpeg del sistema.
   }

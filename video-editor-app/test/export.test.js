@@ -86,7 +86,7 @@ test('exporta un proyecto completo (velocidad, transiciones, capas, audio, forma
   const project = fullProject(textFile);
   const expected = projectDuration(project);
   const out = path.join(tmp, 'full.mp4');
-  const args = buildFfmpegArgs(project, MEDIA, out);
+  const args = buildFfmpegArgs(project, MEDIA, out, { fontFile: path.join(__dirname, '..', 'assets', 'fonts', 'Inter-Bold.otf') });
   await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...args]);
 
   const info = probe(out);

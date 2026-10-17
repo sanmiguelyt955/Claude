@@ -24,32 +24,44 @@
   "build": {
     "appId": "com.sanmiguelyt955.editordevideo",
     "productName": "Editor de video",
-    "directories": { "output": "release" },
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "electron/**/*",
       "lib/**/*",
       "public/**/*",
       "server.js",
-      "package.json"
+      "package.json",
+      "assets/**/*"
     ],
     "asarUnpack": [
       "node_modules/ffmpeg-static/**/*",
-      "node_modules/ffprobe-static/**/*"
+      "node_modules/ffprobe-static/**/*",
+      "assets/**/*"
     ],
     "mac": {
       "category": "public.app-category.video",
-      "target": ["dmg"]
+      "target": [
+        "dmg"
+      ]
     },
     "win": {
-      "target": ["nsis"]
+      "target": [
+        "nsis"
+      ]
     },
     "linux": {
-      "target": ["AppImage"]
+      "target": [
+        "AppImage"
+      ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

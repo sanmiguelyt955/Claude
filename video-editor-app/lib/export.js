@@ -116,7 +116,8 @@ function audioChain(clip, { track, at }) {
   return parts;
 }
 
-function buildFfmpegArgs(project, media, outPath) {
+// opts.fontFile: ruta a una fuente (.ttf/.otf) para los textos. Sin ella, FFmpeg usa fontconfig.
+function buildFfmpegArgs(project, media, outPath, opts = {}) {
   const [W, H] = RATIOS[project.ratio] || RATIOS['16:9'];
   const fps = Math.round(Number(project.fps) || 30);
   const T = projectDuration(project);
@@ -204,8 +205,10 @@ function buildFfmpegArgs(project, media, outPath) {
         ? `:box=1:boxcolor=${hexToFf(clip.bg)}@${n(clip.bgOpacity)}:boxborderw=14`
         : '';
       const o = `t${clip.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+      const font = opts.fontFile ? `fontfile=${ffPath(opts.fontFile)}:` : '';
+      // expansion=none: el texto se escribe tal cual (un "%" no se interpreta como código).
       g.push(
-        `[${current}]drawtext=textfile=${ffPath(clip.textFile)}:fontsize=${size}:fontcolor=${hexToFf(clip.color)}:` +
+        `[${current}]drawtext=${font}expansion=none:textfile=${ffPath(clip.textFile)}:fontsize=${size}:fontcolor=${hexToFf(clip.color)}:` +
           `borderw=3:bordercolor=black${box}:x=(${POS_EXPR(clip.x, 'x')}-text_w/2):y=(${POS_EXPR(clip.y, 'y')}-text_h/2):` +
           `enable='between(t,${n(clip.at)},${n(clip.at + clip.dur)})'[${o}]`
       );

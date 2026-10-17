@@ -21,6 +21,8 @@ const FFPROBE = process.env.FFPROBE_PATH || 'ffprobe';
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
+// Fuente incluida para los textos (la app de escritorio la ubica fuera del .asar).
+const FONT_FILE = process.env.VE_FONT_PATH || path.join(ROOT, 'assets', 'fonts', 'Inter-Bold.otf');
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = process.env.VE_DATA_DIR || path.join(ROOT, 'data');
 const FILES = path.join(DATA, 'files');
@@ -318,7 +320,7 @@ async function handleExport(req, res) {
 
     const outName = `${crypto.randomUUID()}.mp4`;
     const outPath = path.join(EXPORTS, outName);
-    const args = buildFfmpegArgs(project, media, outPath);
+    const args = buildFfmpegArgs(project, media, outPath, { fontFile: FONT_FILE });
 
     await new Promise((resolve, reject) => {
       const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'error', ...args]);

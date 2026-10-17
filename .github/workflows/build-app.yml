@@ -44,23 +44,19 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
-      - name: Instalar FFmpeg (Mac)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-
-      - name: Instalar FFmpeg (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install ffmpeg -y --no-progress
-
-      - name: Diagnóstico de FFmpeg (drawtext)
+      - name: Usar el FFmpeg incluido en la app
+        # Las pruebas y la app usan el mismo binario (ffmpeg-static, con drawtext),
+        # no el FFmpeg del sistema del runner.
         shell: bash
         run: |
-          echo "== FFmpeg del sistema =="; (ffmpeg -version | head -1; ffmpeg -hide_banner -filters 2>/dev/null | grep -E "drawtext|freetype") || echo "sin drawtext"
-          echo "== FFmpeg incluido (ffmpeg-static) =="; BIN=$(node -p "require('ffmpeg-static')"); echo "$BIN"; ("$BIN" -hide_banner -filters 2>/dev/null | grep -E "drawtext|freetype") || echo "sin drawtext"
+          echo "$(node -p "require('path').resolve(require('path').dirname(require('ffmpeg-static')))")" >> "$GITHUB_PATH"
+          echo "$(node -p "require('path').resolve(require('path').dirname(require('ffprobe-static').path))")" >> "$GITHUB_PATH"
 
       - name: Probar el motor
-        run: npm test
+        shell: bash
+        run: |
+          ffmpeg -hide_banner -filters | grep -q drawtext && echo "drawtext OK"
+          npm test
 
       - name: Generar instalador
         run: npm run ${{ matrix.script }}
