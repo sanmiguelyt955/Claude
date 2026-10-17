@@ -53,6 +53,12 @@ jobs:
         shell: pwsh
         run: choco install ffmpeg -y --no-progress
 
+      - name: Diagnóstico de FFmpeg (drawtext)
+        shell: bash
+        run: |
+          echo "== FFmpeg del sistema =="; (ffmpeg -version | head -1; ffmpeg -hide_banner -filters 2>/dev/null | grep -E "drawtext|freetype") || echo "sin drawtext"
+          echo "== FFmpeg incluido (ffmpeg-static) =="; BIN=$(node -p "require('ffmpeg-static')"); echo "$BIN"; ("$BIN" -hide_banner -filters 2>/dev/null | grep -E "drawtext|freetype") || echo "sin drawtext"
+
       - name: Probar el motor
         run: npm test
 
