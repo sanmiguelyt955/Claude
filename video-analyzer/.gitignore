@@ -26,3 +26,7 @@ Thumbs.db
 
 # scratch temporal
 /*.cjs
+
+# Python
+__pycache__/
+*.pyc

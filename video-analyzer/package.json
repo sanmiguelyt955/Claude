@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p packages/memory-engine && tsc --noEmit -p packages/video-processor && tsc --noEmit -p packages/ai-router && tsc --noEmit -p packages/skill-engine && tsc --noEmit -p packages/vault-export && tsc --noEmit -p apps/worker && tsc --noEmit -p apps/web && tsc --noEmit -p packages/perception",
     "test:perception": "node --import tsx --test packages/perception/test/*.test.ts",
     "test:worker": "node --import tsx --test apps/worker/test/*.test.ts",
-    "test": "npm run test:perception && npm run test:worker"
+    "test": "npm run test:whisper && npm run test:perception && npm run test:worker",
+    "test:whisper": "python3 -m unittest discover -s packages/perception/scripts/tests -v"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
