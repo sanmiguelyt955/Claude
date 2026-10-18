@@ -1,3 +1,4 @@
+import { CLAUDE_MAX_IMAGES, evenlySpaced } from '../src/providers/claude.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -45,7 +46,7 @@ test('perceive runs frames, speech and windowed vision end to end', { timeout: 3
 
   const steps: Array<{ label: string; current?: number; total?: number }> = []
   const result = await perceive(video, work, { providers: [fakeVision], whisperModel: 'tiny', language: 'en', onProgress: (p) => steps.push(p) })
-  assert.deepEqual(steps.slice(0, 2).map((p) => p.label), ['Extrayendo fotogramas...', 'Transcribiendo el audio...'])
+  assert.equal(steps[0]!.label, 'Extrayendo fotogramas y transcribiendo el audio...')
   const last = steps.at(-1)!
   assert.equal(last.label, 'Escribiendo el resumen...')
   assert.equal(last.current, last.total! - 1, 'the bar never reads 100% before the summary is in')
@@ -216,4 +217,13 @@ test('perceive fails clearly without any vision key', { timeout: 300_000 }, asyn
     if (savedA) process.env.ANTHROPIC_API_KEY = savedA
     if (savedG) process.env.GEMINI_API_KEY = savedG
   }
+})
+
+test('Claude, as the fallback, sees an even sample of at most 100 frames', () => {
+  const frames = Array.from({ length: 300 }, (_, i) => i)
+  const sample = evenlySpaced(frames, CLAUDE_MAX_IMAGES)
+  assert.equal(sample.length, 100)
+  assert.equal(sample[0], 0)
+  assert.equal(sample.at(-1), 299)
+  assert.deepEqual(evenlySpaced([1, 2, 3], 100), [1, 2, 3])
 })

@@ -122,12 +122,12 @@ const framePath = path.join(mkdtempSync(path.join(tmpdir(), 'gemini-frame-')), '
 writeFileSync(framePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
 const withFrames = { frames: [{ path: framePath, time: 1.5 }], transcript: '', instruction: 'describe', thinking: 'low' as const }
 
-test('frame windows go at medium resolution with little thinking', async () => {
+test('frame windows go at low resolution with little thinking', async () => {
   requests.length = 0
   await geminiModel('ok').describe(withFrames)
   assert.deepEqual(requests[0]!.body.generationConfig, {
     responseMimeType: 'application/json',
-    mediaResolution: 'MEDIA_RESOLUTION_MEDIUM',
+    mediaResolution: 'MEDIA_RESOLUTION_LOW',
     thinkingConfig: { thinkingLevel: 'low' },
   })
   process.env.GEMINI_MEDIA_RESOLUTION = ''

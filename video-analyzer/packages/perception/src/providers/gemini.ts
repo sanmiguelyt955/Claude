@@ -101,14 +101,15 @@ export function geminiModel(model: string): VisionProvider {
 }
 
 /**
- * Tokens per image. Gemini 3+ reads each picture at "high" (1,120 tokens) by
- * default; "medium" (560) is where Google says reading text saturates, so on-
- * screen text survives and a 100-frame window costs half. Set
- * GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_LOW (280) to save more, or empty
- * to leave Google's default.
+ * Tokens per image. Gemini 3+ reads each picture at "high" (1,100 tokens,
+ * measured) by default; "low" (264) still read small on-screen clock text
+ * exactly in a 300-frame test, so windows carry three times the frames for
+ * the same tokens as 100 at "medium" (527). Set
+ * GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_MEDIUM for fine print, or empty to
+ * leave Google's default.
  */
 function mediaResolution(): string {
-  return (process.env.GEMINI_MEDIA_RESOLUTION ?? 'MEDIA_RESOLUTION_MEDIUM').trim()
+  return (process.env.GEMINI_MEDIA_RESOLUTION ?? 'MEDIA_RESOLUTION_LOW').trim()
 }
 
 export function geminiProviders(): VisionProvider[] {

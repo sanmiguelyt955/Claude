@@ -13,8 +13,18 @@ export type FrameOptions = {
   fps: number
   /** Keep a frame only when it differs this much from the previous kept one (0..1). */
   sceneThreshold: number
-  /** Always keep one frame every N seconds, so the model is never blind between scene changes. */
+  /**
+   * Keep at least one frame every N seconds, so the model is never blind
+   * between scene changes. The real interval shrinks on shorter videos (see
+   * keyframeBudget), down to every frame of the source.
+   */
   keyframeEverySeconds: number
+  /**
+   * Keyframes to spread over the whole video: a 1-minute clip gets them at
+   * the source rate (30 fps), a 15-minute one every 0.5 s. Scene changes are
+   * kept on top of these, up to maxFrames.
+   */
+  keyframeBudget: number
   /** Hard cap on frames kept, spread evenly over the video if exceeded. */
   maxFrames: number
   /** Output width in px; height follows the aspect ratio. */
@@ -32,7 +42,8 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
   fps: 120,
   sceneThreshold: 0.03,
   keyframeEverySeconds: 1,
-  maxFrames: 1200,
+  keyframeBudget: 1800,
+  maxFrames: 3600,
   width: 768,
   dedupThreshold: 2,
   maxGapSeconds: 10,
@@ -64,7 +75,9 @@ export async function extractFrames(
   // Sampling above the video's own frame rate only makes FFmpeg duplicate
   // frames (a 30 fps video read at 120 fps is four copies of each) and score
   // every copy for scene changes, which made long videos crawl.
-  const fps = Math.min(opts.fps, (await sourceFps(file)) ?? opts.fps)
+  const [rate, { duration }] = await Promise.all([sourceFps(file), probeMedia(file)])
+  const fps = Math.min(opts.fps, rate ?? opts.fps)
+  const keyframeSeconds = Math.min(opts.keyframeEverySeconds, Math.max(1 / fps, duration / opts.keyframeBudget))
 
   // -fps_mode passthrough keeps exactly the selected frames (no duplicates
   // to fill the timeline). It replaced -vsync 0, which FFmpeg 9 removed.
@@ -73,7 +86,7 @@ export async function extractFrames(
   // 1 s keyframes of a static shot are otherwise all sent).
   const graph = [
     `[0:v]fps=${fps}`,
-    `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.max(1, Math.round(fps * opts.keyframeEverySeconds))}))'`,
+    `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.max(1, Math.round(fps * keyframeSeconds))}))'`,
     'showinfo',
     'split=2[big][small];',
   ].join(',') + `[big]scale=${opts.width}:-2[jpg];[small]scale=${THUMB}:${THUMB},format=rgb24[thumb]`

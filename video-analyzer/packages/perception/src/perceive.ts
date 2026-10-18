@@ -15,8 +15,13 @@ export function defaultVisionProviders(): VisionProvider[] {
   return [...geminiProviders(), claude]
 }
 
-/** Claude accepts at most 100 images per request; keep every window under it. */
-export const WINDOW_FRAMES = 100
+/**
+ * Frames per request. At low media resolution (264 tokens each, measured with
+ * countTokens) 300 frames are ~80k tokens, and Gemini answers in about 8 s
+ * while still reading small on-screen text. Claude, as the fallback, sees an
+ * even sample of 100 of them.
+ */
+export const WINDOW_FRAMES = 300
 
 export type PerceiveOptions = {
   frameOptions?: FrameOptions
@@ -215,42 +220,52 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const wantsSpeakers = hasAudio && (opts.diarize ?? process.env.DIARIZATION !== '0') && !alreadyLabelled
   const needsAudio = needsWhisper || wantsSpeakers
   log(needsAudio ? 'extrayendo frames y audio' : 'extrayendo frames')
-  progress({ label: 'Extrayendo fotogramas...' })
-  const [frames] = await Promise.all([
-    extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS),
-    needsAudio ? extractAudio(file, wavPath) : Promise.resolve(null),
-  ])
-  if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
-
-  let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
-  if (captions) {
-    log(`${frames.length} frames únicos; ${captions.segments.length} frases de los subtítulos de la plataforma, sin transcribir`)
-    speech = captions
-  } else if (hasAudio && checkpoint.transcript) {
-    log(`${frames.length} frames únicos; transcripción retomada del intento anterior`)
-    speech = checkpoint.transcript
-  } else if (hasAudio) {
-    log(`${frames.length} frames únicos; transcribiendo audio`)
-    progress({ label: 'Transcribiendo el audio...' })
-    speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
-    checkpoint.transcript = speech
-    save()
-  }
-
-  if (wantsSpeakers && speech.segments.length > 0) {
-    progress({ label: 'Separando quién habla...' })
-    try {
-      speech = await diarize(wavPath, speech)
-      const voices = new Set(speech.segments.map((s) => s.speaker).filter(Boolean)).size
-      log(voices ? `${voices} ${voices === 1 ? 'voz' : 'voces'} distintas` : 'no se pudo distinguir ninguna voz')
-    } catch (err) {
-      // The labels are a bonus: without them the analysis is still complete.
-      log(`no se pudo separar quién habla: ${(err as Error).message.slice(0, 200)}`)
-      speech = { ...speech, segments: speech.segments.map((s) => ({ ...s, speaker: null })) }
+  progress({ label: needsWhisper ? 'Extrayendo fotogramas y transcribiendo el audio...' : 'Extrayendo fotogramas...' })
+  // Frames and speech are independent until the windows need both, so they
+  // run side by side: the frame pass no longer waits for Whisper or the other
+  // way round. The audio extraction itself takes seconds.
+  const audio = needsAudio ? extractAudio(file, wavPath) : Promise.resolve(null)
+  const framesJob = extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS)
+  const speechJob = (async (): Promise<Transcript> => {
+    await audio
+    let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
+    if (captions) {
+      log(`${captions.segments.length} frases de los subtítulos de la plataforma, sin transcribir`)
+      speech = captions
+    } else if (hasAudio && checkpoint.transcript) {
+      log('transcripción retomada del intento anterior')
+      speech = checkpoint.transcript
+    } else if (hasAudio) {
+      log('transcribiendo audio')
+      speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
+      checkpoint.transcript = speech
+      save()
     }
-    checkpoint.transcript = speech
-    save()
-  }
+
+    if (wantsSpeakers && speech.segments.length > 0) {
+      progress({ label: 'Separando quién habla...' })
+      try {
+        speech = await diarize(wavPath, speech)
+        const voices = new Set(speech.segments.map((s) => s.speaker).filter(Boolean)).size
+        log(voices ? `${voices} ${voices === 1 ? 'voz' : 'voces'} distintas` : 'no se pudo distinguir ninguna voz')
+      } catch (err) {
+        // The labels are a bonus: without them the analysis is still complete.
+        log(`no se pudo separar quién habla: ${(err as Error).message.slice(0, 200)}`)
+        speech = { ...speech, segments: speech.segments.map((s) => ({ ...s, speaker: null })) }
+      }
+      checkpoint.transcript = speech
+      save()
+    }
+    return speech
+  })()
+  // Settle both before failing, so a frame error never leaves Whisper running unobserved.
+  const [framesResult, speechResult] = await Promise.allSettled([framesJob, speechJob])
+  if (framesResult.status === 'rejected') throw framesResult.reason
+  if (speechResult.status === 'rejected') throw speechResult.reason
+  const frames = framesResult.value
+  const speech = speechResult.value
+  if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
+  log(`${frames.length} frames únicos`)
 
   const transcript: AnalysisResult['transcript'] = speech.segments.map((s, i) => ({
     index: i,
