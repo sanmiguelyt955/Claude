@@ -1,6 +1,9 @@
 import { CLAUDE_MAX_IMAGES, evenlySpaced } from '../src/providers/claude.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+
+// These tests cover the basic scene analysis; the V6.5 record has its own (perceive-v6.test.ts).
+process.env.PERCEPTION_PROTOCOL = 'basico'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'

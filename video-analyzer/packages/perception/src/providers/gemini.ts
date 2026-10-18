@@ -27,7 +27,7 @@ export function geminiVisionModels(): string[] {
 }
 
 type StreamChunk = {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> }; finishReason?: string }>
   error?: { code?: number; status?: string; message?: string }
 }
 
@@ -46,9 +46,11 @@ type StreamChunk = {
 const FRAME_TOKENS: Record<string, number> = { MEDIA_RESOLUTION_LOW: 272, MEDIA_RESOLUTION_MEDIUM: 535, '': 1110 }
 
 /** Input tokens a request will cost, close enough to keep under the per-minute limit. */
-export function estimateTokens({ frames, transcript, instruction }: VisionRequest): number {
+export function estimateTokens({ frames, transcript, instruction, audio }: VisionRequest): number {
   const perFrame = FRAME_TOKENS[frames.length ? mediaResolution() : ''] ?? FRAME_TOKENS['']!
-  return frames.length * perFrame + Math.ceil(((transcript ?? '').length + instruction.length) / 3) + 200
+  // Gemini counts audio at 32 tokens per second.
+  const sound = audio ? Math.ceil(audio.seconds * 32) : 0
+  return frames.length * perFrame + sound + Math.ceil(((transcript ?? '').length + instruction.length) / 3) + 200
 }
 
 /** One budget per model, shared by every window and the summary. Free tier: 5 RPM, 250k input TPM. */
@@ -70,11 +72,15 @@ export function geminiModel(model: string): VisionProvider {
     readyInMs: (req) => budgetOf(model).readyInMs(estimateTokens(req)),
     reserve: (req) => budgetOf(model).reserve(estimateTokens(req)),
     available: () => Boolean(process.env.GEMINI_API_KEY),
-    async describe({ frames, transcript, instruction, json = true, thinking }: VisionRequest) {
+    async describe({ frames, transcript, instruction, json = true, thinking, audio, schema, maxOutputTokens }: VisionRequest) {
       const parts: unknown[] = []
       for (const f of frames) {
         parts.push({ text: `[t=${frameLabel(f.time)}]` })
         parts.push({ inline_data: { mime_type: 'image/jpeg', data: (await readFile(f.path)).toString('base64') } })
+      }
+      if (audio) {
+        parts.push({ text: '[audio del tramo]' })
+        parts.push({ inline_data: { mime_type: audio.mimeType, data: (await readFile(audio.path)).toString('base64') } })
       }
       parts.push({ text: [...speechPreamble(transcript), instruction].join('\n\n') })
 
@@ -82,6 +88,8 @@ export function geminiModel(model: string): VisionProvider {
       const resolution = frames.length ? mediaResolution() : ''
       const generationConfig = (tuned: boolean) => ({
         ...(json ? { responseMimeType: 'application/json' } : {}),
+        ...(tuned && json && schema ? { responseSchema: schema } : {}),
+        ...(maxOutputTokens ? { maxOutputTokens } : {}),
         ...(tuned && resolution ? { mediaResolution: resolution } : {}),
         ...(tuned && thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
       })
@@ -99,12 +107,13 @@ export function geminiModel(model: string): VisionProvider {
       } catch (err) {
         // A model that does not take one of the cost settings rejects the
         // whole request with a 400 naming it; the request is fine without it.
-        const tuned = Boolean(resolution || thinking)
-        if (!tuned || !/HTTP 400/.test(String(err)) || !/resolution|thinking/i.test(String(err))) throw err
+        const tuned = Boolean(resolution || thinking || schema)
+        if (!tuned || !/HTTP 400/.test(String(err)) || !/resolution|thinking|schema/i.test(String(err))) throw err
         events = await send(false)
       }
 
       let text = ''
+      let truncated = false
       for (const raw of events) {
         const chunk = JSON.parse(raw) as StreamChunk
         if (chunk.error) {
@@ -118,7 +127,11 @@ export function geminiModel(model: string): VisionProvider {
         for (const p of chunk.candidates?.[0]?.content?.parts ?? []) {
           if (!p.thought) text += p.text ?? ''
         }
+        if (chunk.candidates?.[0]?.finishReason === 'MAX_TOKENS') truncated = true
       }
+      // A reply cut by the length limit is not a valid record: say so instead
+      // of handing on half a JSON that fails to parse somewhere later.
+      if (truncated) throw new Error(`${name}: respuesta cortada por el límite de longitud (MAX_TOKENS)`)
       return text
     },
   }

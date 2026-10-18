@@ -11,10 +11,11 @@ import { formatDuration, formatSize } from '@/lib/format'
 import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
 import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
-type Tab = 'resumen' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
+type Tab = 'resumen' | 'registro' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
 
 const TABS: Array<{ value: Tab; label: string }> = [
   { value: 'resumen', label: 'Resumen' },
+  { value: 'registro', label: 'Registro V6.5' },
   { value: 'chat', label: 'Chat' },
   { value: 'timeline', label: 'Timeline' },
   { value: 'transcripcion', label: 'Transcripción' },
@@ -746,6 +747,10 @@ export function VideoDetailClient({ id }: { id: string }) {
             </div>
           )}
 
+          {tab === 'registro' && (
+            <ProtocolRecord markdown={summary?.protocol_record_md ?? null} title={video.title} />
+          )}
+
           {tab === 'detalles' && (
             <dl className="divide-y divide-(--color-line) rounded-(--radius-card) border border-(--color-line)">
               {[
@@ -804,5 +809,54 @@ export function VideoDetailClient({ id }: { id: string }) {
         </div>
       )}
     </main>
+  )
+}
+
+/**
+ * The Protocolo V6.5 record, readable in the app: headings, bold labels and
+ * bullets from its Markdown, the rest as it is (the record is mostly labelled
+ * lines). Downloadable as the .md that goes to Obsidian.
+ */
+function ProtocolRecord({ markdown, title }: { markdown: string | null; title: string }) {
+  if (!markdown) {
+    return (
+      <p className="text-sm text-(--color-ink-soft)">
+        Este análisis no tiene registro V6.5. Vuelve a analizar el video para generarlo.
+      </p>
+    )
+  }
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }))
+    const a = Object.assign(document.createElement('a'), { href: url, download: `${title.replace(/\.[a-z0-9]{2,4}$/i, '')} — registro V6.5.md` })
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  const frontmatter = markdown.startsWith('---\n') ? markdown.slice(0, markdown.indexOf('\n---', 4) + 4) : ''
+  const body = markdown.slice(frontmatter.length)
+  const bold = (line: string) =>
+    line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+      part.startsWith('**') && part.endsWith('**') ? <strong key={i}>{part.slice(2, -2)}</strong> : part,
+    )
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={download} className="btn-ghost">
+          Descargar registro (.md)
+        </button>
+        <span className="text-xs text-(--color-ink-soft)">{Math.round(markdown.length / 1024)} KB · se exporta igual a Obsidian</span>
+      </div>
+      {frontmatter && (
+        <pre className="overflow-x-auto rounded-xl bg-(--color-surface-2) p-3 text-xs">{frontmatter}</pre>
+      )}
+      <div className="flex flex-col gap-1 text-sm leading-relaxed">
+        {body.split('\n').map((line, i) => {
+          if (line.startsWith('# ')) return <h2 key={i} className="mt-2 text-lg font-semibold">{line.slice(2)}</h2>
+          if (line.startsWith('## ')) return <h3 key={i} className="mt-4 border-t border-(--color-line) pt-3 font-semibold">{line.slice(3)}</h3>
+          if (line.startsWith('- ')) return <p key={i} className="pl-4 -indent-3">• {bold(line.slice(2))}</p>
+          if (!line.trim()) return <div key={i} className="h-1" />
+          return <p key={i} className="whitespace-pre-wrap break-words">{bold(line)}</p>
+        })}
+      </div>
+    </div>
   )
 }

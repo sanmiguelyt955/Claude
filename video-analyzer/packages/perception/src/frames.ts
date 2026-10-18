@@ -7,6 +7,8 @@ const run = promisify(execFile)
 const ffmpegBin = () => process.env.FFMPEG_PATH || 'ffmpeg'
 
 export type Frame = { path: string; time: number }
+/** A shot change found by FFmpeg's scdet: its instant and score (0-100). */
+export type Cut = { time: number; score: number }
 
 export type FrameOptions = {
   /** Frame grid to sample from (the video is read at this rate, then filtered). */
@@ -69,6 +71,24 @@ export async function extractFrames(
   outDir: string,
   opts: FrameOptions = DEFAULT_FRAME_OPTIONS,
 ): Promise<Frame[]> {
+  return (await extractFramesAndCuts(file, outDir, opts)).frames
+}
+
+/** scdet score above which a frame change counts as a cut (FFmpeg's default is 10). */
+const CUT_THRESHOLD = Number(process.env.CUT_THRESHOLD ?? 10) || 10
+
+/**
+ * The frames plus every cut in the video, measured in the same decoding pass:
+ * a 160 px copy of each source frame goes through scdet, so the shot map
+ * (protocol 9.4) comes from FFmpeg [META], not from the model's guess. In
+ * planar RGB, not the default luma: a cut between two colours of equal
+ * brightness (red to green) scored 0 on luma and 50 in RGB.
+ */
+export async function extractFramesAndCuts(
+  file: string,
+  outDir: string,
+  opts: FrameOptions = DEFAULT_FRAME_OPTIONS,
+): Promise<{ frames: Frame[]; cuts: Cut[] }> {
   await rm(outDir, { recursive: true, force: true })
   await mkdir(outDir, { recursive: true })
 
@@ -84,8 +104,8 @@ export async function extractFrames(
   // One pass, two outputs of the same selected frames: the JPGs the model
   // sees and a raw 16x16 RGB strip used to drop near-duplicates (the
   // 1 s keyframes of a static shot are otherwise all sent).
-  const graph = [
-    `[0:v]fps=${fps}`,
+  const graph = `[0:v]split=2[fr][sc];[sc]scale=160:-2,format=gbrp,scdet=threshold=${CUT_THRESHOLD},nullsink;` + [
+    `[fr]fps=${fps}`,
     `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.max(1, Math.round(fps * keyframeSeconds))}))'`,
     'showinfo',
     'split=2[big][small];',
@@ -103,7 +123,9 @@ export async function extractFrames(
   )
 
   // showinfo writes one line per kept frame to stderr, in output order.
-  const times = [...String(stderr).matchAll(/pts_time:([\d.]+)/g)].map((m) => Number(m[1]))
+  const log = String(stderr)
+  const times = [...log.matchAll(/^\[Parsed_showinfo[^\n]*?pts_time:([\d.]+)/gm)].map((m) => Number(m[1]))
+  const cuts = [...log.matchAll(/lavfi\.scd\.score: ([\d.]+), lavfi\.scd\.time: ([\d.]+)/g)].map((m) => ({ score: Number(m[1]), time: Number(m[2]) }))
   const files = (await readdir(outDir)).filter((f) => f.endsWith('.jpg')).sort()
   const count = Math.min(files.length, times.length)
 
@@ -129,7 +151,7 @@ export async function extractFrames(
     await Promise.all(dropped.map((f) => unlink(f.path)))
     frames = frames.filter((_, i) => keep.has(i))
   }
-  return frames
+  return { frames, cuts }
 }
 
 /**

@@ -26,3 +26,12 @@ export interface SkillEngineProvider {
   readonly model: string
   complete(prompt: string, schema?: unknown): Promise<{ text: string; usage: import('./types.js').TokenUsage }>
 }
+export {
+  PROTOCOL_VERSION,
+  V6_PHASE1_SCHEMA,
+  V6_PHASE3_SCHEMA,
+  getProtocolText,
+  mmss,
+  renderV6Record,
+} from './protocol-v6.js'
+export type { V6Phase1, V6Phase3, VideoMeta } from './protocol-v6.js'

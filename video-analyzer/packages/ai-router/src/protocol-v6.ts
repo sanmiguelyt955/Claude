@@ -595,8 +595,21 @@ export function renderV6Record(input: {
   merged: AnalysisResult
   phase3: V6Phase3
   windowLimits: string[]
+  /**
+   * How the model reached the source (protocol section 1). The Gemini
+   * engine sends the whole file: "directo". The perception engine sends
+   * sampled frames and the full audio: "muestreado", with its detail.
+   */
+  access?: { acceso: string; detalle: string; cobertura: string }
+  /** Texts on screen gathered window by window (perception), when phase 1 has none. */
+  textosPantalla?: V6Phase1['textos_pantalla']
 }): string {
   const { meta, phase1: p1, merged, windowLimits } = input
+  const access = input.access ?? {
+    acceso: 'directo',
+    detalle: 'directo continuo: Gemini recibe el archivo completo, muestreado por Google a una frecuencia fija de fotogramas.',
+    cobertura: 'VIS, AUD y TXT: 100 % de la duración.',
+  }
   const guarded = guardObservation(input.phase3)
   const p3 = guarded.p3
   const f = p1.ficha
@@ -612,9 +625,7 @@ export function renderV6Record(input: {
     // The app only ingests video files; audio and transcript sources are
     // covered by the protocol itself when it is used outside the app.
     'fuente_tipo: video',
-    // Gemini receives the whole file (sampled at a fixed fps), never a
-    // derived extraction — protocol v6.4 "acceso directo continuo".
-    'acceso: directo',
+    `acceso: ${access.acceso}`,
     'alcance: completo',
     `tramo_original: ${yamlValue(`00:00–${mmss(meta.durationSeconds)}`)}`,
     `duracion: ${yamlValue(f.duracion)}`,
@@ -639,6 +650,9 @@ export function renderV6Record(input: {
     `DURACIÓN MEDIA DE PLANO: ${ft.duracion_media_plano}`,
     `PLANO MÁS LARGO: ${ft.plano_mas_largo}`,
     `PLANO MÁS CORTO: ${ft.plano_mas_corto}`,
+    `ALCANCE Y TRAMO: video completo, 00:00–${mmss(meta.durationSeconds)}. Tiempos del registro: del archivo, que es el original.`,
+    `ACCESO: ${access.detalle}`,
+    `MAPA DE COBERTURA: ${access.cobertura}`,
     '',
     '**Triaje**',
     '',
@@ -681,8 +695,9 @@ export function renderV6Record(input: {
   out.push('## 9.6 Transcripción literal', '', renderTranscript(merged), '')
 
   out.push('## 9.7 Texto en pantalla', '')
-  if (!p1.textos_pantalla.length) out.push('No aparece texto en pantalla.', '')
-  for (const t of p1.textos_pantalla) {
+  const textos = p1.textos_pantalla.length ? p1.textos_pantalla : (input.textosPantalla ?? [])
+  if (!textos.length) out.push('No aparece texto en pantalla.', '')
+  for (const t of textos) {
     out.push(
       `**${t.id}** — aparece ${t.aparece} / desaparece ${t.desaparece} (${t.duracion})`,
       `TIPO: ${t.tipo}`,

@@ -50,6 +50,7 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
       onAttempt: (a) => recordProviderRequest(video.id, job.id, a, db),
       captions,
       checkpoint,
+      title: video.title,
       onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
     })
 
@@ -80,6 +81,8 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
           fullSummary: result.summary.full_summary,
           topics: result.summary.topics,
           language: result.summary.language,
+          protocolVersion: result.protocolRecord?.version ?? null,
+          protocolRecordMd: result.protocolRecord?.markdown ?? null,
         },
         scenes: result.scenes.map((s) => ({
           index: s.index,

@@ -18,6 +18,15 @@ export type VisionRequest = {
    * thinking means a faster answer. Providers without the setting ignore it.
    */
   thinking?: 'low'
+  /**
+   * Sound the model should hear with the frames (the window's audio, for the
+   * protocol's AUD channel). Providers that cannot hear ignore it.
+   */
+  audio?: { path: string; mimeType: string; seconds: number }
+  /** JSON schema the reply must follow (Gemini responseSchema); ignored elsewhere. */
+  schema?: unknown
+  /** Longest reply allowed, in tokens; the provider default otherwise. */
+  maxOutputTokens?: number
 }
 
 /** The speech preamble shared by every provider; empty for text-only calls. */

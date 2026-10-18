@@ -7,9 +7,9 @@ export {
   defaultVisionProviders,
   WINDOW_FRAMES,
 } from './perceive.js'
-export type { PerceiveOptions, PerceptionCheckpoint } from './perceive.js'
+export type { PerceiveOptions, PerceptionCheckpoint, PerceptionResult } from './perceive.js'
 export { describeWithFallback, shouldFallback } from './chain.js'
-export { extractFrames, extractAudio, probeMedia, DEFAULT_FRAME_OPTIONS } from './frames.js'
+export { extractFrames, extractFramesAndCuts, extractAudio, probeMedia, DEFAULT_FRAME_OPTIONS } from './frames.js'
 export type { Frame, FrameOptions } from './frames.js'
 export { dedupFrames } from './frames.js'
 export { transcribe } from './transcribe.js'

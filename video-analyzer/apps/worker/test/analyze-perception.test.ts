@@ -3,6 +3,9 @@
 // real Claude provider code, the fallback chain and the persistence all run.
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+
+// These tests cover the basic scene analysis; the V6.5 record has its own (perceive-v6.test.ts).
+process.env.PERCEPTION_PROTOCOL = 'basico'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'

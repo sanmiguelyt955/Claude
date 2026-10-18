@@ -32,13 +32,14 @@ def run_propio(wav: str, model: str, language: str | None, beam_size: int, fallb
     return transcribe(wav, model=model, language=language, beam_size=beam_size, temperatures=temperatures)
 
 
-def split_sentences(words: list[dict], max_seconds: float = 15.0, pause: float = 0.8) -> list[dict]:
+def split_sentences(words: list[dict], max_seconds: float = 8.0, pause: float = 0.8) -> list[dict]:
     """Words ({"start", "end", "word"}) regrouped into sentence-sized segments.
 
     Batched faster-whisper returns one segment per ~30 s chunk, too coarse for
     the timeline, the player jumps and the speaker labels. A segment ends at
     sentence punctuation, at a pause longer than `pause`, or once it runs
-    past `max_seconds`."""
+    past `max_seconds` (8 s: the protocol V6.5 limit for one transcript line,
+    so a long line cannot hide the words it skipped)."""
     out: list[dict] = []
     current: list[dict] = []
 
@@ -92,8 +93,12 @@ def run_faster_whisper_on(wav: str, model: str, language: str | None, beam_size:
     chosen = pick_device(device)
     if chosen == "cuda":
         add_cuda_dll_dirs()
+        # On the card there is room for the best model: large-v3-turbo in
+        # int8_float16 fits a 4 GB laptop GPU and transcribes better than
+        # small does on the CPU. WHISPER_GPU_MODEL= (empty) keeps `model`.
+        gpu_model = os.environ.get("WHISPER_GPU_MODEL", "large-v3-turbo") or model
         try:
-            out = run_faster_whisper(wav, model, language, beam_size, "cuda", compute_type or "float16")
+            out = run_faster_whisper(wav, gpu_model, language, beam_size, "cuda", compute_type or "int8_float16")
             return {**out, "device": "cuda"}
         except Exception as err:  # missing CUDA libraries, out of memory...
             print(f"la gráfica falló ({str(err)[:200]}); transcribiendo en el procesador", file=sys.stderr)
@@ -116,7 +121,9 @@ def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: in
         pipeline = BatchedInferencePipeline(model=fw)
         segments, info = pipeline.transcribe(
             audio, language=language, beam_size=beam_size, word_timestamps=True,
-            batch_size=int(os.environ.get("WHISPER_BATCH_SIZE", "8")),
+            # 4, not 8: on 4 CPU cores batch 4 was ~12% faster on 15 min of
+            # English and 10 min of Spanish (REA-measured, 18 Oct 2026).
+            batch_size=int(os.environ.get("WHISPER_BATCH_SIZE", "4")),
         )
     else:
         # Silero VAD only drops silences over 2 s by default (faster-whisper

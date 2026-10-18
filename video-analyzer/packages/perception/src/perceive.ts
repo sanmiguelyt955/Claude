@@ -2,7 +2,8 @@ import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import type { AnalysisResult } from '@cva/ai-router'
 import { captionCoverage, MIN_CAPTION_COVERAGE } from './captions.js'
-import { extractAudio, extractFrames, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
+import { extractAudio, extractFramesAndCuts, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
+import { buildV6Record, PROTOCOL_VERSION, type V6Checkpoint } from './v6/record.js'
 import { transcribe, type Transcript } from './transcribe.js'
 import { diarize } from './diarize.js'
 import { describeWithFallback, type FallbackOptions } from './chain.js'
@@ -25,6 +26,15 @@ export const WINDOW_FRAMES = 300
 
 export type PerceiveOptions = {
   frameOptions?: FrameOptions
+  /**
+   * "v6" (default, PERCEPTION_PROTOCOL): the full Protocolo V6.5 record —
+   * second-by-second timeline with image, sound, on-screen text and camera,
+   * entities, shots, synthesis — plus the library scenes. "basico": scenes
+   * only, one request per window and one for the summary.
+   */
+  protocol?: 'v6' | 'basico'
+  /** Video title for the record's header. */
+  title?: string
   /** Order = priority. Defaults to defaultVisionProviders(); unconfigured ones are skipped. */
   providers?: VisionProvider[]
   whisperModel?: string
@@ -67,7 +77,12 @@ export type PerceptionCheckpoint = {
   version: 1
   transcript?: Transcript
   windows: Record<string, { scenes: Scene[]; elements: Element[] }>
+  /** Phases of the V6.5 record already answered. */
+  v6?: V6Checkpoint
 }
+
+/** The analysis plus, under protocol v6, the full record as Markdown. */
+export type PerceptionResult = AnalysisResult & { protocolRecord?: { version: string; markdown: string } }
 
 /** Reads a checkpoint back from the jobs table; anything else (e.g. the Gemini engine's) is ignored. */
 export function parseCheckpoint(json: string | null | undefined): PerceptionCheckpoint | undefined {
@@ -226,7 +241,7 @@ function windowsOf(frames: Frame[], duration: number) {
  * Speech is passed to the vision model as text, so it works for models
  * that cannot hear, and the transcript is kept verbatim in the result.
  */
-export async function perceive(file: string, workDir: string, opts: PerceiveOptions = {}): Promise<AnalysisResult> {
+export async function perceive(file: string, workDir: string, opts: PerceiveOptions = {}): Promise<PerceptionResult> {
   const log = opts.log ?? (() => {})
   const progress = opts.onProgress ?? (() => {})
   const providers = opts.providers ?? defaultVisionProviders()
@@ -235,6 +250,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     version: 1,
     transcript: opts.checkpoint?.transcript,
     windows: { ...opts.checkpoint?.windows },
+    v6: opts.checkpoint?.v6 ? { ...opts.checkpoint.v6, windows: { ...opts.checkpoint.v6.windows } } : undefined,
   }
   const save = () => opts.onCheckpoint?.(checkpoint)
   await mkdir(workDir, { recursive: true })
@@ -257,7 +273,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   // run side by side: the frame pass no longer waits for Whisper or the other
   // way round. The audio extraction itself takes seconds.
   const audio = needsAudio ? extractAudio(file, wavPath) : Promise.resolve(null)
-  const framesJob = extractFrames(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS)
+  const framesJob = extractFramesAndCuts(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS)
   const speechJob = (async (): Promise<Transcript> => {
     await audio
     let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
@@ -295,10 +311,32 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const [framesResult, speechResult] = await Promise.allSettled([framesJob, speechJob])
   if (framesResult.status === 'rejected') throw framesResult.reason
   if (speechResult.status === 'rejected') throw speechResult.reason
-  const frames = framesResult.value
+  const { frames, cuts } = framesResult.value
   const speech = speechResult.value
   if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
-  log(`${frames.length} frames únicos`)
+  log(`${frames.length} frames únicos, ${cuts.length} cortes`)
+
+  if ((opts.protocol ?? process.env.PERCEPTION_PROTOCOL ?? 'v6') === 'v6') {
+    checkpoint.v6 ??= { windows: {} }
+    const { result, markdown } = await buildV6Record({
+      title: opts.title ?? path.basename(file),
+      file,
+      workDir,
+      duration,
+      hasAudio,
+      wavPath,
+      frames,
+      cuts,
+      speech,
+      providers,
+      checkpoint: checkpoint.v6,
+      save,
+      log,
+      progress,
+      onAttempt: opts.onAttempt,
+    })
+    return { ...result, protocolRecord: { version: PROTOCOL_VERSION, markdown } }
+  }
 
   const transcript: AnalysisResult['transcript'] = speech.segments.map((s, i) => ({
     index: i,

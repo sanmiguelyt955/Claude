@@ -42,6 +42,10 @@ export type VideoSummary = {
   full_summary: string
   topics_json: string
   language: string | null
+  /** "v6.5" when the analysis produced the full protocol record. */
+  protocol_version?: string | null
+  /** The full Protocolo V6.5 record as Markdown (9.0 to 9.14). */
+  protocol_record_md?: string | null
 }
 
 export type SceneDetail = {
