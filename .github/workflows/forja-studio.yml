@@ -1,0 +1,30 @@
+name: forja-studio
+
+on:
+  push:
+    paths:
+      - "forja-studio/**"
+      - ".github/workflows/forja-studio.yml"
+  pull_request:
+    paths:
+      - "forja-studio/**"
+      - ".github/workflows/forja-studio.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: forja-studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: forja-studio/package-lock.json
+      - run: npm ci
+      - run: npm test

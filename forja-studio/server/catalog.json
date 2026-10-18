@@ -1,0 +1,163 @@
+{
+  "_comment": "Catálogo de modelos. 'providers' indica cómo mapear cada modelo a cada proveedor: endpoint (fal) o model (kie), 'with_media' para la variante que acepta referencias, 'inputs' para el campo destino de cada rol de media y 'params' para renombrar/formatear parámetros ({\"to\": nombre, \"template\": \"{v}s\"}). Los ids de proveedor cambian con frecuencia: verifícalos en fal.ai/models y kie.ai/market.",
+  "models": [
+    {
+      "id": "flux_schnell",
+      "name": "FLUX.1 Schnell",
+      "type": "image",
+      "description": "Texto a imagen muy rápido y barato, ideal para iterar.",
+      "cost": 1,
+      "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+      "params": [{ "name": "num_images", "label": "Imágenes", "type": "number", "min": 1, "max": 4, "default": 1, "multiplies_cost": true }],
+      "media": [],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/flux/schnell", "params": { "aspect_ratio": { "to": "image_size", "map": { "1:1": "square_hd", "16:9": "landscape_16_9", "9:16": "portrait_16_9", "4:3": "landscape_4_3", "3:4": "portrait_4_3" } } } }
+      }
+    },
+    {
+      "id": "nano_banana",
+      "name": "Nano Banana",
+      "type": "image",
+      "description": "Generación y edición con referencias (consistencia de producto y personaje).",
+      "cost": 4,
+      "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+      "params": [{ "name": "num_images", "label": "Imágenes", "type": "number", "min": 1, "max": 4, "default": 1, "multiplies_cost": true }],
+      "media": [{ "role": "image_references", "label": "Referencias", "max": 4 }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/nano-banana", "with_media": "fal-ai/nano-banana/edit", "inputs": { "image_references": "image_urls" } },
+        "kie": { "model": "google/nano-banana", "with_media": "google/nano-banana-edit", "inputs": { "image_references": "image_urls" }, "params": { "aspect_ratio": { "to": "image_size" } } }
+      }
+    },
+    {
+      "id": "seedream_v4",
+      "name": "Seedream 4",
+      "type": "image",
+      "description": "Imágenes de alta resolución con texto legible y edición por referencias.",
+      "cost": 3,
+      "aspect_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+      "params": [{ "name": "num_images", "label": "Imágenes", "type": "number", "min": 1, "max": 4, "default": 1, "multiplies_cost": true }],
+      "media": [{ "role": "image_references", "label": "Referencias", "max": 6 }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/bytedance/seedream/v4/text-to-image", "with_media": "fal-ai/bytedance/seedream/v4/edit", "inputs": { "image_references": "image_urls" }, "params": { "aspect_ratio": { "to": "image_size", "map": { "1:1": "square_hd", "16:9": "landscape_16_9", "9:16": "portrait_16_9", "4:3": "landscape_4_3", "3:4": "portrait_4_3" } } } },
+        "kie": { "model": "bytedance/seedream-v4-text-to-image", "with_media": "bytedance/seedream-v4-edit", "inputs": { "image_references": "image_urls" }, "params": { "aspect_ratio": { "to": "image_size" }, "num_images": { "to": "max_images" } } }
+      }
+    },
+    {
+      "id": "flux_kontext",
+      "name": "FLUX Kontext Pro",
+      "type": "image",
+      "description": "Edición de una imagen por instrucciones de texto.",
+      "cost": 5,
+      "aspect_ratios": ["1:1", "16:9", "9:16"],
+      "params": [],
+      "media": [{ "role": "image", "label": "Imagen a editar", "max": 1, "required": true }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/flux-pro/kontext", "inputs": { "image": "image_url" } }
+      }
+    },
+    {
+      "id": "kling_2_1",
+      "name": "Kling 2.1",
+      "type": "video",
+      "description": "Vídeo cinematográfico; con imagen inicial anima tu foto.",
+      "cost_per_second": 6,
+      "aspect_ratios": ["16:9", "9:16", "1:1"],
+      "params": [{ "name": "duration", "label": "Duración (s)", "type": "select", "options": [5, 10], "default": 5 }],
+      "media": [{ "role": "start_image", "label": "Imagen inicial", "max": 1 }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/kling-video/v2.1/master/text-to-video", "with_media": "fal-ai/kling-video/v2.1/standard/image-to-video", "inputs": { "start_image": "image_url" }, "params": { "duration": { "to": "duration", "template": "{v}" } } },
+        "kie": { "model": "kling/v2-1-master-text-to-video", "with_media": "kling/v2-1-standard", "inputs": { "start_image": "image_url" }, "params": { "duration": { "to": "duration", "template": "{v}" } } }
+      }
+    },
+    {
+      "id": "seedance_lite",
+      "name": "Seedance 1.0 Lite",
+      "type": "video",
+      "description": "Vídeo rápido y económico, buen movimiento de cámara.",
+      "cost_per_second": 3,
+      "aspect_ratios": ["16:9", "9:16", "1:1", "4:3", "3:4"],
+      "params": [
+        { "name": "duration", "label": "Duración (s)", "type": "select", "options": [5, 10], "default": 5 },
+        { "name": "resolution", "label": "Resolución", "type": "select", "options": ["480p", "720p", "1080p"], "default": "720p" }
+      ],
+      "media": [{ "role": "start_image", "label": "Imagen inicial", "max": 1 }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/bytedance/seedance/v1/lite/text-to-video", "with_media": "fal-ai/bytedance/seedance/v1/lite/image-to-video", "inputs": { "start_image": "image_url" }, "params": { "duration": { "to": "duration", "template": "{v}" } } },
+        "kie": { "model": "bytedance/v1-lite-text-to-video", "with_media": "bytedance/v1-lite-image-to-video", "inputs": { "start_image": "image_url" }, "params": { "duration": { "to": "duration", "template": "{v}" } } }
+      }
+    },
+    {
+      "id": "veo3_fast",
+      "name": "Veo 3 Fast",
+      "type": "video",
+      "description": "Vídeo con audio nativo (voces, ambiente) en 8 segundos.",
+      "cost_per_second": 10,
+      "aspect_ratios": ["16:9", "9:16"],
+      "params": [
+        { "name": "duration", "label": "Duración (s)", "type": "select", "options": [8], "default": 8 },
+        { "name": "generate_audio", "label": "Audio nativo", "type": "boolean", "default": true }
+      ],
+      "media": [{ "role": "start_image", "label": "Imagen inicial", "max": 1 }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/veo3/fast", "with_media": "fal-ai/veo3/fast/image-to-video", "inputs": { "start_image": "image_url" }, "params": { "duration": { "to": "duration", "template": "{v}s" } } }
+      }
+    },
+    {
+      "id": "wan_2_2",
+      "name": "Wan 2.2",
+      "type": "video",
+      "description": "Modelo abierto de vídeo, económico.",
+      "cost_per_second": 2,
+      "aspect_ratios": ["16:9", "9:16", "1:1"],
+      "params": [{ "name": "duration", "label": "Duración (s)", "type": "select", "options": [5], "default": 5 }],
+      "media": [],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/wan/v2.2-a14b/text-to-video", "params": { "duration": { "drop": true } } },
+        "kie": { "model": "wan/2-2-a14b-text-to-video-turbo", "params": { "duration": { "drop": true } } }
+      }
+    },
+    {
+      "id": "tts_multilingual",
+      "name": "Voz multilingüe (ElevenLabs)",
+      "type": "audio",
+      "description": "Texto a voz natural en más de 29 idiomas.",
+      "cost": 2,
+      "aspect_ratios": [],
+      "params": [{ "name": "voice", "label": "Voz", "type": "select", "options": ["Rachel", "Aria", "Roger", "Sarah", "Charlie", "George"], "default": "Rachel" }],
+      "media": [],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/elevenlabs/tts/multilingual-v2", "params": { "prompt": { "to": "text" } } },
+        "kie": { "model": "elevenlabs/text-to-speech-multilingual-v2", "params": { "prompt": { "to": "text" } } }
+      }
+    },
+    {
+      "id": "image_upscale",
+      "name": "Upscale de imagen",
+      "type": "image",
+      "description": "Aumenta resolución y detalle de una imagen existente.",
+      "cost": 2,
+      "prompt": "optional",
+      "aspect_ratios": [],
+      "params": [],
+      "media": [{ "role": "image", "label": "Imagen", "max": 1, "required": true }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/clarity-upscaler", "inputs": { "image": "image_url" } }
+      }
+    },
+    {
+      "id": "remove_background",
+      "name": "Quitar fondo",
+      "type": "image",
+      "description": "Recorta el sujeto con fondo transparente.",
+      "cost": 1,
+      "prompt": "none",
+      "aspect_ratios": [],
+      "params": [],
+      "media": [{ "role": "image", "label": "Imagen", "max": 1, "required": true }],
+      "providers": {
+        "fal": { "endpoint": "fal-ai/birefnet", "inputs": { "image": "image_url" } },
+        "kie": { "model": "recraft/remove-background", "inputs": { "image": "image" } }
+      }
+    }
+  ]
+}

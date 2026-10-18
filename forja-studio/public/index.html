@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Forja Studio</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%274%27 fill=%27%23ff6a3d%27/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&family=Space+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark"></span>Forja</div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="image" class="active">Imagen</button>
+      <button data-tab="video">Vídeo</button>
+      <button data-tab="audio">Audio</button>
+      <button data-tab="library">Biblioteca</button>
+    </nav>
+    <div class="account">
+      <span class="badge" id="provider-badge"></span>
+      <span class="credits" id="credits" title="Créditos"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="composer" id="composer">
+      <label class="field">
+        <span>Modelo</span>
+        <select id="model"></select>
+        <small id="model-desc"></small>
+      </label>
+      <div id="media-slots"></div>
+      <label class="field" id="prompt-field">
+        <span>Prompt</span>
+        <textarea id="prompt" rows="5" placeholder="Describe lo que quieres crear…"></textarea>
+      </label>
+      <div class="field" id="ratio-field">
+        <span>Formato</span>
+        <div class="chips" id="ratios"></div>
+      </div>
+      <div id="params"></div>
+      <p class="error" id="form-error" hidden></p>
+      <button class="generate" id="generate">Generar <span id="cost"></span></button>
+    </section>
+
+    <section class="feed">
+      <div class="feed-head">
+        <h1 id="feed-title">Tus creaciones</h1>
+      </div>
+      <div class="grid" id="grid"></div>
+      <p class="empty" id="empty" hidden>Todavía no hay nada aquí. Escribe un prompt y pulsa Generar.</p>
+    </section>
+  </main>
+
+  <template id="card-tpl">
+    <article class="card">
+      <div class="media"></div>
+      <div class="meta">
+        <div class="row"><strong class="model"></strong><span class="status"></span></div>
+        <p class="prompt"></p>
+        <div class="row actions"></div>
+      </div>
+    </article>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>
