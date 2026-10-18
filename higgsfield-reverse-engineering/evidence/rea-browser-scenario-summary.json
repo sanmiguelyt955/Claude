@@ -1,0 +1,100 @@
+{
+ "evidence_id": "ev_f07c05c70d1f5a2350ca44514e7a63028dcc73c08730d58696e899783fe9bef0",
+ "operation": "capture_browser_scenario",
+ "provider": {
+  "id": "rea-playwright-browser-scenario",
+  "name": "REA Playwright browser scenario capture provider",
+  "version": "1"
+ },
+ "pages": [
+  "https://higgsfield.ai/generate",
+  "https://higgsfield.ai/ai/video",
+  "https://higgsfield.ai/pricing",
+  "https://higgsfield.ai/marketing-studio",
+  "https://higgsfield.ai/canvas",
+  "https://higgsfield.ai/mcp",
+  "https://higgsfield.ai/audio",
+  "https://higgsfield.ai/ai-influencer-studio"
+ ],
+ "event_counts": {
+  "request": 1024,
+  "response": 1022,
+  "request-failed": 2,
+  "console": 30,
+  "request-finished": 1021,
+  "page-error": 1,
+  "request-unfinished": 1
+ },
+ "requests_by_origin": {
+  "https://assets.higgsfield.ai": 992,
+  "https://static.higgsfield.ai": 15,
+  "https://higgsfield.ai": 13,
+  "https://clerk.higgsfield.ai": 2,
+  "https://static.cloudflareinsights.com": 2
+ },
+ "requests_by_type": {
+  "script": 962,
+  "stylesheet": 29,
+  "image": 18,
+  "other": 5,
+  "font": 5,
+  "document": 2,
+  "ping": 1,
+  "media": 1,
+  "xhr": 1
+ },
+ "errors_and_401s": [
+  {
+   "step": 2,
+   "text": "Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings.",
+   "url": null
+  },
+  {
+   "step": 2,
+   "text": "Failed to load resource: the server responded with a status of 401 ()",
+   "url": "https://fnf-api-gw.higgsfield.ai/fnf/subscriptions/bundle/unlim-catalog"
+  },
+  {
+   "step": 2,
+   "text": "Failed to load resource: the server responded with a status of 401 ()",
+   "url": "https://fnf-api-gw.higgsfield.ai/fnf/user/features"
+  },
+  {
+   "step": 2,
+   "text": "Failed to load resource: the server responded with a status of 401 ()",
+   "url": "https://fnf-api-gw.higgsfield.ai/fnf/workspaces/settings"
+  },
+  {
+   "step": 4,
+   "text": "Failed to load resource: the server responded with a status of 401 ()",
+   "url": "https://fnf-api-gw.higgsfield.ai/fnf/workspaces/settings"
+  },
+  {
+   "step": 6,
+   "text": "Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin",
+   "url": "https://cdn.platform.openai.com/deployments/watchwood/watchwood.js"
+  },
+  {
+   "step": 10,
+   "text": "Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin",
+   "url": "https://cdn.platform.openai.com/deployments/watchwood/watchwood.js"
+  },
+  {
+   "step": 16,
+   "text": "Failed to load resource: net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin",
+   "url": "https://cdn.platform.openai.com/deployments/watchwood/watchwood.js"
+  }
+ ],
+ "limitations": [
+  "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+  "Network content is retained only when selected; Playwright response-body bytes are API results and are not guaranteed to match wire bytes.",
+  "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+  "Network content reads settle within 5 seconds each and the observer does not request bodies from unfinished responses.",
+  "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+  "Storage values are hashed only after declared-secret redaction.",
+  "Shared-context network capture excludes requests without a known root or descendant Page frame.",
+  "Network collection reached its 1024-transaction resource budget; further transactions were omitted.",
+  "Some network requests had not completed when capture ended; later activity is unknown.",
+  "CDP attachment cannot recover pre-attach events or guarantee launch-time context options."
+ ]
+}

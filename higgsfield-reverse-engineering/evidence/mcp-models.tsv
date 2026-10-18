@@ -1,0 +1,130 @@
+id	name	provider	output	supports_unlim	media_roles	params
+soul_2	Higgsfield Soul 2.0	Higgsfield	image	True	image	quality,style_id,soul_id
+soul_cinematic	Soul Cinema	Higgsfield	image	False	image	quality,soul_id
+gpt_image_2	GPT Image 2	OpenAI	image	True	image	resolution,quality
+cinematic_studio_2_5	Cinema Studio Image 2.5	Higgsfield	image	False	image	resolution
+marketing_studio_image	Marketing Studio Image	Higgsfield	image	False	image	resolution
+ms_image	DTC Ads	Higgsfield	image	False	image	style_id,brand_kit_id,resolution,quality,batch_size,product_ids,folder_id
+image_auto	Auto	Higgsfield	image	False	image	
+autosprite	AutoSprite Animation	Higgsfield	image	False	image	kind,name,video_tier,frame_count,frame_size,remove_bg,with_sound,is_humanoid
+soul_cast	Soul Cast	Higgsfield	image	False		budget
+soul_location	Soul Location	Higgsfield	image	False		
+cinematic_studio_3_0	Cinema Studio Video 3.0	Higgsfield	video	False	end_image,image,start_image	resolution,genre,generate_audio
+cinematic_studio_video	Cinema Studio Video	Higgsfield	video	False	end_image,image,start_image	slow_motion,sound
+cinematic_studio_video_v2	Cinema Studio Video	Higgsfield	video	False	end_image,image,start_image	genre,mode,sound,speedramp,multi_shots,multi_shot_mode,cfg_scale,preset_id
+marketing_studio_video	Marketing Studio	Higgsfield	video	False	end_image,image,start_image	resolution,generate_audio,mode,folder_id,width,height,avatar_ids,product_ids,assets,hook_id,setting_id,ad_reference_id
+higgsfield_preset	Higgsfield Preset	Higgsfield	video	False	image	folder_id,preset_id
+sam_3_3d	SAM 3 3D Objects	Meta	3d	False	image	detection_threshold,export_textured_glb,seed
+image_to_3d	Image to 3D	Meshy	3d	False	image	should_texture,enable_rigging,enable_animation,should_remesh,texture_prompt,texture_image_url,target_polycount,topology,symmetry_mode,enable_pbr,pose_mode,rigging_height_meters,animation_action_id,enable_safety_checker,seed
+multi_image_to_3d	Multi-Image to 3D	Meshy	3d	False	image	should_texture,enable_rigging,enable_animation,should_remesh,texture_prompt,texture_image_url,target_polycount,topology,symmetry_mode,enable_pbr,pose_mode,rigging_height_meters,animation_action_id,enable_safety_checker,seed
+3d_rigging	3D Rigging	Meshy	3d	False		model_url,height_meters,enable_animation,animation_action_id,enable_safety_checker
+soul_v2	Higgsfield Soul 2.0	Higgsfield	image	True	image	quality,style_id,soul_id
+meshy_image_to_3d	Image to 3D	Meshy	3d	False	image	should_texture,enable_rigging,enable_animation,should_remesh,texture_prompt,texture_image_url,target_polycount,topology,symmetry_mode,enable_pbr,pose_mode,rigging_height_meters,animation_action_id,enable_safety_checker,seed
+meshy_multi_image_to_3d	Multi-Image to 3D	Meshy	3d	False	image	should_texture,enable_rigging,enable_animation,should_remesh,texture_prompt,texture_image_url,target_polycount,topology,symmetry_mode,enable_pbr,pose_mode,rigging_height_meters,animation_action_id,enable_safety_checker,seed
+meshy_rigging	3D Rigging	Meshy	3d	False		model_url,height_meters,enable_animation,animation_action_id,enable_safety_checker
+z_image	Z Image	Tongyi-MAI	image	False		
+nano_banana	Nano Banana	Google	image	True	image_references	
+nano_banana_pro	Nano Banana Pro	Google	image	True	image_references	resolution
+nano_banana_2_shots	Nano Banana Pro		image	False	image_references	
+nano_banana_2	Nano Banana 2	Google	image	True	image_references,mask	resolution,is_inpaint
+nano_banana_2_1	Nano Banana 2.1	Google	image	False	image_references,mask,video_references	resolution,is_inpaint,thinking_level,enable_web_search,enable_image_search,seed
+nano_banana_2_lite	Nano Banana 2 Lite	Google	image	False	image_references,mask	resolution,thinking,is_inpaint
+seedream_v4_5	Seedream 4.5	Bytedance	image	True	image_references	quality
+flux_2	FLUX.2	Black Forest Labs	image	True	image_references	resolution,variant
+flux_2_pro_outpaint	FLUX.2 Pro Outpaint	Black Forest Labs	image	False	image_references	expand_top,expand_bottom,expand_left,expand_right,folder_id
+flux_3_image	FLUX 3 Image	Black Forest Labs	image	False	image_references	resolution,batch_size,folder_id
+flux_3_video	FLUX 3 Video	Black Forest Labs	video	False	end_image,image_references,start_image,video_references	duration,resolution,generate_audio
+flux_3_video_edit	FLUX 3 Video Edit	Black Forest Labs	video	False	video_references	folder_id
+flux_kontext	Flux Kontext	Black Forest Labs	image	False	image_references	
+kling_omni_image	Kling O1 Image	Kling	image	True	image_references	resolution
+openai_hazel	OpenAI Hazel	OpenAI	image	False	image_references	quality
+gpt_image_2_5	GPT Image 2.5	OpenAI	image	False	image_references	variant,quality,resolution,background
+soul_cinema_studio	soul_cinema_studio		image	False	image_references	quality,style_id,custom_reference_id,enhance_prompt
+seedream_v5_lite	Seedream 5.0 Lite	Bytedance	image	True	image_references	quality
+seedream_5_0_flash	Seedream 5.0 Flash	Bytedance	image	False	image_references	resolution,width,height
+seedream_v5_pro	Seedream 5.0 Pro	Bytedance	image	True	image_references	resolution,width,height,remove_bg,is_inpaint
+3d_jutsu_angles	3D Jutsu Angles	Bytedance	image	False	image_references	resolution,width,height,remove_bg,is_inpaint
+grok_image	Grok Image	xAI	image	False	image_references	resolution,mode
+grok_image_2_0	Grok Image 2.0	xAI	image	False	image_references	resolution,quality
+ideogram_4_5	Ideogram 4.5	Ideogram	image	False	image_references,mask	resolution,quality,magic_prompt,seed,batch_size
+grok_video_v15	Grok Video 1.5	xAI	video	False	audio_references,image_references,start_image	resolution,duration
+grok_video_v15_lite	Grok Imagine Video 1.5 Lite	xAI	video	False	start_image	resolution,duration
+recraft_v4_1	Recraft V4.1	Recraft	image	False		resolution,model_type,colors,background_color
+recraft_v4_styles	Recraft V4 Styles	Recraft	image	False		style_id,resolution,style_match
+seed_audio	Seed Audio 1.0	ByteDance	audio	True	audio_references,image_references	format,sample_rate,speech_rate,loudness_rate,pitch_rate,voice_type,voice_id
+qwen_audio_tts	Qwen Audio 3.0 TTS Flash	Alibaba Cloud	audio	False		voice_type,voice_id,instruction,language,format,sample_rate,volume,speech_rate,pitch_rate,seed,batch_size
+elevenlabs_v4	Eleven v4	ElevenLabs	audio	False		dialogue,stability,similarity_boost,batch_size
+elevenlabs_v4_turbo	Eleven v4 Turbo	ElevenLabs	audio	False		dialogue,stability,similarity_boost,batch_size
+sonilo_music	Sonilo Music	FAL	audio	False		duration
+mirelo_text_to_audio	Mirelo Text to Audio	FAL	audio	True		duration
+inworld_text_to_speech	Inworld Text to Speech	FAL	audio	True		voice
+text2speech_v2	Text to Speech V2	Higgsfield	audio	True		variant,voice_type,voice_id
+image_background_remover	Image Background Remover		image	False	image_references	
+video_background_remover	Video Background Remover		video	False	video_references	
+voice_change	voice_change		video	False	input_video	voice_id,voice_type,folder_id
+dubbing	dubbing		video	False	input_video	target_language,folder_id
+sync_so	Sync Lipsync 3		video	False	input_audio,input_video	sync_mode,folder_id
+outpaint	Outpaint		image	False	image_references	folder_id
+minimax_hailuo	Minimax Hailuo	Hailuo	video	False	end_image,start_image	variant,duration,resolution
+minimax_h3	MiniMax H3	MiniMax	video	False	audio_references,end_image,image_references,start_image,video_references	duration,resolution,batch_size,folder_id
+minimax_h3_max	MiniMax H3 Max	MiniMax	video	False	audio_references,end_image,image_references,start_image,video_references	duration,resolution,batch_size,folder_id
+wan2_6	Wan 2.6 Video	Wan	video	False	audio_references,image_references,video_references	quality,duration
+seedance1_5	Seedance 1.5 Pro	Bytedance	video	False	end_image,start_image	duration,resolution,generate_audio
+seedance_2_0	Seedance 2.0	Bytedance	video	True	audio_references,end_image,image_references,start_image,video_references	duration,resolution,mode,bitrate_mode,genre,generate_audio
+seedance_2_0_mini	Seedance 2.0 Mini	Bytedance	video	True	audio_references,end_image,image_references,start_image,video_references	duration,resolution,bitrate_mode,genre,generate_audio
+seedance_2_5	Seedance 2.5	Bytedance	video	False	audio_references,end_image,image_references,start_image,video_references	mode,duration,resolution,generate_audio,bitrate_mode,extension_mode,draft,draft_job_id
+ad_multiplier	Ad Multiplier	Higgsfield	video	False	audio_references,end_image,image_references,start_image,video_references	mode,duration,resolution,generate_audio,bitrate_mode,extension_mode
+ad_multiplier_v2	Ad Multiplier Recreate	Higgsfield	video	False	image_references,video_references	resolution,mode,section
+cinematic_studio_video_4_0	Cinema Studio 4.0	Higgsfield	video	False	audio_references,end_image,image_references,start_image,video_references	mode,duration,resolution,generate_audio,bitrate_mode,extension_mode,era_id,camera_model_id,camera_lens_id,camera_aperture_id,pacing_id,genre_id,light,light_id,light_custom,color_palette
+draw_to_video	Draw To Video		video	False	image_references,ref_image,video	duration,resolution,generate_audio,enhancer
+reframe	Reframe		video	False	image_references,start_image,video_references	resolution,duration
+topaz_image	Topaz		image	False	image_references	output_width,output_height,face_enhancement,face_enhancement_creativity,face_enhancement_strength,variant,sharpen,denoise,folder_id
+topaz_image_generative	Topaz		image	False	image_references	output_width,output_height,variant,autoprompt,creativity,texture,sharpen,denoise,face_enhancement,face_enhancement_creativity,face_enhancement_strength
+topaz_hyperion_2_5	Topaz Hyperion 2.5	topaz	video	False	video_references	output_format
+topaz_video	Topaz		video	False	video_references	resolution,enhancement,frame_interpolation
+bytedance_video_upscale	Bytedance Video Upscale		video	False	video_references	fps,resolution,preset,model_version
+image_decompose	Image Decompose		image	False	image_references	mode,folder_id
+bytedance_image_upscale	Bytedance Image Upscale		image	False	image_references	resolution,remove_bg
+video_upscale	Video Upscale		video	False	input_video	duration,folder_id
+video_deflicker	Video Deflicker		video	False	input_video	duration,folder_id
+clipify	Clipify	Higgsfield	video	False		urls,clips_num,clip_aspect,subtitle_highlight_hex,subtitle_position,subtitle_font,subtitle_case,track_face_crop,max_height,segment_seconds
+kling2_6	Kling 2.6 Video	Kling	video	False	start_image	duration,sound
+kling3_0	Kling v3.0	Kling	video	True	end_image,start_image	duration,mode,sound
+kling3_0_turbo	Kling 3.0 Turbo	Kling	video	False	start_image	resolution,duration
+kling_o3_image_reference	Kling 3.0 Omni	Kling	video	False	image_references	duration,mode,sound,multi_shots,multi_prompt
+kling_o3_flf	Kling 3.0 Omni (Frames)	Kling	video	False	end_image,start_image	duration,mode,sound,multi_shots,multi_prompt
+kling_video_edit	Kling 3.0 Omni Edit	Kling	video	False	image_references,video_references	mode
+happy_horse_video	Happy Horse Video	Happy Horse	video	False	start_image	resolution,duration
+hf_mult_motion_control	Genjutsu	Higgsfield	video	False	image_references,video_references	resolution
+hf_mult_replace_object	Genjutsu	Higgsfield	video	False	image_references,video_references	resolution
+kling3_0_motion_control	Kling 3.0 Motion Control		video	True	image_references,video_references	mode,background_source
+grok_video	Grok Video	xAI	video	False	start_image	duration
+gemini_omni	Gemini Omni Flash	Google	video	True	image_references,video_references	duration,resolution
+gemini_omni_flash_1_1	Gemini Omni Flash 1.1	Google	video	False	end_image,image_references,start_image,video_references	mode,duration,resolution
+wan2_7	Wan 2.7	Wan	video	True	audio_references,end_image,start_image	duration,resolution
+wan3_0	Wan 3.0	Wan	video	False	audio_references,end_image,image_references,start_image,video_references	duration,resolution,generate_audio,enable_thinking
+wan3_0_prime	Wan 3.0 Prime	Wan	video	False	audio_references,end_image,image_references,start_image,video_references	duration,resolution,generate_audio,enable_thinking
+veo3	Google Veo 3	Google	video	False	start_image	variant
+veo3_1	Google Veo 3.1	Google	video	False	start_image	duration,quality,variant
+veo3_1_lite	Google Veo 3.1 Lite	Google	video	False	end_image,start_image	duration,generate_audio
+depth_anything_video	Depth Anything Video	Depth Anything	video	False	video_references	variant,colormap,resolution,max_frames,side_by_side
+sam_3_video	Remove Background		video	False	video_references	apply_mask,frames_count
+fps_boost	FPS Boost		video	False	video_references	variant,fps
+sam_3_3d_body	3D Body	Meta	3d	False	image_references	export_meshes,include_3d_keypoints,include_mhr_params
+tripo_3d	Text to 3D		3d	False		negative_prompt,texture,pbr,texture_quality,geometry_quality,auto_size,face_limit
+tripo_h3_1_image_to_3d	Tripo H3.1 Image to 3D	Tripo	3d	False	image_references	face_limit,texture,pbr,texture_quality,geometry_quality,quad,orientation
+tripo_h3_1_multiview_to_3d	Tripo H3.1 Multiview to 3D	Tripo	3d	False	image_references	face_limit,texture,pbr,quad
+tripo_p2_image_to_3d	Tripo P2 Image to 3D	Tripo	3d	False	image_references	face_limit,texture,pbr,seed,texture_quality,texture_version
+hunyuan3d_v3_image_to_3d	Hunyuan3D v3 Image to 3D	Tencent	3d	False	image_references	enable_pbr,face_count,generate_type,polygon_type
+meshy_v6_text_to_3d	Meshy 6 Text to 3D	Meshy	3d	False		mode,seed,model_type,topology,target_polycount,enable_rigging,enable_animation
+hunyuan3d_v3_1_text_to_3d	Hunyuan 3D v3.1 Text to 3D	Tencent	3d	False		mode,enable_pbr,generate_type,face_count
+meshy_v5_remesh	Meshy 5 Remesh	Meshy	3d	False		model_url,topology,target_polycount,resize_height,origin_at
+meshy_v5_retexture	Meshy 5 Retexture	Meshy	3d	False		model_url,text_style_prompt,image_style_url,enable_pbr
+meshy_v7_image_to_3d	Meshy 7 Image to 3D	Meshy	3d	False	image_references	model_type,topology,target_polycount,should_texture,enable_rigging,enable_animation,ultra_mode
+cinematic_studio_image	Cinematic Studio Image		image	False	image_references	resolution,camera_model_id,camera_lens_id,camera_focal_length_id,camera_aperture_id
+cinematic_studio_video_3_5	Cinematic Studio Video 3.5		video	False	audio_references,end_image,image_references,start_image,video_references	resolution,duration,genre,generate_audio,multi_shots,multi_prompt,camera_style,light_scheme,color_grading,style_prompt
+marketing_studio_2_image	Marketing Studio Product Shot	Higgsfield	image	False	character_photo,input_images,model_image,product_image	type,style_id,preset_id,notes,want_person,brand_kit_id,folder_id
+marketing_studio_v2_video	Marketing Studio Video	Higgsfield	video	False	avatars,character_photo,input_images,location_photo,product_photo	type,style_id,preset_id,brand_url,duration,resolution,product_url,ad_reference_id,batch_size
+marketing_studio_v2_reference2video	Marketing Studio Reference Video	Higgsfield	video	False	character_image,input_video,product_image	folder_id
+cinematic_studio_soul_cast	Cinematic Studio Soul Cast		image	False		budget
+cinematic_studio_soul_location	Cinematic Studio Soul Location		image	False		

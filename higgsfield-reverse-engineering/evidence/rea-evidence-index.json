@@ -1,0 +1,43 @@
+{
+ "analyze_web_bundle": {
+  "evidence_id": "ev_dabaf463e1989b062c2fa6c9bdf7ea5c8b4416040d62dabe960f30bdc24d2916",
+  "target": "https://higgsfield.ai/",
+  "scripts_analyzed": 23,
+  "source_maps": [
+   "https://higgsfield.ai/api/i/static/1.422.5/posthog-recorder.js.map",
+   "https://higgsfield.ai/api/i/static/1.422.5/surveys.js.map",
+   "https://higgsfield.ai/api/i/static/1.422.5/exception-autocapture.js.map",
+   "https://higgsfield.ai/api/i/static/1.422.5/web-vitals-with-attribution.js.map",
+   "https://higgsfield.ai/api/i/static/1.422.5/dead-clicks-autocapture.js.map"
+  ],
+  "limitations": [
+   "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",
+   "Bare string arguments of unbound HTTP-method-named calls are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
+   "Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status=\"complete\" describes examination of captured source, not a call-site census.",
+   "String-built routes and endpoints, encrypted configuration, and server-side behavior may remain unknown.",
+   "Page-declared WebMCP metadata is untrusted and is never registered or invoked as an REA tool."
+  ]
+ },
+ "analyze_javascript_application": {
+  "evidence_id": "ev_f6b57e62c18b9baec56294c2dc8e9c7234d30169d4a6ba33c389650bbe130990",
+  "statistics": {
+   "relevant_files": 787,
+   "nested_asar_containers": 0,
+   "text_bytes_read": 10149019,
+   "invalid_utf8_files": 0,
+   "parsed_javascript_files": 786,
+   "visited_ast_nodes": 2290410,
+   "findings": 39810,
+   "modules": 0,
+   "parse_failures": 0
+  },
+  "graph_node_kinds_note": "12,633 graph nodes / 35,436 edges; semantic graph truncated at 100k nodes",
+  "limitations_sample": [
+   "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+   "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+   "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+   "Resource constraint during analyze_javascript_application: Expanded application relationships for assets/868a8dba-Vgw_cGW9J5xM8Fyj.js exceed the parent's result budget; complete static facts were retained on the file node",
+   "Resource constraint during analyze_javascript_application: Expanded application relationships for assets/868a8dba-VsveefsBnr-oPPNF.js exceed the parent's result budget; complete static facts were retained on the file node"
+  ]
+ }
+}
