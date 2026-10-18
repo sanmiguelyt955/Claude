@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { geminiModel, geminiProviders } from '../src/providers/gemini.ts'
-import { ProviderOverloadedError } from '../src/providers/types.ts'
+import { ProviderOverloadedError, quotaDetail, retryAfterOf } from '../src/providers/types.ts'
 import { describeWithFallback } from '../src/chain.ts'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -149,4 +149,15 @@ test('a model that rejects a cost setting is asked again without it', async () =
   requests.length = 0
   await assert.rejects(geminiModel('bad').describe(withFrames), /HTTP 400/)
   assert.equal(requests.length, 1)
+})
+
+test('a 429 waits what Google asks and names the quota it hit', () => {
+  const body = JSON.stringify({ error: { code: 429, details: [
+    { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateContentInputTokensPerModelPerMinute-FreeTier' }] },
+    { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '23.4s' },
+  ] } }, null, 2)
+  assert.equal(retryAfterOf(null, body), 23_400)
+  assert.equal(retryAfterOf('5', body), 5_000, 'the header wins')
+  assert.equal(retryAfterOf(null, '{}'), undefined)
+  assert.match(quotaDetail(body), /^\[GenerateContentInputTokensPerModelPerMinute-FreeTier\] /)
 })

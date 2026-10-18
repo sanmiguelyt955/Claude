@@ -64,6 +64,24 @@ export function parseRetryAfter(value: string | null): number | undefined {
 }
 
 /**
+ * How long Google asks to wait, from the RetryInfo in a 429 body
+ * ("retryDelay": "23s"); the Retry-After header wins when present. Waiting
+ * exactly that, not a fixed minute, is what makes a per-minute limit cheap.
+ */
+export function retryAfterOf(header: string | null, body: string): number | undefined {
+  const fromHeader = parseRetryAfter(header)
+  if (fromHeader !== undefined) return fromHeader
+  const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body)
+  return m ? Math.ceil(Number(m[1]) * 1000) : undefined
+}
+
+/** The quota a 429 names (e.g. "...InputTokensPerModelPerMinute"), put first so it survives the 200-character message. */
+export function quotaDetail(body: string): string {
+  const id = /"quotaId"\s*:\s*"([^"]+)"/.exec(body)?.[1]
+  return id ? `[${id}] ${body}` : body
+}
+
+/**
  * POST JSON with a timeout, mapping every "try again later" outcome to
  * ProviderOverloadedError so the chain can fall over. A real request error
  * (bad image, bad key) is thrown as a plain Error and stops the job.
@@ -86,7 +104,7 @@ export async function postJson(provider: string, url: string, headers: Record<st
   if (!res.ok) {
     const text = await res.text()
     if (TRANSIENT_STATUS.has(res.status)) {
-      throw new ProviderOverloadedError(provider, res.status, text, parseRetryAfter(res.headers.get('retry-after')))
+      throw new ProviderOverloadedError(provider, res.status, quotaDetail(text), retryAfterOf(res.headers.get('retry-after'), text))
     }
     throw new Error(`${provider} HTTP ${res.status}: ${text.slice(0, 300)}`)
   }
@@ -131,7 +149,7 @@ export async function postSse(provider: string, url: string, headers: Record<str
     if (!res.ok) {
       const text = await res.text()
       if (TRANSIENT_STATUS.has(res.status)) {
-        throw new ProviderOverloadedError(provider, res.status, text, parseRetryAfter(res.headers.get('retry-after')))
+        throw new ProviderOverloadedError(provider, res.status, quotaDetail(text), retryAfterOf(res.headers.get('retry-after'), text))
       }
       throw new Error(`${provider} HTTP ${res.status}: ${text.slice(0, 300)}`)
     }
