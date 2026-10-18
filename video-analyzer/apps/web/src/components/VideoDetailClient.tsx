@@ -427,23 +427,96 @@ export function VideoDetailClient({ id }: { id: string }) {
 
           {tab === 'timeline' && (
             <ol className="relative flex flex-col gap-4 border-l-2 border-(--color-line) pl-5">
-              {scenes.map((scene) => (
-                <li key={scene.scene_index} className="relative">
-                  <span
-                    aria-hidden
-                    className="absolute -left-[27px] top-1.5 size-3 rounded-full ring-4 ring-(--color-canvas)"
-                    style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
-                  />
-                  <p className="flex items-center gap-1.5 text-xs text-(--color-ink-soft)">
-                    <At seconds={scene.start_seconds} /> – {formatDuration(scene.end_seconds)}
-                  </p>
-                  <p className="mt-1 font-semibold">{scene.title}</p>
-                  <p className="text-(--color-ink-soft)">{scene.description}</p>
-                  {scene.audio_description && (
-                    <p className="text-xs italic text-(--color-ink-soft)">Audio: {scene.audio_description}</p>
-                  )}
-                </li>
-              ))}
+              {scenes.map((scene) => {
+                const inScene = (start: number, end: number | null) =>
+                  start < scene.end_seconds && (end ?? start) >= scene.start_seconds
+                const sceneText = textElements.filter((e) => inScene(e.start_seconds, e.end_seconds))
+                const said = transcript.filter((t) => inScene(t.start_seconds, t.end_seconds))
+                const middle = (scene.start_seconds + scene.end_seconds) / 2
+                return (
+                  <li key={scene.scene_index} className="relative">
+                    <span
+                      aria-hidden
+                      className="absolute -left-[27px] top-1.5 size-3 rounded-full ring-4 ring-(--color-canvas)"
+                      style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
+                    />
+                    <div className="card flex flex-col gap-3 p-3 sm:flex-row">
+                      {video.stored_path && (
+                        <button
+                          type="button"
+                          onClick={() => seek(scene.start_seconds)}
+                          className="shrink-0 self-start overflow-hidden rounded-xl bg-black sm:w-48"
+                          aria-label={`Ver la escena desde ${formatDuration(scene.start_seconds)}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/videos/${video.id}/frame?t=${middle.toFixed(1)}`}
+                            alt={`Fotograma de «${scene.title}»`}
+                            loading="lazy"
+                            className="aspect-video w-full object-cover"
+                          />
+                        </button>
+                      )}
+                      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                        <p className="flex items-center gap-1.5 text-xs text-(--color-ink-soft)">
+                          <At seconds={scene.start_seconds} /> – {formatDuration(scene.end_seconds)}
+                        </p>
+                        <p className="font-semibold">{scene.title}</p>
+                        <p className="text-sm">
+                          <span className="font-medium">Imagen: </span>
+                          <span className="text-(--color-ink-soft)">{scene.description}</span>
+                        </p>
+                        {(scene.audio_description || video.stored_path) && (
+                          <div className="flex flex-col gap-1 text-sm">
+                            {scene.audio_description && (
+                              <p>
+                                <span className="font-medium">Audio: </span>
+                                <span className="text-(--color-ink-soft)">{scene.audio_description}</span>
+                              </p>
+                            )}
+                            {video.stored_path && (
+                              <audio
+                                controls
+                                preload="none"
+                                src={`/api/videos/${video.id}/audio?start=${scene.start_seconds.toFixed(1)}&end=${scene.end_seconds.toFixed(1)}`}
+                                className="h-8 w-full max-w-sm"
+                                aria-label={`Escuchar «${scene.title}»`}
+                              />
+                            )}
+                          </div>
+                        )}
+                        {sceneText.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5 text-sm">
+                            <span className="font-medium">Texto en pantalla:</span>
+                            {sceneText.map((el, i) => (
+                              <span key={i} className="chip" title={el.detail ?? undefined}>
+                                {el.label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {said.length > 0 && (
+                          <details className="text-sm">
+                            <summary className="font-medium">Lo que se dice ({said.length} frases)</summary>
+                            <div className="mt-1 flex flex-col gap-1 text-(--color-ink-soft)">
+                              {said.map((t) => (
+                                <p key={t.chunk_index}>
+                                  {t.speaker && (
+                                    <span className="mr-1 font-semibold" style={{ color: speakerColor(t.speaker) }}>
+                                      {t.speaker}:
+                                    </span>
+                                  )}
+                                  {t.text}
+                                </p>
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
             </ol>
           )}
 
