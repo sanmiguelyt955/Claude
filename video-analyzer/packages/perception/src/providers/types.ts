@@ -31,6 +31,70 @@ export interface VisionProvider {
   /** False when the provider has no key/config; the chain skips it silently. */
   available(): boolean
   describe(req: VisionRequest): Promise<string>
+  /**
+   * Milliseconds until this request fits the provider's own per-minute
+   * limits (0 = now). Lets the chain wait or switch before Google refuses.
+   */
+  readyInMs?(req: VisionRequest): number
+  /** Counts the request against those limits; called right before describe(). */
+  reserve?(req: VisionRequest): void
+  /**
+   * A lower-quality last resort (Flash-Lite): the chain uses it only when the
+   * others would keep the request waiting longer than it is worth.
+   */
+  readonly fallbackOnly?: boolean
+}
+
+/**
+ * Requests and input tokens sent in the last minute, against the free-tier
+ * limits Google enforces per model (RPM and input TPM). Checking before
+ * sending avoids the 429 and its wait; Google stays the final word.
+ */
+export class MinuteBudget {
+  private sent: Array<{ at: number; tokens: number }> = []
+  private readonly tpm: number
+
+  /**
+   * The token limit keeps a 10% margin (our estimate is close, not exact) and
+   * the minute lasts 62 s, since Google's clock counts a request a little
+   * later than we send it: both seen as 429s against a strict stand-in.
+   */
+  constructor(
+    private readonly rpm: number,
+    tpm: number,
+    private readonly now: () => number = Date.now,
+    private readonly windowMs = 62_000,
+  ) {
+    this.tpm = Math.floor(tpm * 0.9)
+  }
+
+  private recent(): Array<{ at: number; tokens: number }> {
+    const cutoff = this.now() - this.windowMs
+    this.sent = this.sent.filter((s) => s.at > cutoff)
+    return this.sent
+  }
+
+  readyInMs(tokens: number): number {
+    const sent = this.recent()
+    const now = this.now()
+    let wait = 0
+    if (this.rpm > 0 && sent.length >= this.rpm) wait = sent[sent.length - this.rpm]!.at + this.windowMs - now
+    if (this.tpm > 0) {
+      // Oldest requests leave the minute first; wait until enough have left.
+      let total = sent.reduce((sum, s) => sum + s.tokens, 0)
+      const need = Math.min(tokens, this.tpm)
+      for (const s of sent) {
+        if (total + need <= this.tpm) break
+        total -= s.tokens
+        wait = Math.max(wait, s.at + this.windowMs - now)
+      }
+    }
+    return Math.max(0, wait)
+  }
+
+  reserve(tokens: number): void {
+    this.recent().push({ at: this.now(), tokens })
+  }
 }
 
 /**

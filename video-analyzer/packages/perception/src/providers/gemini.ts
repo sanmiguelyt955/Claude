@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import {
   frameLabel,
+  MinuteBudget,
   postSse,
   ProviderOverloadedError,
   speechPreamble,
@@ -41,10 +42,33 @@ type StreamChunk = {
  * No temperature/top_p/top_k: Gemini 3.6+ ignores them and Google has said
  * they will be rejected with a 400 in a future release.
  */
+/** Input tokens per frame at each media resolution, measured with countTokens (plus its time label). */
+const FRAME_TOKENS: Record<string, number> = { MEDIA_RESOLUTION_LOW: 272, MEDIA_RESOLUTION_MEDIUM: 535, '': 1110 }
+
+/** Input tokens a request will cost, close enough to keep under the per-minute limit. */
+export function estimateTokens({ frames, transcript, instruction }: VisionRequest): number {
+  const perFrame = FRAME_TOKENS[frames.length ? mediaResolution() : ''] ?? FRAME_TOKENS['']!
+  return frames.length * perFrame + Math.ceil(((transcript ?? '').length + instruction.length) / 3) + 200
+}
+
+/** One budget per model, shared by every window and the summary. Free tier: 5 RPM, 250k input TPM. */
+const budgets = new Map<string, MinuteBudget>()
+function budgetOf(model: string): MinuteBudget {
+  let b = budgets.get(model)
+  if (!b) {
+    b = new MinuteBudget(Number(process.env.GEMINI_MAX_RPM ?? 5) || 0, Number(process.env.GEMINI_MAX_TPM ?? 250_000) || 0)
+    budgets.set(model, b)
+  }
+  return b
+}
+
 export function geminiModel(model: string): VisionProvider {
   const name = `gemini:${model}`
   return {
     name,
+    fallbackOnly: /lite/i.test(model),
+    readyInMs: (req) => budgetOf(model).readyInMs(estimateTokens(req)),
+    reserve: (req) => budgetOf(model).reserve(estimateTokens(req)),
     available: () => Boolean(process.env.GEMINI_API_KEY),
     async describe({ frames, transcript, instruction, json = true, thinking }: VisionRequest) {
       const parts: unknown[] = []

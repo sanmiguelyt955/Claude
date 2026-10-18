@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { describeWithFallback, shouldFallback } from '../src/chain.ts'
-import { ProviderOverloadedError, parseRetryAfter, postJson, type VisionProvider } from '../src/providers/types.ts'
+import { MinuteBudget, ProviderOverloadedError, parseRetryAfter, postJson, type VisionProvider } from '../src/providers/types.ts'
 
 const req = { frames: [], transcript: '', instruction: 'x' }
 let seq = 0
@@ -125,4 +125,44 @@ test('postJson maps 529, timeouts and 400 correctly', async () => {
     else process.env.VISION_TIMEOUT_MS = saved
     server.close()
   }
+})
+
+test('the minute budget waits for requests and tokens to leave the last minute', () => {
+  let now = 0
+  const b = new MinuteBudget(2, 100_000, () => now, 60_000) // 90k usable tokens
+  assert.equal(b.readyInMs(80_000), 0)
+  b.reserve(80_000)
+  assert.equal(b.readyInMs(20_000), 60_000, 'tokens: wait until the first request leaves the minute')
+  assert.equal(b.readyInMs(10_000), 0)
+  b.reserve(10_000)
+  now = 20_000
+  assert.equal(b.readyInMs(1), 40_000, 'requests: two per minute already sent')
+  now = 60_001
+  assert.equal(b.readyInMs(80_000), 0, 'the first request left; 10k + 80k fit')
+})
+
+test('waits a little for the better model instead of dropping to Flash-Lite', async () => {
+  const waits: number[] = []
+  let busy = 20_000
+  const main: VisionProvider = { ...fake(async () => '{"main":true}'), readyInMs: () => busy }
+  const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true }
+  const out = await describeWithFallback([main, lite], req, { sleep: async (ms) => { waits.push(ms); busy = 0 } })
+  assert.equal(out.provider, main.name)
+  assert.deepEqual(waits, [20_000])
+})
+
+test('uses Flash-Lite when the better model would keep the request waiting too long', async () => {
+  const main: VisionProvider = { ...fake(async () => '{"main":true}'), readyInMs: () => 90_000 }
+  const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true }
+  const out = await describeWithFallback([main, lite], req, { sleep: noSleep })
+  assert.equal(out.provider, lite.name)
+})
+
+test('a ready second model is used at once, without waiting for the first', async () => {
+  const waits: number[] = []
+  const first: VisionProvider = { ...fake(async () => '{}'), readyInMs: () => 30_000 }
+  const second = fake(async () => '{}')
+  const out = await describeWithFallback([first, second], req, { sleep: async (ms) => { waits.push(ms) } })
+  assert.equal(out.provider, second.name)
+  assert.deepEqual(waits, [])
 })

@@ -248,7 +248,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
       try {
         speech = await diarize(wavPath, speech)
         const voices = new Set(speech.segments.map((s) => s.speaker).filter(Boolean)).size
-        log(voices ? `${voices} ${voices === 1 ? 'voz' : 'voces'} distintas` : 'no se pudo distinguir ninguna voz')
+        log(voices === 1 ? '1 voz' : voices ? `${voices} voces distintas` : 'no se pudo distinguir ninguna voz')
       } catch (err) {
         // The labels are a bonus: without them the analysis is still complete.
         log(`no se pudo separar quién habla: ${(err as Error).message.slice(0, 200)}`)
