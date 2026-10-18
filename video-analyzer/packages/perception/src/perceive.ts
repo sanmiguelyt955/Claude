@@ -238,6 +238,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     } else if (hasAudio) {
       log('transcribiendo audio')
       speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
+      if (speech.device) log(speech.device === 'cuda' ? 'audio transcrito en la tarjeta gráfica' : 'audio transcrito en el procesador')
       checkpoint.transcript = speech
       save()
     }

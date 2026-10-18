@@ -159,6 +159,15 @@ if (Test-Changed 'pip' $reqHash) {
   Save-State 'pip' $reqHash
 }
 
+# NVIDIA card (nvidia-smi comes with its driver): the CUDA libraries that
+# let faster-whisper transcribe on it, several times faster than the CPU.
+# About 1 GB, downloaded once; without them it simply stays on the CPU.
+if ((Get-Command nvidia-smi -ErrorAction SilentlyContinue) -and (Test-Changed 'pip-gpu' 'cu12-v1')) {
+  Say 'Tarjeta NVIDIA encontrada: instalando lo necesario para transcribir con ella (una sola vez, ~1 GB)...'
+  & $python -m pip install --disable-pip-version-check -q 'nvidia-cublas-cu12' 'nvidia-cudnn-cu12>=9,<10'
+  if ($LASTEXITCODE -eq 0) { Save-State 'pip-gpu' 'cu12-v1' } else { Say 'No se pudo instalar; se transcribe con el procesador.' }
+}
+
 $envLocal = Join-Path $Root '.env.local'
 if (-not (Test-Path $envLocal)) {
   Copy-Item (Join-Path $Root '.env.example') $envLocal

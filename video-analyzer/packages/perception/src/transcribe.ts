@@ -13,12 +13,19 @@ export type Segment = {
   /** "Hablante N" once diarize() ran; absent before or when nobody could be told apart. */
   speaker?: string | null
 }
-export type Transcript = { language: string; segments: Segment[] }
+export type Transcript = {
+  language: string
+  segments: Segment[]
+  /** Where faster-whisper ran: "cuda" (NVIDIA card) or "cpu". Absent for captions and our NumPy engine. */
+  device?: string
+}
 
 /**
  * "Escuchar": speech-to-text on a WAV file via scripts/transcribe.py.
- * Default engine is our own NumPy Whisper (scripts/nuestro_whisper);
- * WHISPER_ENGINE=faster-whisper switches to the CTranslate2 build.
+ * Default engine is faster-whisper when installed, on the NVIDIA card if
+ * there is one; WHISPER_ENGINE=propio forces our NumPy Whisper. A crash on
+ * the card that Python cannot catch (a missing CUDA DLL can abort the
+ * process) is retried once on the CPU.
  */
 export async function transcribe(
   wavPath: string,
@@ -29,6 +36,13 @@ export async function transcribe(
   if (opts.language) args.push('--language', opts.language)
   const engine = opts.engine || process.env.WHISPER_ENGINE
   if (engine) args.push('--engine', engine)
-  const { stdout } = await run(python, args, { maxBuffer: 64 * 1024 * 1024 })
-  return JSON.parse(String(stdout)) as Transcript
+  const forced = process.env.WHISPER_DEVICE
+  try {
+    const { stdout } = await run(python, args, { maxBuffer: 64 * 1024 * 1024 })
+    return JSON.parse(String(stdout)) as Transcript
+  } catch (err) {
+    if (forced && forced !== 'auto') throw err
+    const { stdout } = await run(python, [...args, '--device', 'cpu'], { maxBuffer: 64 * 1024 * 1024 })
+    return JSON.parse(String(stdout)) as Transcript
+  }
 }

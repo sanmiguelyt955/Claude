@@ -9,6 +9,12 @@ Engines (--engine or WHISPER_ENGINE):
 Both run the same openai/whisper-* weights. On 15 minutes of speech (4 CPU
 cores, model small) propio took about 14 min, faster-whisper 5 min, and
 faster-whisper batched 1.6 min with the same words recognised.
+
+faster-whisper runs on an NVIDIA graphics card when there is one (--device
+auto, the default): float16 on the card, int8 on the CPU otherwise. On
+Windows the CUDA libraries come from the nvidia-cublas-cu12 and
+nvidia-cudnn-cu12 pip packages, which the launcher installs when it finds
+nvidia-smi. Any failure on the card falls back to the CPU.
 """
 import argparse
 import json
@@ -51,6 +57,48 @@ def split_sentences(words: list[dict], max_seconds: float = 15.0, pause: float =
     if current:
         close()
     return out
+
+
+def add_cuda_dll_dirs() -> None:
+    """Windows: make the pip-installed cuBLAS/cuDNN DLLs findable by CTranslate2."""
+    if os.name != "nt":
+        return
+    try:
+        import nvidia  # namespace package of nvidia-cublas-cu12 / nvidia-cudnn-cu12
+    except ImportError:
+        return
+    for root in getattr(nvidia, "__path__", []):
+        for lib in ("cublas", "cudnn", "cuda_nvrtc", "cuda_runtime"):
+            bin_dir = os.path.join(root, lib, "bin")
+            if os.path.isdir(bin_dir):
+                os.add_dll_directory(bin_dir)
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+
+
+def pick_device(device: str) -> str:
+    """auto -> cuda when CTranslate2 sees an NVIDIA card, else cpu."""
+    if device != "auto":
+        return device
+    try:
+        import ctranslate2
+
+        return "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def run_faster_whisper_on(wav: str, model: str, language: str | None, beam_size: int, device: str, compute_type: str | None) -> dict:
+    """faster-whisper on `device` (auto/cuda/cpu); a failure on the card retries on the CPU."""
+    chosen = pick_device(device)
+    if chosen == "cuda":
+        add_cuda_dll_dirs()
+        try:
+            out = run_faster_whisper(wav, model, language, beam_size, "cuda", compute_type or "float16")
+            return {**out, "device": "cuda"}
+        except Exception as err:  # missing CUDA libraries, out of memory...
+            print(f"la gráfica falló ({str(err)[:200]}); transcribiendo en el procesador", file=sys.stderr)
+    out = run_faster_whisper(wav, model, language, beam_size, "cpu", compute_type if chosen == "cpu" and compute_type else "int8")
+    return {**out, "device": "cpu"}
 
 
 def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: int, device: str, compute_type: str) -> dict:
@@ -102,8 +150,8 @@ def main() -> None:
         default=os.environ.get("WHISPER_TEMPERATURE_FALLBACK", "1") == "0",
         help="no reintentar a mayor temperatura las ventanas repetitivas o con baja confianza",
     )
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--compute-type", default="int8")
+    parser.add_argument("--device", default=os.environ.get("WHISPER_DEVICE") or "auto", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--compute-type", default=os.environ.get("WHISPER_COMPUTE_TYPE") or None, help="float16 en la gráfica e int8 en el procesador si se omite")
     args = parser.parse_args()
 
     engine = args.engine
@@ -112,7 +160,7 @@ def main() -> None:
     if engine == "propio":
         out = run_propio(args.wav, args.model, args.language, args.beam_size, not args.no_fallback)
     else:
-        out = run_faster_whisper(args.wav, args.model, args.language, args.beam_size, args.device, args.compute_type)
+        out = run_faster_whisper_on(args.wav, args.model, args.language, args.beam_size, args.device, args.compute_type)
     json.dump(out, sys.stdout, ensure_ascii=False)
 
 
