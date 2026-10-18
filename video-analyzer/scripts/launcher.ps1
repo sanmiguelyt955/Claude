@@ -199,7 +199,7 @@ if ($updated -or -not (Test-Path (Join-Path $Root 'apps\web\.next\BUILD_ID')) -o
 Step 'Abriendo Video Analyzer'
 $env:PYTHON_BIN = $python  # the pipeline would otherwise call "python3", which Windows usually lacks
 $worker = Start-Process cmd.exe -PassThru -WorkingDirectory $Root -WindowStyle Minimized -ArgumentList '/k', "title $WorkerTitle & npm run start --workspace=@cva/worker"
-$web = Start-Process cmd.exe -PassThru -WorkingDirectory (Join-Path $Root 'apps\web') -WindowStyle Minimized -ArgumentList '/k', "title $WebTitle & npx next start -p $Port"
+$web = Start-Process cmd.exe -PassThru -WorkingDirectory (Join-Path $Root 'apps\web') -WindowStyle Minimized -ArgumentList '/k', "title $WebTitle & npx next start -H 127.0.0.1 -p $Port"
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 Set-Content -Path $PidFile -Value @($worker.Id, $web.Id)
 
