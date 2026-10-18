@@ -63,6 +63,7 @@ export const V6_PERCEPTION_WINDOW_SCHEMA = obj({
   escenas: arr(obj({ start_seconds: NUM, end_seconds: NUM, title: STR, description: STR, audio_description: STR })),
   elementos: arr(obj({ kind: STR, label: STR, detail: STR, start_seconds: NUM, end_seconds: NUM })),
   entidades_nuevas: arr(obj({ id: STR, primera_aparicion_segundo: NUM, descripcion_fisica: STR, identificacion: STR })),
+  voces: arr(obj({ id: STR, descripcion_acustica: STR })),
   limites: arr(STR),
 })
 
@@ -81,6 +82,8 @@ type WindowOut = {
   escenas: Array<{ start_seconds: number; end_seconds: number; title: string; description: string; audio_description: string }>
   elementos: Array<{ kind: string; label: string; detail: string; start_seconds: number; end_seconds: number }>
   entidades_nuevas: Array<{ id: string; primera_aparicion_segundo: number; descripcion_fisica: string; identificacion: string }>
+  /** Acoustic description of each voice heard in the window (phase 1 does not hear). */
+  voces?: Array<{ id: string; descripcion_acustica: string }>
   limites: string[]
 }
 
@@ -389,6 +392,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   const cambios = outs.flatMap((o, i) => (o.cambios_estado ?? []).map((c) => ({ ...c, antes: tx.rename(i, c.antes), despues: tx.rename(i, c.despues) })))
   const windowLimits = outs.flatMap((o, i) => (o.limites ?? []).map((l) => `[tramo ${i + 1}] ${tx.rename(i, l)}`))
   const escenas = outs.flatMap((o) => o.escenas ?? [])
+  withVoices(p1, outs)
 
   // ── Phase 3 ─────────────────────────────────────────────────────────────
   progress({ label: 'Registro V6.5: síntesis...', current: steps - 1, total: steps })
@@ -492,6 +496,34 @@ function secondsPlan(w: V6Window, duration: number): string {
 
 const windowKey = (w: V6Window) => `v6-${w.start.toFixed(3)}-${w.end.toFixed(3)}-${w.frames.length}`
 
+/**
+ * Phase 1 sees one frame per shot and no sound, so each VOZ#/S# gets its
+ * acoustic description from the windows that heard it: the first window's
+ * description, plus any other window's when it differs (tramo-labelled).
+ */
+export function withVoices(p1: V6Phase1, outs: Array<Pick<WindowOut, 'voces'>>): void {
+  const heard = new Map<string, string[]>()
+  outs.forEach((o, i) => {
+    for (const v of o.voces ?? []) {
+      const id = v.id.replace(/^VOZ\s+/i, 'VOZ').trim()
+      if (!id || !v.descripcion_acustica?.trim()) continue
+      const list = heard.get(id) ?? []
+      if (!list.some((d) => d.endsWith(v.descripcion_acustica.trim()))) list.push(list.length ? `[tramo ${i + 1}] ${v.descripcion_acustica.trim()}` : v.descripcion_acustica.trim())
+      heard.set(id, list)
+    }
+  })
+  for (const e of p1.entidades) {
+    const d = heard.get(e.id)
+    if (d) {
+      e.descripcion_fisica = d.join(' / ')
+      heard.delete(e.id)
+    }
+  }
+  for (const [id, d] of heard) {
+    p1.entidades.push({ id, primera_aparicion: '[ND]', descripcion_fisica: d.join(' / '), identificacion: 'NO DETERMINABLE', apariciones: '[ND]' })
+  }
+}
+
 /** Measured facts win over the model: shot times and counts, the technical sheet. */
 function fixPhase1(p1: V6Phase1, shots: Shot[], meta: VideoMeta, frames: Frame[]): V6Phase1 {
   const byId = new Map((p1.planos ?? []).map((p) => [p.id, p]))
@@ -529,6 +561,8 @@ function fixPhase1(p1: V6Phase1, shots: Shot[], meta: VideoMeta, frames: Frame[]
       plano_mas_corto: `${shortest.id} (${shortest.d.toFixed(2)} s) [META]`,
     },
     planos,
+    // A copy: withVoices fills it in, and the checkpoint keeps phase 1 as answered.
+    entidades: (p1.entidades ?? []).map((e) => ({ ...e })),
     textos_pantalla: [],
   }
 }

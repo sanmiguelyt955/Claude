@@ -7,7 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { V6_PHASE1_SCHEMA } from '@cva/ai-router'
 import { perceive } from '../src/perceive.ts'
-import { coverTimeline, renumberTexts, shotsFrom, v6Windows, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
+import { coverTimeline, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -152,4 +152,11 @@ test('on-screen texts are numbered across windows by first appearance, reference
   assert.deepEqual(list.map((t) => [t.id, t.contenido]), [['TX1', 'TX1-t1'], ['TX2', 'TX2'], ['TX3', 'TX1']])
   assert.equal(rename(1, 'TX1 y TX2 visibles'), 'TX3 y TX2 visibles', 'one pass, no chained renames')
   assert.equal(rename(0, 'TX1-t1 aparece'), 'TX1 aparece')
+})
+
+test('voices get their acoustic description from the windows that heard them', () => {
+  const p1 = { entidades: [{ id: 'VOZ1', primera_aparicion: '00:01', descripcion_fisica: 'Descripción acústica en la fase 2.', identificacion: 'NO DETERMINABLE', apariciones: '00:01–00:05' }] } as never as Parameters<typeof withVoices>[0]
+  withVoices(p1, [{ voces: [{ id: 'VOZ 1', descripcion_acustica: 'tono medio, ritmo rápido' }] }, { voces: [{ id: 'VOZ1', descripcion_acustica: 'tono medio, ritmo rápido' }, { id: 'S1', descripcion_acustica: 'pitido agudo de 0,2 s' }] }])
+  assert.equal(p1.entidades[0]!.descripcion_fisica, 'tono medio, ritmo rápido', 'same description once')
+  assert.equal(p1.entidades[1]!.id, 'S1')
 })

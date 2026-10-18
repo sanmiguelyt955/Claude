@@ -35,6 +35,7 @@ No cambiar sin preguntar primero:
 - Nada de funciones que no se pidieron ni abstracciones para código de un solo uso.
 - Toca solo lo necesario: no "mejores" código, comentarios o formato vecinos. Cada línea cambiada debe venir de lo que se pidió.
 - "Arregla el bug" → primero un test que lo reproduzca, luego hazlo pasar. En tareas de varios pasos: "1. [paso] → verificar: [comprobación]".
+- **Todo cambio se prueba antes de darlo por terminado.** La mejora es prueba y error: tests automáticos, y además una prueba real del comportamiento (la app corriendo, un análisis real o una captura con REA) que muestre que funciona. Si algo no se puede probar aquí (p. ej. la tarjeta gráfica), se prueba lo más cercano y se dice qué quedó sin probar.
 - No pegues archivos o logs enteros en la conversación: referéncialos con Read o pega solo las últimas ~50 líneas del error (de ahorra-tokens-claude, MIT).
 
 ## Convenciones
