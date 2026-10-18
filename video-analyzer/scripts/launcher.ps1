@@ -184,6 +184,16 @@ if (Test-Changed 'env-fast-whisper' 'v1') {
   Save-State 'env-fast-whisper' 'v1'
 }
 
+# MEDIUM was the default frame resolution until 300-frame windows at LOW
+# proved to read on-screen text as well at half the tokens. Done once.
+if (Test-Changed 'env-low-resolution' 'v1') {
+  $envText = Get-Content $envLocal
+  if ($envText -contains 'GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_MEDIUM') {
+    ($envText -replace '^GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_MEDIUM$', 'GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_LOW') | Set-Content $envLocal
+  }
+  Save-State 'env-low-resolution' 'v1'
+}
+
 Say 'Actualizando la base de datos...'
 Run 'La migracion de la base de datos' { & npm run --silent db:migrate }
 
