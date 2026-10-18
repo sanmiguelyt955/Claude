@@ -95,6 +95,15 @@ Devuelve SOLO JSON con esta forma:
  "elements":[{"kind":"object"|"on_screen_text"|"action"|"person"|"relation","label":string,"detail":string|null,"start_seconds":number,"end_seconds":number|null}]}
 Usa segundos absolutos del video. Describe qué pasa en pantalla y qué se escucha. Si la transcripción dice quién habla (Hablante 1, Hablante 2...), usa esos nombres en audio_description y, si se ve quién es, dilo. Responde en español.`
 
+/** Longest scene asked for: an 18-minute "scene" says little about what happens in it. */
+const MAX_SCENE_SECONDS = 120
+
+/** The window's range, so the scenes cover all of it and none is a quarter of an hour long. */
+export function windowInstruction(w: { start: number; end: number }): string {
+  return `${WINDOW_INSTRUCTION}
+Este tramo va del segundo ${w.start.toFixed(1)} al ${w.end.toFixed(1)}. Las escenas deben cubrirlo entero y seguidas, sin huecos: la primera empieza en ${w.start.toFixed(1)}, cada una empieza donde termina la anterior y la última termina en ${w.end.toFixed(1)}. Haz una escena nueva cada vez que cambie lo que se ve o el tema, y ninguna de más de ${MAX_SCENE_SECONDS} segundos.`
+}
+
 const SUMMARY_INSTRUCTION = `Con estas escenas y la transcripción del video, devuelve SOLO JSON:
 {"short_summary":string,"full_summary":string,"topics":string[],"language":string}
 Responde en español.`
@@ -139,6 +148,7 @@ export function parseWindowReply(text: string, window: { start: number; end: num
     })
   }
   if (scenes.length === 0) throw new Error('La respuesta no trae ninguna escena válida.')
+  closeGaps(scenes, window)
 
   const elements: Element[] = []
   for (const item of Array.isArray(raw.elements) ? raw.elements : []) {
@@ -157,6 +167,28 @@ export function parseWindowReply(text: string, window: { start: number; end: num
     })
   }
   return { scenes, elements }
+}
+
+/**
+ * Nothing between two scenes may go undescribed: small gaps are closed by
+ * stretching the scenes around them (first to the window start, last to its
+ * end); a gap over a quarter of the window means the model skipped part of it,
+ * so the reply is rejected and the request asked again.
+ */
+export function closeGaps(scenes: Scene[], window: { start: number; end: number }): void {
+  scenes.sort((a, b) => a.start_seconds - b.start_seconds)
+  const span = Math.max(window.end - window.start, 1)
+  const gaps = [scenes[0]!.start_seconds - window.start, window.end - Math.max(...scenes.map((s) => s.end_seconds))]
+  for (let i = 1; i < scenes.length; i++) gaps.push(scenes[i]!.start_seconds - Math.max(...scenes.slice(0, i).map((s) => s.end_seconds)))
+  const worst = Math.max(...gaps)
+  if (worst > span / 4) throw new Error(`Las escenas dejan ${Math.round(worst)} s del tramo sin describir.`)
+  scenes[0]!.start_seconds = window.start
+  for (let i = 1; i < scenes.length; i++) {
+    const prev = scenes[i - 1]!
+    if (prev.end_seconds < scenes[i]!.start_seconds) prev.end_seconds = scenes[i]!.start_seconds
+  }
+  const last = scenes[scenes.length - 1]!
+  if (last.end_seconds < window.end) last.end_seconds = window.end
 }
 
 export function parseSummaryReply(text: string, fallbackLanguage: string): AnalysisResult['summary'] {
@@ -308,7 +340,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
         log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
         const { provider, value } = await describeWithFallback(
           providers,
-          { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: WINDOW_INSTRUCTION, thinking: 'low' },
+          { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: windowInstruction(w), thinking: 'low' },
           { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt },
         )
         log(`ventana ${n + 1} respondida por ${provider}`)

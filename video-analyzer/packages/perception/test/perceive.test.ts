@@ -6,7 +6,7 @@ import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { perceive, parseCheckpoint, parseJsonReply, parseWindowReply, WINDOW_FRAMES, type PerceptionCheckpoint } from '../src/perceive.ts'
+import { closeGaps, perceive, parseCheckpoint, parseJsonReply, parseWindowReply, windowInstruction, WINDOW_FRAMES, type PerceptionCheckpoint } from '../src/perceive.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -193,9 +193,9 @@ test('parseWindowReply repairs what the database would reject', () => {
     ],
   }), w)
   assert.equal(out.scenes.length, 2)
-  assert.deepEqual([out.scenes[0]!.start_seconds, out.scenes[0]!.end_seconds], [12, 12])
-  assert.equal(out.scenes[0]!.title, 'fin antes que inicio')
-  assert.deepEqual([out.scenes[1]!.start_seconds, out.scenes[1]!.end_seconds], [10, 20])
+  assert.deepEqual([out.scenes[0]!.start_seconds, out.scenes[0]!.end_seconds], [10, 20], 'sorted by time')
+  assert.deepEqual([out.scenes[1]!.start_seconds, out.scenes[1]!.end_seconds], [12, 20], 'the last one reaches the window end')
+  assert.equal(out.scenes[1]!.title, 'fin antes que inicio')
   assert.equal(out.elements.length, 1)
   assert.equal(out.elements[0]!.kind, 'object')
   assert.throws(() => parseWindowReply('{"scenes":[]}', w), /ninguna escena válida/)
@@ -226,4 +226,13 @@ test('Claude, as the fallback, sees an even sample of at most 100 frames', () =>
   assert.equal(sample[0], 0)
   assert.equal(sample.at(-1), 299)
   assert.deepEqual(evenlySpaced([1, 2, 3], 100), [1, 2, 3])
+})
+
+test('no part of a window is left without a scene', () => {
+  const scene = (a: number, b: number) => ({ start_seconds: a, end_seconds: b, title: 't', description: 'd', audio_description: null })
+  const scenes = [scene(130, 200), scene(3, 100)]
+  closeGaps(scenes, { start: 0, end: 210 })
+  assert.deepEqual(scenes.map((s) => [s.start_seconds, s.end_seconds]), [[0, 130], [130, 210]], 'small gaps closed, in order')
+  assert.throws(() => closeGaps([scene(0, 100), scene(700, 1000)], { start: 0, end: 1000 }), /600 s del tramo sin describir/)
+  assert.match(windowInstruction({ start: 0, end: 1083 }), /del segundo 0\.0 al 1083\.0.*sin huecos.*120 segundos/s)
 })
