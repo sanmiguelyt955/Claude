@@ -32,7 +32,7 @@ const WINDOW_FRAMES = 300
  * run of identical seconds) with four channels; 240 s stay well inside the
  * 65k-token reply even on a busy video.
  */
-const windowSeconds = () => Math.max(30, Number(process.env.V6_WINDOW_SECONDS ?? 240) || 240)
+const windowSeconds = () => Math.max(30, Number(process.env.V6_WINDOW_SECONDS ?? 120) || 120)
 /** Most shots described by their own frame in phase 1. */
 const MAX_PHASE1_FRAMES = 300
 /** Gemini 3 Flash replies are capped at 65,536 tokens; windows and the synthesis use all of it. */
@@ -334,7 +334,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   const report = () => progress({ label: `Registro V6.5: ${done} de ${windows.length} tramos de la línea de tiempo...`, current: 1 + done, total: steps })
   report()
   const reference = phase1Reference(p1)
-  const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 3) || 1)
+  const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 8) || 1)
   let next = 0
   const worker = async () => {
     while (next < windows.length) {
@@ -362,7 +362,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
             V6_ACCESS,
             metaBlock(meta, shots, input.hasAudio),
             reference,
-            `ESTE TRAMO: ${w.index + 1} de ${windows.length}, del segundo ${w.start.toFixed(1)} (${mmss(w.start)}) al ${w.end.toFixed(1)} (${mmss(w.end)}). ${secondsPlan(w, duration)} Sufijo para entidades y textos nuevos de este tramo: "-${tag}" (ej. O9-${tag}, TX1-${tag}; la app renumera los TX al unir los tramos). Planos en este tramo: ${shotsHere.join(', ') || '[ND]'}.${w.frames.length ? '' : ' Este tramo NO tiene fotogramas: VIS es [ND] en todo él; registra AUD y declara el hueco de imagen.'}`,
+            `ESTE TRAMO: ${w.index + 1} de ${windows.length}, del segundo ${w.start.toFixed(1)} (${mmss(w.start)}) al ${w.end.toFixed(1)} (${mmss(w.end)}). ${secondsPlan(w)} Sufijo para entidades y textos nuevos de este tramo: "-${tag}" (ej. O9-${tag}, TX1-${tag}; la app renumera los TX al unir los tramos). Planos en este tramo: ${shotsHere.join(', ') || '[ND]'}.${w.frames.length ? '' : ' Este tramo NO tiene fotogramas: VIS es [ND] en todo él; registra AUD y declara el hueco de imagen.'}`,
             `CORTES MEDIDOS EN ESTE TRAMO [META]: ${cutsHere.length ? cutsHere.map((c) => `${mmss(c.time)} (score ${c.score.toFixed(1)})`).join(', ') : 'ninguno'}`,
             `SILENCIOS MEDIDOS (≥0,5 s bajo -35 dB) [META]: ${silencesHere.length ? silencesHere.map((s) => `${mmss(s.start)}–${mmss(s.end)}`).join(', ') : input.hasAudio ? 'ninguno' : 'NO APLICA'}`,
             `TRANSCRIPCIÓN DE ESTE TRAMO [META] (numeración global T#):\n${lines.join('\n') || 'No se detecta habla en este tramo.'}`,
@@ -486,12 +486,15 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
  * The entries the window must deliver, spelled out: told only "one per
  * second", the model summarised ten-second stretches.
  */
-function secondsPlan(w: V6Window, duration: number): string {
+// Always one entry per second. Allowing identical seconds to be chained on
+// videos over a minute (as the protocol permits) had every model on a 4-minute
+// video on 18 Oct 2026 group changing seconds too, and each rejected reply
+// cost a request and a minute.
+function secondsPlan(w: V6Window): string {
   const first = Math.floor(w.start)
   const last = Math.ceil(w.end)
   const n = last - first
-  const chaining = duration > 60
-  return `La línea de tiempo de este tramo son ${n} segundos: entradas ${mmss(Math.max(first, w.start))}–${mmss(Math.min(first + 1, w.end))}, ${mmss(first + 1)}–${mmss(first + 2)}, … hasta la que termina en ${mmss(w.end)}; ${chaining ? 'solo se pueden juntar en una entrada los segundos CONSECUTIVOS sin ningún cambio (sin_cambios=true); un segundo con cualquier cambio, aunque sea una frase nueva de la transcripción, es su propia entrada' : 'el video dura menos de un minuto: una entrada por segundo, sin encadenar'}. Una entrada de varios segundos con cambios dentro se rechaza.`
+  return `La línea de tiempo de este tramo son ${n} segundos: entradas ${mmss(Math.max(first, w.start))}–${mmss(Math.min(first + 1, w.end))}, ${mmss(first + 1)}–${mmss(first + 2)}, … hasta la que termina en ${mmss(w.end)}; una entrada por segundo, sin encadenar (un segundo sin cambios es una entrada corta con sin_cambios=true). Una entrada de varios segundos con cambios dentro se rechaza.`
 }
 
 const windowKey = (w: V6Window) => `v6-${w.start.toFixed(3)}-${w.end.toFixed(3)}-${w.frames.length}`

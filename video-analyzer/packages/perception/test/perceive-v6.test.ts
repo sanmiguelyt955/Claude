@@ -113,6 +113,19 @@ test('perceive under protocol v6 writes the full record: measured shots, timelin
   assert.ok(result.elements.some((e) => e.kind === 'on_screen_text' && e.label === 'HOLA'))
 })
 
+test('a resumed analysis with its transcript saved still hears every window', { timeout: 300_000 }, async () => {
+  const calls: VisionRequest[] = []
+  const transcript = { language: 'en', segments: [{ start: 0.5, end: 2.5, text: 'This is a quick test sentence.' }] }
+  const result = await perceive(makeVideo(), mkdtempSync(path.join(tmpdir(), 'v6-resume-')), {
+    protocol: 'v6',
+    providers: [fakeGemini(calls)],
+    diarize: false,
+    checkpoint: { engine: 'perception', version: 1, windows: {}, transcript },
+  })
+  assert.match(result.protocolRecord!.markdown, /quick test sentence/)
+  assert.ok(calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).every((w) => w.audio), 'the sound is extracted again for the windows')
+})
+
 test('shots come from the measured cuts and windows cover the whole video', () => {
   assert.deepEqual(
     shotsFrom([{ time: 2, score: 20 }, { time: 2.1, score: 20 }, { time: 5, score: 30 }], 8).map((s) => [s.id, s.start, s.end]),

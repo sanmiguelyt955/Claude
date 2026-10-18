@@ -141,11 +141,22 @@ export function parseRetryAfter(value: string | null): number | undefined {
  * ("retryDelay": "23s"); the Retry-After header wins when present. Waiting
  * exactly that, not a fixed minute, is what makes a per-minute limit cheap.
  */
-export function retryAfterOf(header: string | null, body: string): number | undefined {
+export function retryAfterOf(header: string | null, body: string, now = Date.now()): number | undefined {
+  // A daily quota resets at midnight Pacific time; Google's short retryDelay
+  // would have every later request of the day spend a call to hear "no".
+  if (/"quotaId"\s*:\s*"[^"]*PerDay/.test(body)) return untilPacificMidnight(now)
   const fromHeader = parseRetryAfter(header)
   if (fromHeader !== undefined) return fromHeader
   const m = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(body)
   return m ? Math.ceil(Number(m[1]) * 1000) : undefined
+}
+
+function untilPacificMidnight(now: number): number {
+  const [h, m, sec] = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .format(now)
+    .split(':')
+    .map(Number) as [number, number, number]
+  return 86_400_000 - ((h * 60 + m) * 60 + sec) * 1000 - (now % 1000)
 }
 
 /** The quota a 429 names (e.g. "...InputTokensPerModelPerMinute"), put first so it survives the 200-character message. */

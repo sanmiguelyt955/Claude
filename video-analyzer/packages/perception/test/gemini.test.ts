@@ -159,5 +159,10 @@ test('a 429 waits what Google asks and names the quota it hit', () => {
   assert.equal(retryAfterOf(null, body), 23_400)
   assert.equal(retryAfterOf('5', body), 5_000, 'the header wins')
   assert.equal(retryAfterOf(null, '{}'), undefined)
+  // A daily quota is spent until midnight in California: no retry before that.
+  const daily = '{"error":{"details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},{"retryDelay":"20s"}]}}'
+  const at = Date.parse('2026-10-18T20:30:00Z') // 13:30 in Los Angeles (PDT)
+  assert.equal(retryAfterOf(null, daily, at), (10 * 60 + 30) * 60_000)
+  assert.equal(retryAfterOf('5', daily, at), (10 * 60 + 30) * 60_000, 'even over a short header')
   assert.match(quotaDetail(body), /^\[GenerateContentInputTokensPerModelPerMinute-FreeTier\] /)
 })

@@ -1,6 +1,8 @@
 import { ProviderOverloadedError, type VisionProvider, type VisionRequest } from './providers/types.js'
 
 const pausedUntil = new Map<string, number>()
+/** Models whose daily quota is spent: the retry rounds do not wake them before it resets. */
+const dailyUntil = new Map<string, number>()
 
 /** Errors that mean "try the next provider": overload, quota, timeout or network. */
 export function shouldFallback(err: unknown): boolean {
@@ -87,11 +89,16 @@ export async function describeWithFallback<T = string>(
     if (!pick) {
       // Every provider answered with garbage: waiting will not fix that.
       if (parseFailures === usable.length || round === maxRounds) break
+      // Waiting minutes cannot bring back a quota that resets at midnight.
+      if (usable.every((p) => (dailyUntil.get(p.name) ?? 0) > Date.now())) {
+        failures.push('todos los modelos agotaron su cuota del día (se renueva a medianoche, hora de California)')
+        break
+      }
       const wait = Math.min(Math.min(...usable.map(waitOf)), maxWaitMs)
       log(`todos los proveedores en pausa; reintento ${round + 1}/${maxRounds} en ${Math.round(wait / 1000)}s`)
       await sleep(wait)
       // The wait may be capped below the real pause; let them try again anyway.
-      for (const p of usable) pausedUntil.delete(p.name)
+      for (const p of usable) if ((dailyUntil.get(p.name) ?? 0) <= Date.now()) pausedUntil.delete(p.name)
       tried.clear()
       parseFailures = 0
       round++
@@ -111,6 +118,7 @@ export async function describeWithFallback<T = string>(
       if (!shouldFallback(err)) throw err
       const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? cooldownMs
       pausedUntil.set(p.name, Date.now() + pause)
+      if (/PerDay/.test(String(err))) dailyUntil.set(p.name, Date.now() + pause)
       log(`${p.name} no disponible, pasando al siguiente: ${String(err)}`)
       failures.push(String(err))
       continue

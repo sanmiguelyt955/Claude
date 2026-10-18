@@ -166,3 +166,20 @@ test('a ready second model is used at once, without waiting for the first', asyn
   assert.equal(out.provider, second.name)
   assert.deepEqual(waits, [])
 })
+
+test('a model out of daily quota stays out across the retry rounds', async () => {
+  let daily = 0
+  let flaky = 0
+  const spent = fake(async () => { daily++; throw new ProviderOverloadedError('p', 429, '[GenerateRequestsPerDayPerProjectPerModel-FreeTier] quota', 10 * 3_600_000) })
+  const busy = fake(async () => { flaky++; if (flaky < 3) throw overload(1_000); return '{"ok":true}' })
+  const out = await describeWithFallback([spent, busy], req, { sleep: noSleep })
+  assert.equal(out.text, '{"ok":true}')
+  assert.equal(daily, 1, 'asked once, not again every round')
+})
+
+test('when every model is out of daily quota it says so at once instead of waiting', async () => {
+  const spent = () => fake(async () => { throw new ProviderOverloadedError('p', 429, '[GenerateRequestsPerDayPerProjectPerModel-FreeTier] quota', 10 * 3_600_000) })
+  const waits: number[] = []
+  await assert.rejects(describeWithFallback([spent(), spent()], req, { sleep: async (ms) => { waits.push(ms) } }), /cuota del día/)
+  assert.deepEqual(waits, [])
+})

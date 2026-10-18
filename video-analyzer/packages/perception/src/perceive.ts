@@ -266,7 +266,9 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const needsWhisper = hasAudio && !captions && !checkpoint.transcript
   const alreadyLabelled = checkpoint.transcript?.segments.some((s) => s.speaker !== undefined) ?? false
   const wantsSpeakers = hasAudio && (opts.diarize ?? process.env.DIARIZATION !== '0') && !alreadyLabelled
-  const needsAudio = needsWhisper || wantsSpeakers
+  const v6 = (opts.protocol ?? process.env.PERCEPTION_PROTOCOL ?? 'v6') === 'v6'
+  // The V6.5 windows hear their own clip of the sound, so a resumed analysis needs it too.
+  const needsAudio = needsWhisper || wantsSpeakers || (v6 && hasAudio)
   log(needsAudio ? 'extrayendo frames y audio' : 'extrayendo frames')
   progress({ label: needsWhisper ? 'Extrayendo fotogramas y transcribiendo el audio...' : 'Extrayendo fotogramas...' })
   // Frames and speech are independent until the windows need both, so they
@@ -316,7 +318,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   if (frames.length === 0) throw new Error('No se pudo extraer ningún fotograma del video.')
   log(`${frames.length} frames únicos, ${cuts.length} cortes`)
 
-  if ((opts.protocol ?? process.env.PERCEPTION_PROTOCOL ?? 'v6') === 'v6') {
+  if (v6) {
     checkpoint.v6 ??= { windows: {} }
     const { result, markdown } = await buildV6Record({
       title: opts.title ?? path.basename(file),
@@ -359,7 +361,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   // Windows are independent, so several go to the model at once instead of
   // one after another: on a long video the waits add up to most of the
   // analysis. VISION_CONCURRENCY=1 restores the old one-by-one order.
-  const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 3) || 1)
+  const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 8) || 1)
   const results: Array<{ scenes: Scene[]; elements: Element[] }> = new Array(windows.length)
   let finished = 0
   const report = () =>

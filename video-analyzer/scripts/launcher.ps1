@@ -203,6 +203,16 @@ if (Test-Changed 'env-low-resolution' 'v1') {
   Save-State 'env-low-resolution' 'v1'
 }
 
+# VISION_CONCURRENCY=3 was the default until the per-minute pacing made more
+# windows at once safe. Done once.
+if (Test-Changed 'env-concurrency' 'v1') {
+  $envText = Get-Content $envLocal
+  if ($envText -contains 'VISION_CONCURRENCY=3') {
+    ($envText -replace '^VISION_CONCURRENCY=3$', 'VISION_CONCURRENCY=8') | Set-Content $envLocal
+  }
+  Save-State 'env-concurrency' 'v1'
+}
+
 Say 'Actualizando la base de datos...'
 Run 'La migracion de la base de datos' { & npm run --silent db:migrate }
 
