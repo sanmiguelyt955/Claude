@@ -209,3 +209,47 @@ for (const skipped of ['planos', 'recreacion'] as const) test(`a window that ski
   assert.match(result.protocolRecord!.markdown, /ESCALA: general/, 'the description comes from the second answer')
   assert.doesNotMatch(result.protocolRecord!.markdown, /ningún tramo/)
 })
+
+test('a window no model answers whole is split in two halves, asked in parallel', { timeout: 300_000 }, async () => {
+  const video = path.join(mkdtempSync(path.join(tmpdir(), 'v6-split-')), 'long.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=30:r=10', '-f', 'lavfi', '-i', 'sine=f=440:d=30', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  // Like Flash-Lite on 19 Oct 2026: a long window comes back with its seconds grouped.
+  const grouping: VisionProvider = {
+    name: 'grouping',
+    available: () => true,
+    async describe(req) {
+      const out = JSON.parse(await good.describe(req))
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
+        const [a, b] = /del segundo ([\d.]+) .* al ([\d.]+)/.exec(req.instruction)!.slice(1).map(Number) as [number, number]
+        if (b - a > 20) out.timeline = [{ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'todo junto', aud: 'a', txt: 't', cam: 'c', cortes: [] }]
+      }
+      return JSON.stringify(out)
+    },
+  }
+  const logs: string[] = []
+  let saved: unknown
+  const result = await perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-split-w-')), {
+    protocol: 'v6', providers: [grouping], whisperModel: 'tiny', language: 'en', diarize: false, log: (m) => logs.push(m),
+    onCheckpoint: (c) => { saved = JSON.parse(JSON.stringify(c)) },
+  })
+  const md = result.protocolRecord!.markdown
+  assert.ok(logs.some((l) => /se parte en dos mitades/.test(l)))
+  const windows = calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA)
+  assert.equal(windows.length, 3, 'the whole window once, then its two halves')
+  assert.ok(windows.slice(1).every((w) => /ESTE TRAMO: 1[ab] de 1/.test(w.instruction)))
+  assert.match(md, /\[00:29–00:30/, 'the timeline reaches the end')
+  assert.doesNotMatch(md, /todo junto/)
+  assert.match(md, /\*\*TX1\*\*/)
+  assert.doesNotMatch(md, /TX\d+-t1[ab]/, 'texts from the halves are renumbered')
+
+  // Resumed before the synthesis: the halves are reused, the whole window is not asked again.
+  const resumed = saved as { v6: { phase3?: unknown } }
+  delete resumed.v6.phase3
+  const again: VisionRequest[] = []
+  await perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-split-r-')), {
+    protocol: 'v6', providers: [fakeGemini(again)], whisperModel: 'tiny', language: 'en', diarize: false, checkpoint: resumed as never,
+  })
+  assert.equal(again.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).length, 0)
+})

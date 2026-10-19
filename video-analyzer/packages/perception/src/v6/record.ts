@@ -116,6 +116,8 @@ type Phase3Out = Omit<V6Phase3, 'cambios_estado' | 'recreacion'> & { resumen_com
 export type V6Checkpoint = {
   phase1?: V6Phase1
   windows: Record<string, WindowOut>
+  /** Windows answered in two halves (their keys), so a resumed job goes straight to the halves. */
+  split?: string[]
   phase3?: Phase3Out
 }
 
@@ -131,7 +133,27 @@ export function shotsFrom(cuts: Cut[], duration: number): Shot[] {
   return bounds.slice(0, -1).map((start, i) => ({ id: `PL${i + 1}`, start, end: bounds[i + 1]! }))
 }
 
-export type V6Window = { index: number; start: number; end: number; frames: Frame[] }
+export type V6Window = {
+  index: number
+  start: number
+  end: number
+  frames: Frame[]
+  /** "3", or "3a"/"3b" for the halves of window 3 when it had to be split. */
+  label?: string
+}
+
+/** A window shorter than this is not split again. */
+const MIN_SPLIT_SECONDS = 20
+
+/** The two halves of a window, each with its own frames and label. */
+export function splitWindow(w: V6Window): [V6Window, V6Window] {
+  const mid = (w.start + w.end) / 2
+  const label = w.label ?? String(w.index + 1)
+  return [
+    { index: w.index, start: w.start, end: mid, frames: w.frames.filter((f) => f.time < mid), label: `${label}a` },
+    { index: w.index, start: mid, end: w.end, frames: w.frames.filter((f) => f.time >= mid), label: `${label}b` },
+  ]
+}
 
 /** Contiguous windows over the whole video, each at most WINDOW_FRAMES frames and windowSeconds() long. */
 export function v6Windows(frames: Frame[], duration: number): V6Window[] {
@@ -189,7 +211,7 @@ export async function probeVideo(file: string): Promise<{ width: number | null; 
 /** The window's sound as a small Opus file the model can hear. */
 async function audioClip(wavPath: string, dir: string, w: V6Window): Promise<{ path: string; mimeType: string; seconds: number }> {
   await mkdir(dir, { recursive: true })
-  const out = path.join(dir, `tramo-${w.index + 1}.ogg`)
+  const out = path.join(dir, `tramo-${w.label ?? w.index + 1}.ogg`)
   await run(ffmpegBin(), [
     '-hide_banner', '-v', 'error', '-y', '-ss', w.start.toFixed(3), '-t', (w.end - w.start).toFixed(3), '-i', wavPath,
     '-ac', '1', '-c:a', 'libopus', '-b:a', '24k', '-f', 'ogg', out,
@@ -356,13 +378,21 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   const reference = phase1Reference(checkpoint.phase1)
   const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 8) || 1)
   let next = 0
-  const worker = async () => {
-    while (next < windows.length) {
-      const w = windows[next++]!
+  // The windows actually answered: the planned ones, or the halves of one that failed.
+  const leaves: V6Window[] = []
+  const runWindow = async (w: V6Window): Promise<void> => {
       const key = windowKey(w)
-      if (checkpoint.windows[key]) continue
+      if (checkpoint.windows[key]) {
+        leaves.push(w)
+        return
+      }
+      if (checkpoint.split?.includes(key)) {
+        await Promise.all(splitWindow(w).map(runWindow))
+        return
+      }
       const range = { start: w.start, end: w.end }
-      const tag = `t${w.index + 1}`
+      const label = w.label ?? String(w.index + 1)
+      const tag = `t${label}`
       const lines = speech.segments
         .map((s, i) => ({ s, n: i + 1 }))
         .filter(({ s }) => s.end > w.start && s.start < w.end)
@@ -370,11 +400,13 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
       const cutsHere = input.cuts.filter((c) => c.time >= w.start && c.time < w.end)
       const shotsHere = shots.filter((s) => s.end > w.start && s.start < w.end).map((s) => s.id)
       // Each shot is described by the window it starts in.
-      const ownShots = shots.filter((s) => s.start >= w.start && (s.start < w.end || (w.index === windows.length - 1 && s.start <= w.end)))
+      const ownShots = shots.filter((s) => s.start >= w.start && (s.start < w.end || (w.end >= duration - 1e-6 && s.start <= w.end)))
       const silencesHere = silences.filter((s) => s.end > w.start && s.start < w.end)
-      log(`V6 tramo ${w.index + 1}/${windows.length} (${mmss(w.start)}–${mmss(w.end)}, ${w.frames.length} fotogramas)`)
+      log(`V6 tramo ${label}/${windows.length} (${mmss(w.start)}–${mmss(w.end)}, ${w.frames.length} fotogramas)`)
       const audio = input.hasAudio ? await audioClip(input.wavPath, path.join(input.workDir, 'v6-audio'), w) : undefined
-      const { value } = await chain(
+      let answered: { value: WindowOut }
+      try {
+        answered = await chain(
         {
           frames: w.frames,
           audio,
@@ -384,7 +416,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
             V6_ACCESS,
             metaBlock(meta, shots, input.hasAudio),
             reference,
-            `ESTE TRAMO: ${w.index + 1} de ${windows.length}, del segundo ${w.start.toFixed(1)} (${mmss(w.start)}) al ${w.end.toFixed(1)} (${mmss(w.end)}). ${secondsPlan(w)} Sufijo para entidades y textos nuevos de este tramo: "-${tag}" (ej. O9-${tag}, TX1-${tag}; la app renumera los TX al unir los tramos). Planos en este tramo: ${shotsHere.join(', ') || '[ND]'}.${w.frames.length ? '' : ' Este tramo NO tiene fotogramas: VIS es [ND] en todo él; registra AUD y declara el hueco de imagen.'}`,
+            `ESTE TRAMO: ${label} de ${windows.length}, del segundo ${w.start.toFixed(1)} (${mmss(w.start)}) al ${w.end.toFixed(1)} (${mmss(w.end)}). ${secondsPlan(w)} Sufijo para entidades y textos nuevos de este tramo: "-${tag}" (ej. O9-${tag}, TX1-${tag}; la app renumera los TX al unir los tramos). Planos en este tramo: ${shotsHere.join(', ') || '[ND]'}.${w.frames.length ? '' : ' Este tramo NO tiene fotogramas: VIS es [ND] en todo él; registra AUD y declara el hueco de imagen.'}`,
             `PLANOS QUE EMPIEZAN EN ESTE TRAMO [META] (descríbelos en planos y recreacion, uno por uno, con estos IDs):\n${ownShots.map((s) => `${s.id} — ${mmss(s.start)}–${mmss(s.end)} (${(s.end - s.start).toFixed(2)} s)${s.end > w.end + 0.05 ? ' — sigue en el tramo siguiente: describe lo que ves aquí' : ''}`).join('\n') || '(ninguno)'}`,
             `CORTES MEDIDOS EN ESTE TRAMO [META]: ${cutsHere.length ? cutsHere.map((c) => `${mmss(c.time)} (score ${c.score.toFixed(1)})`).join(', ') : 'ninguno'}`,
             `SILENCIOS MEDIDOS (≥0,5 s bajo -35 dB) [META]: ${silencesHere.length ? silencesHere.map((s) => `${mmss(s.start)}–${mmss(s.end)}`).join(', ') : input.hasAudio ? 'ninguno' : 'NO APLICA'}`,
@@ -409,14 +441,31 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
           return { ...raw, timeline, limites: [...(raw.limites ?? []), ...filled] }
         },
       )
-      checkpoint.windows[key] = value
+      } catch (err) {
+        // No model gave a valid answer for the whole window (most often:
+        // seconds grouped in a long window). Two halves, in parallel, each
+        // with half the timeline to write, instead of the same request again.
+        // A spent daily quota or a too-short window cannot be helped by this.
+        const msg = String(err)
+        if (!/Ningún proveedor/.test(msg) || /cuota del día/.test(msg) || w.end - w.start < MIN_SPLIT_SECONDS) throw err
+        log(`tramo ${label}: ningún modelo lo resolvió entero; se parte en dos mitades en paralelo`)
+        checkpoint.split = [...(checkpoint.split ?? []), key]
+        input.save()
+        await Promise.all(splitWindow(w).map(runWindow))
+        return
+      }
+      checkpoint.windows[key] = answered.value
+      leaves.push(w)
       input.save()
       done++
       report()
-    }
+  }
+  const worker = async () => {
+    while (next < windows.length) await runWindow(windows[next++]!)
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, windows.length) }, worker))
-  const outs = windows.map((w) => checkpoint.windows[windowKey(w)]!)
+  leaves.sort((a, b) => a.start - b.start)
+  const outs = leaves.map((w) => checkpoint.windows[windowKey(w)]!)
 
   // TX numbering across windows: by first appearance.
   const tx = renumberTexts(outs)
@@ -671,7 +720,7 @@ export function renumberTexts(outs: Array<Pick<WindowOut, 'textos_pantalla'>>): 
   })
   // One pass with a callback, so TX1 -> TX5 never chains into TX5 -> TX9.
   const rename = (window: number, s: string) =>
-    s ? s.replace(/\bTX\d+(?:-t\d+)?\b/g, (old) => map.get(`${window}:${old}`) ?? old) : s
+    s ? s.replace(/\bTX\d+(?:-t\d+[a-z]*)?\b/g, (old) => map.get(`${window}:${old}`) ?? old) : s
   return { list: list.map(({ window: _w, ...t }) => t), rename }
 }
 
