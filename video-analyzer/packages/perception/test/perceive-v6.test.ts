@@ -5,9 +5,8 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { V6_PHASE1_SCHEMA } from '@cva/ai-router'
 import { perceive } from '../src/perceive.ts'
-import { coverTimeline, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
+import { coverTimeline, recreationByShot, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_PHASE1_SCHEMA, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -33,19 +32,20 @@ function fakeGemini(calls: VisionRequest[]): VisionProvider {
     available: () => true,
     async describe(req) {
       calls.push(req)
-      if (req.schema === V6_PHASE1_SCHEMA) {
+      if (req.schema === V6_PERCEPTION_PHASE1_SCHEMA) {
         return JSON.stringify({
           ficha: { duracion: 'x', duracion_origen: 'x', relacion_aspecto: 'horizontal', planos: 1, naturaleza: 'animación', audio: 'habla', sujetos: 'ninguno', idioma_habla: 'inglés', tags: ['color'] },
           ficha_tecnica: { duracion_archivo: 'x', ultimo_contenido_observable: 'x', numero_planos: 1, duracion_media_plano: 'x', plano_mas_largo: 'x', plano_mas_corto: 'x' },
           triaje: { eje0_fuente: 'video' },
           procedencia: ['sin marcas de agua'],
           entidades: [{ id: 'E1', primera_aparicion: '00:00', descripcion_fisica: 'campo de color uniforme', identificacion: 'NO DETERMINABLE', apariciones: '00:00–00:08' }],
-          planos: [{ id: 'PL2', inicio: 'x', fin: 'x', duracion: 'x', escala: 'general', angulo: 'frontal', altura: 'ND', movimiento: 'fija', composicion: 'E1 llena el cuadro', fondo_superficie: 'E1', iluminacion: 'uniforme', entrada_salida: 'corte' }],
           textos_pantalla: [],
         })
       }
       if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
         const [a, b] = /del segundo ([\d.]+) .* al ([\d.]+)/.exec(req.instruction)!.slice(1).map(Number) as [number, number]
+        const ownBlock = /PLANOS QUE EMPIEZAN EN ESTE TRAMO[^\n]*\n([\s\S]*?)\n\n/.exec(req.instruction)![1]!
+        const own = [...ownBlock.matchAll(/^(PL\d+) —/gm)].map((m) => m[1]!)
         const timeline = []
         for (let t = a; t < b; t++) {
           timeline.push({ start_seconds: t, end_seconds: Math.min(t + 1, b), sin_cambios: false, vis: `E1 en ${t}s; TX1 visible`, aud: 'VOZ1 habla', txt: 'TX1 visible', cam: 'sin cambios', cortes: [] })
@@ -57,6 +57,9 @@ function fakeGemini(calls: VisionRequest[]): VisionProvider {
           escenas: [{ start_seconds: a, end_seconds: b, title: 'Colores', description: 'campos de color', audio_description: 'VOZ1 habla' }],
           elementos: [{ kind: 'on_screen_text', label: 'HOLA', detail: 'arriba', start_seconds: a, end_seconds: b }],
           entidades_nuevas: [],
+          // Every shot the window owns, as listed in its instruction.
+          planos: own.map((id) => ({ id, escala: id === 'PL2' ? 'general' : 'medio', angulo: 'frontal', altura: 'ND', movimiento: 'fija', composicion: 'E1 llena el cuadro', fondo_superficie: 'E1', iluminacion: 'uniforme', entrada_salida: 'corte' })),
+          recreacion: own.map((id) => ({ plano: id, sujetos_estado_inicial: 'E1', accion: `campo de color en ${id}; TX1 visible`, camara: 'fija', luz_entorno: 'uniforme', audio: 'VOZ1', texto: 'TX1', estado_final: 'E1' })),
           limites: [],
         })
       }
@@ -100,12 +103,16 @@ test('perceive under protocol v6 writes the full record: measured shots, timelin
   assert.match(md, /T1 — 00:0\d.* — VOZ1: ".*quick test sentence/i)
   assert.match(md, /\*\*TX1\*\* — aparece 00:00/)
   assert.match(md, /MAPA DE COBERTURA: VIS: fotogramas en/)
+  for (const id of ['PL1', 'PL2', 'PL3', 'PL4']) assert.match(md, new RegExp(`campo de color en ${id}`), `9.13 has ${id}, written by its window`)
+  assert.doesNotMatch(md, /ningún tramo/)
 
   const windows = calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA)
   assert.ok(windows.length >= 1)
   assert.ok(windows.every((w) => w.audio && w.audio.mimeType === 'audio/ogg'), 'every window hears its sound')
   assert.ok(windows.every((w) => /CORTES MEDIDOS EN ESTE TRAMO \[META\]: 00:02/.test(w.instruction)))
   assert.equal(calls.length, windows.length + 2, 'phase 1 + one request per window + synthesis')
+  assert.ok(!('planos' in (V6_PERCEPTION_PHASE1_SCHEMA.properties as object)), 'phase 1 no longer writes the shots')
+  assert.ok(!calls.some((c) => /MAPA DE PLANOS \(9\.4\)/.test(c.instruction) && c.schema === V6_PERCEPTION_WINDOW_SCHEMA), 'windows do not carry every shot of the video')
   assert.ok(calls.every((c) => c.instruction.length < 60_000), 'the distilled protocol, not the 30k-token full text, goes with each call')
 
   assert.equal(result.summary.short_summary, 'Cuatro campos de color con voz.')
@@ -172,4 +179,33 @@ test('voices get their acoustic description from the windows that heard them', (
   withVoices(p1, [{ voces: [{ id: 'VOZ 1', descripcion_acustica: 'tono medio, ritmo rápido' }] }, { voces: [{ id: 'VOZ1', descripcion_acustica: 'tono medio, ritmo rápido' }, { id: 'S1', descripcion_acustica: 'pitido agudo de 0,2 s' }] }])
   assert.equal(p1.entidades[0]!.descripcion_fisica, 'tono medio, ritmo rápido', 'same description once')
   assert.equal(p1.entidades[1]!.id, 'S1')
+})
+
+test('9.13 follows the measured shots; one no window wrote is [ND] and declared', () => {
+  const shots = [{ id: 'PL1', start: 0, end: 2 }, { id: 'PL2', start: 2, end: 5 }]
+  const r = (plano: string) => ({ plano, sujetos_estado_inicial: 's', accion: 'TX1 aparece', camara: 'c', luz_entorno: 'l', audio: 'a', texto: 'TX1', estado_final: 'e' })
+  const { list, missing } = recreationByShot(shots, [{ recreacion: [r('pl 1')] }, { recreacion: [] }], (w, s) => s.replace('TX1', `TX${w + 7}`))
+  assert.deepEqual(list.map((x) => [x.plano, x.duracion, x.texto]), [['PL1', '2.00 s [META]', 'TX7'], ['PL2', '3.00 s [META]', '[ND]']])
+  assert.equal(missing.length, 1)
+  assert.match(missing[0]!, /PL2/)
+})
+
+for (const skipped of ['planos', 'recreacion'] as const) test(`a window that skips most of its shots (${skipped}) is asked again`, { timeout: 300_000 }, async () => {
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  const lazy: VisionProvider = {
+    name: 'lazy',
+    available: () => true,
+    async describe(req) {
+      const out = JSON.parse(await good.describe(req))
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) out[skipped] = []
+      return JSON.stringify(out)
+    },
+  }
+  const result = await perceive(makeVideo(), mkdtempSync(path.join(tmpdir(), 'v6-lazy-')), {
+    protocol: 'v6', providers: [lazy, { ...good, name: 'good' }], whisperModel: 'tiny', language: 'en', diarize: false,
+  })
+  assert.match(result.protocolRecord!.markdown, /\*\*PL4\*\* — 00:06/)
+  assert.match(result.protocolRecord!.markdown, /ESCALA: general/, 'the description comes from the second answer')
+  assert.doesNotMatch(result.protocolRecord!.markdown, /ningún tramo/)
 })

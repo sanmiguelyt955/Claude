@@ -115,7 +115,7 @@ export class MinuteBudget {
 export class ProviderOverloadedError extends Error {
   constructor(
     provider: string,
-    status: number | string,
+    public readonly status: number | string,
     detail: string,
     public readonly retryAfterMs?: number,
   ) {

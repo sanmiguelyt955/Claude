@@ -1,6 +1,8 @@
 import { ProviderOverloadedError, type VisionProvider, type VisionRequest } from './providers/types.js'
 
 const pausedUntil = new Map<string, number>()
+/** Pause after a 503 that says nothing about how long: demand spikes are short. */
+const SPIKE_PAUSE_MS = 15_000
 /** Models whose daily quota is spent: the retry rounds do not wake them before it resets. */
 const dailyUntil = new Map<string, number>()
 
@@ -26,6 +28,8 @@ export type FallbackOptions<T> = {
   parse?: (text: string) => T
   log?: (msg: string) => void
   sleep?: (ms: number) => Promise<void>
+  /** Clock for the pauses (tests). */
+  now?: () => number
   /**
    * Called for every request actually sent to a provider, answered or not.
    * Quotas count requests, so the caller records each one under its model.
@@ -59,6 +63,7 @@ export async function describeWithFallback<T = string>(
   const parse = opts.parse ?? ((text: string) => text as unknown as T)
   const log = opts.log ?? (() => {})
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const now = opts.now ?? Date.now
 
   const usable = providers.filter((p) => p.available())
   if (usable.length === 0) {
@@ -66,12 +71,19 @@ export async function describeWithFallback<T = string>(
   }
 
   const waitOf = (p: VisionProvider) =>
-    Math.max((pausedUntil.get(p.name) ?? 0) - Date.now(), p.readyInMs?.(req) ?? 0, 0)
+    Math.max((pausedUntil.get(p.name) ?? 0) - now(), p.readyInMs?.(req) ?? 0, 0)
 
   const failures: string[] = []
   let round = 1
   let parseFailures = 0
   const tried = new Set<string>()
+  // Google's 503 "high demand" spikes pass in seconds. When every good model
+  // is in one, waiting a little and asking them again keeps the request off
+  // Flash-Lite (a 2-minute documentary on 19 Oct 2026 had its phase 1, the
+  // entity register the whole record builds on, answered by Flash-Lite).
+  const overloads = new Map<string, number>()
+  const badReply = new Set<string>()
+  const hasFallback = usable.some((p) => p.fallbackOnly)
   for (;;) {
     const untried = usable.filter((p) => !tried.has(p.name))
     let pick = untried.find((p) => !p.fallbackOnly && waitOf(p) === 0)
@@ -83,6 +95,14 @@ export async function describeWithFallback<T = string>(
         await sleep(soonest)
         continue
       }
+      const again = hasFallback ? usable.filter((p) => !p.fallbackOnly && tried.has(p.name) && !badReply.has(p.name) && (overloads.get(p.name) ?? 0) < 2) : []
+      const soonestAgain = again.length ? Math.min(...again.map(waitOf)) : Infinity
+      if (soonestAgain <= preferWaitMs) {
+        log(`los modelos principales están saturados; reintento en ${Math.ceil(soonestAgain / 1000)}s en vez de bajar de calidad`)
+        await sleep(soonestAgain)
+        for (const p of again) tried.delete(p.name)
+        continue
+      }
       pick = untried.find((p) => p.fallbackOnly && waitOf(p) === 0)
     }
 
@@ -90,7 +110,7 @@ export async function describeWithFallback<T = string>(
       // Every provider answered with garbage: waiting will not fix that.
       if (parseFailures === usable.length || round === maxRounds) break
       // Waiting minutes cannot bring back a quota that resets at midnight.
-      if (usable.every((p) => (dailyUntil.get(p.name) ?? 0) > Date.now())) {
+      if (usable.every((p) => (dailyUntil.get(p.name) ?? 0) > now())) {
         failures.push('todos los modelos agotaron su cuota del día (se renueva a medianoche, hora de California)')
         break
       }
@@ -98,8 +118,10 @@ export async function describeWithFallback<T = string>(
       log(`todos los proveedores en pausa; reintento ${round + 1}/${maxRounds} en ${Math.round(wait / 1000)}s`)
       await sleep(wait)
       // The wait may be capped below the real pause; let them try again anyway.
-      for (const p of usable) if ((dailyUntil.get(p.name) ?? 0) <= Date.now()) pausedUntil.delete(p.name)
+      for (const p of usable) if ((dailyUntil.get(p.name) ?? 0) <= now()) pausedUntil.delete(p.name)
       tried.clear()
+      badReply.clear()
+      overloads.clear()
       parseFailures = 0
       round++
       continue
@@ -109,16 +131,18 @@ export async function describeWithFallback<T = string>(
     tried.add(p.name)
     p.reserve?.(req)
     let text: string
-    const started = Date.now()
+    const started = now()
     try {
       text = await p.describe(req)
-      opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: Date.now() - started })
+      opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: now() - started })
     } catch (err) {
-      opts.onAttempt?.({ provider: p.name, ok: false, error: String(err), latencyMs: Date.now() - started })
+      opts.onAttempt?.({ provider: p.name, ok: false, error: String(err), latencyMs: now() - started })
       if (!shouldFallback(err)) throw err
-      const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? cooldownMs
-      pausedUntil.set(p.name, Date.now() + pause)
-      if (/PerDay/.test(String(err))) dailyUntil.set(p.name, Date.now() + pause)
+      overloads.set(p.name, (overloads.get(p.name) ?? 0) + 1)
+      const spike = err instanceof ProviderOverloadedError && err.status === 503 ? SPIKE_PAUSE_MS : cooldownMs
+      const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? spike
+      pausedUntil.set(p.name, now() + pause)
+      if (/PerDay/.test(String(err))) dailyUntil.set(p.name, now() + pause)
       log(`${p.name} no disponible, pasando al siguiente: ${String(err)}`)
       failures.push(String(err))
       continue
@@ -128,6 +152,7 @@ export async function describeWithFallback<T = string>(
       return { provider: p.name, text, value: parse(text) }
     } catch (err) {
       parseFailures++
+      badReply.add(p.name)
       log(`${p.name} respondió algo no válido, probando el siguiente: ${String(err)}`)
       failures.push(`${p.name}: respuesta no válida (${String(err).slice(0, 120)})`)
     }

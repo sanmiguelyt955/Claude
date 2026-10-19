@@ -183,3 +183,25 @@ test('when every model is out of daily quota it says so at once instead of waiti
   await assert.rejects(describeWithFallback([spent(), spent()], req, { sleep: async (ms) => { waits.push(ms) } }), /cuota del día/)
   assert.deepEqual(waits, [])
 })
+
+test('a demand spike (503) on every good model waits and retries them before using Flash-Lite', async () => {
+  let a = 0
+  let b = 0
+  const first = fake(async () => { if (++a === 1) throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand'); return '{"first":true}' })
+  const second = fake(async () => { b++; throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand') })
+  const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true }
+  const waits: number[] = []
+  let clock = Date.now()
+  const out = await describeWithFallback([first, second, lite], req, { now: () => clock, sleep: async (ms) => { waits.push(ms); clock += ms } })
+  assert.equal(out.provider, first.name)
+  assert.equal(waits.length, 1)
+  assert.ok(waits[0]! <= 20_000, `a 503 pauses briefly, waited ${waits[0]}`)
+})
+
+test('a good model that keeps failing gives way to Flash-Lite instead of looping', async () => {
+  const main = fake(async () => { throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand') })
+  const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true }
+  let clock = Date.now()
+  const out = await describeWithFallback([main, lite], req, { now: () => clock, sleep: async (ms) => { clock += ms } })
+  assert.equal(out.provider, lite.name)
+})

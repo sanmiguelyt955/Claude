@@ -64,14 +64,33 @@ export const V6_PERCEPTION_WINDOW_SCHEMA = obj({
   elementos: arr(obj({ kind: STR, label: STR, detail: STR, start_seconds: NUM, end_seconds: NUM })),
   entidades_nuevas: arr(obj({ id: STR, primera_aparicion_segundo: NUM, descripcion_fisica: STR, identificacion: STR })),
   voces: arr(obj({ id: STR, descripcion_acustica: STR })),
+  // 9.4 and 9.13 for the shots that start in the window: written here, with
+  // every frame of the shot in view and in parallel, instead of in one reply
+  // for the whole video (a 201-shot documentary on 19 Oct 2026 kept phase 1
+  // writing for six minutes until the stream broke, and the synthesis six more).
+  planos: arr(
+    obj({ id: STR, escala: STR, angulo: STR, altura: STR, movimiento: STR, composicion: STR, fondo_superficie: STR, iluminacion: STR, entrada_salida: STR }),
+  ),
+  recreacion: arr(
+    obj({ plano: STR, sujetos_estado_inicial: STR, accion: STR, camara: STR, luz_entorno: STR, audio: STR, texto: STR, estado_final: STR }),
+  ),
   limites: arr(STR),
 })
 
-/** Phase 3 without 9.8 (the windows wrote it, with the frames in view) and with the library summary. */
+/** Phase 1 without the shots: the windows describe them. */
+export const V6_PERCEPTION_PHASE1_SCHEMA = (() => {
+  const base = V6_PHASE1_SCHEMA as { type: string; properties: Record<string, unknown>; required: string[] }
+  const properties = { ...base.properties }
+  delete (properties as Record<string, unknown>).planos
+  return { type: 'object', properties, required: Object.keys(properties) }
+})()
+
+/** Phase 3 without 9.8 and the per-shot 9.13 (the windows wrote them, with the frames in view) and with the library summary. */
 export const V6_PERCEPTION_PHASE3_SCHEMA = (() => {
   const base = V6_PHASE3_SCHEMA as { type: string; properties: Record<string, unknown>; required: string[] }
   const properties = { ...base.properties, resumen_completo: STR, idioma: STR }
   delete (properties as Record<string, unknown>).cambios_estado
+  delete (properties as Record<string, unknown>).recreacion
   return { type: 'object', properties, required: Object.keys(properties) }
 })()
 
@@ -84,10 +103,14 @@ type WindowOut = {
   entidades_nuevas: Array<{ id: string; primera_aparicion_segundo: number; descripcion_fisica: string; identificacion: string }>
   /** Acoustic description of each voice heard in the window (phase 1 does not hear). */
   voces?: Array<{ id: string; descripcion_acustica: string }>
+  /** 9.4 of the shots that start in the window (absent in checkpoints from before 19 Oct 2026). */
+  planos?: Array<Omit<V6Phase1['planos'][number], 'inicio' | 'fin' | 'duracion'>>
+  /** 9.13 of the same shots. */
+  recreacion?: Array<Omit<V6Phase3['recreacion'][number], 'duracion'>>
   limites: string[]
 }
 
-type Phase3Out = Omit<V6Phase3, 'cambios_estado'> & { resumen_completo: string; idioma: string }
+type Phase3Out = Omit<V6Phase3, 'cambios_estado' | 'recreacion'> & { resumen_completo: string; idioma: string; recreacion?: V6Phase3['recreacion'] }
 
 /** What the V6 record keeps between attempts (inside the perception checkpoint). */
 export type V6Checkpoint = {
@@ -194,9 +217,8 @@ function shotList(shots: Shot[]): string {
 }
 
 function phase1Reference(p1: V6Phase1): string {
-  const ent = p1.entidades.map((e) => `${e.id} — ${e.descripcion_fisica}`).join('\n')
-  const pl = p1.planos.map((p) => `${p.id} — ${p.inicio}–${p.fin}: ${p.escala}, ${p.angulo}, ${p.movimiento}`).join('\n')
-  return `REGISTRO DE ENTIDADES (9.3, fijado para todo el video):\n${ent || '(ninguna)'}\n\nMAPA DE PLANOS (9.4):\n${pl}`
+  const ent = (p1.entidades ?? []).map((e) => `${e.id} — ${e.descripcion_fisica}`).join('\n')
+  return `REGISTRO DE ENTIDADES (9.3, fijado para todo el video):\n${ent || '(ninguna)'}`
 }
 
 /** The frame nearest the middle of each shot, at most MAX_PHASE1_FRAMES, evenly spread. */
@@ -317,7 +339,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
           `TRANSCRIPCIÓN AUTOMÁTICA [META] (Whisper, voces separadas):\n${transcriptText}`,
           V6_PHASE1,
         ].join('\n\n'),
-        schema: V6_PHASE1_SCHEMA,
+        schema: V6_PERCEPTION_PHASE1_SCHEMA,
         maxOutputTokens: MAX_REPLY_TOKENS,
         // Describing, not reasoning: low thinking answers sooner (59 s with the default).
         thinking: 'low',
@@ -327,13 +349,11 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
     checkpoint.phase1 = value
     input.save()
   }
-  const p1 = fixPhase1(checkpoint.phase1, shots, meta, frames)
-
   // ── Phase 2 ─────────────────────────────────────────────────────────────
   let done = windows.filter((w) => checkpoint.windows[windowKey(w)]).length
   const report = () => progress({ label: `Registro V6.5: ${done} de ${windows.length} tramos de la línea de tiempo...`, current: 1 + done, total: steps })
   report()
-  const reference = phase1Reference(p1)
+  const reference = phase1Reference(checkpoint.phase1)
   const concurrency = Math.max(1, Number(process.env.VISION_CONCURRENCY ?? 8) || 1)
   let next = 0
   const worker = async () => {
@@ -349,6 +369,8 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
         .map(({ s, n }) => tLine(n, s))
       const cutsHere = input.cuts.filter((c) => c.time >= w.start && c.time < w.end)
       const shotsHere = shots.filter((s) => s.end > w.start && s.start < w.end).map((s) => s.id)
+      // Each shot is described by the window it starts in.
+      const ownShots = shots.filter((s) => s.start >= w.start && (s.start < w.end || (w.index === windows.length - 1 && s.start <= w.end)))
       const silencesHere = silences.filter((s) => s.end > w.start && s.start < w.end)
       log(`V6 tramo ${w.index + 1}/${windows.length} (${mmss(w.start)}–${mmss(w.end)}, ${w.frames.length} fotogramas)`)
       const audio = input.hasAudio ? await audioClip(input.wavPath, path.join(input.workDir, 'v6-audio'), w) : undefined
@@ -363,6 +385,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
             metaBlock(meta, shots, input.hasAudio),
             reference,
             `ESTE TRAMO: ${w.index + 1} de ${windows.length}, del segundo ${w.start.toFixed(1)} (${mmss(w.start)}) al ${w.end.toFixed(1)} (${mmss(w.end)}). ${secondsPlan(w)} Sufijo para entidades y textos nuevos de este tramo: "-${tag}" (ej. O9-${tag}, TX1-${tag}; la app renumera los TX al unir los tramos). Planos en este tramo: ${shotsHere.join(', ') || '[ND]'}.${w.frames.length ? '' : ' Este tramo NO tiene fotogramas: VIS es [ND] en todo él; registra AUD y declara el hueco de imagen.'}`,
+            `PLANOS QUE EMPIEZAN EN ESTE TRAMO [META] (descríbelos en planos y recreacion, uno por uno, con estos IDs):\n${ownShots.map((s) => `${s.id} — ${mmss(s.start)}–${mmss(s.end)} (${(s.end - s.start).toFixed(2)} s)${s.end > w.end + 0.05 ? ' — sigue en el tramo siguiente: describe lo que ves aquí' : ''}`).join('\n') || '(ninguno)'}`,
             `CORTES MEDIDOS EN ESTE TRAMO [META]: ${cutsHere.length ? cutsHere.map((c) => `${mmss(c.time)} (score ${c.score.toFixed(1)})`).join(', ') : 'ninguno'}`,
             `SILENCIOS MEDIDOS (≥0,5 s bajo -35 dB) [META]: ${silencesHere.length ? silencesHere.map((s) => `${mmss(s.start)}–${mmss(s.end)}`).join(', ') : input.hasAudio ? 'ninguno' : 'NO APLICA'}`,
             `TRANSCRIPCIÓN DE ESTE TRAMO [META] (numeración global T#):\n${lines.join('\n') || 'No se detecta habla en este tramo.'}`,
@@ -374,6 +397,15 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
         (t) => {
           const raw = parseJson<WindowOut>(t)
           const { timeline, filled } = coverTimeline(raw, range)
+          // A real reply on 19 Oct 2026 described 33 shots and wrote the
+          // recreation sheet of 7: both lists are checked.
+          for (const [list, what] of [[(raw.planos ?? []).map((p) => p.id), 'describe'], [(raw.recreacion ?? []).map((r) => r.plano), 'da ficha de recreación a']] as const) {
+            const done = new Set(list.map(shotId))
+            const missing = ownShots.filter((s) => !done.has(s.id))
+            if (ownShots.length >= 2 && missing.length > ownShots.length / 2) {
+              throw new Error(`El tramo ${what} ${ownShots.length - missing.length} de sus ${ownShots.length} planos.`)
+            }
+          }
           return { ...raw, timeline, limites: [...(raw.limites ?? []), ...filled] }
         },
       )
@@ -392,13 +424,18 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   const cambios = outs.flatMap((o, i) => (o.cambios_estado ?? []).map((c) => ({ ...c, antes: tx.rename(i, c.antes), despues: tx.rename(i, c.despues) })))
   const windowLimits = outs.flatMap((o, i) => (o.limites ?? []).map((l) => `[tramo ${i + 1}] ${tx.rename(i, l)}`))
   const escenas = outs.flatMap((o) => o.escenas ?? [])
+  const windowShots = outs.flatMap((o, i) => (o.planos ?? []).map((p) => renameAll(p, (s) => tx.rename(i, s))))
+  const p1 = fixPhase1({ ...checkpoint.phase1, planos: [...(checkpoint.phase1.planos ?? []), ...windowShots] as V6Phase1['planos'] }, shots, meta, frames)
+  const describedShots = new Set([...(checkpoint.phase1.planos ?? []), ...windowShots].map((p) => shotId(p.id)))
+  for (const s of shots) if (!describedShots.has(s.id)) windowLimits.push(`[${mmss(s.start)}–${mmss(s.end)}] ${s.id}: ningún tramo describió el plano (9.4) [ND].`)
   withVoices(p1, outs)
 
   // ── Phase 3 ─────────────────────────────────────────────────────────────
   progress({ label: 'Registro V6.5: síntesis...', current: steps - 1, total: steps })
   if (!checkpoint.phase3) {
     const record = [
-      `FASE 1:\n${JSON.stringify({ ficha: p1.ficha, triaje: p1.triaje, procedencia: p1.procedencia, entidades: p1.entidades, planos: p1.planos })}`,
+      `FASE 1:\n${JSON.stringify({ ficha: p1.ficha, triaje: p1.triaje, procedencia: p1.procedencia, entidades: p1.entidades })}`,
+      `MAPA DE PLANOS (9.4, escrito por los tramos):\n${p1.planos.map((p) => `${p.id} ${p.inicio}–${p.fin} (${p.duracion}): ${p.escala} · ${p.angulo} · ${p.movimiento} · ${p.entrada_salida}`).join('\n')}`,
       `ESCENAS (resumen observacional por tramos, ≤120 s):\n${escenas.map((s) => `${mmss(s.start_seconds)}–${mmss(s.end_seconds)} ${s.title}: ${s.description} | AUD: ${s.audio_description}`).join('\n')}`,
       `CAMBIOS DE ESTADO (9.8):\n${cambios.map((c) => `${c.timestamp} ANTES: ${c.antes} / TRANSICIÓN: ${c.transicion} / DESPUÉS: ${c.despues} / ND: ${c.no_determinable}`).join('\n') || '(ninguno)'}`,
       `TEXTOS EN PANTALLA (9.7):\n${tx.list.map((t) => `${t.id} ${t.aparece}–${t.desaparece} [${t.tipo}] "${t.contenido}"`).join('\n') || 'No aparece texto en pantalla.'}`,
@@ -426,7 +463,9 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
     checkpoint.phase3 = value
     input.save()
   }
-  const p3 = checkpoint.phase3
+  const recreation = recreationByShot(shots, outs, tx.rename)
+  const p3 = { ...checkpoint.phase3, recreacion: checkpoint.phase3.recreacion?.length ? checkpoint.phase3.recreacion : recreation.list }
+  windowLimits.push(...recreation.missing)
 
   const imageCover = frames.length
     ? `VIS: fotogramas en ${new Set(frames.map((f) => Math.floor(f.time))).size} de ${Math.ceil(duration)} segundos (${Math.round((100 * new Set(frames.map((f) => Math.floor(f.time))).size) / Math.max(1, Math.ceil(duration)))} %), con todos los cambios de escena; los segundos sin fotograma propio se registran desde el contiguo o como [ND].`
@@ -497,6 +536,47 @@ function secondsPlan(w: V6Window): string {
   return `La línea de tiempo de este tramo son ${n} segundos: entradas ${mmss(Math.max(first, w.start))}–${mmss(Math.min(first + 1, w.end))}, ${mmss(first + 1)}–${mmss(first + 2)}, … hasta la que termina en ${mmss(w.end)}; una entrada por segundo, sin encadenar (un segundo sin cambios es una entrada corta con sin_cambios=true). Una entrada de varios segundos con cambios dentro se rechaza.`
 }
 
+/** "PL12", "pl 12" or "PL12 (00:31–00:33)" → "PL12". */
+const shotId = (id: string) => /PL\s*(\d+)/i.exec(id ?? '')?.[1] ? `PL${/PL\s*(\d+)/i.exec(id)![1]}` : (id ?? '').trim()
+
+/** Every string field passed through `f` (the TX renumbering of its window). */
+function renameAll<T extends Record<string, unknown>>(o: T, f: (s: string) => string): T {
+  return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === 'string' ? f(v) : v])) as T
+}
+
+/** 9.13 in shot order from the windows; a shot no window described gets [ND] and a line in 9.14. */
+export function recreationByShot(
+  shots: Shot[],
+  outs: Array<Pick<WindowOut, 'recreacion'>>,
+  rename: (window: number, s: string) => string = (_w, s) => s,
+): { list: V6Phase3['recreacion']; missing: string[] } {
+  const byId = new Map<string, Omit<V6Phase3['recreacion'][number], 'duracion'>>()
+  outs.forEach((o, i) => {
+    for (const r of o.recreacion ?? []) {
+      const id = shotId(r.plano)
+      if (!byId.has(id)) byId.set(id, renameAll({ ...r, plano: id }, (s) => rename(i, s)))
+    }
+  })
+  const missing: string[] = []
+  const nd = '[ND]'
+  const list = shots.map((s) => {
+    const r = byId.get(s.id)
+    if (!r) missing.push(`[${mmss(s.start)}–${mmss(s.end)}] ${s.id}: ningún tramo escribió su ficha de recreación [ND].`)
+    return {
+      plano: s.id,
+      duracion: `${(s.end - s.start).toFixed(2)} s [META]`,
+      sujetos_estado_inicial: r?.sujetos_estado_inicial ?? nd,
+      accion: r?.accion ?? nd,
+      camara: r?.camara ?? nd,
+      luz_entorno: r?.luz_entorno ?? nd,
+      audio: r?.audio ?? nd,
+      texto: r?.texto ?? nd,
+      estado_final: r?.estado_final ?? nd,
+    }
+  })
+  return { list, missing }
+}
+
 const windowKey = (w: V6Window) => `v6-${w.start.toFixed(3)}-${w.end.toFixed(3)}-${w.frames.length}`
 
 /**
@@ -529,7 +609,8 @@ export function withVoices(p1: V6Phase1, outs: Array<Pick<WindowOut, 'voces'>>):
 
 /** Measured facts win over the model: shot times and counts, the technical sheet. */
 function fixPhase1(p1: V6Phase1, shots: Shot[], meta: VideoMeta, frames: Frame[]): V6Phase1 {
-  const byId = new Map((p1.planos ?? []).map((p) => [p.id, p]))
+  // Later entries win: the windows' descriptions over a phase 1 from an older checkpoint.
+  const byId = new Map((p1.planos ?? []).map((p) => [shotId(p.id), p]))
   const planos = shots.map((s) => {
     const p = byId.get(s.id)
     const nd = '[ND]'
