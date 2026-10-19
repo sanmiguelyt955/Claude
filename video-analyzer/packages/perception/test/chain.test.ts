@@ -205,3 +205,11 @@ test('a good model that keeps failing gives way to Flash-Lite instead of looping
   const out = await describeWithFallback([main, lite], req, { now: () => clock, sleep: async (ms) => { clock += ms } })
   assert.equal(out.provider, lite.name)
 })
+
+test('waiting for its own per-minute turn is not a failed round, even with Flash-Lite alone', async () => {
+  let clock = Date.now()
+  let ready = clock + 200_000
+  const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true, readyInMs: () => Math.max(0, ready - clock) }
+  const out = await describeWithFallback([lite], req, { now: () => clock, maxRounds: 2, sleep: async (ms) => { clock += ms } })
+  assert.equal(out.provider, lite.name)
+})

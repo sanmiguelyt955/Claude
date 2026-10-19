@@ -107,6 +107,16 @@ export async function describeWithFallback<T = string>(
     }
 
     if (!pick) {
+      // Providers not yet asked that only wait for their own per-minute turn:
+      // that is pacing, not failure, and must not use up a retry round (with
+      // Flash-Lite alone, 16 windows queued for it failed a job unasked on
+      // 19 Oct 2026).
+      const pacing = usable.filter((p) => !tried.has(p.name) && (pausedUntil.get(p.name) ?? 0) <= now())
+      if (pacing.length) {
+        const wait = Math.min(...pacing.map(waitOf))
+        await sleep(Math.max(wait, 1))
+        continue
+      }
       // Every provider answered with garbage: waiting will not fix that.
       if (parseFailures === usable.length || round === maxRounds) break
       // Waiting minutes cannot bring back a quota that resets at midnight.

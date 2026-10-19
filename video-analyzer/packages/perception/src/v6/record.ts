@@ -270,7 +270,11 @@ const parseJson = <T>(text: string): T => {
  * (it is not "SIN DATOS": the frames and audio were there); a bigger hole
  * means the model skipped part of the window and the reply is asked again.
  */
-export function coverTimeline(w: WindowOut, range: { start: number; end: number }): { timeline: WindowOut['timeline']; filled: string[] } {
+export function coverTimeline(
+  w: WindowOut,
+  range: { start: number; end: number },
+  opts: { lenient?: boolean } = {},
+): { timeline: WindowOut['timeline']; filled: string[] } {
   const entries = [...(w.timeline ?? [])]
     .filter((e) => Number.isFinite(e.start_seconds) && Number.isFinite(e.end_seconds) && e.end_seconds > e.start_seconds)
     .sort((a, b) => a.start_seconds - b.start_seconds)
@@ -304,7 +308,7 @@ export function coverTimeline(w: WindowOut, range: { start: number; end: number 
   // entry; past a fifth of the window that is a summary, not the timeline.
   const coarse = out.filter((e) => !e.sin_cambios && !e.vis.startsWith('[ND]') && e.end_seconds - e.start_seconds > 1.5)
   const coarseSeconds = coarse.reduce((sum, e) => sum + (e.end_seconds - e.start_seconds), 0)
-  if (coarseSeconds > (range.end - range.start) / 5) {
+  if (!opts.lenient && coarseSeconds > (range.end - range.start) / 5) {
     throw new Error(`La línea de tiempo agrupa ${Math.round(coarseSeconds)} s con cambios en entradas de varios segundos; el protocolo pide una entrada por segundo.`)
   }
   for (const e of coarse) filled.push(`[${mmss(e.start_seconds)}–${mmss(e.end_seconds)}] granularidad reducida: una sola entrada para ${(e.end_seconds - e.start_seconds).toFixed(1)} s con cambios [BAJA].`)
@@ -428,7 +432,10 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
         },
         (t) => {
           const raw = parseJson<WindowOut>(t)
-          const { timeline, filled } = coverTimeline(raw, range)
+          // A half too short to split again: its grouped seconds are kept,
+          // each declared in 9.14, rather than the whole analysis failing.
+          const lastResort = Boolean(w.label && /[ab]$/.test(w.label)) && w.end - w.start < MIN_SPLIT_SECONDS
+          const { timeline, filled } = coverTimeline(raw, range, { lenient: lastResort })
           // A real reply on 19 Oct 2026 described 33 shots and wrote the
           // recreation sheet of 7: both lists are checked.
           for (const [list, what] of [[(raw.planos ?? []).map((p) => p.id), 'describe'], [(raw.recreacion ?? []).map((r) => r.plano), 'da ficha de recreación a']] as const) {

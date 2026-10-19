@@ -253,3 +253,12 @@ test('a window no model answers whole is split in two halves, asked in parallel'
   })
   assert.equal(again.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).length, 0)
 })
+
+test('a half that cannot be split again keeps its grouped seconds, declared [BAJA]', () => {
+  const entry = (a: number, b: number) => ({ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'v', aud: 'a', txt: 't', cam: 'c', cortes: [] })
+  const grouped = { timeline: [entry(0, 8), entry(8, 15)] } as never
+  assert.throws(() => coverTimeline(grouped, { start: 0, end: 15 }), /agrupa 15 s/)
+  const kept = coverTimeline(grouped, { start: 0, end: 15 }, { lenient: true })
+  assert.equal(kept.timeline.length, 2)
+  assert.equal(kept.filled.filter((l) => /granularidad reducida/.test(l)).length, 2)
+})
