@@ -18,18 +18,21 @@ export type Transcript = {
   segments: Segment[]
   /** Where faster-whisper ran: "cuda" (NVIDIA card) or "cpu". Absent for captions and our NumPy engine. */
   device?: string
+  /** "parakeet" when Parakeet transcribed instead of Whisper. */
+  engine?: string
 }
 
 /**
  * "Escuchar": speech-to-text on a WAV file via scripts/transcribe.py.
  * Default engine is faster-whisper when installed, on the NVIDIA card if
- * there is one; WHISPER_ENGINE=propio forces our NumPy Whisper. A crash on
+ * there is one; WHISPER_ENGINE=propio forces our NumPy Whisper and
+ * WHISPER_ENGINE=parakeet NVIDIA Parakeet (faster on the CPU, less exact). A crash on
  * the card that Python cannot catch (a missing CUDA DLL can abort the
  * process) is retried once on the CPU.
  */
 export async function transcribe(
   wavPath: string,
-  opts: { model?: string; language?: string; engine?: 'propio' | 'faster-whisper' } = {},
+  opts: { model?: string; language?: string; engine?: 'propio' | 'faster-whisper' | 'parakeet' } = {},
 ): Promise<Transcript> {
   const python = process.env.PYTHON_BIN || 'python3'
   const args = [SCRIPT, wavPath, '--model', opts.model || process.env.WHISPER_MODEL || 'small']

@@ -6,7 +6,14 @@ Engines (--engine or WHISPER_ENGINE):
   auto            faster-whisper when it is installed, else propio (default)
   propio          our NumPy implementation of Whisper (scripts/nuestro_whisper)
   faster-whisper  the CTranslate2 build, needs `pip install faster-whisper`
-Both run the same openai/whisper-* weights. On 15 minutes of speech (4 CPU
+  parakeet        NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX) through sherpa-onnx;
+                  25 European languages. Opt-in only: on 15 min of a Spanish
+                  documentary (4 CPU cores, 19 Oct 2026) it took 82 s against
+                  127 s for batched Whisper small, but it cannot be told the
+                  language and switched 7 of 162 sentences to English
+                  ("is possible that along the comamos pizzas") and invented
+                  an English line over the opening music; Whisper got them right.
+propio and faster-whisper run the same openai/whisper-* weights. On 15 minutes of speech (4 CPU
 cores, model small) propio took about 14 min, faster-whisper 5 min, and
 faster-whisper batched 1.6 min with the same words recognised.
 
@@ -136,6 +143,60 @@ def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: in
     return {"language": info.language, "segments": split_sentences(words)}
 
 
+PARAKEET_REPO = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+
+
+def run_parakeet(wav: str, language: str) -> dict:
+    """Parakeet on the CPU: the voiced stretches (Silero VAD, the one
+    faster-whisper ships) decoded in batches, word times from its tokens."""
+    import sherpa_onnx
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    from huggingface_hub import snapshot_download
+    from nuestro_whisper.audio import load_audio
+
+    d = snapshot_download(PARAKEET_REPO, allow_patterns=["*.int8.onnx", "tokens.txt"])
+    rec = sherpa_onnx.OfflineRecognizer.from_transducer(
+        encoder=os.path.join(d, "encoder.int8.onnx"),
+        decoder=os.path.join(d, "decoder.int8.onnx"),
+        joiner=os.path.join(d, "joiner.int8.onnx"),
+        tokens=os.path.join(d, "tokens.txt"),
+        model_type="nemo_transducer",
+        num_threads=os.cpu_count() or 4,
+    )
+    audio = load_audio(wav)
+    chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500, max_speech_duration_s=25, speech_pad_ms=200))
+    words: list[dict] = []
+    # One stretch at a time: on 4 CPU cores batches of 4 took 100 s for 15 min
+    # of Spanish against 75 s one by one (REA-measured, 19 Oct 2026).
+    batch = int(os.environ.get("PARAKEET_BATCH_SIZE", "1"))
+    for i in range(0, len(chunks), batch):
+        group = chunks[i : i + batch]
+        streams = []
+        for c in group:
+            s = rec.create_stream()
+            s.accept_waveform(16000, audio[c["start"] : c["end"]])
+            streams.append(s)
+        rec.decode_streams(streams)
+        for c, s in zip(group, streams):
+            r = s.result
+            words += parakeet_words(c["start"] / 16000, r.tokens, r.timestamps, r.durations)
+    return {"language": language, "segments": split_sentences(words)}
+
+
+def parakeet_words(offset: float, tokens: list[str], starts: list[float], durations: list[float]) -> list[dict]:
+    """Parakeet tokens of one stretch (times relative to it) as words with
+    absolute times. A token opening with a space starts a word; the rest
+    (word pieces, punctuation) belong to the word before it."""
+    words: list[dict] = []
+    for tok, ts, dur in zip(tokens, starts, durations):
+        if tok.startswith(" ") or not words:
+            words.append({"start": offset + ts, "end": offset + ts + dur, "word": tok if tok.startswith(" ") else " " + tok})
+        else:
+            words[-1]["word"] += tok
+            words[-1]["end"] = offset + ts + dur
+    return words
+
+
 def has_faster_whisper() -> bool:
     try:
         import faster_whisper  # noqa: F401
@@ -149,7 +210,7 @@ def main() -> None:
     parser.add_argument("wav")
     parser.add_argument("--model", default="small")
     parser.add_argument("--language", default=None)
-    parser.add_argument("--engine", default=os.environ.get("WHISPER_ENGINE") or "auto", choices=["auto", "propio", "faster-whisper"])
+    parser.add_argument("--engine", default=os.environ.get("WHISPER_ENGINE") or "auto", choices=["auto", "propio", "faster-whisper", "parakeet"])
     parser.add_argument("--beam-size", type=int, default=int(os.environ.get("WHISPER_BEAM_SIZE", "5")))
     parser.add_argument(
         "--no-fallback",
@@ -162,12 +223,21 @@ def main() -> None:
     args = parser.parse_args()
 
     engine = args.engine
+    language = args.language
     if engine == "auto":
         engine = "faster-whisper" if has_faster_whisper() else "propio"
+    if engine == "parakeet":
+        try:
+            out = {**run_parakeet(args.wav, language or "es"), "device": "cpu", "engine": "parakeet"}
+            json.dump(out, sys.stdout, ensure_ascii=False)
+            return
+        except Exception as err:  # model download, sherpa-onnx missing...
+            print(f"Parakeet falló ({str(err)[:200]}); transcribiendo con Whisper", file=sys.stderr)
+            engine = "faster-whisper" if has_faster_whisper() else "propio"
     if engine == "propio":
         out = run_propio(args.wav, args.model, args.language, args.beam_size, not args.no_fallback)
     else:
-        out = run_faster_whisper_on(args.wav, args.model, args.language, args.beam_size, args.device, args.compute_type)
+        out = run_faster_whisper_on(args.wav, args.model, language, args.beam_size, args.device, args.compute_type)
     json.dump(out, sys.stdout, ensure_ascii=False)
 
 

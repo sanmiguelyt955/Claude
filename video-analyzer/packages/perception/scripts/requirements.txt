@@ -10,3 +10,7 @@ onnxruntime>=1.17
 # Transcripción rápida (motor por defecto): faster-whisper por lotes transcribe
 # 15 minutos de voz en ~1,5 min contra ~14 min de nuestro Whisper en NumPy.
 faster-whisper>=1.1
+# Parakeet TDT 0.6B v3 (NVIDIA, int8), solo si se elige WHISPER_ENGINE=parakeet:
+# un 35 % más rápido que Whisper en el procesador, pero mezcla inglés en frases
+# en español. El modelo (~640 MB) se descarga la primera vez que se usa.
+sherpa-onnx>=1.12

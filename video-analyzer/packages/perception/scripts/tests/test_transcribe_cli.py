@@ -8,7 +8,7 @@ import unittest
 HERE = os.path.dirname(__file__)
 sys.path.insert(0, os.path.join(HERE, ".."))
 
-from transcribe import split_sentences  # noqa: E402
+from transcribe import parakeet_words, split_sentences  # noqa: E402
 
 FIXTURE = os.path.join(HERE, "..", "..", "test", "fixtures-speech.wav")
 
@@ -52,6 +52,31 @@ class FasterWhisperEngineTest(unittest.TestCase):
         text = " ".join(s["text"] for s in data["segments"]).lower()
         self.assertIn("quick test sentence", text)
         self.assertLess(data["segments"][0]["start"], 1.0)
+        self.assertTrue(all(s["end"] >= s["start"] for s in data["segments"]))
+
+
+class ParakeetEngineTest(unittest.TestCase):
+    def test_tokens_become_words_with_absolute_times(self):
+        words = parakeet_words(10.0, [" No", " preg", "unt", "es", ",", " qué"], [0.0, 0.24, 0.48, 0.64, 0.8, 0.88], [0.24, 0.24, 0.16, 0.16, 0.08, 0.16])
+        self.assertEqual([x["word"] for x in words], [" No", " preguntes,", " qué"])
+        self.assertAlmostEqual(words[1]["start"], 10.24)
+        self.assertAlmostEqual(words[1]["end"], 10.88)
+
+    def test_speech_through_the_cli(self):
+        try:
+            import sherpa_onnx  # noqa: F401
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            self.skipTest("sherpa-onnx o faster-whisper no instalados")
+        if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):
+            self.skipTest("descarga desactivada")
+        out = subprocess.run(
+            [sys.executable, os.path.join(HERE, "..", "transcribe.py"), FIXTURE, "--language", "en", "--engine", "parakeet"],
+            capture_output=True, text=True, check=True,
+        )
+        data = json.loads(out.stdout)
+        self.assertEqual(data["engine"], "parakeet")
+        self.assertIn("quick test sentence", " ".join(s["text"] for s in data["segments"]).lower())
         self.assertTrue(all(s["end"] >= s["start"] for s in data["segments"]))
 
 
