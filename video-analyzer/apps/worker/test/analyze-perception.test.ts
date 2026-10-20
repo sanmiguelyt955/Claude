@@ -128,6 +128,16 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   assert.equal(me.searchVideoKeywords(id, 'palabrainexistente', 8).length, 0)
   const library = me.searchLibrary(null, 'heard', 15)
   assert.ok(library.some((r) => r.video_id === id && r.match_type === 'keyword'))
+
+  // An exact word must survive closer semantic matches: give every chunk a
+  // vector near the query except the one that has the word.
+  const db = me.getDb()
+  const dims = Number((db.prepare("SELECT value FROM meta WHERE key = 'embedding_dimensions'").get() as { value: string } | undefined)?.value ?? 768)
+  const near = (k: number) => Array.from({ length: dims }, (_, i) => (i === 0 ? 1 : i === k ? 0.2 : 0))
+  const pending = me.getPendingChunks(id)
+  me.insertEmbeddingsBatch(id, pending.map((c, k) => ({ chunkRowid: c.rowid, embedding: /heard/i.test(c.text) ? near(dims - 1).map((v, i) => (i === 0 ? -1 : v)) : near(k + 1) })), 'prueba', db)
+  const blended = me.searchLibrary(near(0), 'heard', 3)
+  assert.ok(blended.some((r) => /heard/i.test(r.text)), `exact hit kept: ${blended.map((r) => r.match_type).join(',')}`)
 })
 
 test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, async () => {

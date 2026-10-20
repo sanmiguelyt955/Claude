@@ -81,6 +81,7 @@ export function searchLibrary(
     byId.set(row.id, { ...row, match_type: 'semantic' })
   }
 
+  const ftsIds: string[] = []
   const ftsQuery = buildFtsQuery(queryText)
   if (ftsQuery) {
     const ftsRows = db
@@ -95,6 +96,7 @@ export function searchLibrary(
       )
       .all(ftsQuery, limit) as Array<MemoryChunkRow & { video_title: string; video_status: string }>
 
+    ftsIds.push(...ftsRows.map((r) => r.id))
     for (const row of ftsRows) {
       const existing = byId.get(row.id)
       if (existing) {
@@ -105,15 +107,21 @@ export function searchLibrary(
     }
   }
 
+  // Reciprocal rank fusion: each list scores a hit by its position in it.
+  // Sorting by distance put every keyword-only hit (distance 1) behind all
+  // semantic ones, so with `limit` semantic results an exact product name
+  // was never shown. A hit in both lists adds both scores and ranks first.
+  const score = new Map<string, number>()
+  const add = (ids: string[]) => ids.forEach((rowId, rank) => score.set(rowId, (score.get(rowId) ?? 0) + 1 / (RRF_K + rank + 1)))
+  add(vectorRows.map((r) => r.id))
+  add(ftsIds)
   return Array.from(byId.values())
-    .sort((a, b) => {
-      // "both" ranks above a same-distance semantic-only or keyword-only hit.
-      if (a.match_type === 'both' && b.match_type !== 'both') return -1
-      if (b.match_type === 'both' && a.match_type !== 'both') return 1
-      return (a.distance ?? DISTANCE_FOR_KEYWORD_ONLY) - (b.distance ?? DISTANCE_FOR_KEYWORD_ONLY)
-    })
+    .sort((a, b) => (score.get(b.id) ?? 0) - (score.get(a.id) ?? 0))
     .slice(0, limit)
 }
+
+/** The usual RRF constant: damps the gap between the first places of each list. */
+const RRF_K = 60
 
 /**
  * Keyword-only (FTS5) search scoped to one video: the fallback for the
