@@ -484,10 +484,22 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
       done++
       report()
   }
+  // Once a window fails for good the job will be retried, so no new window
+  // is asked (they kept spending quota after the failure), and the job only
+  // fails after those already in flight are answered and checkpointed, so
+  // the retry reuses them instead of asking them again in parallel.
+  let failure: { error: unknown } | null = null
   const worker = async () => {
-    while (next < windows.length) await runWindow(windows[next++]!)
+    while (next < windows.length && !failure) {
+      try {
+        await runWindow(windows[next++]!)
+      } catch (error) {
+        failure ??= { error }
+      }
+    }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, windows.length) }, worker))
+  if (failure) throw (failure as { error: unknown }).error
   leaves.sort((a, b) => a.start - b.start)
   const outs = leaves.map((w) => checkpoint.windows[windowKey(w)]!)
 

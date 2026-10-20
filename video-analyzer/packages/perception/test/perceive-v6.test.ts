@@ -296,3 +296,43 @@ test('a synthesis missing a section is refused, so it is never saved and replaye
   assert.equal(phase3Problem(noGrammar), 'falta gramatica')
   assert.equal(phase3Problem(null), 'no es un objeto')
 })
+
+test('once a window fails for good, no new window is asked; those in flight finish and are kept', { timeout: 300_000 }, async () => {
+  const video = path.join(mkdtempSync(path.join(tmpdir(), 'v6-stop-')), 'long.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=95:r=5', '-f', 'lavfi', '-i', 'sine=f=440:d=95', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  const breaking: VisionProvider = {
+    name: 'breaking',
+    available: () => true,
+    async describe(req) {
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
+        if (/del segundo 0\.0 /.test(req.instruction)) {
+          calls.push(req)
+          throw new Error('breaking HTTP 400: imagen no válida')
+        }
+        await new Promise((r) => setTimeout(r, 300))
+      }
+      return good.describe(req)
+    },
+  }
+  const saved = { windows: process.env.VISION_CONCURRENCY, size: process.env.V6_WINDOW_SECONDS }
+  process.env.VISION_CONCURRENCY = '2'
+  process.env.V6_WINDOW_SECONDS = '30'
+  let checkpoint: { v6?: { windows: Record<string, unknown> } } | undefined
+  try {
+    await assert.rejects(
+      perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-stop-w-')), {
+        protocol: 'v6', providers: [breaking], whisperModel: 'tiny', language: 'en', diarize: false,
+        onCheckpoint: (c) => { checkpoint = JSON.parse(JSON.stringify(c)) },
+      }),
+      /imagen no válida/,
+    )
+  } finally {
+    process.env.VISION_CONCURRENCY = saved.windows
+    process.env.V6_WINDOW_SECONDS = saved.size
+  }
+  await new Promise((r) => setTimeout(r, 1500)) // windows asked after the failure would show up here
+  assert.equal(calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).length, 2, 'the failed window and the one already in flight')
+  assert.equal(Object.keys(checkpoint!.v6!.windows).length, 1, 'the one in flight was saved for the retry')
+})
