@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_FRAME_OPTIONS, dedupFrames, extractFrames } from '../src/frames.ts'
+import { DEFAULT_FRAME_OPTIONS, capFrames, dedupFrames, extractFrames } from '../src/frames.ts'
 
 // 20 s: one red shot of 12 s, then 8 s of blue.
 function staticVideo(): string {
@@ -37,4 +37,23 @@ test('dedupFrames keeps frames that changed and drops the rest', () => {
   assert.deepEqual([...dedupFrames(frames, (i) => thumbs[i]!, { dedupThreshold: 2, maxGapSeconds: 10 })], [0, 2])
   assert.deepEqual([...dedupFrames(frames, (i) => thumbs[i]!, { dedupThreshold: 2, maxGapSeconds: 2 })], [0, 2])
   assert.deepEqual([...dedupFrames(frames, (i) => thumbs[i]!, { dedupThreshold: 2, maxGapSeconds: 1 })], [0, 1, 2, 3])
+})
+
+test('a small text on a still shot is a new frame even if the average barely moves', () => {
+  const still = new Uint8Array(32 * 32 * 3).fill(100)
+  const caption = Uint8Array.from(still)
+  for (let i = 0; i < 30; i++) caption[i] = 250 // a few bright cells: mean change about 1.5
+  const frames = [0, 1, 2].map((t) => ({ path: `${t}.jpg`, time: t }))
+  const thumbs = [still, caption, caption]
+  assert.deepEqual([...dedupFrames(frames, (i) => thumbs[i]!, { dedupThreshold: 2, maxGapSeconds: 10 })], [0, 1])
+})
+
+test('when frames must be cut, every shot keeps the frame right after its cut', () => {
+  const frames = Array.from({ length: 1000 }, (_, i) => ({ path: `${i}.jpg`, time: i * 0.5 }))
+  const cuts = Array.from({ length: 120 }, (_, i) => ({ time: 3.25 + i * 4, score: 20 }))
+  const keep = capFrames(frames, cuts, 300)
+  assert.equal(keep.size, 300)
+  assert.ok(keep.has(0))
+  for (const c of cuts) assert.ok(keep.has(frames.findIndex((f) => f.time >= c.time)), `cut at ${c.time}`)
+  assert.equal(capFrames(frames, cuts, 50).size, 50, 'more cuts than room: cut frames spread evenly')
 })

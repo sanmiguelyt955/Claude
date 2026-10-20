@@ -52,12 +52,20 @@ export const DEFAULT_FRAME_OPTIONS: FrameOptions = {
 }
 
 /**
- * Thumbnails used to spot near-duplicate frames: 16x16 RGB. Colour, not
+ * Thumbnails used to spot near-duplicate frames: 32x32 RGB. Colour, not
  * grayscale, because a cut between two colours of equal brightness (pure red
- * and dark green) looks identical in gray.
+ * and dark green) looks identical in gray. 32, not 16: a 20 px caption on a
+ * 1280 px frame barely moves one 16x16 cell.
  */
-const THUMB = 16
+const THUMB = 32
 const THUMB_BYTES = THUMB * THUMB * 3
+/**
+ * A frame is also new when any single thumbnail value moves this much, even
+ * if the average barely changes: a short price or offer caption on a static
+ * shot (mean change 0.5-0.8) was dropped with every frame that showed it.
+ * Compression noise stays under 10.
+ */
+const LOCAL_CHANGE = 40
 
 /**
  * "Ver": samples the video at up to `fps` but keeps only frames whose content
@@ -143,15 +151,35 @@ export async function extractFramesAndCuts(
   }
 
   if (frames.length > opts.maxFrames) {
-    const keep = new Set<number>()
-    for (let i = 0; i < opts.maxFrames; i++) {
-      keep.add(Math.round((i * (frames.length - 1)) / (opts.maxFrames - 1)))
-    }
+    const keep = capFrames(frames, cuts, opts.maxFrames)
     const dropped = frames.filter((_, i) => !keep.has(i))
     await Promise.all(dropped.map((f) => unlink(f.path)))
     frames = frames.filter((_, i) => keep.has(i))
   }
   return { frames, cuts }
+}
+
+/**
+ * At most `max` frame indexes: the first frame and the first one of each
+ * measured shot always stay (every shot keeps an image), the rest is
+ * spread evenly. Thinning evenly over everything left 384 of 803 cuts and 21
+ * whole shots of a 60-minute video without a frame.
+ */
+export function capFrames(frames: Frame[], cuts: Cut[], max: number): Set<number> {
+  const must = new Set<number>([0])
+  const times = [...cuts].map((c) => c.time).sort((a, b) => a - b)
+  let j = 0
+  times.forEach((t, k) => {
+    // The shot's first frame, wherever it falls before the next cut.
+    const next = times[k + 1] ?? Number.POSITIVE_INFINITY
+    while (j < frames.length && frames[j]!.time < t - 0.01) j++
+    if (j < frames.length && frames[j]!.time < next - 0.01) must.add(j)
+  })
+  const spread = <T>(items: T[], n: number) =>
+    n <= 0 ? [] : n >= items.length ? items : Array.from({ length: n }, (_, i) => items[n === 1 ? 0 : Math.round((i * (items.length - 1)) / (n - 1))]!)
+  if (must.size >= max) return new Set(spread([...must].sort((a, b) => a - b), max))
+  const rest = frames.map((_, i) => i).filter((i) => !must.has(i))
+  return new Set([...must, ...spread(rest, max - must.size)])
 }
 
 /**
@@ -167,12 +195,23 @@ export function dedupFrames(
   const keep = new Set<number>()
   let last = -1
   for (let i = 0; i < frames.length; i++) {
-    if (last < 0 || frames[i]!.time - frames[last]!.time >= opts.maxGapSeconds || meanDiff(thumbOf(i), thumbOf(last)) > opts.dedupThreshold) {
+    if (
+      last < 0 ||
+      frames[i]!.time - frames[last]!.time >= opts.maxGapSeconds ||
+      meanDiff(thumbOf(i), thumbOf(last)) > opts.dedupThreshold ||
+      maxDiff(thumbOf(i), thumbOf(last)) > LOCAL_CHANGE
+    ) {
       keep.add(i)
       last = i
     }
   }
   return keep
+}
+
+function maxDiff(a: Uint8Array, b: Uint8Array): number {
+  let max = 0
+  for (let i = 0; i < a.length; i++) max = Math.max(max, Math.abs(a[i]! - (b[i] ?? 0)))
+  return max
 }
 
 function meanDiff(a: Uint8Array, b: Uint8Array): number {
