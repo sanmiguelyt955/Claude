@@ -1,4 +1,4 @@
-import { ProviderOverloadedError, type VisionProvider, type VisionRequest } from './providers/types.js'
+import { BadReplyError, ProviderOverloadedError, type VisionProvider, type VisionRequest } from './providers/types.js'
 
 const pausedUntil = new Map<string, number>()
 /** Pause after a 503 that says nothing about how long: demand spikes are short. */
@@ -147,18 +147,26 @@ export async function describeWithFallback<T = string>(
       opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: now() - started })
     } catch (err) {
       opts.onAttempt?.({ provider: p.name, ok: false, error: String(err), latencyMs: now() - started })
+      if (err instanceof BadReplyError) {
+        parseFailures++
+        badReply.add(p.name)
+        log(`${p.name} respondió algo no válido, probando el siguiente: ${String(err)}`)
+        failures.push(String(err))
+        continue
+      }
       if (!shouldFallback(err)) throw err
       overloads.set(p.name, (overloads.get(p.name) ?? 0) + 1)
       const spike = err instanceof ProviderOverloadedError && err.status === 503 ? SPIKE_PAUSE_MS : cooldownMs
       const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? spike
       pausedUntil.set(p.name, now() + pause)
-      if (/PerDay/.test(String(err))) dailyUntil.set(p.name, now() + pause)
+      if (/PerDay/.test(String(err)) || (err instanceof ProviderOverloadedError && err.status === 404)) dailyUntil.set(p.name, now() + pause)
       log(`${p.name} no disponible, pasando al siguiente: ${String(err)}`)
       failures.push(String(err))
       continue
     }
     try {
-      pausedUntil.delete(p.name)
+      // A reply already on its way does not undo a daily-quota pause set meanwhile.
+      if ((dailyUntil.get(p.name) ?? 0) <= now()) pausedUntil.delete(p.name)
       return { provider: p.name, text, value: parse(text) }
     } catch (err) {
       parseFailures++

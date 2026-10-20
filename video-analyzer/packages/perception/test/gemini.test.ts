@@ -144,7 +144,11 @@ test('a model that rejects a cost setting is asked again without it', async () =
   requests.length = 0
   assert.equal(await geminiModel('picky').describe(withFrames), '{"ok":true}')
   assert.equal(requests.length, 2)
-  assert.deepEqual(requests[1]!.body.generationConfig, { responseMimeType: 'application/json' })
+  assert.deepEqual(
+    requests[1]!.body.generationConfig,
+    { responseMimeType: 'application/json', mediaResolution: 'MEDIA_RESOLUTION_LOW' },
+    'only the rejected setting is dropped: the frames stay at low resolution',
+  )
   // Any other 400 is still a real error, asked once.
   requests.length = 0
   await assert.rejects(geminiModel('bad').describe(withFrames), /HTTP 400/)

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { describeWithFallback, shouldFallback } from '../src/chain.ts'
-import { MinuteBudget, ProviderOverloadedError, parseRetryAfter, postJson, type VisionProvider } from '../src/providers/types.ts'
+import { BadReplyError, MinuteBudget, ProviderOverloadedError, parseRetryAfter, postJson, type VisionProvider } from '../src/providers/types.ts'
 
 const req = { frames: [], transcript: '', instruction: 'x' }
 let seq = 0
@@ -212,4 +212,21 @@ test('waiting for its own per-minute turn is not a failed round, even with Flash
   const lite: VisionProvider = { ...fake(async () => '{"lite":true}'), fallbackOnly: true, readyInMs: () => Math.max(0, ready - clock) }
   const out = await describeWithFallback([lite], req, { now: () => clock, maxRounds: 2, sleep: async (ms) => { clock += ms } })
   assert.equal(out.provider, lite.name)
+})
+
+test('a reply cut by the length limit goes to the next model, like an unparseable one', async () => {
+  const cut = fake(async () => { throw new BadReplyError('respuesta cortada por el límite de longitud (MAX_TOKENS)') })
+  const whole = fake(async () => '{"ok":true}')
+  const out = await describeWithFallback([cut, whole], req, { sleep: noSleep })
+  assert.equal(out.provider, whole.name)
+  await assert.rejects(describeWithFallback([fake(async () => { throw new BadReplyError('cortada') })], req, { sleep: noSleep }), /Ningún proveedor/, 'so a window no model answers whole can be split')
+})
+
+test('a model that does not exist is set aside for the day instead of failing the job', async () => {
+  let calls = 0
+  const retired = fake(async () => { calls++; throw new ProviderOverloadedError('p', 404, 'el modelo no existe o fue retirado', 24 * 3_600_000) })
+  const ok = fake(async () => '{"ok":true}')
+  assert.equal((await describeWithFallback([retired, ok], req, { sleep: noSleep })).provider, ok.name)
+  assert.equal((await describeWithFallback([retired, ok], req, { sleep: noSleep })).provider, ok.name)
+  assert.equal(calls, 1)
 })

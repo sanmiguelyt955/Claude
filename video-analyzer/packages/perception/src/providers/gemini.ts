@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import {
+  BadReplyError,
   frameLabel,
   MinuteBudget,
   postSse,
@@ -86,30 +87,39 @@ export function geminiModel(model: string): VisionProvider {
 
       const base = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com'
       const resolution = frames.length ? mediaResolution() : ''
-      const generationConfig = (tuned: boolean) => ({
+      // Settings a model may reject with a 400 that names them; only the named
+      // one is dropped on the retry (dropping all of them also dropped the low
+      // resolution, making the request four times larger than budgeted).
+      type Setting = 'schema' | 'resolution' | 'thinking'
+      const generationConfig = (drop: Set<Setting>) => ({
         ...(json ? { responseMimeType: 'application/json' } : {}),
-        ...(tuned && json && schema ? { responseSchema: schema } : {}),
+        ...(!drop.has('schema') && json && schema ? { responseSchema: schema } : {}),
         ...(maxOutputTokens ? { maxOutputTokens } : {}),
-        ...(tuned && resolution ? { mediaResolution: resolution } : {}),
-        ...(tuned && thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
+        ...(!drop.has('resolution') && resolution ? { mediaResolution: resolution } : {}),
+        ...(!drop.has('thinking') && thinking ? { thinkingConfig: { thinkingLevel: thinking } } : {}),
       })
-      const send = (tuned: boolean) =>
+      const send = (drop: Set<Setting>) =>
         postSse(
           name,
           `${base}/v1beta/models/${model}:streamGenerateContent?alt=sse`,
           { 'x-goog-api-key': process.env.GEMINI_API_KEY || '' },
-          { contents: [{ role: 'user', parts }], generationConfig: generationConfig(tuned) },
+          { contents: [{ role: 'user', parts }], generationConfig: generationConfig(drop) },
         )
 
       let events: string[]
       try {
-        events = await send(true)
+        events = await send(new Set())
       } catch (err) {
         // A model that does not take one of the cost settings rejects the
         // whole request with a 400 naming it; the request is fine without it.
-        const tuned = Boolean(resolution || thinking || schema)
-        if (!tuned || !/HTTP 400/.test(String(err)) || !/resolution|thinking|schema/i.test(String(err))) throw err
-        events = await send(false)
+        const msg = String(err)
+        if (!/HTTP 400/.test(msg)) throw err
+        const drop = new Set<Setting>()
+        if (schema && /schema/i.test(msg)) drop.add('schema')
+        if (resolution && /resolution/i.test(msg)) drop.add('resolution')
+        if (thinking && /thinking/i.test(msg)) drop.add('thinking')
+        if (!drop.size) throw err
+        events = await send(drop)
       }
 
       let text = ''
@@ -131,7 +141,7 @@ export function geminiModel(model: string): VisionProvider {
       }
       // A reply cut by the length limit is not a valid record: say so instead
       // of handing on half a JSON that fails to parse somewhere later.
-      if (truncated) throw new Error(`${name}: respuesta cortada por el límite de longitud (MAX_TOKENS)`)
+      if (truncated) throw new BadReplyError(`${name}: respuesta cortada por el límite de longitud (MAX_TOKENS)`)
       return text
     },
   }

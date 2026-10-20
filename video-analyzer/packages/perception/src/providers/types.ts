@@ -112,6 +112,21 @@ export class MinuteBudget {
  * next provider and pauses this one (for `retryAfterMs` when the provider
  * said how long, via Retry-After).
  */
+/**
+ * The provider answered, but the answer cannot be used (cut by the length
+ * limit). Like an unparseable reply: the next model gets the request, and a
+ * window no model answers whole is split in two.
+ */
+export class BadReplyError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BadReplyError'
+  }
+}
+
+/** A model that does not exist (retired or misspelled) is set aside for a day, not the whole job. */
+const MISSING_MODEL_PAUSE_MS = 24 * 3_600_000
+
 export class ProviderOverloadedError extends Error {
   constructor(
     provider: string,
@@ -190,6 +205,7 @@ export async function postJson(provider: string, url: string, headers: Record<st
     if (TRANSIENT_STATUS.has(res.status)) {
       throw new ProviderOverloadedError(provider, res.status, quotaDetail(text), retryAfterOf(res.headers.get('retry-after'), text))
     }
+    if (res.status === 404) throw new ProviderOverloadedError(provider, 404, `el modelo no existe o fue retirado: ${text.slice(0, 200)}`, MISSING_MODEL_PAUSE_MS)
     throw new Error(`${provider} HTTP ${res.status}: ${text.slice(0, 300)}`)
   }
   return res.json()
@@ -235,6 +251,7 @@ export async function postSse(provider: string, url: string, headers: Record<str
       if (TRANSIENT_STATUS.has(res.status)) {
         throw new ProviderOverloadedError(provider, res.status, quotaDetail(text), retryAfterOf(res.headers.get('retry-after'), text))
       }
+      if (res.status === 404) throw new ProviderOverloadedError(provider, 404, `el modelo no existe o fue retirado: ${text.slice(0, 200)}`, MISSING_MODEL_PAUSE_MS)
       throw new Error(`${provider} HTTP ${res.status}: ${text.slice(0, 300)}`)
     }
     if (!res.body) throw new ProviderOverloadedError(provider, 'red', 'respuesta sin cuerpo')

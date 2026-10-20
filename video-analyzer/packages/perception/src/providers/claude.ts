@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { frameLabel, postJson, speechPreamble, type VisionProvider, type VisionRequest } from './types.js'
+import { BadReplyError, frameLabel, postJson, speechPreamble, type VisionProvider, type VisionRequest } from './types.js'
 
 // Claude does not process audio: it sees the frames, and the speech arrives as
 // text from the transcription stage. Frames are interleaved with their time
@@ -17,6 +17,10 @@ export function evenlySpaced<T>(items: T[], max: number): T[] {
 export const claude: VisionProvider = {
   name: 'claude',
   available: () => Boolean(process.env.ANTHROPIC_API_KEY),
+  // Claude does not hear the audio and sees at most 100 frames: with a Gemini
+  // key it only stands in when Gemini is down, never while Gemini merely
+  // paces itself (it took half the windows that way).
+  fallbackOnly: true,
   async describe({ frames, transcript, instruction }: VisionRequest) {
     const content: unknown[] = []
     // Windows are sized for Gemini (300 frames); as the fallback, Claude
@@ -40,10 +44,12 @@ export const claude: VisionProvider = {
       { 'x-api-key': process.env.ANTHROPIC_API_KEY || '', 'anthropic-version': '2023-06-01' },
       {
         model: process.env.CLAUDE_VISION_MODEL || 'claude-sonnet-5-5',
-        max_tokens: 16000,
+        // A window's per-second timeline outgrew 16,000 tokens.
+        max_tokens: 32000,
         messages: [{ role: 'user', content }],
       },
-    )) as { content: Array<{ type: string; text?: string }> }
+    )) as { content: Array<{ type: string; text?: string }>; stop_reason?: string }
+    if (data.stop_reason === 'max_tokens') throw new BadReplyError('claude: respuesta cortada por el límite de longitud (max_tokens)')
     return data.content.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('')
   },
 }
