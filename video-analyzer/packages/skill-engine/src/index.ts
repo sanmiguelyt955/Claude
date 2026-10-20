@@ -140,15 +140,12 @@ export function buildSegmentDigest(
 }
 
 function buildSkillMd(name: string, description: string, bodyMarkdown: string): string {
-  return `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}\n---\n\n${bodyMarkdown.trim()}\n`
+  // Quoted: a description with ": " ("Uso: ...") or starting with "-", "[" or
+  // "#" broke the YAML frontmatter and Claude could not load the skill. A
+  // JSON string is a valid YAML double-quoted scalar.
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s*\n\s*/g, ' '))}\n---\n\n${bodyMarkdown.trim()}\n`
 }
 
-/**
- * Writes the full Agent Skills folder to disk under DATA_DIR/skills-generadas
- * (SKILLS_OUT_DIR), ready to be copied to ~/.claude/skills/ (personal) or
- * .claude/skills/ (project) per PROJECT.md §12. Returns the DATA_DIR-relative
- * output path, since every *_path column in this app is stored that way.
- */
 /**
  * A file name the model proposed, reduced to a plain name inside its folder:
  * "../../scripts/launcher.ps1" would otherwise be written outside the skill,
@@ -159,6 +156,12 @@ export function safeAssetName(raw: string, fallback: string): string {
   return base || fallback
 }
 
+/**
+ * Writes the full Agent Skills folder to disk under DATA_DIR/skills-generadas
+ * (SKILLS_OUT_DIR), ready to be copied to ~/.claude/skills/ (personal) or
+ * .claude/skills/ (project) per PROJECT.md §12. Returns the DATA_DIR-relative
+ * output path, since every *_path column in this app is stored that way.
+ */
 export async function writeSkillFolder(input: {
   name: string
   description: string

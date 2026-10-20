@@ -21,3 +21,10 @@ test('file names the model proposes cannot leave the skill folder', async () => 
   assert.equal(safeAssetName('..', 'x.md'), 'x.md')
   assert.equal(safeAssetName('notas de uso.md', 'x.md'), 'notas_de_uso.md')
 })
+
+test('the SKILL.md frontmatter stays valid YAML whatever the description says', async () => {
+  const description = 'Uso: grabar un unboxing. # Paso 1: "abrir" la caja\nsin cortes'
+  const { skillMd } = await writeSkillFolder({ name: 'unboxing', description, bodyMarkdown: 'x', references: [], scripts: [] })
+  const line = skillMd.split('\n').find((l) => l.startsWith('description: '))!
+  assert.equal(JSON.parse(line.slice('description: '.length)), 'Uso: grabar un unboxing. # Paso 1: "abrir" la caja sin cortes')
+})
