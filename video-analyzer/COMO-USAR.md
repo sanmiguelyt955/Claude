@@ -1,5 +1,10 @@
 # Cómo usar Video Analyzer en tu computadora
 
+> **Ahora mismo no hay instalador para descargar.** GitHub desactivó las
+> "Actions" de la cuenta, que son las que construyen el instalador y lo
+> publican. Hasta que el soporte de GitHub las reactive, usa el lanzador
+> `.bat` (más abajo, en **Alternativa**): se actualiza solo desde el código.
+
 ## Opción recomendada: instalar la app (como el Editor de video)
 
 1. Abre <https://github.com/sanmiguelyt955/Claude/releases/tag/video-analyzer-latest>
