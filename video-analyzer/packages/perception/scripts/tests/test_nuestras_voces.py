@@ -9,6 +9,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from nuestras_voces.diarize import _windows, merge_alike, spectral_cluster  # noqa: E402
+from nuestras_voces import fbank  # noqa: E402
 from nuestras_voces.fbank import kaldi_fbank  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(__file__), "..", "..", "test", "fixtures-speech.wav")
@@ -30,6 +31,16 @@ class FbankTest(unittest.TestCase):
         f = kaldi_fbank(np.zeros(16000, np.float32) + 0.01 * np.sin(np.arange(16000)))
         self.assertEqual(f.shape, (98, 80))  # 1 + (16000 - 400) // 160
         self.assertEqual(kaldi_fbank(np.zeros(100, np.float32)).shape, (0, 80))
+
+    def test_blocks_give_the_same_numbers(self):
+        audio = (0.1 * np.random.default_rng(1).normal(size=16000 * 3)).astype(np.float32)
+        whole = kaldi_fbank(audio)
+        saved = fbank.BLOCK
+        try:
+            fbank.BLOCK = 7
+            np.testing.assert_array_equal(kaldi_fbank(audio), whole)
+        finally:
+            fbank.BLOCK = saved
 
     def test_matches_kaldi_when_available(self):
         try:

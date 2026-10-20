@@ -30,7 +30,12 @@ MIN_SECONDS = 0.255
 WINDOW_FRAMES = 150  # 1.5 s of 10 ms frames
 PERIOD_FRAMES = 75  # 0.75 s
 FRAMES_PER_SECOND = SAMPLE_RATE // FRAME_SHIFT
-PRUNE = 0.2  # each window keeps links to its most similar 20 %
+PRUNE = 0.2  # each window keeps links to its most similar 20 %...
+# ...but never more than this many. Uncapped, 15 min of audio (827 windows)
+# kept 166 links each, so any voice with fewer windows than that was tied to
+# the others: six real voices of a documentary came out as two. WeSpeaker
+# itself keeps about 10 neighbours below 1000 windows.
+MAX_NEIGHBOURS = 20
 MAX_SPEAKERS = 10
 # Groups whose mean prints are closer than this (cosine) are one voice. The
 # eigengap already finds a single group on 130 s of one LibriSpeech reader;
@@ -104,7 +109,7 @@ def spectral_cluster(prints: np.ndarray, max_speakers: int = MAX_SPEAKERS) -> np
     if n < 4:
         return np.zeros(n, np.int64)
     sim = prints @ prints.T
-    keep = max(2, int(np.ceil(PRUNE * n)))
+    keep = max(2, min(int(np.ceil(PRUNE * n)), MAX_NEIGHBOURS))
     affinity = np.zeros_like(sim)
     top = np.argpartition(-sim, keep - 1, axis=1)[:, :keep]
     rows = np.arange(n)[:, None]
@@ -149,7 +154,8 @@ def diarize_segments(audio: np.ndarray, segments: list[dict], min_similarity: fl
         min_similarity = float(os.environ.get("DIARIZATION_MERGE_SIMILARITY", DEFAULT_MERGE_SIMILARITY))
     feats = kaldi_fbank(audio)
     voiced = np.zeros(len(feats) + WINDOW_FRAMES, bool)
-    voiced[voiced_frames(audio)[voiced_frames(audio) < len(voiced)]] = True
+    loud = voiced_frames(audio)
+    voiced[loud[loud < len(voiced)]] = True
 
     spans = []
     for i, s in enumerate(segments):

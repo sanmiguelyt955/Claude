@@ -205,6 +205,14 @@ def has_faster_whisper() -> bool:
     return True
 
 
+def emit(out: dict) -> None:
+    """The JSON as UTF-8 bytes. On Windows a piped stdout uses the ANSI code
+    page (cp1252): Node then read "niña" as "ni\ufffda", and any character
+    outside it (Japanese, Russian...) made the whole transcription fail."""
+    sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
+    sys.stdout.flush()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("wav")
@@ -229,7 +237,7 @@ def main() -> None:
     if engine == "parakeet":
         try:
             out = {**run_parakeet(args.wav, language or "es"), "device": "cpu", "engine": "parakeet"}
-            json.dump(out, sys.stdout, ensure_ascii=False)
+            emit(out)
             return
         except Exception as err:  # model download, sherpa-onnx missing...
             print(f"Parakeet falló ({str(err)[:200]}); transcribiendo con Whisper", file=sys.stderr)
@@ -238,7 +246,7 @@ def main() -> None:
         out = run_propio(args.wav, args.model, args.language, args.beam_size, not args.no_fallback)
     else:
         out = run_faster_whisper_on(args.wav, args.model, language, args.beam_size, args.device, args.compute_type)
-    json.dump(out, sys.stdout, ensure_ascii=False)
+    emit(out)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,17 @@ def w(start, end, word):
     return {"start": start, "end": end, "word": word}
 
 
+class EmitTest(unittest.TestCase):
+    def test_output_is_utf8_even_when_the_console_code_page_is_not(self):
+        # Windows pipes use the ANSI code page (cp1252) unless told otherwise.
+        code = "import transcribe; transcribe.emit({'text': 'Sí, la niña dijo 日本'})"
+        out = subprocess.run(
+            [sys.executable, "-c", code], cwd=os.path.join(HERE, ".."), capture_output=True, check=True,
+            env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+        )
+        self.assertEqual(json.loads(out.stdout.decode("utf-8"))["text"], "Sí, la niña dijo 日本")
+
+
 class SplitSentencesTest(unittest.TestCase):
     def test_ends_at_punctuation_and_pauses(self):
         words = [w(0, 0.4, " Hola"), w(0.4, 0.8, " mundo."), w(0.9, 1.2, " Sigo"), w(1.2, 1.5, " aquí"), w(3.0, 3.4, " después")]

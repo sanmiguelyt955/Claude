@@ -36,13 +36,24 @@ def _mel_banks(n_mels: int) -> np.ndarray:
 _BANKS: dict = {}
 
 
+# Frames per block: framing the whole file at once took 5 GB of RAM for an
+# hour of audio; blocks give the same numbers in a fraction of it.
+BLOCK = 6000
+
+
 def kaldi_fbank(audio: np.ndarray, n_mels: int = 80) -> np.ndarray:
     """(frames, n_mels) log filterbank of 16 kHz float audio in [-1, 1]."""
-    wave = np.asarray(audio, np.float64) * 32768.0  # WeSpeaker loads int16 without normalising
-    if len(wave) < FRAME_LENGTH:
+    if len(audio) < FRAME_LENGTH:
         return np.zeros((0, n_mels), np.float32)
-    n = 1 + (len(wave) - FRAME_LENGTH) // FRAME_SHIFT
-    idx = np.arange(FRAME_LENGTH)[None, :] + FRAME_SHIFT * np.arange(n)[:, None]
+    n = 1 + (len(audio) - FRAME_LENGTH) // FRAME_SHIFT
+    return np.concatenate([_fbank_block(audio, i, min(i + BLOCK, n), n_mels) for i in range(0, n, BLOCK)])
+
+
+def _fbank_block(audio: np.ndarray, first: int, last: int, n_mels: int) -> np.ndarray:
+    """Frames first..last-1 of kaldi_fbank."""
+    # WeSpeaker loads int16 without normalising
+    wave = np.asarray(audio[first * FRAME_SHIFT : (last - 1) * FRAME_SHIFT + FRAME_LENGTH], np.float64) * 32768.0
+    idx = np.arange(FRAME_LENGTH)[None, :] + FRAME_SHIFT * np.arange(last - first)[:, None]
     frames = wave[idx]
     frames = frames - frames.mean(axis=1, keepdims=True)
     frames = np.concatenate([frames[:, :1] * (1 - PREEMPH), frames[:, 1:] - PREEMPH * frames[:, :-1]], axis=1)
