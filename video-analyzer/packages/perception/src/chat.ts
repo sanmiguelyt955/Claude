@@ -159,18 +159,32 @@ function buildInstruction(video: ChatVideo, history: ChatTurn[], question: strin
  * provider chain as the analysis (Gemini then Claude), so a 503 on one
  * provider falls over to the next instead of failing the chat.
  */
+/**
+ * A chat answer reads the stored analysis, a text task Flash-Lite does well:
+ * it goes first (500 a day) and the two models with 20 a day stay for
+ * analyses, which need them. Each question used to spend one of those 20.
+ */
+export function chatProviders(): VisionProvider[] {
+  const all = geminiProviders()
+  const lite = all.filter((p) => p.fallbackOnly).map((p) => ({ ...p, fallbackOnly: false }))
+  return [...lite, ...all.filter((p) => !p.fallbackOnly), claude]
+}
+
 export async function askVideo(input: {
   video: ChatVideo
   question: string
   history?: ChatTurn[]
   providers?: VisionProvider[]
   log?: (msg: string) => void
+  /** Every request sent, so the caller can count it in the daily quota. */
+  onAttempt?: (attempt: { provider: string; ok: boolean; error?: string; latencyMs: number }) => void
 }): Promise<{ answer: string; provider: string }> {
   const { value, provider } = await describeWithFallback(
-    input.providers ?? [...geminiProviders(), claude],
+    input.providers ?? chatProviders(),
     { frames: [], instruction: buildInstruction(input.video, input.history ?? [], input.question), json: false },
     {
       log: input.log,
+      onAttempt: input.onAttempt,
       parse: (text) => {
         const answer = text.trim()
         if (!answer) throw new Error('respuesta vacía')

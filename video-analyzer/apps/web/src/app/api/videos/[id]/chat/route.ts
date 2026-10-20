@@ -9,6 +9,7 @@ import {
   addChatMessage,
   clearChatMessages,
   chatToMarkdown,
+  insertAnalysisRun,
 } from '@cva/memory-engine'
 import { askVideo, type ChatVideo } from '@cva/perception/chat'
 
@@ -99,6 +100,24 @@ export async function POST(request: Request, context: Params): Promise<NextRespo
       question,
       history,
       log: (msg) => console.log(`[chat] ${id}: ${msg}`),
+      // Chat questions spend the same daily quota as analyses: count them.
+      // The schema has no chat phase; deep_pass is the closest.
+      onAttempt: (a) =>
+        insertAnalysisRun({
+          videoId: id,
+          phase: 'deep_pass',
+          model: a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider,
+          processingMode: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          thoughtTokens: 0,
+          estimatedCostUsd: 0,
+          latencyMs: a.latencyMs,
+          succeeded: a.ok,
+          errorMessage: a.error ?? null,
+          requestCount: 1,
+        }),
     })
     addChatMessage({ videoId: id, role: 'user', text: question })
     addChatMessage({ videoId: id, role: 'assistant', text: answer, provider })

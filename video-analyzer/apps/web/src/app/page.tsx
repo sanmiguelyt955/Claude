@@ -1,4 +1,4 @@
-import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts, getModelDailyLimits } from '@cva/memory-engine'
+import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts, quotaModels, resolveModelDailyLimit } from '@cva/memory-engine'
 import { BibliotecaGrid } from '@/components/BibliotecaGrid'
 import { LibrarySearch } from '@/components/LibrarySearch'
 
@@ -22,19 +22,15 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
 
     // Daily capacity is per model, so what matters is the sum across every
     // configured model, not the 20 of whichever one happens to be first.
-    const maxRpd = Number(process.env.GEMINI_MAX_RPD ?? 20)
-    const models = (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.8-flash')
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean)
-    const learnedLimits = status.ok ? getModelDailyLimits(db) : {}
+    // Same models and limits as /api/quota: the ones the analysis engine uses.
+    const models = quotaModels()
     const quota = models.reduce(
       (acc, model) => {
-        const limit = learnedLimits[model] ?? maxRpd
+        const { limit, source } = status.ok ? resolveModelDailyLimit(model, db) : { limit: Number(process.env.GEMINI_MAX_RPD ?? 20), source: 'assumed' }
         const used = status.ok ? getQuotaWindowCounts(db, model).requestsToday : 0
         acc.total += limit
         acc.remaining += Math.max(0, limit - used)
-        if (learnedLimits[model] !== undefined) acc.confirmed += 1
+        if (source === 'google') acc.confirmed += 1
         return acc
       },
       { models: models.length, total: 0, remaining: 0, confirmed: 0 },
@@ -53,8 +49,8 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
         { label: 'Videos en memoria', value: String(videos), ok: true },
         { label: 'Jobs pendientes', value: String(jobs), ok: true },
         {
-          label: 'Analisis disponibles hoy',
-          value: `${quota.remaining} de ${quota.total} · ${quota.models} modelos, ${quota.confirmed} con limite confirmado`,
+          label: 'Peticiones a Gemini disponibles hoy',
+          value: `${quota.remaining} de ${quota.total} · ${quota.models} modelos, ${quota.confirmed} con límite confirmado por Google`,
           ok: quota.remaining > 0,
         },
         {

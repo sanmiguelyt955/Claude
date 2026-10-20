@@ -81,7 +81,7 @@ export type {
 export { getPendingChunks, insertEmbeddingsBatch, searchMemoryChunks } from './repo/embeddings.js'
 export type { PendingChunk, SemanticSearchResult } from './repo/embeddings.js'
 
-export { getModelDailyLimits, recordModelDailyLimit, resolveModelDailyLimit } from './repo/model-limits.js'
+export { getModelDailyLimits, quotaModels, recordModelDailyLimit, resolveModelDailyLimit } from './repo/model-limits.js'
 export type { ModelDailyLimit } from './repo/model-limits.js'
 export {
   WORKER_HEARTBEAT_INTERVAL_MS,

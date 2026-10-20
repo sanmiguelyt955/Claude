@@ -22,12 +22,24 @@ export function getModelDailyLimits(db: Db = getDb()): Record<string, number> {
 }
 
 /**
+ * The free-tier caps .env.example lists, used when .env.local has no
+ * GEMINI_MODEL_DAILY_LIMITS line (older installs): without them Flash-Lite
+ * showed 20 a day instead of its 500.
+ */
+const KNOWN_DAILY_LIMITS: Record<string, number> = {
+  'gemini-3.8-flash': 20,
+  'gemini-3.6-flash': 20,
+  'gemini-3.5-flash-lite': 500,
+  'gemini-3.1-flash-lite': 500,
+}
+
+/**
  * Per-model caps copied by hand from aistudio.google.com/rate-limit, as
  * GEMINI_MODEL_DAILY_LIMITS="model=RPD,model=RPD".
  */
 function configuredDailyLimits(): Record<string, number> {
   const raw = process.env.GEMINI_MODEL_DAILY_LIMITS?.trim()
-  if (!raw) return {}
+  if (!raw) return { ...KNOWN_DAILY_LIMITS }
   const out: Record<string, number> = {}
   for (const pair of raw.split(',')) {
     const [model, value] = pair.split('=').map((x) => x.trim())
@@ -65,4 +77,21 @@ export function recordModelDailyLimit(model: string, limit: number, db: Db = get
   db.prepare(
     'INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(META_KEY, JSON.stringify(current))
+}
+
+/** Same default as @cva/perception's DEFAULT_GEMINI_VISION_MODELS. */
+const DEFAULT_VISION_MODELS = 'gemini-3.8-flash,gemini-3.6-flash,gemini-3.5-flash-lite'
+
+/**
+ * The Gemini models whose daily quota the user is actually spending: with
+ * ANALYSIS_ENGINE=perception (the launcher's and the desktop app's setting)
+ * those are GEMINI_VISION_MODELS, not the older video path's
+ * GEMINI_VIDEO_MODELS the quota screens used to read.
+ */
+export function quotaModels(): string[] {
+  const raw =
+    process.env.ANALYSIS_ENGINE === 'perception'
+      ? (process.env.GEMINI_VISION_MODELS ?? process.env.GEMINI_VISION_MODEL ?? DEFAULT_VISION_MODELS)
+      : (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.8-flash')
+  return [...new Set(raw.split(',').map((m) => m.trim()).filter(Boolean))]
 }
