@@ -273,7 +273,7 @@ const parseJson = <T>(text: string): T => {
 export function coverTimeline(
   w: WindowOut,
   range: { start: number; end: number },
-  opts: { lenient?: boolean } = {},
+  opts: { lenient?: boolean; marks?: Array<{ time: number; what: string }> } = {},
 ): { timeline: WindowOut['timeline']; filled: string[] } {
   const entries = [...(w.timeline ?? [])]
     .filter((e) => Number.isFinite(e.start_seconds) && Number.isFinite(e.end_seconds) && e.end_seconds > e.start_seconds)
@@ -286,23 +286,36 @@ export function coverTimeline(
     filled.push(`[${mmss(a)}–${mmss(b)}] la línea de tiempo de este intervalo no se produjo; ver los fotogramas y el audio del tramo [ND].`)
     out.push({ start_seconds: a, end_seconds: b, sin_cambios: false, vis: '[ND] — registro no producido para este intervalo.', aud: '[ND]', txt: '[ND]', cam: '[ND]', cortes: [] })
   }
-  let worst = 0
+  // All the holes add up: five 25 s holes in 120 s used to pass because each
+  // one alone was under the limit.
+  let missing = 0
   for (const e of entries) {
     const s = Math.max(e.start_seconds, range.start)
     const t = Math.min(e.end_seconds, range.end)
     if (t <= at) continue
     if (s > at + 0.05) {
-      worst = Math.max(worst, s - at)
+      missing += s - at
       hole(at, s)
     }
     out.push({ ...e, start_seconds: Math.max(s, at), end_seconds: t })
     at = t
   }
   if (range.end > at + 0.05) {
-    worst = Math.max(worst, range.end - at)
+    missing += range.end - at
     hole(at, range.end)
   }
-  if (worst > (range.end - range.start) / 4) throw new Error(`La línea de tiempo deja ${Math.round(worst)} s del tramo sin registrar.`)
+  if (missing > (range.end - range.start) / 4) throw new Error(`La línea de tiempo deja ${Math.round(missing)} s del tramo sin registrar.`)
+  // A "no changes" entry that spans a measured cut or the start of a new
+  // transcript line hides that change (real replies on 19 Oct 2026 covered
+  // 16 s with two cuts and three lines of speech that way): it counts as an
+  // entry with changes.
+  for (const e of out) {
+    if (!e.sin_cambios || e.end_seconds - e.start_seconds <= 1.5) continue
+    const hidden = (opts.marks ?? []).filter((m) => m.time > e.start_seconds + 0.05 && m.time < e.end_seconds - 0.05)
+    if (!hidden.length) continue
+    e.sin_cambios = false
+    filled.push(`[${mmss(e.start_seconds)}–${mmss(e.end_seconds)}] marcada sin cambios pero contiene ${hidden.map((m) => `${m.what} en ${mmss(m.time)}`).join(', ')} [BAJA].`)
+  }
   // One entry per second: only stable stretches (sin_cambios) may span more.
   // A real reply on 18 Oct 2026 put ten seconds of changing speech in one
   // entry; past a fifth of the window that is a summary, not the timeline.
@@ -435,7 +448,11 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
           // A half too short to split again: its grouped seconds are kept,
           // each declared in 9.14, rather than the whole analysis failing.
           const lastResort = Boolean(w.label && /[ab]$/.test(w.label)) && w.end - w.start < MIN_SPLIT_SECONDS
-          const { timeline, filled } = coverTimeline(raw, range, { lenient: lastResort })
+          const marks = [
+            ...cutsHere.map((c) => ({ time: c.time, what: 'un corte medido' })),
+            ...speech.segments.map((s, n) => ({ time: s.start, what: `el inicio de T${n + 1}` })).filter((m) => m.time > w.start && m.time < w.end),
+          ]
+          const { timeline, filled } = coverTimeline(raw, range, { lenient: lastResort, marks })
           // A real reply on 19 Oct 2026 described 33 shots and wrote the
           // recreation sheet of 7: both lists are checked.
           for (const [list, what] of [[(raw.planos ?? []).map((p) => p.id), 'describe'], [(raw.recreacion ?? []).map((r) => r.plano), 'da ficha de recreación a']] as const) {
@@ -475,8 +492,23 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   const outs = leaves.map((w) => checkpoint.windows[windowKey(w)]!)
 
   // TX numbering across windows: by first appearance.
-  const tx = renumberTexts(outs)
-  const timeline = outs.flatMap((o, i) => o.timeline.map((e) => ({ ...e, txt: tx.rename(i, e.txt), vis: tx.rename(i, e.vis) })))
+  const tx = renumberTexts(outs, leaves.map((w) => w.end))
+  // CORTE lines come from the measured cuts [META], not from the model, which
+  // placed some in the wrong second, named the wrong shot or skipped them.
+  const shotAtCut = (time: number) => shots.find((s) => Math.abs(s.start - time) < 0.06) ?? shots.find((s) => time >= s.start && time < s.end)
+  const measuredCuts = (a: number, b: number) =>
+    input.cuts.filter((c) => c.time >= a && c.time < b).map((c) => `CORTE en ${mmss(c.time)} → ${shotAtCut(c.time)?.id ?? '[ND]'}`)
+  const plain = (s: string) => (s ?? '').replace(/\bsin_cambios\b/g, 'sin cambios')
+  const timeline = outs.flatMap((o, i) =>
+    o.timeline.map((e) => {
+      const txt = plain(tx.rename(i, e.txt))
+      const cam = plain(e.cam).replace(/CORTE en [^;,\n]*?(?:→|->)\s*PL\d+[;,.]?\s*/g, '').trim() || 'sin cambios'
+      const cortes = measuredCuts(e.start_seconds, e.end_seconds)
+      // A text that appears or goes, or a cut, is a change: never "no changes".
+      const changes = cortes.length > 0 || /\b(aparece|desaparece)/i.test(txt) || /\b(aparece|desaparece)/i.test(cam)
+      return { ...e, sin_cambios: e.sin_cambios && !changes, vis: plain(tx.rename(i, e.vis)), aud: plain(e.aud), txt, cam, cortes }
+    }),
+  )
   const cambios = outs.flatMap((o, i) => (o.cambios_estado ?? []).map((c) => ({ ...c, antes: tx.rename(i, c.antes), despues: tx.rename(i, c.despues) })))
   const windowLimits = outs.flatMap((o, i) => (o.limites ?? []).map((l) => `[tramo ${i + 1}] ${tx.rename(i, l)}`))
   const escenas = outs.flatMap((o) => o.escenas ?? [])
@@ -488,7 +520,8 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
 
   // ── Phase 3 ─────────────────────────────────────────────────────────────
   progress({ label: 'Registro V6.5: síntesis...', current: steps - 1, total: steps })
-  if (!checkpoint.phase3) {
+  // A synthesis saved before this check could lack a section and fail every retry.
+  if (!checkpoint.phase3 || phase3Problem(checkpoint.phase3)) {
     const record = [
       `FASE 1:\n${JSON.stringify({ ficha: p1.ficha, triaje: p1.triaje, procedencia: p1.procedencia, entidades: p1.entidades })}`,
       `MAPA DE PLANOS (9.4, escrito por los tramos):\n${p1.planos.map((p) => `${p.id} ${p.inicio}–${p.fin} (${p.duracion}): ${p.escala} · ${p.angulo} · ${p.movimiento} · ${p.entrada_salida}`).join('\n')}`,
@@ -514,7 +547,12 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
         schema: V6_PERCEPTION_PHASE3_SCHEMA,
         maxOutputTokens: MAX_REPLY_TOKENS,
       },
-      (t) => parseJson<Phase3Out>(t),
+      (t) => {
+        const value = parseJson<Phase3Out>(t)
+        const problem = phase3Problem(value)
+        if (problem) throw new Error(`síntesis incompleta: ${problem}`)
+        return value
+      },
     )
     checkpoint.phase3 = value
     input.save()
@@ -590,6 +628,21 @@ function secondsPlan(w: V6Window): string {
   const last = Math.ceil(w.end)
   const n = last - first
   return `La línea de tiempo de este tramo son ${n} segundos: entradas ${mmss(Math.max(first, w.start))}–${mmss(Math.min(first + 1, w.end))}, ${mmss(first + 1)}–${mmss(first + 2)}, … hasta la que termina en ${mmss(w.end)}; una entrada por segundo, sin encadenar (un segundo sin cambios es una entrada corta con sin_cambios=true). Una entrada de varios segundos con cambios dentro se rechaza.`
+}
+
+/**
+ * What is missing from a synthesis, or '' when the renderer can use it. A
+ * reply without "gramatica" (Claude ignores the schema; the 400 retry sends
+ * none) was checkpointed and then crashed every retry without a request.
+ */
+export function phase3Problem(v: unknown): string {
+  const o = v as Record<string, unknown> | null
+  if (!o || typeof o !== 'object') return 'no es un objeto'
+  if (typeof o.resumen_corto !== 'string') return 'falta resumen_corto'
+  if (!o.gramatica || typeof o.gramatica !== 'object') return 'falta gramatica'
+  if (!o.plan_rodaje || typeof o.plan_rodaje !== 'object') return 'falta plan_rodaje'
+  for (const k of ['temas', 'funcion', 'interpretacion', 'patrones', 'limites']) if (!Array.isArray(o[k])) return `falta ${k}`
+  return ''
 }
 
 /** "PL12", "pl 12" or "PL12 (00:31–00:33)" → "PL12". */
@@ -708,7 +761,11 @@ function fixPhase1(p1: V6Phase1, shots: Shot[], meta: VideoMeta, frames: Frame[]
 }
 
 /** TX ids of each window (TX1-t3, or a bare TX1) become TX1, TX2... in order of appearance; references follow, window by window. */
-export function renumberTexts(outs: Array<Pick<WindowOut, 'textos_pantalla'>>): {
+export function renumberTexts(
+  outs: Array<Pick<WindowOut, 'textos_pantalla'>>,
+  /** End time of each window: a text still on screen there continues in the next one. */
+  borders: number[] = [],
+): {
   list: V6Phase1['textos_pantalla']
   rename: (window: number, s: string) => string
 } {
@@ -719,12 +776,30 @@ export function renumberTexts(outs: Array<Pick<WindowOut, 'textos_pantalla'>>): 
     return m[3] !== undefined ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : Number(m[1]) * 60 + Number(m[2])
   }
   all.sort((a, b) => seconds(a.aparece) - seconds(b.aparece) || a.window - b.window)
+  // A text on screen across a window border is one text, not two that
+  // "appear" and "disappear" at the border (a watermark became one TX per
+  // window; a caption was cut in two at 09:49.68).
+  const norm = (s: string) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const near = (time: number, border: number) => !Number.isFinite(time) || Math.abs(time - border) <= 1
+  const root = new Map<(typeof all)[number], (typeof all)[number]>()
+  for (const t of all) {
+    const border = borders[t.window - 1]
+    if (border === undefined || !near(seconds(t.aparece), border)) continue
+    const prev = all.find((p) => p.window === t.window - 1 && norm(p.contenido) === norm(t.contenido) && near(seconds(p.desaparece), border))
+    if (prev) root.set(t, root.get(prev) ?? prev)
+  }
   const map = new Map<string, string>()
-  const list = all.map((t, i) => {
-    const id = `TX${i + 1}`
-    map.set(`${t.window}:${t.id}`, id)
-    return { ...t, id }
-  })
+  const kept = all.filter((t) => !root.has(t)).map((t, i) => ({ ...t, id: `TX${i + 1}`, source: t }))
+  for (const k of kept) map.set(`${k.window}:${k.source.id}`, k.id)
+  for (const [t, first] of root) {
+    const k = kept.find((x) => x.source === first)!
+    map.set(`${t.window}:${t.id}`, k.id)
+    k.desaparece = t.desaparece
+    const a = seconds(k.aparece)
+    const b = seconds(t.desaparece)
+    if (Number.isFinite(a) && Number.isFinite(b)) k.duracion = `${(b - a).toFixed(1)} s`
+  }
+  const list = kept.map(({ source: _s, ...t }) => t)
   // One pass with a callback, so TX1 -> TX5 never chains into TX5 -> TX9.
   const rename = (window: number, s: string) =>
     s ? s.replace(/\bTX\d+(?:-t\d+[a-z]*)?\b/g, (old) => map.get(`${window}:${old}`) ?? old) : s

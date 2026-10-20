@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { perceive } from '../src/perceive.ts'
-import { coverTimeline, recreationByShot, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_PHASE1_SCHEMA, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
+import { coverTimeline, phase3Problem, recreationByShot, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_PHASE1_SCHEMA, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -103,6 +103,7 @@ test('perceive under protocol v6 writes the full record: measured shots, timelin
   assert.match(md, /T1 — 00:0\d.* — VOZ1: ".*quick test sentence/i)
   assert.match(md, /\*\*TX1\*\* — aparece 00:00/)
   assert.match(md, /MAPA DE COBERTURA: VIS: fotogramas en/)
+  assert.match(md, /CORTE en 00:02(?:\.0+)? → PL2/, 'cuts in 9.5 come from the measurement, even when the model lists none')
   for (const id of ['PL1', 'PL2', 'PL3', 'PL4']) assert.match(md, new RegExp(`campo de color en ${id}`), `9.13 has ${id}, written by its window`)
   assert.doesNotMatch(md, /ningún tramo/)
 
@@ -261,4 +262,37 @@ test('a half that cannot be split again keeps its grouped seconds, declared [BAJ
   const kept = coverTimeline(grouped, { start: 0, end: 15 }, { lenient: true })
   assert.equal(kept.timeline.length, 2)
   assert.equal(kept.filled.filter((l) => /granularidad reducida/.test(l)).length, 2)
+})
+
+test('holes add up: many short holes that leave most of the window empty are asked again', () => {
+  const entry = (a: number, b: number) => ({ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'v', aud: 'a', txt: 't', cam: 'c', cortes: [] })
+  const sparse = { timeline: [entry(0, 4), entry(29, 33), entry(58, 62), entry(87, 91), entry(119, 120)] } as never
+  assert.throws(() => coverTimeline(sparse, { start: 0, end: 120 }), /103 s del tramo sin registrar/)
+})
+
+test('a "no changes" entry that spans a measured cut or a new line of speech is not stable', () => {
+  const entry = (a: number, b: number, sin_cambios: boolean) => ({ start_seconds: a, end_seconds: b, sin_cambios, vis: 'SIN CAMBIOS OBSERVABLES', aud: 'a', txt: 't', cam: 'c', cortes: [] })
+  const perSecond = Array.from({ length: 104 }, (_, i) => entry(i, i + 1, false))
+  const out = coverTimeline({ timeline: [...perSecond, entry(104, 120, true)] } as never, { start: 0, end: 120 }, { marks: [{ time: 113.5, what: 'un corte medido' }, { time: 117, what: 'el inicio de T19' }] })
+  const last = out.timeline.at(-1)!
+  assert.equal(last.sin_cambios, false)
+  assert.ok(out.filled.some((l) => /01:44–02:00\] marcada sin cambios pero contiene un corte medido en 01:53\.50, el inicio de T19 en 01:57 \[BAJA\]/.test(l)), out.filled.join(' | '))
+})
+
+test('a text on screen across a window border stays one text', () => {
+  const tx = (id: string, aparece: string, desaparece: string, contenido: string) => ({ id, aparece, desaparece, duracion: '', tipo: 'rótulo', posicion: 'abajo', contenido, apariencia: '', animacion: '' })
+  const { list, rename } = renumberTexts(
+    [{ textos_pantalla: [tx('TX1', '09:46.0', '09:49.7', 'JEFF KEEGAN\nMiembro')] }, { textos_pantalla: [tx('TX1-t2', '09:49.68', '09:53.0', 'Jeff Keegan miembro'), tx('TX2-t2', '09:50', '09:51', 'otro')] }],
+    [589.68, 709.68],
+  )
+  assert.deepEqual(list.map((t) => [t.id, t.aparece, t.desaparece]), [['TX1', '09:46.0', '09:53.0'], ['TX2', '09:50', '09:51']])
+  assert.equal(rename(1, 'TX1-t2 visible'), 'TX1 visible')
+})
+
+test('a synthesis missing a section is refused, so it is never saved and replayed', () => {
+  const ok = { resumen_corto: 'x', gramatica: {}, plan_rodaje: {}, temas: [], funcion: [], interpretacion: [], patrones: [], limites: [] }
+  assert.equal(phase3Problem(ok), '')
+  const { gramatica: _g, ...noGrammar } = ok
+  assert.equal(phase3Problem(noGrammar), 'falta gramatica')
+  assert.equal(phase3Problem(null), 'no es un objeto')
 })

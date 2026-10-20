@@ -507,7 +507,10 @@ function renderTimeline(r: AnalysisResult): string {
       const cuts = rest.filter((l) => l.startsWith('CORTE'))
       const head = `[${mmss(s.start_seconds)}–${mmss(s.end_seconds)}]`
       if (vis.includes('SIN CAMBIOS OBSERVABLES')) {
-        return [`${head}`, vis.replace(/^VIS:\s*/, ''), `AUD: ${aud}`, ...cuts].join('\n')
+        // The protocol's SIN CAMBIOS line still records VIS, AUD and TXT: a
+        // text that appears or goes in a still second must not vanish.
+        const changed = (l: string) => !/^(TXT|CAM):\s*sin cambios\.?$/i.test(l.trim())
+        return [`${head}`, vis.replace(/^VIS:\s*/, ''), `AUD: ${aud}`, ...[txt, cam].filter(changed), ...cuts].join('\n')
       }
       return [head, vis, `AUD: ${aud}`, txt, cam, ...cuts].join('\n')
     })
