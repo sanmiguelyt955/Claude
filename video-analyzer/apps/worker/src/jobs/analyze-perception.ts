@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
 import {
   getVideo,
   setVideoStatus,
@@ -111,6 +111,10 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
       db,
     )
     setVideoStatus(video.id, 'ready', null, db)
+    // Frames, the WAV and the window clips (about 88 MB per 15 min) are only
+    // needed to resume a failed run; the page draws its stills and audio
+    // straight from the video. They used to pile up forever.
+    await rm(workDir, { recursive: true, force: true }).catch((err) => console.warn(`[perception] ${video.id}: no se pudo borrar ${workDir}: ${(err as Error).message}`))
     // Same as the Gemini path: index the new analysis for library search.
     enqueueJob({ type: 'embed', videoId: video.id }, db)
     console.log(`[perception] ${video.id}: ${result.scenes.length} escenas, ${result.transcript.length} frases.`)

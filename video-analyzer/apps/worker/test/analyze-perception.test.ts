@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 process.env.PERCEPTION_PROTOCOL = 'basico'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -112,6 +112,7 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   const { id, job } = queueVideo('con claude')
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
+  assert.equal(existsSync(path.join(root, 'perception', id)), false, 'the work folder goes once the analysis is stored')
   assert.ok(countRows('scenes', id) >= 2)
   assert.ok(countRows('transcript_chunks', id) >= 1)
   // The invented kind "logo" was mapped instead of breaking the CHECK constraint.

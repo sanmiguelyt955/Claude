@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
@@ -108,6 +108,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   }, [])
 
   async function handleAnalyze() {
+    if (data?.video.status === 'ready' && !window.confirm('Se hará un análisis nuevo de este video: usa cuota de Gemini y reemplaza el análisis actual cuando termine. ¿Seguir?')) return
     setActionBusy(true)
     setErrorMessage(null)
     try {
@@ -121,6 +122,11 @@ export function VideoDetailClient({ id }: { id: string }) {
       setActionBusy(false)
     }
   }
+
+  // Stable, so the memoized record tab is not redrawn on every poll.
+  const analyzeRef = useRef(handleAnalyze)
+  analyzeRef.current = handleAnalyze
+  const reanalyze = useCallback(() => void analyzeRef.current(), [])
 
   async function handleExportVault() {
     setActionBusy(true)
@@ -763,7 +769,7 @@ export function VideoDetailClient({ id }: { id: string }) {
           )}
 
           {tab === 'registro' && (
-            <ProtocolRecord markdown={summary?.protocol_record_md ?? null} title={video.title} />
+            <ProtocolRecord markdown={summary?.protocol_record_md ?? null} title={video.title} onReanalyze={reanalyze} />
           )}
 
           {tab === 'detalles' && (
@@ -834,12 +840,15 @@ export function VideoDetailClient({ id }: { id: string }) {
  */
 // Memoized: a 400 KB record is about 11,000 elements, rebuilt on every poll
 // and every keystroke on the page before.
-const ProtocolRecord = memo(function ProtocolRecord({ markdown, title }: { markdown: string | null; title: string }) {
+const ProtocolRecord = memo(function ProtocolRecord({ markdown, title, onReanalyze }: { markdown: string | null; title: string; onReanalyze: () => void }) {
   if (!markdown) {
     return (
-      <p className="text-sm text-(--color-ink-soft)">
-        Este análisis no tiene registro V6.5. Vuelve a analizar el video para generarlo.
-      </p>
+      <div className="space-y-3 text-sm text-(--color-ink-soft)">
+        <p>Este análisis no tiene registro V6.5. Vuelve a analizar el video para generarlo.</p>
+        <button type="button" className="btn-ghost" onClick={onReanalyze}>
+          Volver a analizar
+        </button>
+      </div>
     )
   }
   const download = () => {
