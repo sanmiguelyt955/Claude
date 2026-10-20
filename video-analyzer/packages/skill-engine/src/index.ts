@@ -149,6 +149,16 @@ function buildSkillMd(name: string, description: string, bodyMarkdown: string): 
  * .claude/skills/ (project) per PROJECT.md §12. Returns the DATA_DIR-relative
  * output path, since every *_path column in this app is stored that way.
  */
+/**
+ * A file name the model proposed, reduced to a plain name inside its folder:
+ * "../../scripts/launcher.ps1" would otherwise be written outside the skill,
+ * over the app's own files.
+ */
+export function safeAssetName(raw: string, fallback: string): string {
+  const base = (raw ?? '').split(/[\\/]/).pop()!.replace(/[^\w.\-]+/g, '_').replace(/^\.+/, '')
+  return base || fallback
+}
+
 export async function writeSkillFolder(input: {
   name: string
   description: string
@@ -168,7 +178,7 @@ export async function writeSkillFolder(input: {
     const refDir = path.join(dir, 'references')
     await mkdir(refDir, { recursive: true })
     for (const ref of input.references) {
-      const relPath = path.join('references', ref.filename)
+      const relPath = path.join('references', safeAssetName(ref.filename, 'referencia.md'))
       await writeFile(path.join(dir, relPath), ref.contents, 'utf8')
       assets.push({ path: relPath, contents: ref.contents })
     }
@@ -178,7 +188,7 @@ export async function writeSkillFolder(input: {
     const scriptDir = path.join(dir, 'scripts')
     await mkdir(scriptDir, { recursive: true })
     for (const script of input.scripts) {
-      const relPath = path.join('scripts', script.filename)
+      const relPath = path.join('scripts', safeAssetName(script.filename, 'script.txt'))
       await writeFile(path.join(dir, relPath), script.contents, 'utf8')
       assets.push({ path: relPath, contents: script.contents })
     }

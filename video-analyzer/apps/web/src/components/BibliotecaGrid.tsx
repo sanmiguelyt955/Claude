@@ -57,9 +57,13 @@ export function BibliotecaGrid() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoIds: [...selected] }),
       })
-      const body = (await res.json()) as { error?: string }
+      const body = (await res.json()) as { error?: string; separate?: boolean }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo encolar el lote.')
-      setBatchMessage(`${selected.size} videos encolados en 1 sola peticion.`)
+      setBatchMessage(
+        body.separate
+          ? `${selected.size} videos en cola: cada uno con su análisis completo, uno tras otro.`
+          : `${selected.size} videos encolados en 1 sola petición.`,
+      )
       setSelected(new Set())
     } catch (error) {
       setBatchMessage((error as Error).message)
@@ -159,7 +163,7 @@ export function BibliotecaGrid() {
             disabled={batchBusy || selected.size < 2}
             className="btn-primary !py-1.5"
           >
-            {batchBusy ? 'Encolando...' : 'Analizar juntos (1 peticion)'}
+            {batchBusy ? 'Encolando…' : 'Analizar seleccionados'}
           </button>
           {batchMessage && <span className="text-(--color-ink-soft)">{batchMessage}</span>}
         </div>

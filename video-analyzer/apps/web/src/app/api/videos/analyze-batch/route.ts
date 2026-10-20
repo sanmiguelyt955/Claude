@@ -13,7 +13,7 @@ type Body = { videoIds?: string[] }
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const body = (await request.json().catch(() => ({}))) as Body
-  const videoIds = (body.videoIds ?? []).filter(Boolean)
+  const videoIds = [...new Set(Array.isArray(body.videoIds) ? body.videoIds.filter((id) => typeof id === 'string' && id) : [])]
 
   if (videoIds.length < 2) {
     return NextResponse.json({ error: 'Elige al menos 2 videos para analizar juntos.' }, { status: 400 })
@@ -30,6 +30,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     )
   }
 
+  // The perception engine analyzes one video at a time, each with its full
+  // V6.5 record; a single-request batch would skip it (and could never be redone).
+  if (process.env.ANALYSIS_ENGINE === 'perception') {
+    const jobIds = videoIds.map((videoId) => enqueueJob({ type: 'analyze', videoId }, undefined).id)
+    return NextResponse.json({ jobIds, videoIds, separate: true }, { status: 202 })
+  }
   const job = enqueueJob({ type: 'analyze', videoId: videoIds[0], payload: { videoIds } }, undefined)
   return NextResponse.json({ jobId: job.id, videoIds }, { status: 202 })
 }
