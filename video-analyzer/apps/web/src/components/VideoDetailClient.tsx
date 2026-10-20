@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
 import { AnalyzingProgress } from './AnalyzingProgress'
@@ -63,16 +63,21 @@ export function VideoDetailClient({ id }: { id: string }) {
     void player.play().catch(() => {})
     player.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   }
-  const At = ({ seconds }: { seconds: number | null }) =>
+  // A plain function, not a component defined in here: as a component it was
+  // a new type on every render, so React rebuilt each timestamp button every
+  // 2 s and keyboard focus fell off it.
+  const at = (seconds: number | null) =>
     seconds === null ? null : (
       <button type="button" className="timestamp" onClick={() => seek(seconds)} title="Ver en el video">
         {formatDuration(seconds)}
       </button>
     )
 
+  const [missing, setMissing] = useState(false)
   async function refresh() {
     try {
       const res = await fetch(`/api/videos/${id}`, { cache: 'no-store' })
+      if (res.status === 404) setMissing(true)
       if (!res.ok) return
       const detail = (await res.json()) as VideoDetailResponse
       setData(detail)
@@ -81,12 +86,17 @@ export function VideoDetailClient({ id }: { id: string }) {
     }
   }
 
+  // Every 2 s while something runs for this video; a finished one (about
+  // 550 KB per answer) only every 30 s. Each action refreshes at once, which
+  // brings back the fast pace as soon as its job appears.
+  const busy = !data || Boolean(data.video.activeJob) || ['pending', 'probing', 'queued', 'analyzing'].includes(data.video.status)
   useEffect(() => {
+    if (missing) return
     void refresh()
-    const interval = setInterval(refresh, 2000)
+    const interval = setInterval(refresh, busy ? 2000 : 30000)
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id])
+  }, [id, busy, missing])
 
   useEffect(() => {
     fetch('/api/skills')
@@ -258,7 +268,12 @@ export function VideoDetailClient({ id }: { id: string }) {
   if (!data) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <p className="text-sm text-(--color-ink-soft)">Cargando...</p>
+        <p className="text-sm text-(--color-ink-soft)">{missing ? 'Este video ya no existe en la biblioteca.' : 'Cargando…'}</p>
+        {missing && (
+          <Link href="/" className="mt-3 inline-block text-sm underline">
+            Volver a la biblioteca
+          </Link>
+        )}
       </main>
     )
   }
@@ -301,7 +316,7 @@ export function VideoDetailClient({ id }: { id: string }) {
         <header className="flex flex-col gap-4">
           <div className="flex flex-col items-start gap-3">
             <StatusBadge status={video.status} />
-            <h1 className="text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{video.title}</h1>
+            <h1 className="text-2xl font-bold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-3xl">{video.title}</h1>
           </div>
           <div className="flex flex-wrap gap-2 text-xs text-(--color-ink-soft)">
             {video.duration_seconds !== null && <span className="chip">⏱ {formatDuration(video.duration_seconds)}</span>}
@@ -460,7 +475,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                       )}
                       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
                         <p className="flex items-center gap-1.5 text-xs text-(--color-ink-soft)">
-                          <At seconds={scene.start_seconds} /> – {formatDuration(scene.end_seconds)}
+                          {at(scene.start_seconds)} – {formatDuration(scene.end_seconds)}
                         </p>
                         <p className="font-semibold">{scene.title}</p>
                         <p className="text-sm">
@@ -526,7 +541,7 @@ export function VideoDetailClient({ id }: { id: string }) {
               {transcript.map((chunk) => (
                 <div key={chunk.chunk_index} className="flex gap-3 rounded-xl px-2 py-1.5 hover:bg-(--color-surface-2)">
                   <span className="pt-0.5">
-                    <At seconds={chunk.start_seconds} />
+                    {at(chunk.start_seconds)}
                   </span>
                   <p className="leading-relaxed">
                     {chunk.speaker && (
@@ -548,7 +563,7 @@ export function VideoDetailClient({ id }: { id: string }) {
             <ul className="flex flex-col gap-2">
               {objectElements.map((el, i) => (
                 <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <At seconds={el.start_seconds} />
+                  {at(el.start_seconds)}
                   <span className="chip">{ELEMENT_KIND_LABEL[el.kind]}</span>
                   <span className="font-medium">{el.label}</span>
                   {el.detail && <span className="text-(--color-ink-soft)">— {el.detail}</span>}
@@ -564,7 +579,7 @@ export function VideoDetailClient({ id }: { id: string }) {
             <ul className="flex flex-col gap-2">
               {textElements.map((el, i) => (
                 <li key={i} className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <At seconds={el.start_seconds} />
+                  {at(el.start_seconds)}
                   <span className="font-medium">{el.label}</span>
                   {el.detail && <span className="text-(--color-ink-soft)">— {el.detail}</span>}
                 </li>
@@ -817,7 +832,9 @@ export function VideoDetailClient({ id }: { id: string }) {
  * bullets from its Markdown, the rest as it is (the record is mostly labelled
  * lines). Downloadable as the .md that goes to Obsidian.
  */
-function ProtocolRecord({ markdown, title }: { markdown: string | null; title: string }) {
+// Memoized: a 400 KB record is about 11,000 elements, rebuilt on every poll
+// and every keystroke on the page before.
+const ProtocolRecord = memo(function ProtocolRecord({ markdown, title }: { markdown: string | null; title: string }) {
   if (!markdown) {
     return (
       <p className="text-sm text-(--color-ink-soft)">
@@ -859,4 +876,4 @@ function ProtocolRecord({ markdown, title }: { markdown: string | null; title: s
       </div>
     </div>
   )
-}
+})
