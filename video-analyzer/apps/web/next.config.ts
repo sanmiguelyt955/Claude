@@ -17,6 +17,9 @@ if (existsSync(rootEnvLocal)) {
 type WebpackConfig = Parameters<NonNullable<NextConfig['webpack']>>[0]
 
 const config: NextConfig = {
+  // A second dev server (tests, a parallel check) needs its own build folder
+  // or the two overwrite each other's .next.
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   // The desktop app (desktop/) ships a self-contained server: `next build`
   // with NEXT_OUTPUT=standalone copies only the files the server needs.
   ...(process.env.NEXT_OUTPUT === 'standalone' ? { output: 'standalone' as const } : {}),
