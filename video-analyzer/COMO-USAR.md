@@ -72,7 +72,12 @@ En PowerShell, elige dónde guardarla (por ejemplo, Documentos) y descárgala:
 ```powershell
 cd $HOME\Documents
 git clone https://github.com/sanmiguelyt955/Claude.git
+cd Claude
+git checkout claude/admiring-newton-086e1x
 ```
+
+La última línea importa: las mejoras están en esa rama, y el lanzador se
+actualiza desde la rama en la que estés.
 
 Si te pide iniciar sesión en GitHub, hazlo: el repositorio es tuyo.
 
@@ -105,6 +110,29 @@ Las siguientes veces abre en segundos.
      respuesta cita el momento del video.
    - **Buscar en este video** y, en la Biblioteca, buscar en todos tus videos.
    - **Exportar a Obsidian** (si configuraste `OBSIDIAN_VAULT_PATH`).
+
+### Cuánto tarda un análisis
+
+Medido con Gemini real en un video de 15 minutos: **unos 11 minutos** (7 de
+ellos son Gemini). Los demás tiempos están calculados a partir de esa medición:
+
+| Duración del video | Tiempo aproximado | Peticiones a los modelos buenos (40 al día) |
+|---|---|---|
+| 1 minuto | 2–3 min | 3 |
+| 5 minutos | 4–5 min | 5 |
+| 15 minutos | ~11 min | ~12 |
+| 30 minutos | 15–20 min | ~18 |
+| 1 hora | 25–35 min | ~33 |
+| 1 h 40 min | 45–60 min | ~53: no caben; el resto lo hace Flash-Lite, con menos detalle |
+
+- Gemini ve el video en partes de 2 minutos, 8 a la vez. Las partes de más
+  de 8 esperan turno.
+- Cuando Google está saturado (error 503), la app espera y reintenta. Eso
+  puede sumar varios minutos.
+- Con la tarjeta gráfica (RTX 3050), la transcripción debería ir más rápido
+  que en estas mediciones, que se hicieron sin tarjeta.
+- Si se acaban las peticiones del día, el análisis espera a que se renueven
+  (a la medianoche de California) y continúa solo, sin perder lo avanzado.
 
 ### Actualizaciones del lanzador
 
