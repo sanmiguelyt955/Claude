@@ -12,6 +12,8 @@ const path = require('node:path')
 const { spawn } = require('node:child_process')
 
 const isWin = process.platform === 'win32'
+const RESTARTS_MAX = 5
+const RESTART_DELAY_MS = Number(process.env.VIDEO_ANALYZER_RESTART_DELAY_MS || 2000)
 
 function runtimePaths(runtimeDir) {
   const exe = (name) => (isWin ? `${name}.exe` : name)
@@ -124,14 +126,41 @@ async function startApp({ runtimeDir, dataDir, settings = {}, port, log = () => 
     )
   })
 
+  let stopping = false
+  // A worker or web server that dies while the app is open is started again:
+  // with the worker gone every analysis stayed queued until the app was
+  // closed and reopened. Not forever, though: one that keeps crashing stops
+  // after RESTARTS_MAX tries in 10 minutes (its log says why).
+  const keepAlive = (name, script) => {
+    const recent = []
+    const start = () => {
+      const child = run(name, script, path.dirname(script))
+      child.on('error', (e) => log(`${name}: ${e.message}`))
+      child.on('exit', (code) => {
+        if (stopping) return
+        const now = Date.now()
+        while (recent.length && now - recent[0] > 10 * 60_000) recent.shift()
+        if (recent.length >= RESTARTS_MAX) {
+          log(`${name} se cerró ${recent.length + 1} veces en 10 minutos; no se reinicia más. Revisa ${path.join(logsDir, `${name}.log`)}`)
+          return
+        }
+        recent.push(now)
+        log(`${name} se cerró (código ${code}); se vuelve a abrir`)
+        setTimeout(() => { if (!stopping) start() }, RESTART_DELAY_MS * recent.length)
+      })
+      return child
+    }
+    return start()
+  }
+
   log('arrancando worker y web')
-  const worker = run('worker', p.worker, path.dirname(p.worker))
-  const web = run('web', p.webServer, path.dirname(p.webServer))
+  const worker = keepAlive('worker', p.worker)
+  const web = keepAlive('web', p.webServer)
   let webDead = false
   web.on('exit', () => { webDead = true })
-  worker.on('error', (e) => log(`worker: ${e.message}`))
 
   const stop = () => {
+    stopping = true
     for (const child of children) {
       if (child.exitCode === null && !child.killed) child.kill()
     }

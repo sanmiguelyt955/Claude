@@ -389,7 +389,7 @@ export function VideoDetailClient({ id }: { id: string }) {
           <p className="font-semibold">El analizador no está encendido</p>
           <p className="text-(--color-ink-soft)">
             Hay un trabajo en la cola para este video, pero nada lo va a procesar hasta que el analizador corra. Vuelve a abrir
-            «Iniciar Video Analyzer.bat» (o la app de escritorio) y seguirá solo.
+            «Iniciar Video Analyzer.bat» (lo enciende sin cerrar nada); en la app de escritorio, Archivo → Reiniciar. Después sigue solo.
           </p>
         </div>
       )}
