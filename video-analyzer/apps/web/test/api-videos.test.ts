@@ -123,31 +123,35 @@ test('DELETE removes the rows and every per-video file, and leaves other videos 
   for (const file of perVideo.map((f) => f.replaceAll(id, other))) assert.ok(existsSync(file), file)
 })
 
-test('DELETE refuses while a job is queued or running, and keeps everything', async () => {
+test('DELETE refuses while a job is working on the video, and keeps everything', async () => {
   const route = await import('../src/app/api/videos/[id]/route')
-  for (const state of ['queued', 'running'] as const) {
-    const id = storedVideo('queued')
-    me.enqueueJob({ type: 'analyze', videoId: id })
-    if (state === 'running') assert.equal(me.claimNextJob()?.video_id, id)
-    const res = await route.DELETE(req(`/api/videos/${id}`, { method: 'DELETE' }), ctx(id))
-    assert.equal(res.status, 409, state)
-    const body = (await res.json()) as { error: string }
-    assert.match(body.error, /espera|termine/i)
-    assert.ok(me.getVideo(id))
-    assert.ok(existsSync(path.join(me.VIDEOS_DIR, id, 'source.mp4')))
-    me.getDb().prepare("UPDATE jobs SET status = 'done' WHERE video_id = ?").run(id)
-  }
+  const id = storedVideo('queued')
+  me.enqueueJob({ type: 'analyze', videoId: id })
+  assert.equal(me.claimNextJob()?.video_id, id)
+  const res = await route.DELETE(req(`/api/videos/${id}`, { method: 'DELETE' }), ctx(id))
+  assert.equal(res.status, 409)
+  assert.match(((await res.json()) as { error: string }).error, /espera|termine/i)
+  assert.ok(me.getVideo(id))
+  assert.ok(existsSync(path.join(me.VIDEOS_DIR, id, 'source.mp4')))
+  me.getDb().prepare("UPDATE jobs SET status = 'done' WHERE video_id = ?").run(id)
 })
 
-test('DELETE refuses a video that is part of a queued batch analysis led by another video', async () => {
+test('a video whose jobs are only waiting (the worker may be off) can be deleted; they go with it', async () => {
   const route = await import('../src/app/api/videos/[id]/route')
+  const id = storedVideo('queued')
+  const job = me.enqueueJob({ type: 'analyze', videoId: id })
+  const res = await route.DELETE(req(`/api/videos/${id}`, { method: 'DELETE' }), ctx(id))
+  assert.equal(res.status, 200)
+  assert.equal(me.getVideo(id), undefined)
+  assert.equal(me.getJob(job.id), undefined)
+
+  // In a waiting batch led by another video: the batch is called off, the other video stays.
   const first = storedVideo('queued')
   const second = storedVideo('queued')
-  const job = me.enqueueJob({ type: 'analyze', videoId: first, payload: { videoIds: [first, second] } })
-  const res = await route.DELETE(req(`/api/videos/${second}`, { method: 'DELETE' }), ctx(second))
-  assert.equal(res.status, 409)
-  assert.ok(me.getVideo(second))
-  me.completeJob(job.id)
+  const batch = me.enqueueJob({ type: 'analyze', videoId: first, payload: { videoIds: [first, second] } })
+  assert.equal((await route.DELETE(req(`/api/videos/${second}`, { method: 'DELETE' }), ctx(second))).status, 200)
+  assert.equal(me.getJob(batch.id)?.status, 'cancelled')
+  assert.ok(me.getVideo(first))
 })
 
 test('DELETE of a video that does not exist is 404', async () => {

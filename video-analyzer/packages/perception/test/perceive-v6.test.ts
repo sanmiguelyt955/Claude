@@ -17,6 +17,7 @@ import {
   renumberTexts,
   shotsFrom,
   v6Windows,
+  renumberEntities,
   withVoices,
   V6_PERCEPTION_PHASE1_SCHEMA,
   V6_PERCEPTION_WINDOW_SCHEMA,
@@ -629,4 +630,15 @@ test('a phone video stored on its side is measured as it is seen', { timeout: 60
   execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-display_rotation', '90', '-i', path.join(dir, 'plain.mp4'), '-c', 'copy', path.join(dir, 'rot.mp4')])
   assert.deepEqual(await probeVideo(path.join(dir, 'plain.mp4')), { width: 320, height: 180, fps: 10 })
   assert.deepEqual(await probeVideo(path.join(dir, 'rot.mp4')), { width: 180, height: 320, fps: 10 })
+})
+
+test('entities a window found get plain ids that continue the known ones, window by window', () => {
+  const rename = renumberEntities([{ id: 'P1' }, { id: 'O4' }], [
+    { entidades_nuevas: [{ id: 'O1-t1', primera_aparicion_segundo: 3, descripcion_fisica: 'taza', identificacion: 'NO DETERMINABLE' }] },
+    { entidades_nuevas: [] },
+    { entidades_nuevas: [{ id: 'O1-t3', primera_aparicion_segundo: 40, descripcion_fisica: 'portátil', identificacion: 'NO DETERMINABLE' }, { id: 'P1-t3', primera_aparicion_segundo: 41, descripcion_fisica: 'mano', identificacion: 'NO DETERMINABLE' }] },
+  ])
+  assert.equal(rename(0, 'P1 deja O1-t1 junto a O4'), 'P1 deja O5 junto a O4')
+  assert.equal(rename(2, 'P1-t3 abre O1-t3; TX1-t3 sigue'), 'P2 abre O6; TX1-t3 sigue')
+  assert.equal(rename(1, 'O1-t3'), 'O1-t3', 'another window\'s id is not this one\'s')
 })

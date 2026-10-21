@@ -711,8 +711,14 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   // Each window keeps its own label ("3", or "3a"/"3b" after a split) in 9.14, 9.3 and the voices.
   const labels = leaves.map((w) => w.label ?? String(w.index + 1))
 
-  // TX numbering across windows: by first appearance.
-  const tx = renumberTexts(outs, leaves.map((w) => w.end))
+  // TX numbering across windows: by first appearance. Entities a window
+  // found get the next free number of their letter (O5-t3 → O5).
+  const texts = renumberTexts(outs, leaves.map((w) => w.end))
+  const entityRename = renumberEntities(checkpoint.phase1.entidades ?? [], outs)
+  const tx = {
+    list: texts.list.map((t, k) => renameAll(t, (s) => entityRename(texts.windows[k]!, s))),
+    rename: (i: number, s: string) => entityRename(i, texts.rename(i, s)),
+  }
   // The checks on "no changes" entries and on a drifting timeline also apply
   // to windows saved before them: what they find is declared, not asked again.
   const checked = outs.map((o, i) => {
@@ -738,12 +744,12 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
       const cortes = measuredCuts(e.start_seconds, e.end_seconds)
       // A text that appears or goes, or a cut, is a change: never "no changes".
       const changes = cortes.length > 0 || /\b(aparece|desaparece)/i.test(txt) || /\b(aparece|desaparece)/i.test(cam)
-      return { ...e, sin_cambios: e.sin_cambios && !changes, vis: plain(tx.rename(i, e.vis)), aud: plain(e.aud), txt, cam, cortes }
+      return { ...e, sin_cambios: e.sin_cambios && !changes, vis: plain(tx.rename(i, e.vis)), aud: plain(tx.rename(i, e.aud)), txt, cam: tx.rename(i, cam), cortes }
     }),
   )
-  const cambios = outs.flatMap((o, i) => (o.cambios_estado ?? []).map((c) => ({ ...c, antes: tx.rename(i, c.antes), despues: tx.rename(i, c.despues) })))
+  const cambios = outs.flatMap((o, i) => (o.cambios_estado ?? []).map((c) => renameAll(c, (s) => tx.rename(i, s))))
   const windowLimits = outs.flatMap((o, i) => [...(o.limites ?? []), ...checked[i]!.limits].map((l) => `[tramo ${labels[i]}] ${tx.rename(i, l)}`))
-  const escenas = outs.flatMap((o) => o.escenas ?? [])
+  const escenas = outs.flatMap((o, i) => (o.escenas ?? []).map((e) => renameAll(e, (s) => tx.rename(i, s))))
   const windowShots = outs.flatMap((o, i) => (o.planos ?? []).map((p) => renameAll(p, (s) => tx.rename(i, s))))
   const p1 = fixPhase1({ ...checkpoint.phase1, planos: [...(checkpoint.phase1.planos ?? []), ...windowShots] as V6Phase1['planos'] }, shots, meta, frames, input.hasAudio)
   const describedShots = new Set([...(checkpoint.phase1.planos ?? []), ...windowShots].map((p) => shotId(p.id)))
@@ -1050,6 +1056,35 @@ export function fixPhase1(p1: V6Phase1, shots: Shot[], meta: VideoMeta, frames: 
   }
 }
 
+/**
+ * Entity ids a window made up (O5-t3: its suffix keeps two windows answered
+ * at once from both using O5) become plain ids: the next free number of the
+ * letter, after phase 1's entities, in window order. References follow,
+ * window by window.
+ */
+export function renumberEntities(
+  known: Array<{ id: string }>,
+  outs: Array<Pick<WindowOut, 'entidades_nuevas'>>,
+): (window: number, s: string) => string {
+  const top = new Map<string, number>()
+  const bump = (id: string) => {
+    const m = /^([A-Z])(\d+)$/.exec(id)
+    if (m) top.set(m[1]!, Math.max(top.get(m[1]!) ?? 0, Number(m[2])))
+  }
+  for (const e of known) bump(e.id)
+  const map = new Map<string, string>()
+  outs.forEach((o, i) => {
+    for (const e of o.entidades_nuevas ?? []) {
+      const m = /^([A-Z])\d+-t\d+[a-z]*$/.exec(e.id)
+      if (!m || map.has(`${i}:${e.id}`)) continue
+      const n = (top.get(m[1]!) ?? 0) + 1
+      top.set(m[1]!, n)
+      map.set(`${i}:${e.id}`, `${m[1]}${n}`)
+    }
+  })
+  return (window, s) => (s ? s.replace(/\b[A-Z]\d+-t\d+[a-z]*\b/g, (old) => map.get(`${window}:${old}`) ?? old) : s)
+}
+
 /** TX ids of each window (TX1-t3, or a bare TX1) become TX1, TX2... in order of appearance; references follow, window by window. */
 export function renumberTexts(
   outs: Array<Pick<WindowOut, 'textos_pantalla'>>,
@@ -1058,6 +1093,8 @@ export function renumberTexts(
 ): {
   list: V6Phase1['textos_pantalla']
   rename: (window: number, s: string) => string
+  /** The window each item of `list` came from (its first one). */
+  windows: number[]
 } {
   const all = outs.flatMap((o, i) => (o.textos_pantalla ?? []).map((t) => ({ ...t, window: i })))
   const seconds = (s: string) => {
@@ -1092,7 +1129,7 @@ export function renumberTexts(
   // One pass with a callback, so TX1 -> TX5 never chains into TX5 -> TX9.
   const rename = (window: number, s: string) =>
     s ? s.replace(/\bTX\d+(?:-t\d+[a-z]*)?\b/g, (old) => map.get(`${window}:${old}`) ?? old) : s
-  return { list: list.map(({ window: _w, ...t }) => t), rename }
+  return { list: list.map(({ window: _w, ...t }) => t), rename, windows: list.map((t) => t.window) }
 }
 
 export { PROTOCOL_VERSION }

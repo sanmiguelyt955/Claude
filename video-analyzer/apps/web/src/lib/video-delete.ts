@@ -5,23 +5,30 @@ import { DATA_DIR, VIDEOS_DIR, deleteVideo, getDb, type Db } from '@cva/memory-e
 /**
  * Deletes the video's row; the foreign keys cascade to its jobs, analysis,
  * chat and skill improvements, while a skill it produced stays (unlinked).
- * Refused while a job still needs the video, including a batch analysis led
- * by another video. IMMEDIATE, so the worker cannot claim a job between the
- * check and the delete.
+ * Refused while a job is working on the video, including a batch analysis
+ * led by another video; jobs still waiting go with it. IMMEDIATE, so the
+ * worker cannot claim a job between the check and the delete.
  */
 export function deleteVideoUnlessBusy(id: string, db: Db = getDb()): 'deleted' | 'busy' | 'missing' {
   return db
     .transaction(() => {
       if (!db.prepare('SELECT 1 FROM videos WHERE id = ?').get(id)) return 'missing' as const
+      // Only work in progress blocks it. A job still waiting (with the worker
+      // off it waits forever) is cancelled with the video; so is a batch it
+      // is in, which would otherwise read a deleted file.
       const busy = db
         .prepare(
           `SELECT 1 FROM jobs
-            WHERE status IN ('queued', 'running')
+            WHERE status = 'running'
               AND (video_id = ? OR EXISTS (SELECT 1 FROM json_each(jobs.payload_json, '$.videoIds') WHERE value = ?))
             LIMIT 1`,
         )
         .get(id, id)
       if (busy) return 'busy' as const
+      db.prepare(
+        `UPDATE jobs SET status = 'cancelled', finished_at = ?
+          WHERE status = 'queued' AND EXISTS (SELECT 1 FROM json_each(jobs.payload_json, '$.videoIds') WHERE value = ?)`,
+      ).run(new Date().toISOString(), id)
       deleteVideo(id, db)
       return 'deleted' as const
     })
