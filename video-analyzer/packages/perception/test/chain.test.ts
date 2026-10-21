@@ -341,3 +341,17 @@ test('each request is reported when it is sent and again when it is answered', a
   await describeWithFallback([slow], { frames: [], instruction: 'x' }, { onAttempt: (a) => events.push(a.sent ? 'sent' : a.ok ? 'answered' : 'failed') })
   assert.deepEqual(events, ['sent', 'answering', 'answered'])
 })
+
+test('with the good models out for the day, a model that answers garbage is not asked the same again every round', async () => {
+  const spent = fake(async () => { throw new ProviderOverloadedError('p', 429, '[GenerateRequestsPerDayPerProjectPerModel-FreeTier] quota', 10 * 3_600_000) })
+  let asked = 0
+  // Like Flash-Lite on 21 Oct 2026: 88 of its 124 answers were refused, most of them the same request again.
+  const lite: VisionProvider = { ...fake(async () => { asked++; return '{"timeline":"fuera de su tramo"}' }), fallbackOnly: true }
+  const waits: number[] = []
+  await assert.rejects(
+    describeWithFallback([spent, lite], req, { parse: () => { throw new Error('La línea de tiempo deja 15 s del tramo sin registrar.') }, sleep: async (ms) => { waits.push(ms) } }),
+    /respuesta no válida/,
+  )
+  assert.equal(asked, 1, 'the caller splits the window instead')
+  assert.deepEqual(waits, [])
+})

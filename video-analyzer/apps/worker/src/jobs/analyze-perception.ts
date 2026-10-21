@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import {
   getVideo,
   setVideoStatus,
@@ -118,6 +118,12 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     // Frames, the WAV and the window clips (about 88 MB per 15 min) are only
     // needed to resume a failed run; the page draws its stills and audio
     // straight from the video. They used to pile up forever.
+    // The replies the record refused stay, to see later what the models got wrong.
+    const refused = path.join(DATA_DIR, 'tmp', 'rechazadas', video.id)
+    await rm(refused, { recursive: true, force: true })
+      .then(() => mkdir(path.dirname(refused), { recursive: true }))
+      .then(() => rename(path.join(workDir, 'rechazadas'), refused))
+      .catch(() => {})
     await rm(workDir, { recursive: true, force: true }).catch((err) => console.warn(`[perception] ${video.id}: no se pudo borrar ${workDir}: ${(err as Error).message}`))
     // Same as the Gemini path: index the new analysis for library search.
     enqueueJob({ type: 'embed', videoId: video.id }, db)

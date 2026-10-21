@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdir, readdir, readFile, rm, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readdir, readFile, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const run = promisify(execFile)
@@ -163,6 +164,35 @@ export async function extractFramesAndCuts(
     frames = frames.filter((_, i) => keep.has(i))
   }
   return { frames, cuts }
+}
+
+/**
+ * extractFramesAndCuts, or the frames an earlier attempt took from the same
+ * file with the same options when they are all still in outDir. A deferred
+ * or retried analysis used to decode the whole video again first (a minute
+ * per retry for 51 min on 21 Oct 2026). The list sits beside outDir.
+ */
+export async function framesAndCutsOnce(
+  file: string,
+  outDir: string,
+  opts: FrameOptions = DEFAULT_FRAME_OPTIONS,
+): Promise<{ frames: Frame[]; cuts: Cut[]; reused: boolean }> {
+  const listPath = `${outDir}.json`
+  const { size, mtimeMs } = await stat(file)
+  const key = JSON.stringify({ file: path.resolve(file), size, mtimeMs, opts, cut: CUT_THRESHOLD })
+  try {
+    const saved = JSON.parse(await readFile(listPath, 'utf8')) as { key: string; frames: Frame[]; cuts: Cut[] }
+    if (saved.key === key && saved.frames.length && saved.frames.every((f) => existsSync(f.path))) {
+      return { frames: saved.frames, cuts: saved.cuts, reused: true }
+    }
+  } catch {
+    // No list yet, or an unreadable one: extract.
+  }
+  // Gone before the folder is emptied, so an extraction cut short is never taken for a finished one.
+  await rm(listPath, { force: true })
+  const out = await extractFramesAndCuts(file, outDir, opts)
+  await writeFile(listPath, JSON.stringify({ key, ...out }))
+  return { ...out, reused: false }
 }
 
 /**

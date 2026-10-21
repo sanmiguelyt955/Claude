@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync } from 'node:fs'
+import { mkdtempSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { DEFAULT_FRAME_OPTIONS, capFrames, dedupFrames, extractFrames } from '../src/frames.ts'
+import { DEFAULT_FRAME_OPTIONS, capFrames, dedupFrames, extractFrames, framesAndCutsOnce } from '../src/frames.ts'
 
 // 20 s: one red shot of 12 s, then 8 s of blue.
 function staticVideo(): string {
@@ -73,4 +73,26 @@ test('frames are never enlarged, and a vertical video is bounded by its long sid
   assert.equal(await first(wide, 768), '320,180', 'a 320 px source stays 320 px (it was enlarged to 768)')
   assert.equal(await first(wide, 128), '128,72')
   assert.equal(await first(tall, 128), '72,128', 'vertical: the height is the long side (it was 128x228)')
+})
+
+test('a retry takes the frames the first attempt left, unless the options changed or one is missing', { timeout: 120_000 }, async () => {
+  const video = staticVideo()
+  const out = path.join(mkdtempSync(path.join(tmpdir(), 'frames-once-')), 'frames')
+  const opts = { ...DEFAULT_FRAME_OPTIONS, fps: 10 }
+  const first = await framesAndCutsOnce(video, out, opts)
+  assert.equal(first.reused, false)
+  const written = statSync(first.frames[0]!.path).mtimeMs
+  const again = await framesAndCutsOnce(video, out, opts)
+  assert.equal(again.reused, true)
+  assert.deepEqual(again.frames, first.frames)
+  assert.deepEqual(again.cuts, first.cuts)
+  assert.equal(statSync(again.frames[0]!.path).mtimeMs, written, 'nothing decoded again')
+
+  assert.equal((await framesAndCutsOnce(video, out, { ...opts, maxGapSeconds: 5 })).reused, false, 'other options: extracted again')
+  const now = await framesAndCutsOnce(video, out, { ...opts, maxGapSeconds: 5 })
+  assert.equal(now.reused, true)
+  unlinkSync(now.frames[1]!.path)
+  const redone = await framesAndCutsOnce(video, out, { ...opts, maxGapSeconds: 5 })
+  assert.equal(redone.reused, false, 'a missing frame: extracted again')
+  assert.deepEqual(redone.frames, now.frames)
 })

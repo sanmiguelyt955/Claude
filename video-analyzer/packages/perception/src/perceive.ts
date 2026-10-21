@@ -2,7 +2,7 @@ import path from 'node:path'
 import { mkdir } from 'node:fs/promises'
 import type { AnalysisResult } from '@cva/ai-router'
 import { captionCoverage, MIN_CAPTION_COVERAGE } from './captions.js'
-import { extractAudio, extractFramesAndCuts, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
+import { extractAudio, framesAndCutsOnce, probeMedia, type Frame, type FrameOptions, DEFAULT_FRAME_OPTIONS } from './frames.js'
 import { buildV6Record, PROTOCOL_VERSION, type V6Checkpoint } from './v6/record.js'
 import { transcribe, type Transcript } from './transcribe.js'
 import { diarize } from './diarize.js'
@@ -280,7 +280,10 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   // run side by side: the frame pass no longer waits for Whisper or the other
   // way round. The audio extraction itself takes seconds.
   const audio = needsAudio ? extractAudio(file, wavPath) : Promise.resolve(null)
-  const framesJob = extractFramesAndCuts(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS)
+  const framesJob = framesAndCutsOnce(file, path.join(workDir, 'frames'), opts.frameOptions ?? DEFAULT_FRAME_OPTIONS).then((out) => {
+    if (out.reused) log('fotogramas retomados del intento anterior')
+    return out
+  })
   const speechJob = (async (): Promise<Transcript> => {
     await audio
     let speech: Transcript = { language: opts.language ?? 'es', segments: [] }

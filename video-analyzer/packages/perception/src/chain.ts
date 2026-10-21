@@ -60,6 +60,8 @@ export type FallbackOptions<T> = {
    * Quotas count requests, so the caller records each one under its model.
    */
   onAttempt?: (attempt: Attempt) => void
+  /** A reply `parse` refused, with why: kept by the caller to see what the models got wrong. */
+  onBadReply?: (provider: string, text: string, error: unknown) => void
   /**
    * Stops the retries: checked before every request and during every wait.
    * A request already sent is answered first. Aborting throws the signal's
@@ -184,8 +186,12 @@ export async function describeWithFallback<T = string>(
         const retryAt = Math.min(...usable.map((p) => dailyUntil.get(p.name)!))
         throw new DailyQuotaExhaustedError(`Ningún proveedor de visión pudo responder: ${failures.slice(-6).join(' | ')}`, retryAt)
       }
-      // Every provider answered with garbage: waiting will not fix that.
-      if (parseFailures === usable.length) break
+      // Every provider that can still answer today answered with garbage:
+      // waiting will not fix that, and asking the same again cost Flash-Lite
+      // three more refused answers per request once the good models were out
+      // for the day (21 Oct 2026). The caller splits the window instead.
+      const answering = usable.filter((p) => (dailyUntil.get(p.name) ?? 0) <= now())
+      if (parseFailures === usable.length || (answering.length && answering.every((p) => badReply.has(p.name)))) break
       if (round === maxRounds) {
         if (sawBadReply) break
         const retryAt = now() + Math.min(...usable.map(waitOf))
@@ -251,6 +257,7 @@ export async function describeWithFallback<T = string>(
       parseFailures++
       sawBadReply = true
       badReply.add(p.name)
+      opts.onBadReply?.(p.name, text, err)
       log(`${p.name} respondió algo no válido, probando el siguiente: ${String(err)}`)
       failures.push(`${p.name}: respuesta no válida (${String(err).slice(0, 120)})`)
     }

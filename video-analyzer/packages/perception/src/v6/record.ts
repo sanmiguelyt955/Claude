@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -524,8 +525,22 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
   // Aborted once a window fails for good: the other windows stop retrying
   // instead of spending requests on a job that will be retried anyway.
   const halt = new AbortController()
+  // Refused replies are kept next to the frames (at most 40 per video), so
+  // what a model got wrong can be read afterwards: the record keeps only why.
+  let refused = 0
+  const keepRefused = (provider: string, text: string, error: unknown) => {
+    if (refused >= 40) return
+    const name = `${String(++refused).padStart(2, '0')}-${provider.replace(/[^\w.-]+/g, '_')}.txt`
+    try {
+      // At once, so the file is there when the request's error is.
+      mkdirSync(path.join(input.workDir, 'rechazadas'), { recursive: true })
+      writeFileSync(path.join(input.workDir, 'rechazadas', name), `${String(error)}\n\n${text}`)
+    } catch {
+      // Only a diagnostic: the analysis goes on without it.
+    }
+  }
   const chain = <T>(req: Parameters<typeof describeWithFallback>[1], parse: (t: string) => T) =>
-    describeWithFallback(providers, req, { log, parse, onAttempt: input.onAttempt, signal: halt.signal })
+    describeWithFallback(providers, req, { log, parse, onAttempt: input.onAttempt, onBadReply: keepRefused, signal: halt.signal })
 
   // ── Phase 1 ─────────────────────────────────────────────────────────────
   progress({ label: 'Registro V6.5: entidades y planos...', current: 0, total: total + 2 })
@@ -650,6 +665,49 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
       return { value: out, stop: isDailyQuota(err) ? err : undefined }
     }
   }
+  /**
+   * A window no model answered validly and too short to split: one [ND]
+   * entry for its whole interval, with the speech Whisper heard and the cuts
+   * FFmpeg measured in it (both [META]), declared in 9.14.
+   */
+  const unrecordedWindow = (w: V6Window, reason: string): WindowOut => {
+    const heard = speech.segments
+      .map((s, i) => ({ s, n: i + 1 }))
+      .filter(({ s }) => s.end > w.start && s.start < w.end)
+      .map(({ s, n }) => `T${n} «${s.text.trim()}»`)
+    const cuts = input.cuts.filter((c) => c.time >= w.start && c.time < w.end).map((c) => mmss(c.time))
+    const why = reason.replace(/^Error: /, '').replace(/^Ningún proveedor de visión pudo responder: /, '').slice(0, 200)
+    return {
+      timeline: [
+        {
+          start_seconds: w.start,
+          end_seconds: w.end,
+          sin_cambios: false,
+          vis: `${ND_HOLE}: ningún modelo dio una línea de tiempo válida para este intervalo.`,
+          aud: heard.length ? `${heard.join(' ')} [META]` : '[ND]',
+          txt: '[ND]',
+          cam: '[ND]',
+          cortes: cuts,
+        },
+      ],
+      textos_pantalla: [],
+      cambios_estado: [],
+      escenas: [
+        {
+          start_seconds: w.start,
+          end_seconds: w.end,
+          title: 'Intervalo sin registro',
+          description: 'Ningún modelo dio una descripción válida de este intervalo [ND].',
+          audio_description: heard.length ? heard.join(' ') : '[ND]',
+        },
+      ],
+      elementos: [],
+      entidades_nuevas: [],
+      limites: [
+        `[${mmss(w.start)}–${mmss(w.end)}] ningún modelo dio una línea de tiempo válida para este tramo (${why}); queda como [ND] con la transcripción y los cortes medidos [BAJA].`,
+      ],
+    }
+  }
   // The windows actually answered: the planned ones, or the halves of one that failed.
   const leaves: V6Window[] = []
   const runWindow = async (w: V6Window): Promise<void> => {
@@ -670,10 +728,25 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
       // No model gave a valid answer for the whole window (most often:
       // seconds grouped in a long window). Two halves, in parallel, each
       // with half the timeline to write, instead of the same request again.
-      // A spent daily quota, models all busy, or a too-short window cannot
-      // be helped by this.
+      // A spent daily quota or models all busy cannot be helped by this.
       const msg = String(err)
-      if (notTheRequest(err) || !/Ningún proveedor/.test(msg) || /cuota del día/.test(msg) || w.end - w.start < MIN_SPLIT_SECONDS) throw err
+      if (notTheRequest(err) || !/Ningún proveedor/.test(msg) || /cuota del día/.test(msg)) throw err
+      if (w.end - w.start < MIN_SPLIT_SECONDS) {
+        // A video that is this one window has nothing else to keep: it fails
+        // and is retried.
+        if (windows.length === 1 && !w.label) throw err
+        // Too short to split again: the window goes to the record as [ND]
+        // with what was measured in it. One 15-s window Flash-Lite kept
+        // answering with its timeline elsewhere failed a 51-min analysis
+        // with 41 of 44 windows done (21 Oct 2026).
+        log(`tramo ${w.label ?? w.index + 1}: ningún modelo dio una línea de tiempo válida; queda como [ND] con la transcripción y los cortes medidos`)
+        checkpoint.windows[key] = unrecordedWindow(w, msg)
+        leaves.push(w)
+        input.save()
+        done++
+        report()
+        return
+      }
       log(`tramo ${w.label ?? w.index + 1}: ningún modelo lo resolvió entero; se parte en dos mitades en paralelo`)
       checkpoint.split = [...(checkpoint.split ?? []), key]
       total++

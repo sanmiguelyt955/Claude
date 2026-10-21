@@ -39,7 +39,7 @@ export function deleteVideoUnlessBusy(id: string, db: Db = getDb()): 'deleted' |
  * Everything kept on disk for one video: the file itself (and yt-dlp's
  * captions) from the upload or download, the perception engine's work
  * folder, the timeline's frames and audio clips, the library thumbnail and
- * the raw Gemini response.
+ * the raw Gemini response and the replies the record refused.
  */
 function videoDataPaths(id: string): string[] {
   return [
@@ -49,6 +49,7 @@ function videoDataPaths(id: string): string[] {
     path.join(DATA_DIR, 'clips', id),
     path.join(DATA_DIR, 'thumbnails', `${id}.jpg`),
     path.join(DATA_DIR, 'tmp', 'gemini-responses', `${id}.json`),
+    path.join(DATA_DIR, 'tmp', 'rechazadas', id),
   ]
 }
 

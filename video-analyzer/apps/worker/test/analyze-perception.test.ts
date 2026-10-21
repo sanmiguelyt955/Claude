@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 process.env.PERCEPTION_PROTOCOL = 'basico'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -117,9 +117,13 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   process.env.ANTHROPIC_API_KEY = 'test-key'
   process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   const { id, job } = queueVideo('con claude')
+  // A reply the record refused during the run, as record.ts leaves it.
+  mkdirSync(path.join(root, 'perception', id, 'rechazadas'), { recursive: true })
+  writeFileSync(path.join(root, 'perception', id, 'rechazadas', '01-gemini_gemini-3.5-flash-lite.txt'), 'Error: deja 15 s\n\n{}')
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
   assert.equal(existsSync(path.join(root, 'perception', id)), false, 'the work folder goes once the analysis is stored')
+  assert.equal(readFileSync(path.join(root, 'tmp', 'rechazadas', id, '01-gemini_gemini-3.5-flash-lite.txt'), 'utf8'), 'Error: deja 15 s\n\n{}', 'the refused replies stay')
   assert.ok(countRows('scenes', id) >= 2)
   assert.ok(countRows('transcript_chunks', id) >= 1)
   // The invented kind "logo" was mapped instead of breaking the CHECK constraint.

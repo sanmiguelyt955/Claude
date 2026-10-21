@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -641,4 +641,67 @@ test('entities a window found get plain ids that continue the known ones, window
   assert.equal(rename(0, 'P1 deja O1-t1 junto a O4'), 'P1 deja O5 junto a O4')
   assert.equal(rename(2, 'P1-t3 abre O1-t3; TX1-t3 sigue'), 'P2 abre O6; TX1-t3 sigue')
   assert.equal(rename(1, 'O1-t3'), 'O1-t3', 'another window\'s id is not this one\'s')
+})
+
+test('a half no model answers validly goes to the record as [ND] with what was measured; the run goes on', { timeout: 300_000 }, async () => {
+  const video = path.join(mkdtempSync(path.join(tmpdir(), 'v6-nd-')), 'long.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=30:r=10', '-f', 'lavfi', '-i', 'sine=f=440:d=30', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  // Like Flash-Lite on 21 Oct 2026: the whole window grouped, and half 1b
+  // answered with its seconds counted from 0 instead of from 15.
+  const lost: VisionProvider = {
+    name: 'lost',
+    available: () => true,
+    async describe(req) {
+      const out = JSON.parse(await good.describe(req))
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
+        const [a, b] = /del segundo ([\d.]+) .* al ([\d.]+)/.exec(req.instruction)!.slice(1).map(Number) as [number, number]
+        if (b - a > 20) out.timeline = [{ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'todo junto', aud: 'a', txt: 't', cam: 'c', cortes: [] }]
+        else if (a > 0) for (const e of out.timeline) Object.assign(e, { start_seconds: e.start_seconds - a, end_seconds: e.end_seconds - a })
+      }
+      return JSON.stringify(out)
+    },
+  }
+  const logs: string[] = []
+  let saved: { v6: { windows: Record<string, unknown> } } | undefined
+  const work = mkdtempSync(path.join(tmpdir(), 'v6-nd-w-'))
+  const result = await perceive(video, work, {
+    protocol: 'v6', providers: [lost], whisperModel: 'tiny', language: 'en', diarize: false, log: (m) => logs.push(m),
+    onCheckpoint: (c) => { saved = JSON.parse(JSON.stringify(c)) },
+  })
+  const md = result.protocolRecord!.markdown
+  assert.ok(logs.some((l) => /tramo 1b: ningún modelo dio una línea de tiempo válida; queda como \[ND\]/.test(l)), logs.join('\n'))
+  assert.match(md, /\[00:15–00:30\] ningún modelo dio una línea de tiempo válida para este tramo \(.*deja 15 s del tramo sin registrar.*\); queda como \[ND\]/)
+  assert.match(md, /\[00:15–00:30\]\nVIS: \[ND\] — registro no producido: ningún modelo dio una línea de tiempo válida/)
+  assert.match(md, /\[00:14–00:15/, 'half 1a is kept as answered')
+  // Half 1b is asked once: the [ND] is not asked again as a hole.
+  const halves = calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA && /ESTE TRAMO: 1b/.test(c.instruction))
+  assert.equal(halves.length, 1)
+  assert.equal(Object.keys(saved!.v6.windows).length, 2, 'both halves are checkpointed')
+  assert.ok(result.scenes.some((s) => s.start_seconds === 15 && s.end_seconds === 30), 'the library still covers 00:15–00:30')
+  // The refused replies are kept to be read: the grouped window and half 1b.
+  const refused = readdirSync(path.join(work, 'rechazadas')).sort()
+  assert.deepEqual(refused, ['01-lost.txt', '02-lost.txt'])
+  const second = readFileSync(path.join(work, 'rechazadas', '02-lost.txt'), 'utf8')
+  assert.match(second, /^Error: La línea de tiempo deja 15 s del tramo sin registrar\.\n\n\{"timeline":\[\{"start_seconds":0,/)
+})
+
+test('a video that is one short window answered badly still fails, to be retried', { timeout: 300_000 }, async () => {
+  const video = makeVideo()
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  const elsewhere: VisionProvider = {
+    name: 'elsewhere',
+    available: () => true,
+    async describe(req) {
+      const out = JSON.parse(await good.describe(req))
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) for (const e of out.timeline) Object.assign(e, { start_seconds: e.start_seconds + 100, end_seconds: e.end_seconds + 100 })
+      return JSON.stringify(out)
+    },
+  }
+  await assert.rejects(
+    perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-nd1-')), { protocol: 'v6', providers: [elsewhere], whisperModel: 'tiny', language: 'en', diarize: false }),
+    /Ningún proveedor de visión pudo responder/,
+  )
 })
