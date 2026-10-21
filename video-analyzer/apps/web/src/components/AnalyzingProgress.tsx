@@ -99,7 +99,15 @@ export function AnalyzingProgress({
 
   return (
     <div className="flex flex-col gap-2 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-4">
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--color-line)">
+      <div
+        role="progressbar"
+        aria-label="Progreso del análisis"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent ?? undefined}
+        aria-valuetext={label ?? 'Analizando…'}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-(--color-line)"
+      >
         {hasRealProgress ? (
           <div
             className="h-full rounded-full bg-(--color-accent) transition-[width] duration-500 ease-out"
@@ -110,7 +118,7 @@ export function AnalyzingProgress({
         )}
       </div>
       <div className="flex items-center justify-between text-xs text-(--color-ink-soft)">
-        <span>{label ?? 'Analizando...'}</span>
+        <span>{label ?? 'Analizando…'}</span>
         <span className="font-mono">
           {hasRealProgress ? (
             <>

@@ -7,6 +7,7 @@ import {
   setVideoStatus,
   setVideoTitle,
   updateJobProgress,
+  enqueueJobUnlessActive,
   resolveDataPath,
   toDataRelativePath,
   VIDEOS_DIR,
@@ -23,7 +24,8 @@ import {
   isSupportedExtension,
 } from '@cva/video-processor'
 
-type ProbeJobPayload = { videoId: string }
+/** analyze: the user pressed "Subir y analizar", so the analysis follows the probe. */
+type ProbeJobPayload = { videoId: string; analyze?: boolean }
 
 /**
  * Best-effort title lookup via YouTube's public oEmbed endpoint — no API key,
@@ -69,7 +71,7 @@ function guessExtensionFromUrl(url: string): string {
  * nicer title via oEmbed and leaves FFmpeg out of it entirely.
  */
 export async function runProbeJob(job: JobRow, db: Db): Promise<void> {
-  const { videoId } = JSON.parse(job.payload_json) as ProbeJobPayload
+  const { videoId, analyze } = JSON.parse(job.payload_json) as ProbeJobPayload
   const video = getVideo(videoId, db)
   if (!video) throw new Error(`El video ${videoId} ya no existe.`)
 
@@ -83,6 +85,7 @@ export async function runProbeJob(job: JobRow, db: Db): Promise<void> {
     const title = await fetchYoutubeTitle(video.source_url)
     if (title) setVideoTitle(video.id, title, db)
     setVideoStatus(video.id, 'queued', null, db)
+    if (analyze) queueAnalysis(video.id, db)
     return
   }
 
@@ -119,4 +122,11 @@ export async function runProbeJob(job: JobRow, db: Db): Promise<void> {
   const [metadata, contentHash] = await Promise.all([probe(absolutePath), hashFile(absolutePath)])
   applyVideoMetadata(video.id, metadata, contentHash, db)
   setVideoStatus(video.id, 'queued', null, db)
+  if (analyze) queueAnalysis(video.id, db)
+}
+
+/** Same as the [Analizar] button (POST /api/videos/[id]/analyze), right after the probe. */
+function queueAnalysis(videoId: string, db: Db): void {
+  const outcome = enqueueJobUnlessActive({ type: 'analyze', videoId }, ['analyze', 'detect_skills'], db)
+  if ('blocked' in outcome) console.log(`[probe] ${videoId}: ya tenía un análisis en curso`)
 }

@@ -40,7 +40,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     sourceUrl: url,
   })
 
-  const job = enqueueJob({ type: 'probe', videoId: video.id })
+  // analyze: "Agregar y analizar" — the worker queues the analysis once the download is done.
+  const job = enqueueJob({ type: 'probe', videoId: video.id, payload: body.analyze === true ? { analyze: true } : undefined })
 
   return NextResponse.json({ video, jobId: job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

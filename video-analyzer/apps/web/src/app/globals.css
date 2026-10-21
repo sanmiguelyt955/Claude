@@ -9,11 +9,18 @@
   --color-line: oklch(0.915 0.008 265);
   --color-ink: oklch(0.2 0.02 265);
   --color-ink-soft: oklch(0.52 0.02 265);
-  --color-accent: oklch(0.6 0.2 268);
-  --color-accent-2: oklch(0.62 0.22 300);
-  --color-ok: oklch(0.66 0.15 155);
-  --color-warn: oklch(0.74 0.16 70);
-  --color-danger: oklch(0.62 0.22 25);
+  /* Dark enough for 4.5:1 as text on white, on their own 14 % tint (the
+     status badges) and under white text (WCAG AA): the old ones gave 2.4:1
+     (warn), 2.9:1 (ok) and 4.1:1 (accent). */
+  --color-accent: oklch(0.5 0.2 268);
+  --color-accent-2: oklch(0.52 0.22 300);
+  --color-ok: oklch(0.48 0.12 155);
+  --color-warn: oklch(0.5 0.12 70);
+  --color-danger: oklch(0.52 0.2 25);
+  /* The primary button's gradient; dark mode lightens the accent for text,
+     which would leave white button text at 3:1. */
+  --color-btn-from: var(--color-accent);
+  --color-btn-to: var(--color-accent-2);
 
   --radius-card: 1.25rem;
   --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 8px 24px oklch(0.2 0.02 265 / 0.06);
@@ -36,6 +43,11 @@
     --color-ink-soft: oklch(0.7 0.018 265);
     --color-accent: oklch(0.68 0.18 268);
     --color-accent-2: oklch(0.7 0.2 300);
+    --color-ok: oklch(0.66 0.15 155);
+    --color-warn: oklch(0.74 0.16 70);
+    --color-danger: oklch(0.7 0.19 25);
+    --color-btn-from: oklch(0.55 0.19 268);
+    --color-btn-to: oklch(0.57 0.2 300);
     --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.25);
     --shadow-lift: 0 2px 6px oklch(0 0 0 / 0.35), 0 18px 44px oklch(0 0 0 / 0.4);
   }
@@ -73,7 +85,7 @@ body {
     font-size: 0.875rem;
     font-weight: 600;
     color: white;
-    background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+    background: linear-gradient(135deg, var(--color-btn-from), var(--color-btn-to));
     box-shadow: 0 6px 18px color-mix(in oklch, var(--color-accent) 35%, transparent);
     transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
   }
@@ -101,6 +113,26 @@ body {
     border-color: var(--color-accent);
   }
   .btn-ghost:disabled {
+    opacity: 0.5;
+  }
+  .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in oklch, var(--color-danger) 45%, var(--color-line));
+    background: var(--color-surface);
+    color: var(--color-danger);
+    padding: 0.55rem 1.05rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .btn-danger:hover {
+    border-color: var(--color-danger);
+    background: color-mix(in oklch, var(--color-danger) 8%, var(--color-surface));
+  }
+  .btn-danger:disabled {
     opacity: 0.5;
   }
   .chip {
@@ -137,6 +169,23 @@ button:not(:disabled),
 [role='button'],
 summary {
   cursor: pointer;
+}
+/* Fingers need bigger targets than a mouse (44 px, Apple's and WCAG 2.5.5's
+   size): on phones most controls were 30-36 px tall. */
+@media (pointer: coarse), (max-width: 640px) {
+  .btn-primary,
+  .btn-ghost,
+  .btn-danger,
+  main button:not(.timestamp),
+  main select,
+  main input:not([type='checkbox'], [type='radio']),
+  header a {
+    min-height: 44px;
+  }
+  button.timestamp {
+    min-height: 32px;
+    padding-inline: 0.55rem;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *,

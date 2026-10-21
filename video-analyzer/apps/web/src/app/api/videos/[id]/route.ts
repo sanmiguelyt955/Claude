@@ -11,6 +11,7 @@ import {
   getActiveJobForVideo,
   setVideoFolder,
   isAnotherWorkerAlive,
+  getDb,
 } from '@cva/memory-engine'
 import { readJsonObject } from '../../../../lib/json-body'
 import { deleteVideoUnlessBusy, removeVideoFiles } from '../../../../lib/video-delete'
@@ -53,6 +54,8 @@ export async function GET(
     analysisRuns: listAnalysisRunsForVideo(id),
     skills: listSkillsForVideo(id),
     skillImprovements: listSkillImprovementsForVideo(id),
+    // The latest skill job, so a failed "Detectar skills" is shown, not silent.
+    skillJob: latestSkillJob(id),
     // The worker is its own process; without it every job stays queued
     // forever, so the page needs to know to say so. ("Another" worker is
     // any worker here: this server never runs one.)
@@ -101,4 +104,15 @@ export async function DELETE(
     })
   }
   return NextResponse.json({ ok: true })
+}
+
+function latestSkillJob(videoId: string): { type: string; status: string; error: string | null } | null {
+  const row = getDb()
+    .prepare(
+      `SELECT type, status, last_error FROM jobs
+        WHERE video_id = ? AND type IN ('detect_skills', 'generate_skill', 'improve_skill')
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(videoId) as { type: string; status: string; last_error: string | null } | undefined
+  return row ? { type: row.type, status: row.status, error: row.last_error } : null
 }

@@ -9,7 +9,7 @@ import type { LibrarySearchResult } from '@/lib/types'
 const SOURCE_LABEL: Record<LibrarySearchResult['source'], string> = {
   summary: 'Resumen',
   scene: 'Escena',
-  transcript: 'Transcripcion',
+  transcript: 'Transcripción',
   element: 'Objeto/texto',
   skill: 'Skill',
 }

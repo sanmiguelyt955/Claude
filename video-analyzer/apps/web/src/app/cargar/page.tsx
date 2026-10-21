@@ -26,6 +26,7 @@ export default function CargarPage() {
     setErrorMessage(null)
     try {
       const formData = new FormData()
+      formData.append('analyze', '1')
       formData.append('file', file)
       const res = await fetch('/api/videos/upload', { method: 'POST', body: formData })
       const data = (await res.json()) as { video?: { id: string }; error?: string }
@@ -47,7 +48,7 @@ export default function CargarPage() {
       const res = await fetch('/api/videos/from-url', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: urlValue.trim() }),
+        body: JSON.stringify({ url: urlValue.trim(), analyze: true }),
       })
       const data = (await res.json()) as { video?: { id: string }; error?: string }
       if (!res.ok || !data.video) throw new Error(data.error ?? 'Error al aceptar la URL.')
@@ -82,21 +83,23 @@ export default function CargarPage() {
       <section className="card flex flex-col gap-4 p-5">
         <h2 className="font-semibold">Subir archivo</h2>
         <form onSubmit={handleFileSubmit} className="flex flex-col gap-3">
-          <label className="flex cursor-pointer flex-col items-center gap-3 rounded-(--radius-card) border-2 border-dashed border-(--color-line) bg-(--color-surface-2) px-4 py-10 text-center transition-colors hover:border-(--color-accent)">
+          <label className="flex cursor-pointer flex-col items-center gap-3 rounded-(--radius-card) border-2 border-dashed border-(--color-line) bg-(--color-surface-2) px-4 py-10 text-center transition-colors hover:border-(--color-accent) has-[:focus-visible]:border-(--color-accent) has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-(--color-accent)">
             <span
               aria-hidden
               className="grid size-12 place-items-center rounded-2xl text-white"
-              style={{ background: 'linear-gradient(135deg, var(--color-accent), var(--color-accent-2))' }}
+              style={{ background: 'linear-gradient(135deg, var(--color-btn-from), var(--color-btn-to))' }}
             >
               <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d="M12 16V4m0 0-4.5 4.5M12 4l4.5 4.5M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
               </svg>
             </span>
+            {/* sr-only, not hidden: a hidden input cannot get keyboard focus, so
+                the picker was out of reach without a mouse. */}
             <input
               ref={fileInputRef}
               type="file"
               accept="video/*,audio/*"
-              className="hidden"
+              className="peer sr-only"
               disabled={busy}
               onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
             />
@@ -126,7 +129,8 @@ export default function CargarPage() {
             type="url"
             value={urlValue}
             onChange={(e) => setUrlValue(e.target.value)}
-            placeholder="https://www.tiktok.com/@usuario/video/..."
+            placeholder="https://www.tiktok.com/@usuario/video/…"
+            aria-label="Enlace del video"
             className="rounded-full border border-(--color-line) bg-(--color-surface-2) px-4 py-2.5 text-sm outline-none focus:border-(--color-accent)"
             disabled={busy}
           />

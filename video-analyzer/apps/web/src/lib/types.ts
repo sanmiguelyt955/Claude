@@ -140,6 +140,10 @@ export type VideoDetailResponse = {
   analysisRuns: AnalysisRunSummary[]
   skills: SkillDetail[]
   skillImprovements: SkillImprovementDetail[]
+  /** The latest skill job, so a failed "Detectar skills" is not silent. */
+  skillJob: { type: string; status: string; error: string | null } | null
+  /** False when no worker process is running: queued jobs will not move. */
+  workerAlive: boolean
 }
 
 export type SemanticSearchResult = {

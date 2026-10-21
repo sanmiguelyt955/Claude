@@ -90,9 +90,10 @@ export default function HomePage() {
         <dl className="divide-y divide-(--color-line) border-t border-(--color-line)">
           {checks.map((check) => (
             <div key={check.label} className="flex items-center justify-between gap-4 px-5 py-2.5">
-              <dt className="text-(--color-ink-soft)">{check.label}</dt>
-              <dd className="flex items-center gap-2 text-right font-mono text-xs">
-                <span className="truncate">{check.value}</span>
+              <dt className="shrink-0 text-(--color-ink-soft)">{check.label}</dt>
+              <dd className="flex min-w-0 items-center gap-2 text-right font-mono text-xs">
+                {/* Long paths wrap instead of pushing the page sideways on a phone. */}
+                <span className="min-w-0 [overflow-wrap:anywhere]">{check.value}</span>
                 <span
                   aria-hidden
                   className="size-2 shrink-0 rounded-full"

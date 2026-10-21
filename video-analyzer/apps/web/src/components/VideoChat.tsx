@@ -169,7 +169,7 @@ export function VideoChat({ videoId, ready, onSeek }: { videoId: string; ready: 
             key={m.id}
             className={
               m.role === 'user'
-                ? 'max-w-[85%] self-end rounded-2xl rounded-br-md px-4 py-2.5 text-sm text-white shadow-md [background:linear-gradient(135deg,var(--color-accent),var(--color-accent-2))]'
+                ? 'max-w-[85%] self-end rounded-2xl rounded-br-md px-4 py-2.5 text-sm text-white shadow-md [background:linear-gradient(135deg,var(--color-btn-from),var(--color-btn-to))]'
                 : 'card max-w-[85%] self-start whitespace-pre-wrap !rounded-2xl !rounded-bl-md px-4 py-2.5 text-sm leading-relaxed'
             }
           >

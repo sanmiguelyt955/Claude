@@ -92,7 +92,7 @@ export function BibliotecaGrid() {
   }, [])
 
   if (videos === null) {
-    return <p className="text-sm text-(--color-ink-soft)">Cargando biblioteca...</p>
+    return <p className="text-sm text-(--color-ink-soft)">Cargando biblioteca…</p>
   }
 
   if (videos.length === 0) {

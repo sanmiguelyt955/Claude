@@ -12,7 +12,7 @@ import { isSupportedExtension, SUPPORTED_EXTENSIONS } from '@cva/video-processor
 // Busboy needs Node's fs/stream APIs — the Edge runtime does not have them.
 export const runtime = 'nodejs'
 
-type ParsedUpload = { fieldTitle?: string; savedPath: string; originalFilename: string }
+type ParsedUpload = { fieldTitle?: string; analyze?: boolean; savedPath: string; originalFilename: string }
 
 /**
  * Parses the multipart body with busboy instead of `request.formData()`.
@@ -35,6 +35,7 @@ async function parseMultipart(request: Request, videoId: string): Promise<Parsed
     const busboy = Busboy({ headers: { 'content-type': contentType }, limits: { files: 1 }, defParamCharset: 'utf8' })
 
     let fieldTitle: string | undefined
+    let analyze = false
     let savedPath: string | undefined
     let originalFilename: string | undefined
     let fileWritePromise: Promise<void> | undefined
@@ -70,6 +71,7 @@ async function parseMultipart(request: Request, videoId: string): Promise<Parsed
 
     busboy.on('field', (name, value) => {
       if (name === 'title') fieldTitle = value
+      if (name === 'analyze') analyze = value === '1'
     })
 
     busboy.on('file', (_name, fileStream, info) => {
@@ -102,7 +104,7 @@ async function parseMultipart(request: Request, videoId: string): Promise<Parsed
             fail(new Error('No se recibió ningún archivo.'))
             return
           }
-          resolve({ fieldTitle, savedPath, originalFilename })
+          resolve({ fieldTitle, analyze, savedPath, originalFilename })
         } catch (error) {
           fail(error as Error)
         }
@@ -133,7 +135,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     storedPath: toDataRelativePath(parsed.savedPath),
   })
 
-  const job = enqueueJob({ type: 'probe', videoId: video.id })
+  // analyze: "Subir y analizar" — the worker queues the analysis once the probe is done.
+  const job = enqueueJob({ type: 'probe', videoId: video.id, payload: parsed.analyze ? { analyze: true } : undefined })
 
   return NextResponse.json({ video, jobId: job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

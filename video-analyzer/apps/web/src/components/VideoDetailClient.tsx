@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { SegmentedControl } from './SegmentedControl'
@@ -8,7 +9,7 @@ import { AnalyzingProgress } from './AnalyzingProgress'
 import { FolderField } from './FolderField'
 import { VideoChat } from './VideoChat'
 import { formatDuration, formatSize } from '@/lib/format'
-import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL } from '@/lib/status'
+import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL, friendlyError } from '@/lib/status'
 import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
 type Tab = 'resumen' | 'registro' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
@@ -37,7 +38,10 @@ function speakerColor(speaker: string): string {
 export function VideoDetailClient({ id }: { id: string }) {
   const [data, setData] = useState<VideoDetailResponse | null>(null)
   const [tab, setTab] = useState<Tab>('resumen')
-  const [actionBusy, setActionBusy] = useState(false)
+  // Which action is in flight: one shared flag relabelled every button
+  // ("Exportando…" while detecting skills).
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const actionBusy = pendingAction !== null
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [searchValue, setSearchValue] = useState('')
   const [searchResults, setSearchResults] = useState<SemanticSearchResult[] | null>(null)
@@ -48,6 +52,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [improveSkillId, setImproveSkillId] = useState('')
   const [improveExternalPath, setImproveExternalPath] = useState('')
   const playerRef = useRef<HTMLVideoElement>(null)
+  const router = useRouter()
   // ?t=SECONDS (from a library search hit) opens the video at that moment.
   const startAt = useRef<number | null>(null)
   useEffect(() => {
@@ -109,17 +114,17 @@ export function VideoDetailClient({ id }: { id: string }) {
 
   async function handleAnalyze() {
     if (data?.video.status === 'ready' && !window.confirm('Se hará un análisis nuevo de este video: usa cuota de Gemini y reemplaza el análisis actual cuando termine. ¿Seguir?')) return
-    setActionBusy(true)
+    setPendingAction('analyze')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/videos/${id}/analyze`, { method: 'POST' })
       const body = (await res.json()) as { error?: string }
-      if (!res.ok) throw new Error(body.error ?? 'No se pudo iniciar el analisis.')
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo iniciar el análisis.')
       await refresh()
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
@@ -129,7 +134,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const reanalyze = useCallback(() => void analyzeRef.current(), [])
 
   async function handleExportVault() {
-    setActionBusy(true)
+    setPendingAction('export')
     setErrorMessage(null)
     setExportedNote(null)
     try {
@@ -140,27 +145,27 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleDetectSkills() {
-    setActionBusy(true)
+    setPendingAction('detect')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/videos/${id}/detect-skills`, { method: 'POST' })
       const body = (await res.json()) as { error?: string }
-      if (!res.ok) throw new Error(body.error ?? 'No se pudo iniciar la deteccion de skills.')
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo iniciar la detección de skills.')
       await refresh()
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleGenerateSkill(skillId: string) {
-    setActionBusy(true)
+    setPendingAction('generate')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/skills/${skillId}/generate`, { method: 'POST' })
@@ -170,12 +175,12 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleDiscardSkill(skillId: string) {
-    setActionBusy(true)
+    setPendingAction('discard')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/skills/${skillId}/discard`, { method: 'POST' })
@@ -185,12 +190,12 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleImproveSkill() {
-    setActionBusy(true)
+    setPendingAction('improve')
     setErrorMessage(null)
     try {
       const body = improveSkillId ? { skillId: improveSkillId } : { sourceSkillPath: improveExternalPath.trim() }
@@ -200,17 +205,17 @@ export function VideoDetailClient({ id }: { id: string }) {
         body: JSON.stringify(body),
       })
       const resBody = (await res.json()) as { error?: string }
-      if (!res.ok) throw new Error(resBody.error ?? 'No se pudo iniciar la comparacion.')
+      if (!res.ok) throw new Error(resBody.error ?? 'No se pudo iniciar la comparación.')
       await refresh()
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleApplyImprovement(improvementId: string) {
-    setActionBusy(true)
+    setPendingAction('apply')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/skill-improvements/${improvementId}/apply`, { method: 'POST' })
@@ -220,12 +225,12 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleIgnoreImprovement(improvementId: string) {
-    setActionBusy(true)
+    setPendingAction('ignore')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/skill-improvements/${improvementId}/ignore`, { method: 'POST' })
@@ -235,12 +240,12 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
     }
   }
 
   async function handleRetry() {
-    setActionBusy(true)
+    setPendingAction('retry')
     setErrorMessage(null)
     try {
       const res = await fetch(`/api/videos/${id}/retry`, { method: 'POST' })
@@ -250,7 +255,22 @@ export function VideoDetailClient({ id }: { id: string }) {
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
-      setActionBusy(false)
+      setPendingAction(null)
+    }
+  }
+
+  async function handleDelete() {
+    if (!window.confirm('Se borrará este video de la biblioteca para siempre: el archivo, su análisis, el chat y las imágenes que se sacaron de él. Las skills que ya creaste se conservan. ¿Borrarlo?')) return
+    setPendingAction('delete')
+    setErrorMessage(null)
+    try {
+      const res = await fetch(`/api/videos/${id}`, { method: 'DELETE' })
+      const body = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? 'No se pudo borrar el video.')
+      router.push('/')
+    } catch (error) {
+      setErrorMessage((error as Error).message)
+      setPendingAction(null)
     }
   }
 
@@ -288,10 +308,15 @@ export function VideoDetailClient({ id }: { id: string }) {
   const objectElements = elements.filter((e) => OBJECT_KINDS.has(e.kind))
   const textElements = elements.filter((e) => e.kind === 'on_screen_text')
   const topics = summary ? (JSON.parse(summary.topics_json) as string[]) : []
+  const skillJobActive = video.activeJob?.type === 'detect_skills'
+  const skillJobFailed = !skillJobActive && data.skillJob?.type === 'detect_skills' && data.skillJob.status === 'failed'
+  // A queued job only moves while the worker runs; without it the page used to wait forever.
+  const waitingForWorker = data.workerAlive === false && video.activeJob?.status === 'queued'
+  const downloading = video.source_kind === 'url' && !video.stored_path && (video.status === 'pending' || video.status === 'probing')
 
   return (
     <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6">
-      <Link href="/" className="w-fit text-sm text-(--color-ink-soft) hover:text-(--color-ink)">
+      <Link href="/" className="inline-flex min-h-11 w-fit items-center text-sm text-(--color-ink-soft) hover:text-(--color-ink) sm:min-h-0">
         ← Biblioteca
       </Link>
 
@@ -314,7 +339,7 @@ export function VideoDetailClient({ id }: { id: string }) {
             />
           ) : (
             <div className="grid aspect-video place-items-center text-sm text-white/60">
-              {video.source_kind === 'url' ? 'El video se ve desde su enlace original.' : 'Preparando el video…'}
+              {downloading ? 'Descargando el video desde su enlace…' : video.source_kind === 'url' ? 'El video se ve desde su enlace original.' : 'Preparando el video…'}
             </div>
           )}
         </div>
@@ -359,8 +384,20 @@ export function VideoDetailClient({ id }: { id: string }) {
         </div>
       )}
 
+      {waitingForWorker && (
+        <div role="status" className="card flex flex-col gap-1 p-4 text-sm" style={{ borderColor: 'color-mix(in oklch, var(--color-warn) 55%, var(--color-line))' }}>
+          <p className="font-semibold">El analizador no está encendido</p>
+          <p className="text-(--color-ink-soft)">
+            Hay un trabajo en la cola para este video, pero nada lo va a procesar hasta que el analizador corra. Vuelve a abrir
+            «Iniciar Video Analyzer.bat» (o la app de escritorio) y seguirá solo.
+          </p>
+        </div>
+      )}
+
       {(video.status === 'pending' || video.status === 'probing') && (
-        <p className="text-sm text-(--color-ink-soft)">FFmpeg esta leyendo la metadata del video...</p>
+        <p className="text-sm text-(--color-ink-soft)">
+          {downloading ? 'Descargando el video desde su enlace…' : 'Leyendo la duración y el formato del video…'}
+        </p>
       )}
 
       {video.status === 'queued' && (
@@ -370,7 +407,7 @@ export function VideoDetailClient({ id }: { id: string }) {
           disabled={actionBusy}
           className="btn-primary w-fit"
         >
-          {actionBusy ? 'Iniciando…' : '✨ Analizar el video'}
+          {pendingAction === 'analyze' ? 'Iniciando…' : '✨ Analizar el video'}
         </button>
       )}
 
@@ -388,9 +425,15 @@ export function VideoDetailClient({ id }: { id: string }) {
           <p className="font-semibold" style={{ color: 'var(--color-danger)' }}>
             El análisis no se pudo completar
           </p>
-          <p className="break-words font-mono text-xs leading-relaxed text-(--color-ink-soft)">{video.error_message}</p>
+          <p className="text-sm leading-relaxed">{friendlyError(video.error_message)}</p>
+          {video.error_message && (
+            <details className="text-xs text-(--color-ink-soft)">
+              <summary className="cursor-pointer">Ver el detalle técnico</summary>
+              <p className="mt-2 break-words font-mono leading-relaxed">{video.error_message}</p>
+            </details>
+          )}
           <button type="button" onClick={handleRetry} disabled={actionBusy} className="btn-primary w-fit">
-            {actionBusy ? 'Reintentando...' : 'Reintentar'}
+            {pendingAction === 'retry' ? 'Reintentando…' : 'Reintentar'}
           </button>
         </div>
       )}
@@ -404,7 +447,7 @@ export function VideoDetailClient({ id }: { id: string }) {
               disabled={actionBusy}
               className="btn-ghost w-fit"
             >
-              {actionBusy ? 'Exportando…' : 'Exportar todo a Obsidian'}
+              {pendingAction === 'export' ? 'Exportando…' : 'Exportar todo a Obsidian'}
             </button>
             {exportedNote && (
               <span className="text-sm" style={{ color: 'var(--color-ok)' }}>
@@ -560,7 +603,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                 </div>
               ))}
               {transcript.length === 0 && (
-                <p className="text-sm text-(--color-ink-soft)">Este video no tiene dialogo detectado.</p>
+                <p className="text-sm text-(--color-ink-soft)">Este video no tiene diálogo detectado.</p>
               )}
             </div>
           )}
@@ -591,7 +634,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                 </li>
               ))}
               {textElements.length === 0 && (
-                <p className="text-sm text-(--color-ink-soft)">No se detecto texto en pantalla.</p>
+                <p className="text-sm text-(--color-ink-soft)">No se detectó texto en pantalla.</p>
               )}
             </ul>
           )}
@@ -600,21 +643,33 @@ export function VideoDetailClient({ id }: { id: string }) {
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-(--color-ink-soft)">
-                  Procesos o metodos reutilizables detectados en este video (PROJECT.md §12).
+                  Procesos o métodos reutilizables detectados en este video (PROJECT.md §12).
                 </p>
                 <button
                   type="button"
                   onClick={handleDetectSkills}
-                  disabled={actionBusy}
+                  disabled={actionBusy || skillJobActive}
                   className="w-fit shrink-0 rounded-full border border-(--color-line) px-4 py-2 text-sm font-medium disabled:opacity-50"
                 >
-                  {actionBusy ? 'Procesando...' : 'Detectar skills'}
+                  {pendingAction === 'detect' ? 'Iniciando…' : skillJobActive ? 'Detectando…' : 'Detectar skills'}
                 </button>
               </div>
 
-              {skills.length === 0 && (
+              {skillJobActive && (
+                <p role="status" className="text-sm text-(--color-ink-soft)">
+                  {video.activeJob?.status === 'queued'
+                    ? video.activeJob.progressLabel || 'En la cola: empieza en cuanto el analizador esté libre.'
+                    : 'Buscando procesos reutilizables en el video…'}
+                </p>
+              )}
+              {skillJobFailed && (
+                <p role="alert" className="text-sm" style={{ color: 'var(--color-danger)' }}>
+                  La última búsqueda de skills falló: {friendlyError(data.skillJob?.error ?? null)} Puedes volver a intentarlo.
+                </p>
+              )}
+              {skills.length === 0 && !skillJobActive && (
                 <p className="text-sm text-(--color-ink-soft)">
-                  Todavia no se ha buscado. Cada busqueda gasta una peticion del cupo diario de Gemini.
+                  Todavía no se ha buscado. Cada búsqueda gasta una petición del cupo diario de Gemini.
                 </p>
               )}
 
@@ -645,7 +700,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                             type="button"
                             onClick={() => handleGenerateSkill(skill.id)}
                             disabled={actionBusy}
-                            className="rounded-full bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                            className="rounded-full bg-(--color-btn-from) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                           >
                             Crear Skill
                           </button>
@@ -661,7 +716,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                       )}
 
                       {skill.status === 'generating' && (
-                        <p className="text-sm text-(--color-ink-soft)">Generando SKILL.md...</p>
+                        <p className="text-sm text-(--color-ink-soft)">Generando SKILL.md…</p>
                       )}
 
                       {skill.status === 'generated' && (
@@ -676,11 +731,12 @@ export function VideoDetailClient({ id }: { id: string }) {
               <div className="mt-2 flex flex-col gap-3 border-t border-(--color-line) pt-4">
                 <h2 className="text-sm font-semibold">Mejorar una skill existente con este video</h2>
                 <p className="text-sm text-(--color-ink-soft)">
-                  Compara una Skill ya generada (de este video o de otro) contra lo que este video ensena, y
+                  Compara una Skill ya generada (de este video o de otro) contra lo que este video enseña, y
                   propone mejoras concretas (PROJECT.md §13).
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <select
+                    aria-label="Skill generada para mejorar"
                     value={improveSkillId}
                     onChange={(e) => {
                       setImproveSkillId(e.target.value)
@@ -703,7 +759,8 @@ export function VideoDetailClient({ id }: { id: string }) {
                       setImproveExternalPath(e.target.value)
                       if (e.target.value) setImproveSkillId('')
                     }}
-                    placeholder="Ruta a un SKILL.md en el disco..."
+                    placeholder="Ruta a un SKILL.md en el disco…"
+                    aria-label="Ruta a un SKILL.md en el disco"
                     className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
                   />
                 </div>
@@ -711,9 +768,9 @@ export function VideoDetailClient({ id }: { id: string }) {
                   type="button"
                   onClick={handleImproveSkill}
                   disabled={actionBusy || (!improveSkillId && !improveExternalPath.trim())}
-                  className="w-fit rounded-full bg-(--color-accent) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  className="w-fit rounded-full bg-(--color-btn-from) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {actionBusy ? 'Comparando...' : 'Comparar'}
+                  {pendingAction === 'improve' ? 'Iniciando…' : 'Comparar'}
                 </button>
 
                 <ul className="flex flex-col gap-3">
@@ -742,7 +799,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                               type="button"
                               onClick={() => handleApplyImprovement(imp.id)}
                               disabled={actionBusy}
-                              className="rounded-full bg-(--color-accent) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                              className="rounded-full bg-(--color-btn-from) px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                             >
                               Aplicar
                             </button>
@@ -758,7 +815,7 @@ export function VideoDetailClient({ id }: { id: string }) {
                         )}
                         {imp.status === 'applied' && (
                           <p className="text-sm" style={{ color: 'var(--color-ok)' }}>
-                            Aplicada — el SKILL.md ya se actualizo.
+                            Aplicada — el SKILL.md ya se actualizó.
                           </p>
                         )}
                       </li>
@@ -778,8 +835,8 @@ export function VideoDetailClient({ id }: { id: string }) {
                 ['Contenedor', video.container ?? '—'],
                 ['Codec de video', video.video_codec ?? '—'],
                 ['Codec de audio', video.audio_codec ?? '—'],
-                ['Tiene audio', video.has_audio ? 'Si' : 'No'],
-                ['Tamano', formatSize(video.size_bytes)],
+                ['Tiene audio', video.has_audio ? 'Sí' : 'No'],
+                ['Tamaño', formatSize(video.size_bytes)],
                 ['Hash (SHA-256)', video.content_hash ?? '—'],
                 ['Creado', new Date(video.created_at).toLocaleString('es')],
               ].map(([label, value]) => (
@@ -798,15 +855,15 @@ export function VideoDetailClient({ id }: { id: string }) {
                 type="text"
                 value={searchValue}
                 onChange={(e) => setSearchValue(e.target.value)}
-                placeholder="Ej: donde habla del precio..."
+                placeholder="Ej.: dónde habla del precio…"
                 className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
               />
               <button
                 type="submit"
                 disabled={searching || !searchValue.trim()}
-                className="rounded-md bg-(--color-accent) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="rounded-md bg-(--color-btn-from) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {searching ? 'Buscando...' : 'Buscar'}
+                {searching ? 'Buscando…' : 'Buscar'}
               </button>
             </form>
             {searchNotice && <p className="text-sm text-(--color-ink-soft)">{searchNotice}</p>}
@@ -829,6 +886,11 @@ export function VideoDetailClient({ id }: { id: string }) {
           </div>
         </div>
       )}
+      <div className="mt-2 border-t border-(--color-line) pt-4">
+        <button type="button" onClick={handleDelete} disabled={actionBusy} className="btn-danger w-fit">
+          {pendingAction === 'delete' ? 'Borrando…' : 'Eliminar video'}
+        </button>
+      </div>
     </main>
   )
 }
@@ -838,9 +900,11 @@ export function VideoDetailClient({ id }: { id: string }) {
  * bullets from its Markdown, the rest as it is (the record is mostly labelled
  * lines). Downloadable as the .md that goes to Obsidian.
  */
-// Memoized: a 400 KB record is about 11,000 elements, rebuilt on every poll
+// Memoized: a 400 KB record is thousands of elements, rebuilt on every poll
 // and every keystroke on the page before.
 const ProtocolRecord = memo(function ProtocolRecord({ markdown, title, onReanalyze }: { markdown: string | null; title: string; onReanalyze: () => void }) {
+  // The first sections (identification, triage, entities) open; the long per-second ones on demand.
+  const [open, setOpen] = useState<Set<number>>(() => new Set([0, 1, 2]))
   if (!markdown) {
     return (
       <div className="space-y-3 text-sm text-(--color-ink-soft)">
@@ -863,11 +927,25 @@ const ProtocolRecord = memo(function ProtocolRecord({ markdown, title, onReanaly
     line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
       part.startsWith('**') && part.endsWith('**') ? <strong key={i}>{part.slice(2, -2)}</strong> : part,
     )
+  const lines = (text: string) =>
+    text.split('\n').map((line, i) => {
+      if (line.startsWith('# ')) return <h2 key={i} className="mt-2 text-lg font-semibold">{line.slice(2)}</h2>
+      if (line.startsWith('- ')) return <p key={i} className="pl-4 -indent-3">• {bold(line.slice(2))}</p>
+      if (!line.trim()) return <div key={i} className="h-1" />
+      return <p key={i} className="whitespace-pre-wrap break-words">{bold(line)}</p>
+    })
+  // One collapsible block per "## 9.x" section, drawn only once it is opened:
+  // the whole record at once was about 11,000 elements and froze the tab.
+  const parts = body.split(/^(?=## )/m)
+  const intro = parts[0]!.startsWith('## ') ? '' : parts.shift()!
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={download} className="btn-ghost">
           Descargar registro (.md)
+        </button>
+        <button type="button" onClick={() => setOpen(new Set(parts.map((_, i) => i)))} className="btn-ghost">
+          Abrir todas las secciones
         </button>
         <span className="text-xs text-(--color-ink-soft)">{Math.round(markdown.length / 1024)} KB · se exporta igual a Obsidian</span>
       </div>
@@ -875,12 +953,24 @@ const ProtocolRecord = memo(function ProtocolRecord({ markdown, title, onReanaly
         <pre className="overflow-x-auto rounded-xl bg-(--color-surface-2) p-3 text-xs">{frontmatter}</pre>
       )}
       <div className="flex flex-col gap-1 text-sm leading-relaxed">
-        {body.split('\n').map((line, i) => {
-          if (line.startsWith('# ')) return <h2 key={i} className="mt-2 text-lg font-semibold">{line.slice(2)}</h2>
-          if (line.startsWith('## ')) return <h3 key={i} className="mt-4 border-t border-(--color-line) pt-3 font-semibold">{line.slice(3)}</h3>
-          if (line.startsWith('- ')) return <p key={i} className="pl-4 -indent-3">• {bold(line.slice(2))}</p>
-          if (!line.trim()) return <div key={i} className="h-1" />
-          return <p key={i} className="whitespace-pre-wrap break-words">{bold(line)}</p>
+        {lines(intro)}
+        {parts.map((part, i) => {
+          const heading = part.slice(3, part.indexOf('\n') === -1 ? undefined : part.indexOf('\n'))
+          const isOpen = open.has(i)
+          return (
+            <details
+              key={i}
+              open={isOpen}
+              onToggle={(e) => {
+                const now = (e.currentTarget as HTMLDetailsElement).open
+                if (now !== isOpen) setOpen((prev) => { const next = new Set(prev); if (now) next.add(i); else next.delete(i); return next })
+              }}
+              className="border-t border-(--color-line) pt-3"
+            >
+              <summary className="font-semibold">{heading}</summary>
+              {isOpen && <div className="mt-2 flex flex-col gap-1">{lines(part.slice(heading.length + 4))}</div>}
+            </details>
+          )
         })}
       </div>
     </div>

@@ -16,6 +16,8 @@ export function SegmentedControl<T extends string>({
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
+          // Screen readers otherwise cannot tell which tab is open.
+          aria-pressed={value === option.value}
           className="shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors"
           style={
             value === option.value
