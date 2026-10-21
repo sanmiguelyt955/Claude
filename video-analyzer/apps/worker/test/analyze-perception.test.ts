@@ -31,6 +31,7 @@ let runAnalyzePerceptionJob: typeof import('../src/jobs/analyze-perception.ts').
 let server: http.Server
 let overloadNext = 0
 let rejectSummaryNext = 0
+let dailyOut = false
 const imagesPerCall: number[] = []
 
 before(async () => {
@@ -42,6 +43,11 @@ before(async () => {
     let body = ''
     req.on('data', (c) => (body += c))
     req.on('end', () => {
+      if (dailyOut) {
+        res.writeHead(429)
+        res.end('{"error":{"code":429,"message":"Quota exceeded","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"20"}]}]}}')
+        return
+      }
       if (overloadNext > 0) {
         overloadNext--
         res.writeHead(529, { 'retry-after': '1' })
@@ -230,4 +236,23 @@ test('folders: a trimmed name per video, empty takes it out', () => {
   assert.equal(me.setVideoFolder(id, 'x'.repeat(100), db)!.length, me.MAX_FOLDER_CHARS)
   assert.equal(me.setVideoFolder(id, '   ', db), null)
   assert.equal(me.getVideo(id, db)!.folder, null)
+})
+
+// Last on purpose: the chain remembers a model's daily pause for the whole process.
+test('with the daily quota spent the job waits for it instead of failing, and Google\'s cap is learned', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  dailyOut = true
+  const { id, job } = queueVideo('sin cuota')
+  const claimed = db.prepare("UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = ? RETURNING *").get(job.id) as typeof job
+  try {
+    await assert.rejects(runAnalyzePerceptionJob(claimed, db), (err: Error) => err.name === 'JobDeferred' && /cuota de Gemini de hoy/.test(err.message))
+  } finally {
+    dailyOut = false
+  }
+  const after = me.getJob(job.id, db)!
+  assert.equal(after.status, 'queued')
+  assert.equal(after.attempts, 0, 'the wait does not use up an attempt')
+  assert.ok(new Date(after.run_after!).getTime() > Date.now() + 30 * 60_000, `run_after ${after.run_after}`)
+  assert.notEqual(me.getVideo(id, db)!.status, 'failed')
+  assert.equal(me.getModelDailyLimits(db).claude, 20)
 })

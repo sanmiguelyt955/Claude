@@ -52,6 +52,8 @@ function chatVideo(id: string, title: string, durationSeconds: number | null): C
       start: e.start_seconds,
       end: e.end_seconds,
     })),
+    // The V6.5 record: second-by-second detail (9.5) and every on-screen text (9.7).
+    record: summary?.protocol_record_md ?? null,
   }
 }
 

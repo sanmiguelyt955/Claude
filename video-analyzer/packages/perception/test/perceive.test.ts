@@ -9,8 +9,9 @@ import { mkdtempSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DEFAULT_FRAME_OPTIONS } from '../src/frames.ts'
 import { closeGaps, perceive, parseCheckpoint, parseJsonReply, parseWindowReply, windowInstruction, WINDOW_FRAMES, type PerceptionCheckpoint } from '../src/perceive.ts'
-import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
+import { ProviderOverloadedError, type VisionProvider, type VisionRequest } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const speech = path.join(here, 'fixtures-speech.wav')
@@ -151,6 +152,76 @@ test('platform captions replace Whisper and reach the model', { timeout: 300_000
   await assert.rejects(perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-captions-')), {
     providers: [fakeProvider([])], whisperModel: 'no-such-model', captions: partial, diarize: false,
   }))
+})
+
+test('a retry with platform captions keeps the speaker labels of the first attempt', { timeout: 300_000 }, async () => {
+  const video = makeVideo()
+  const captions = { language: 'es', segments: [{ start: 0.5, end: 6, text: 'Frase de los subtítulos' }] }
+  let saved: PerceptionCheckpoint | undefined
+  await perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-captions-resume-')), {
+    providers: [fakeProvider([])], whisperModel: 'no-such-model', captions, onCheckpoint: (cp) => (saved = structuredClone(cp)),
+  })
+  assert.equal(saved?.transcript?.segments[0]?.speaker, 'Hablante 1')
+  // The worker passes the captions again together with the checkpoint.
+  const again = await perceive(video, mkdtempSync(path.join(tmpdir(), 'perception-captions-resume-')), {
+    providers: [fakeProvider([])], whisperModel: 'no-such-model', captions, checkpoint: parseCheckpoint(JSON.stringify(saved)),
+  })
+  assert.equal(again.transcript[0]!.speaker, 'Hablante 1', 'the resumed run used to read the unlabelled captions (null)')
+})
+
+test('when a window fails, the others stop asking and the job fails at once', { timeout: 300_000 }, async () => {
+  // 21 s at 30 fps, every frame kept: 630 frames, three windows.
+  const dir = mkdtempSync(path.join(tmpdir(), 'perception-stop-'))
+  const video = path.join(dir, 'busy.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:d=21:r=30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video])
+  const asked = [0, 0, 0]
+  const busy: VisionProvider = {
+    name: 'busy-' + Math.random(),
+    available: () => true,
+    async describe(req) {
+      const n = Math.min(2, Math.floor(req.frames[0]!.time / 10))
+      asked[n]!++
+      // The first window is refused for good a moment later; the second finds
+      // the model saturated, to be asked again in a second.
+      if (n === 0) {
+        await new Promise((r) => setTimeout(r, 200))
+        throw new Error('HTTP 400 imagen no válida')
+      }
+      throw new ProviderOverloadedError('busy', 503, 'UNAVAILABLE high demand', 1_000)
+    },
+  }
+  const saved = process.env.VISION_CONCURRENCY
+  process.env.VISION_CONCURRENCY = '2'
+  try {
+    await assert.rejects(
+      perceive(video, path.join(dir, 'work'), { providers: [busy], frameOptions: { ...DEFAULT_FRAME_OPTIONS, dedupThreshold: 0, width: 160 } }),
+      /HTTP 400 imagen no válida/,
+    )
+  } finally {
+    if (saved === undefined) delete process.env.VISION_CONCURRENCY
+    else process.env.VISION_CONCURRENCY = saved
+  }
+  // Long enough for every retry round of the second window and then the third window.
+  await new Promise((r) => setTimeout(r, 6_000))
+  assert.deepEqual(asked, [1, 1, 0], 'after the failure, the second window stopped retrying and the third was never asked')
+})
+
+test("at Google's own resolution the windows are cut to what one request can carry", { timeout: 300_000 }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'perception-hires-'))
+  const video = path.join(dir, 'clip.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:d=12:r=30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video])
+  const calls: VisionRequest[] = []
+  const saved = process.env.GEMINI_MEDIA_RESOLUTION
+  process.env.GEMINI_MEDIA_RESOLUTION = ''
+  try {
+    await perceive(video, path.join(dir, 'work'), { providers: [fakeProvider(calls)], frameOptions: { ...DEFAULT_FRAME_OPTIONS, dedupThreshold: 0, width: 160 } })
+  } finally {
+    if (saved === undefined) delete process.env.GEMINI_MEDIA_RESOLUTION
+    else process.env.GEMINI_MEDIA_RESOLUTION = saved
+  }
+  const sizes = calls.filter((c) => c.frames.length > 0).map((c) => c.frames.length)
+  // Not 300 + 60: a 300-frame request is about 333k tokens, refused by Google every time.
+  assert.deepEqual(sizes.sort((a, b) => b - a), [175, 175, 10])
 })
 
 test('a failed speaker step leaves the analysis complete, without labels', { timeout: 300_000 }, async () => {

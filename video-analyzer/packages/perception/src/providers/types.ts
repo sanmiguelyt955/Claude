@@ -83,7 +83,12 @@ export class MinuteBudget {
     return this.sent
   }
 
+  /**
+   * Infinity when the request alone is over the token limit: no wait makes it
+   * fit, and Google would answer every attempt with a 429.
+   */
   readyInMs(tokens: number): number {
+    if (this.tpm > 0 && tokens > this.tpm) return Infinity
     const sent = this.recent()
     const now = this.now()
     let wait = 0
@@ -91,9 +96,8 @@ export class MinuteBudget {
     if (this.tpm > 0) {
       // Oldest requests leave the minute first; wait until enough have left.
       let total = sent.reduce((sum, s) => sum + s.tokens, 0)
-      const need = Math.min(tokens, this.tpm)
       for (const s of sent) {
-        if (total + need <= this.tpm) break
+        if (total + tokens <= this.tpm) break
         total -= s.tokens
         wait = Math.max(wait, s.at + this.windowMs - now)
       }
@@ -121,6 +125,37 @@ export class BadReplyError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'BadReplyError'
+  }
+}
+
+/**
+ * Every usable model is out of its daily quota (or set aside for the day):
+ * no wait inside the job brings one back. `retryAt` (epoch ms) is when the
+ * earliest of them comes back, so the caller can put the work off until then.
+ */
+export class DailyQuotaExhaustedError extends Error {
+  readonly name = 'DailyQuotaExhaustedError'
+  constructor(
+    message: string,
+    readonly retryAt: number,
+  ) {
+    super(message)
+  }
+}
+
+/**
+ * Every model stayed saturated or unreachable through all the retry rounds,
+ * and none gave an unusable answer: the request is fine, the moment is not.
+ * Splitting the request would not help; asking again later does. `retryAt`
+ * (epoch ms) is when the earliest model's pause ends.
+ */
+export class AllProvidersBusyError extends Error {
+  readonly name = 'AllProvidersBusyError'
+  constructor(
+    message: string,
+    readonly retryAt: number,
+  ) {
+    super(message)
   }
 }
 
@@ -166,18 +201,33 @@ export function retryAfterOf(header: string | null, body: string, now = Date.now
   return m ? Math.ceil(Number(m[1]) * 1000) : undefined
 }
 
+/** Pacific wall-clock time minus UTC at `at`, in ms (-7 h or -8 h). */
+function pacificOffsetMs(at: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(at)
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0)
+  return Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second')) - Math.floor(at / 1000) * 1000
+}
+
+/**
+ * Until the next midnight in California. Found as an instant, with the offset
+ * that holds at that midnight: "24 h minus the time elapsed today" was an hour
+ * off on the 23- and 25-hour days when the clocks change.
+ */
 function untilPacificMidnight(now: number): number {
-  const [h, m, sec] = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    .format(now)
-    .split(':')
-    .map(Number) as [number, number, number]
-  return 86_400_000 - ((h * 60 + m) * 60 + sec) * 1000 - (now % 1000)
+  const today = new Date(now + pacificOffsetMs(now))
+  const midnight = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1)
+  let at = midnight - pacificOffsetMs(now)
+  at = midnight - pacificOffsetMs(at)
+  return at - now
 }
 
 /** The quota a 429 names (e.g. "...InputTokensPerModelPerMinute"), put first so it survives the 200-character message. */
 export function quotaDetail(body: string): string {
   const id = /"quotaId"\s*:\s*"([^"]+)"/.exec(body)?.[1]
-  return id ? `[${id}] ${body}` : body
+  // The cap goes up front too: the message keeps only its first 200
+  // characters, and the worker learns the daily limit from it.
+  const value = /"quotaValue"\s*:\s*"?(\d+)/.exec(body)?.[1]
+  return id ? `[${id}${value ? `, limit: ${value}` : ''}] ${body}` : body
 }
 
 /**

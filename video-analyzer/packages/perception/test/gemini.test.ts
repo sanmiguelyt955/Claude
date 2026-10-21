@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { geminiModel, geminiProviders } from '../src/providers/gemini.ts'
+import { estimateTokens, geminiModel, geminiProviders, maxFramesPerRequest } from '../src/providers/gemini.ts'
 import { ProviderOverloadedError, quotaDetail, retryAfterOf } from '../src/providers/types.ts'
 import { describeWithFallback } from '../src/chain.ts'
 import { writeFileSync, mkdtempSync } from 'node:fs'
@@ -168,5 +168,24 @@ test('a 429 waits what Google asks and names the quota it hit', () => {
   const at = Date.parse('2026-10-18T20:30:00Z') // 13:30 in Los Angeles (PDT)
   assert.equal(retryAfterOf(null, daily, at), (10 * 60 + 30) * 60_000)
   assert.equal(retryAfterOf('5', daily, at), (10 * 60 + 30) * 60_000, 'even over a short header')
+  // The days the clocks change are 25 and 23 hours long in California.
+  assert.equal(retryAfterOf(null, daily, Date.parse('2026-11-01T07:30:00Z')), 24.5 * 3_600_000, '00:30 PDT, midnight comes in PST (it said 23.5 h)')
+  assert.equal(retryAfterOf(null, daily, Date.parse('2026-03-08T09:30:00Z')), 21.5 * 3_600_000, '01:30 PST, midnight comes in PDT (it said 22.5 h)')
   assert.match(quotaDetail(body), /^\[GenerateContentInputTokensPerModelPerMinute-FreeTier\] /)
+})
+
+test('a request carries no more frames than fit the per-minute token limit at the chosen resolution', () => {
+  const saved = process.env.GEMINI_MEDIA_RESOLUTION
+  try {
+    delete process.env.GEMINI_MEDIA_RESOLUTION
+    assert.ok(maxFramesPerRequest() >= 300, 'low resolution (the default): the usual 300-frame windows fit')
+    process.env.GEMINI_MEDIA_RESOLUTION = ''
+    const n = maxFramesPerRequest()
+    assert.equal(n, 175, "Google's own resolution, 1110 tokens a frame")
+    const frames = Array.from({ length: n }, (_, i) => ({ path: '', time: i }))
+    assert.ok(estimateTokens({ frames, instruction: 'x'.repeat(60_000), audio: { path: '', mimeType: 'audio/ogg', seconds: 120 } }) <= 225_000)
+  } finally {
+    if (saved === undefined) delete process.env.GEMINI_MEDIA_RESOLUTION
+    else process.env.GEMINI_MEDIA_RESOLUTION = saved
+  }
 })

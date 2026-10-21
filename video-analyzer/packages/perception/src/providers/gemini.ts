@@ -54,15 +54,30 @@ export function estimateTokens({ frames, transcript, instruction, audio }: Visio
   return frames.length * perFrame + sound + Math.ceil(((transcript ?? '').length + instruction.length) / 3) + 200
 }
 
+const maxTpm = () => Number(process.env.GEMINI_MAX_TPM ?? 250_000) || 0
+
 /** One budget per model, shared by every window and the summary. Free tier: 5 RPM, 250k input TPM. */
 const budgets = new Map<string, MinuteBudget>()
 function budgetOf(model: string): MinuteBudget {
   let b = budgets.get(model)
   if (!b) {
-    b = new MinuteBudget(Number(process.env.GEMINI_MAX_RPM ?? 5) || 0, Number(process.env.GEMINI_MAX_TPM ?? 250_000) || 0)
+    b = new MinuteBudget(Number(process.env.GEMINI_MAX_RPM ?? 5) || 0, maxTpm())
     budgets.set(model, b)
   }
   return b
+}
+
+/**
+ * Most frames one request can carry at the configured resolution and still
+ * fit the per-minute token limit (with its 10% margin), leaving `otherTokens`
+ * for the instruction, the speech and the sound. 300 frames at Google's
+ * default resolution are 333k tokens: Google refuses them every time.
+ */
+export function maxFramesPerRequest(otherTokens = 30_000): number {
+  const tpm = Math.floor(maxTpm() * 0.9)
+  if (!tpm) return Infinity
+  const perFrame = FRAME_TOKENS[mediaResolution()] ?? FRAME_TOKENS['']!
+  return Math.max(1, Math.floor((tpm - otherTokens) / perFrame))
 }
 
 export function geminiModel(model: string): VisionProvider {

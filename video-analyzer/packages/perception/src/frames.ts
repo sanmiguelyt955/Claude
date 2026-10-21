@@ -29,7 +29,11 @@ export type FrameOptions = {
   keyframeBudget: number
   /** Hard cap on frames kept, spread evenly over the video if exceeded. */
   maxFrames: number
-  /** Output width in px; height follows the aspect ratio. */
+  /**
+   * Longest side of the frames, in px; the other follows the aspect ratio. A
+   * smaller source is not enlarged: upscaling added bytes (and Claude image
+   * tokens), not detail.
+   */
   width: number
   /**
    * Drop a frame when its 16x16 colour thumbnail differs from the last kept
@@ -117,7 +121,9 @@ export async function extractFramesAndCuts(
     `select='eq(n\\,0)+gt(scene\\,${opts.sceneThreshold})+not(mod(n\\,${Math.max(1, Math.round(fps * keyframeSeconds))}))'`,
     'showinfo',
     'split=2[big][small];',
-  ].join(',') + `[big]scale=${opts.width}:-2[jpg];[small]scale=${THUMB}:${THUMB},format=rgb24[thumb]`
+  ].join(',') +
+    `[big]scale=w='min(${opts.width}\\,iw)':h='min(${opts.width}\\,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2[jpg];` +
+    `[small]scale=${THUMB}:${THUMB},format=rgb24[thumb]`
   const thumbsPath = path.join(outDir, 'thumbs.rgb')
 
   const { stderr } = await run(

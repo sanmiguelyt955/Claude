@@ -57,3 +57,20 @@ test('when frames must be cut, every shot keeps the frame right after its cut', 
   for (const c of cuts) assert.ok(keep.has(frames.findIndex((f) => f.time >= c.time)), `cut at ${c.time}`)
   assert.equal(capFrames(frames, cuts, 50).size, 50, 'more cuts than room: cut frames spread evenly')
 })
+
+test('frames are never enlarged, and a vertical video is bounded by its long side', { timeout: 120_000 }, async () => {
+  const size = (file: string) =>
+    execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file]).toString().trim()
+  const clip = (s: string) => {
+    const out = path.join(mkdtempSync(path.join(tmpdir(), 'frames-size-')), `${s}.mp4`)
+    execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc=s=${s}:d=2:r=10`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', out])
+    return out
+  }
+  const first = async (video: string, width: number) =>
+    size((await extractFrames(video, mkdtempSync(path.join(tmpdir(), 'frames-size-out-')), { ...DEFAULT_FRAME_OPTIONS, fps: 10, width }))[0]!.path)
+  const wide = clip('320x180')
+  const tall = clip('180x320')
+  assert.equal(await first(wide, 768), '320,180', 'a 320 px source stays 320 px (it was enlarged to 768)')
+  assert.equal(await first(wide, 128), '128,72')
+  assert.equal(await first(tall, 128), '72,128', 'vertical: the height is the long side (it was 128x228)')
+})

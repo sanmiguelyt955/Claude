@@ -2,7 +2,18 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { describeWithFallback, shouldFallback } from '../src/chain.ts'
-import { BadReplyError, MinuteBudget, ProviderOverloadedError, parseRetryAfter, postJson, type VisionProvider } from '../src/providers/types.ts'
+import {
+  AllProvidersBusyError,
+  BadReplyError,
+  DailyQuotaExhaustedError,
+  MinuteBudget,
+  ProviderOverloadedError,
+  parseRetryAfter,
+  postJson,
+  type VisionProvider,
+} from '../src/providers/types.ts'
+import { claude } from '../src/providers/claude.ts'
+import { defaultVisionProviders } from '../src/perceive.ts'
 
 const req = { frames: [], transcript: '', instruction: 'x' }
 let seq = 0
@@ -229,4 +240,97 @@ test('a model that does not exist is set aside for the day instead of failing th
   assert.equal((await describeWithFallback([retired, ok], req, { sleep: noSleep })).provider, ok.name)
   assert.equal((await describeWithFallback([retired, ok], req, { sleep: noSleep })).provider, ok.name)
   assert.equal(calls, 1)
+})
+
+test('when every model is out for the day the error says when the first one comes back', async () => {
+  const clock = Date.parse('2026-10-20T12:00:00Z')
+  const spent = (hours: number) => fake(async () => { throw new ProviderOverloadedError('p', 429, '[GenerateRequestsPerDayPerProjectPerModel-FreeTier] quota', hours * 3_600_000) })
+  const err = await describeWithFallback([spent(10), spent(3)], req, { now: () => clock, sleep: noSleep }).catch((e: unknown) => e)
+  assert.ok(err instanceof DailyQuotaExhaustedError, String(err))
+  assert.equal(err.name, 'DailyQuotaExhaustedError')
+  assert.equal(err.retryAt, clock + 3 * 3_600_000)
+  assert.match(err.message, /Ningún proveedor de visión pudo responder: .*cuota del día/)
+})
+
+test('a storm that outlasts every round is "busy", not a bad request, and says when to come back', async () => {
+  let clock = Date.now()
+  const waits: number[] = []
+  const only = fake(async () => { throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand') })
+  const err = await describeWithFallback([only], req, { now: () => clock, sleep: async (ms) => { waits.push(ms); clock += ms } }).catch((e: unknown) => e)
+  assert.ok(err instanceof AllProvidersBusyError, String(err))
+  assert.match(err.message, /Ningún proveedor de visión pudo responder/)
+  assert.ok(err.retryAt > clock)
+  assert.deepEqual(waits, [15_000, 30_000, 60_000], 'each 503 in a row doubles the pause (it was 15 s every time)')
+  // A bad reply on the way means the request itself may be the problem.
+  const cut = fake(async () => { throw new BadReplyError('cortada') })
+  const err2 = await describeWithFallback([cut], req, { sleep: noSleep }).catch((e: unknown) => e)
+  assert.ok(!(err2 instanceof AllProvidersBusyError) && /Ningún proveedor/.test(String(err2)))
+})
+
+test('after an overload, one request at a time checks whether the model is back', async () => {
+  let clock = Date.now()
+  let calls = 0
+  let release: (text: string) => void = () => {}
+  const flaky = fake(async () => {
+    if (++calls === 1) throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand')
+    if (calls === 2) return new Promise<string>((resolve) => { release = resolve })
+    return '{"flaky":true}'
+  })
+  const other = fake(async () => '{"other":true}')
+  const opts = { now: () => clock, sleep: noSleep }
+  await describeWithFallback([flaky, other], req, opts) // the 503: flaky paused 15 s
+  clock += 16_000
+  const first = describeWithFallback([flaky, other], req, opts) // checks flaky; its answer takes a while
+  await new Promise((r) => setImmediate(r))
+  const second = await describeWithFallback([flaky, other], req, opts)
+  assert.equal(second.provider, other.name, 'the second window does not pile onto the model being checked')
+  assert.equal(calls, 2)
+  release('{"flaky":true}')
+  assert.equal((await first).provider, flaky.name)
+  assert.equal((await describeWithFallback([flaky, other], req, opts)).provider, flaky.name, 'once it answered, it is used as usual')
+})
+
+test('an aborted call sends nothing more, even in the middle of a wait', async () => {
+  let calls = 0
+  const busy = fake(async () => { calls++; throw new ProviderOverloadedError('p', 503, 'UNAVAILABLE high demand') })
+  const stop = new AbortController()
+  const reason = new Error('otro tramo falló')
+  setTimeout(() => stop.abort(reason), 50)
+  const started = Date.now()
+  await assert.rejects(describeWithFallback([busy], req, { signal: stop.signal }), (e) => e === reason)
+  assert.equal(calls, 1)
+  assert.ok(Date.now() - started < 5_000, 'the 15 s pause was cut short')
+  await assert.rejects(describeWithFallback([fake(async () => { calls++; return '{}' })], req, { signal: stop.signal }), (e) => e === reason)
+  assert.equal(calls, 1, 'an already aborted call asks nobody')
+})
+
+test('a request over the per-minute token limit is not sent, so the caller can split it', async () => {
+  let calls = 0
+  const tooBig = (fallbackOnly = false): VisionProvider => ({ ...fake(async () => { calls++; return '{}' }), fallbackOnly, readyInMs: () => Infinity })
+  const lastResort: VisionProvider = { ...fake(async () => { calls++; return '{"claude":true}' }), fallbackOnly: true }
+  await assert.rejects(describeWithFallback([tooBig(), tooBig(true), lastResort], req, { sleep: noSleep }), /Ningún proveedor de visión pudo responder: la petición es más grande/)
+  assert.equal(calls, 0, 'not 20 requests answered by 429, and not handed to the last resort')
+  const fits = fake(async () => '{"ok":true}')
+  assert.equal((await describeWithFallback([tooBig(), fits], req, { sleep: noSleep })).provider, fits.name)
+  const b = new MinuteBudget(5, 100_000, () => 0)
+  assert.equal(b.readyInMs(95_000), Infinity, 'over the 90k usable: no wait makes it fit')
+  assert.equal(b.readyInMs(85_000), 0)
+})
+
+test('Claude is a last resort: it does not take windows while Gemini only paces itself', async () => {
+  assert.equal(claude.fallbackOnly, true)
+  assert.equal(defaultVisionProviders().at(-1), claude)
+  const waits: number[] = []
+  let busy = 20_000
+  const gemini: VisionProvider = { ...fake(async () => '{"gemini":true}'), readyInMs: () => busy }
+  const saved = process.env.ANTHROPIC_API_KEY
+  process.env.ANTHROPIC_API_KEY = 'x'
+  try {
+    const out = await describeWithFallback([gemini, claude], req, { sleep: async (ms) => { waits.push(ms); busy = 0 } })
+    assert.equal(out.provider, gemini.name)
+    assert.deepEqual(waits, [20_000])
+  } finally {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY
+    else process.env.ANTHROPIC_API_KEY = saved
+  }
 })

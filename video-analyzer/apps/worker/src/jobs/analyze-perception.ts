@@ -10,10 +10,14 @@ import {
   saveJobCheckpoint,
   updateJobProgress,
   getLatestFailedAnalyzeCheckpoint,
+  deferJob,
+  recordModelDailyLimit,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
 import { perceive, parseCheckpoint, parseVtt, type Transcript } from '@cva/perception'
+import { parseQuotaLimit } from '@cva/ai-router'
+import { JobDeferred } from '../deferred.js'
 
 type AnalyzeJobPayload = { videoId: string }
 
@@ -119,6 +123,20 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     enqueueJob({ type: 'embed', videoId: video.id }, db)
     console.log(`[perception] ${video.id}: ${result.scenes.length} escenas, ${result.transcript.length} frases.`)
   } catch (error) {
+    // Waiting, not failing: a spent daily quota comes back at midnight
+    // (Pacific) and busy models within minutes. The checkpoint already holds
+    // every answered window, so the deferred job resumes where it stopped
+    // without using up one of its attempts.
+    const name = (error as Error | undefined)?.name
+    if (name === 'DailyQuotaExhaustedError' || name === 'AllProvidersBusyError') {
+      const retryAt = Number((error as { retryAt?: number }).retryAt) || 0
+      const reason =
+        name === 'DailyQuotaExhaustedError'
+          ? 'Se acabó la cuota de Gemini de hoy; el análisis seguirá solo cuando se renueve (medianoche, hora de California).'
+          : 'Los modelos de Google están saturados ahora mismo; el análisis seguirá solo en unos minutos.'
+      deferJob(job.id, new Date(Math.max(retryAt, Date.now() + (name === 'AllProvidersBusyError' ? 5 * 60_000 : 60_000))).toISOString(), reason, db)
+      throw new JobDeferred(reason)
+    }
     insertAnalysisRun(
       {
         videoId: video.id,
@@ -155,12 +173,20 @@ function recordProviderRequest(
   a: { provider: string; ok: boolean; error?: string; latencyMs: number },
   db: Db,
 ): void {
+  const model = a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider
+  // Google's own daily cap, from its 429 ("quotaValue"), makes the quota
+  // screens a fact instead of an assumption. Only the PerDay quota counts:
+  // a per-minute 429 carries its per-minute value.
+  if (a.error?.includes('PerDay')) {
+    const limit = parseQuotaLimit(new Error(a.error))
+    if (limit) recordModelDailyLimit(model, limit, db)
+  }
   insertAnalysisRun(
     {
       videoId,
       jobId,
       phase: 'first_pass',
-      model: a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider,
+      model,
       processingMode: null,
       inputTokens: 0,
       outputTokens: 0,

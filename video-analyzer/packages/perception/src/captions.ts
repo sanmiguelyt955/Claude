@@ -21,13 +21,18 @@ const clean = (line: string) =>
  * analysis can skip Whisper. YouTube's automatic captions roll: each cue
  * repeats the line before it and adds the new words, with 10 ms cues in
  * between that repeat everything; a line already shown by the previous cue
- * is dropped so every sentence appears once.
+ * is dropped so every sentence appears once. Only there: in written captions
+ * a cue that comes after a pause and says the same ("¡Vamos!" twice) is said
+ * twice, so a repeat is dropped only when the file rolls (word timings) or
+ * the cue starts right where the previous one ended.
  */
 export function parseVtt(vtt: string, fallbackLanguage: string): Transcript {
   // YouTube writes "Language: en" in the header; other platforms don't.
   const language = /^Language:\s*([\w-]+)/m.exec(vtt.split(/\n\s*\n/)[0] ?? '')?.[1] ?? fallbackLanguage
+  const rolls = /<\d{1,2}:\d{2}(?::\d{2})?[.,]\d{3}>/.test(vtt)
   const segments: Segment[] = []
   let previous: string[] = []
+  let previousEnd = -Infinity
   for (const block of vtt.replace(/\r\n?/g, '\n').split(/\n{2,}/)) {
     const lines = block.split('\n')
     const timing = lines.findIndex((l) => l.includes('-->'))
@@ -38,8 +43,10 @@ export function parseVtt(vtt: string, fallbackLanguage: string): Transcript {
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue
 
     const text = lines.slice(timing + 1).map(clean).filter(Boolean)
-    const fresh = text.filter((l) => !previous.includes(l))
+    const continues = rolls || start - previousEnd <= 0.05
+    const fresh = continues ? text.filter((l) => !previous.includes(l)) : text
     previous = text
+    previousEnd = end
     if (fresh.length === 0) continue
     segments.push({ start, end: Math.max(end, start), text: fresh.join(' ') })
   }

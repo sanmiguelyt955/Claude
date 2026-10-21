@@ -43,6 +43,18 @@ welcome back
   ])
 })
 
+test('a line said again after a pause is kept; a cue carried over without a pause is not', () => {
+  const t = parseVtt(
+    'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n¡Vamos!\n\n00:00:02.500 --> 00:00:03.500\n¡Vamos!\n\n00:00:04.000 --> 00:00:05.000\nUno, dos, tres.\n\n00:00:05.000 --> 00:00:06.000\nUno, dos, tres.\n',
+    'es',
+  )
+  assert.deepEqual(t.segments, [
+    { start: 1, end: 2, text: '¡Vamos!' },
+    { start: 2.5, end: 3.5, text: '¡Vamos!' }, // it was dropped as a rolling repeat
+    { start: 4, end: 5, text: 'Uno, dos, tres.' },
+  ])
+})
+
 test('caption coverage counts overlapping lines once', () => {
   const seg = (start: number, end: number) => ({ start, end, text: 'x' })
   assert.equal(captionCoverage([seg(0, 10), seg(5, 15), seg(50, 60)], 100), 0.25)

@@ -1,8 +1,26 @@
-import { BadReplyError, ProviderOverloadedError, type VisionProvider, type VisionRequest } from './providers/types.js'
+import {
+  AllProvidersBusyError,
+  BadReplyError,
+  DailyQuotaExhaustedError,
+  ProviderOverloadedError,
+  type VisionProvider,
+  type VisionRequest,
+} from './providers/types.js'
 
 const pausedUntil = new Map<string, number>()
 /** Pause after a 503 that says nothing about how long: demand spikes are short. */
 const SPIKE_PAUSE_MS = 15_000
+/**
+ * Overloads in a row per model, counted over every request of every window.
+ * A 503 that keeps coming back is a storm, not a spike: each one doubles the
+ * pause (15 s, 30 s, 1 min, then the 2-minute cap), and after one, a single
+ * request at a time checks whether the model is back. In a simulated storm,
+ * 8 windows sent 159 requests before the job failed (64 to each model with
+ * 20 a day); now 21.
+ */
+const strikes = new Map<string, number>()
+/** Models with that one checking request in flight, until when the others wait for it. */
+const probing = new Map<string, number>()
 /** Models whose daily quota is spent: the retry rounds do not wake them before it resets. */
 const dailyUntil = new Map<string, number>()
 
@@ -35,6 +53,12 @@ export type FallbackOptions<T> = {
    * Quotas count requests, so the caller records each one under its model.
    */
   onAttempt?: (attempt: { provider: string; ok: boolean; error?: string; latencyMs: number }) => void
+  /**
+   * Stops the retries: checked before every request and during every wait.
+   * A request already sent is answered first. Aborting throws the signal's
+   * reason, so a job that has already failed stops spending quota.
+   */
+  signal?: AbortSignal
 }
 
 /**
@@ -62,16 +86,44 @@ export async function describeWithFallback<T = string>(
   const preferWaitMs = opts.preferWaitMs ?? 65_000
   const parse = opts.parse ?? ((text: string) => text as unknown as T)
   const log = opts.log ?? (() => {})
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const signal = opts.signal
+  const sleep =
+    opts.sleep ??
+    ((ms: number) =>
+      new Promise<void>((resolve, reject) => {
+        const stop = () => {
+          clearTimeout(timer)
+          reject(signal!.reason)
+        }
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', stop)
+          resolve()
+        }, ms)
+        signal?.addEventListener('abort', stop, { once: true })
+      }))
+  const wait = async (ms: number) => {
+    signal?.throwIfAborted()
+    await sleep(ms)
+    signal?.throwIfAborted()
+  }
   const now = opts.now ?? Date.now
 
-  const usable = providers.filter((p) => p.available())
-  if (usable.length === 0) {
+  const configured = providers.filter((p) => p.available())
+  if (configured.length === 0) {
     throw new Error('Ningún proveedor de visión tiene clave configurada (ANTHROPIC_API_KEY, GEMINI_API_KEY).')
+  }
+  // A request over a model's per-minute token limit gets a 429 on every
+  // attempt (20 of them, a whole window, with GEMINI_MEDIA_RESOLUTION empty):
+  // that model sits it out. If only last resorts could take it, the plain
+  // failure lets the caller split the window into halves that fit instead.
+  const usable = configured.filter((p) => (p.readyInMs?.(req) ?? 0) !== Infinity)
+  if (usable.length < configured.length && !usable.some((p) => !p.fallbackOnly)) {
+    const big = configured.filter((p) => !usable.includes(p)).map((p) => p.name)
+    throw new Error(`Ningún proveedor de visión pudo responder: la petición es más grande de lo que ${big.join(', ')} acepta${big.length > 1 ? 'n' : ''} por minuto.`)
   }
 
   const waitOf = (p: VisionProvider) =>
-    Math.max((pausedUntil.get(p.name) ?? 0) - now(), p.readyInMs?.(req) ?? 0, 0)
+    Math.max((pausedUntil.get(p.name) ?? 0) - now(), (probing.get(p.name) ?? 0) - now(), p.readyInMs?.(req) ?? 0, 0)
 
   const failures: string[] = []
   let round = 1
@@ -83,6 +135,9 @@ export async function describeWithFallback<T = string>(
   // entity register the whole record builds on, answered by Flash-Lite).
   const overloads = new Map<string, number>()
   const badReply = new Set<string>()
+  // Whether any model answered something unusable during the whole call: if
+  // none did, giving up means "busy", and a smaller request would not help.
+  let sawBadReply = false
   const hasFallback = usable.some((p) => p.fallbackOnly)
   for (;;) {
     const untried = usable.filter((p) => !tried.has(p.name))
@@ -92,14 +147,14 @@ export async function describeWithFallback<T = string>(
       const soonest = better.length ? Math.min(...better) : Infinity
       if (soonest <= preferWaitMs) {
         log(`esperando ${Math.ceil(soonest / 1000)}s al límite por minuto del modelo principal en vez de bajar de calidad`)
-        await sleep(soonest)
+        await wait(soonest)
         continue
       }
       const again = hasFallback ? usable.filter((p) => !p.fallbackOnly && tried.has(p.name) && !badReply.has(p.name) && (overloads.get(p.name) ?? 0) < 2) : []
       const soonestAgain = again.length ? Math.min(...again.map(waitOf)) : Infinity
       if (soonestAgain <= preferWaitMs) {
         log(`los modelos principales están saturados; reintento en ${Math.ceil(soonestAgain / 1000)}s en vez de bajar de calidad`)
-        await sleep(soonestAgain)
+        await wait(soonestAgain)
         for (const p of again) tried.delete(p.name)
         continue
       }
@@ -113,20 +168,25 @@ export async function describeWithFallback<T = string>(
       // 19 Oct 2026).
       const pacing = usable.filter((p) => !tried.has(p.name) && (pausedUntil.get(p.name) ?? 0) <= now())
       if (pacing.length) {
-        const wait = Math.min(...pacing.map(waitOf))
-        await sleep(Math.max(wait, 1))
+        await wait(Math.max(Math.min(...pacing.map(waitOf)), 1))
         continue
       }
-      // Every provider answered with garbage: waiting will not fix that.
-      if (parseFailures === usable.length || round === maxRounds) break
       // Waiting minutes cannot bring back a quota that resets at midnight.
       if (usable.every((p) => (dailyUntil.get(p.name) ?? 0) > now())) {
         failures.push('todos los modelos agotaron su cuota del día (se renueva a medianoche, hora de California)')
-        break
+        const retryAt = Math.min(...usable.map((p) => dailyUntil.get(p.name)!))
+        throw new DailyQuotaExhaustedError(`Ningún proveedor de visión pudo responder: ${failures.slice(-6).join(' | ')}`, retryAt)
       }
-      const wait = Math.min(Math.min(...usable.map(waitOf)), maxWaitMs)
-      log(`todos los proveedores en pausa; reintento ${round + 1}/${maxRounds} en ${Math.round(wait / 1000)}s`)
-      await sleep(wait)
+      // Every provider answered with garbage: waiting will not fix that.
+      if (parseFailures === usable.length) break
+      if (round === maxRounds) {
+        if (sawBadReply) break
+        const retryAt = now() + Math.min(...usable.map(waitOf))
+        throw new AllProvidersBusyError(`Ningún proveedor de visión pudo responder: ${failures.slice(-6).join(' | ')}`, retryAt)
+      }
+      const pause = Math.min(Math.min(...usable.map(waitOf)), maxWaitMs)
+      log(`todos los proveedores en pausa; reintento ${round + 1}/${maxRounds} en ${Math.round(pause / 1000)}s`)
+      await wait(pause)
       // The wait may be capped below the real pause; let them try again anyway.
       for (const p of usable) if ((dailyUntil.get(p.name) ?? 0) <= now()) pausedUntil.delete(p.name)
       tried.clear()
@@ -138,8 +198,11 @@ export async function describeWithFallback<T = string>(
     }
 
     const p = pick
+    signal?.throwIfAborted()
     tried.add(p.name)
     p.reserve?.(req)
+    // The others wait for this one's answer (at most a spike pause) instead of all hitting the 503.
+    if (strikes.get(p.name)) probing.set(p.name, now() + SPIKE_PAUSE_MS)
     let text: string
     const started = now()
     try {
@@ -147,8 +210,12 @@ export async function describeWithFallback<T = string>(
       opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: now() - started })
     } catch (err) {
       opts.onAttempt?.({ provider: p.name, ok: false, error: String(err), latencyMs: now() - started })
+      probing.delete(p.name)
+      // Anything but an overload is an answer: the model is up.
+      if (!shouldFallback(err)) strikes.delete(p.name)
       if (err instanceof BadReplyError) {
         parseFailures++
+        sawBadReply = true
         badReply.add(p.name)
         log(`${p.name} respondió algo no válido, probando el siguiente: ${String(err)}`)
         failures.push(String(err))
@@ -156,7 +223,9 @@ export async function describeWithFallback<T = string>(
       }
       if (!shouldFallback(err)) throw err
       overloads.set(p.name, (overloads.get(p.name) ?? 0) + 1)
-      const spike = err instanceof ProviderOverloadedError && err.status === 503 ? SPIKE_PAUSE_MS : cooldownMs
+      const inARow = (strikes.get(p.name) ?? 0) + 1
+      strikes.set(p.name, inARow)
+      const spike = err instanceof ProviderOverloadedError && err.status === 503 ? Math.min(SPIKE_PAUSE_MS * 2 ** (inARow - 1), maxWaitMs) : cooldownMs
       const pause = (err instanceof ProviderOverloadedError ? err.retryAfterMs : undefined) ?? spike
       pausedUntil.set(p.name, now() + pause)
       if (/PerDay/.test(String(err)) || (err instanceof ProviderOverloadedError && err.status === 404)) dailyUntil.set(p.name, now() + pause)
@@ -164,12 +233,15 @@ export async function describeWithFallback<T = string>(
       failures.push(String(err))
       continue
     }
+    probing.delete(p.name)
+    strikes.delete(p.name)
     try {
       // A reply already on its way does not undo a daily-quota pause set meanwhile.
       if ((dailyUntil.get(p.name) ?? 0) <= now()) pausedUntil.delete(p.name)
       return { provider: p.name, text, value: parse(text) }
     } catch (err) {
       parseFailures++
+      sawBadReply = true
       badReply.add(p.name)
       log(`${p.name} respondió algo no válido, probando el siguiente: ${String(err)}`)
       failures.push(`${p.name}: respuesta no válida (${String(err).slice(0, 120)})`)

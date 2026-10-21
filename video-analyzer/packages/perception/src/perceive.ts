@@ -8,7 +8,7 @@ import { transcribe, type Transcript } from './transcribe.js'
 import { diarize } from './diarize.js'
 import { describeWithFallback, type FallbackOptions } from './chain.js'
 import { claude } from './providers/claude.js'
-import { geminiProviders } from './providers/gemini.js'
+import { geminiProviders, maxFramesPerRequest } from './providers/gemini.js'
 import type { VisionProvider } from './providers/types.js'
 
 /** Every configured Gemini model in order, then Claude. */
@@ -219,14 +219,19 @@ export function parseSummaryReply(text: string, fallbackLanguage: string): Analy
   }
 }
 
-/** Frames grouped into time windows of at most WINDOW_FRAMES, with their time span. */
+/**
+ * Frames grouped into time windows of at most WINDOW_FRAMES (fewer when the
+ * frames are too costly for one request at the chosen resolution), with
+ * their time span.
+ */
 function windowsOf(frames: Frame[], duration: number) {
+  const size = Math.min(WINDOW_FRAMES, maxFramesPerRequest())
   const out: Array<{ frames: Frame[]; start: number; end: number }> = []
-  for (let i = 0; i < frames.length; i += WINDOW_FRAMES) {
-    const chunk = frames.slice(i, i + WINDOW_FRAMES)
+  for (let i = 0; i < frames.length; i += size) {
+    const chunk = frames.slice(i, i + size)
     const first = chunk[0]
     if (!first) continue
-    const next = frames[i + WINDOW_FRAMES]
+    const next = frames[i + size]
     out.push({ frames: chunk, start: first.time, end: next ? next.time : Math.max(duration, first.time) })
   }
   return out
@@ -279,16 +284,20 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
   const speechJob = (async (): Promise<Transcript> => {
     await audio
     let speech: Transcript = { language: opts.language ?? 'es', segments: [] }
-    if (captions) {
-      log(`${captions.segments.length} frases de los subtítulos de la plataforma, sin transcribir`)
-      speech = captions
-    } else if (hasAudio && checkpoint.transcript) {
+    // The checkpoint first: when captions were used, it holds them with the
+    // speaker labels the first attempt added, which the raw captions lack.
+    if (hasAudio && checkpoint.transcript) {
       log('transcripción retomada del intento anterior')
       speech = checkpoint.transcript
+    } else if (captions) {
+      log(`${captions.segments.length} frases de los subtítulos de la plataforma, sin transcribir`)
+      speech = captions
     } else if (hasAudio) {
       log('transcribiendo audio')
       speech = await transcribe(wavPath, { model: opts.whisperModel, language: opts.language })
       if (speech.device) log(speech.device === 'cuda' ? 'audio transcrito en la tarjeta gráfica' : `audio transcrito en el procesador${speech.engine === 'parakeet' ? ' con Parakeet' : ''}`)
+      // A broken card setup makes every transcription several times slower: say why.
+      if (speech.gpu_error) log(`la tarjeta gráfica no se pudo usar (${speech.gpu_error}); se transcribió en el procesador`)
       checkpoint.transcript = speech
       save()
     }
@@ -368,8 +377,14 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     progress({ label: `Mirando el video: ${finished} de ${windows.length} tramos listos...`, current: finished, total: steps })
   report()
   let next = 0
+  // Once a window fails for good the job will be retried, so no new window is
+  // asked and the ones in flight stop retrying (they kept spending quota after
+  // the failure); a request already sent is still answered and checkpointed,
+  // so the retry reuses it. The job fails once they have settled.
+  const stop = new AbortController()
+  let failure: { error: unknown } | null = null
   const worker = async () => {
-    while (next < windows.length) {
+    while (next < windows.length && !failure) {
       const n = next++
       const w = windows[n]!
       const key = windowKey(w)
@@ -378,14 +393,20 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
         log(`ventana ${n + 1}/${windows.length} retomada del intento anterior`)
       } else {
         log(`ventana ${n + 1}/${windows.length} (${w.start.toFixed(1)}-${w.end.toFixed(1)}s, ${w.frames.length} frames)`)
-        const { provider, value } = await describeWithFallback(
-          providers,
-          { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: windowInstruction(w), thinking: 'low' },
-          { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt },
-        )
-        log(`ventana ${n + 1} respondida por ${provider}`)
-        done = value
-        checkpoint.windows[key] = value
+        try {
+          const { provider, value } = await describeWithFallback(
+            providers,
+            { frames: w.frames, transcript: speechIn(w.start, w.end), instruction: windowInstruction(w), thinking: 'low' },
+            { log, parse: (text) => parseWindowReply(text, w), onAttempt: opts.onAttempt, signal: stop.signal },
+          )
+          log(`ventana ${n + 1} respondida por ${provider}`)
+          done = value
+        } catch (error) {
+          failure ??= { error }
+          stop.abort(error)
+          return
+        }
+        checkpoint.windows[key] = done
         save()
       }
       results[n] = done
@@ -394,6 +415,7 @@ export async function perceive(file: string, workDir: string, opts: PerceiveOpti
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, windows.length) }, worker))
+  if (failure) throw (failure as { error: unknown }).error
   for (const done of results) {
     scenes.push(...done.scenes)
     elements.push(...done.elements)
