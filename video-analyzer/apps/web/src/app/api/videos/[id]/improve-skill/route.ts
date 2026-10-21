@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
-import { getVideo, getSkill, enqueueJobUnlessActive } from '@cva/memory-engine'
+import { getVideo, getSkill, enqueueJobUnlessActive, isAnotherWorkerAlive } from '@cva/memory-engine'
+import { readJsonObject, stringField } from '../../../../../lib/json-body'
+import { resolveSkillMdPath } from '../../../../../lib/skill-md'
 
 export const runtime = 'nodejs'
-
-type Body = { skillId?: string; sourceSkillPath?: string }
 
 /**
  * Enqueues 'improve_skill' (PROJECT.md §13, "Mejorar Skill"). Accepts either
@@ -24,9 +24,9 @@ export async function POST(
     )
   }
 
-  const body = (await request.json().catch(() => ({}))) as Body
-  const skillId = body.skillId?.trim() || undefined
-  const sourceSkillPath = body.sourceSkillPath?.trim() || undefined
+  const body = await readJsonObject(request)
+  const skillId = stringField(body, 'skillId')
+  let sourceSkillPath = stringField(body, 'sourceSkillPath')
 
   if (!skillId && !sourceSkillPath) {
     return NextResponse.json({ error: 'Se requiere skillId o sourceSkillPath.' }, { status: 400 })
@@ -34,10 +34,16 @@ export async function POST(
   if (skillId && sourceSkillPath) {
     return NextResponse.json({ error: 'Elige solo una: skillId o sourceSkillPath, no ambas.' }, { status: 400 })
   }
+  if (sourceSkillPath) {
+    // Checked here, not three failed attempts later in the worker.
+    const checked = await resolveSkillMdPath(sourceSkillPath)
+    if ('error' in checked) return NextResponse.json({ error: checked.error }, { status: 400 })
+    sourceSkillPath = checked.path
+  }
   if (skillId) {
     const skill = getSkill(skillId)
     if (!skill || skill.status !== 'generated') {
-      return NextResponse.json({ error: 'Esa skill no existe o todavia no fue generada.' }, { status: 404 })
+      return NextResponse.json({ error: 'Esa skill no existe o todavía no fue generada.' }, { status: 404 })
     }
   }
 
@@ -49,5 +55,5 @@ export async function POST(
     return NextResponse.json({ error: 'Ya hay un job en curso para este video.' }, { status: 409 })
   }
 
-  return NextResponse.json({ jobId: outcome.job.id }, { status: 202 })
+  return NextResponse.json({ jobId: outcome.job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

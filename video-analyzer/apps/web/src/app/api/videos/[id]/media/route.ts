@@ -34,9 +34,13 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
   const type = TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream'
 
+  // HEAD gets the headers only: a stream opened for it was never read nor
+  // closed, leaking one open file per request.
+  const head = request.method === 'HEAD'
+  const stream = (opts?: { start: number; end: number }) => (head ? null : (Readable.toWeb(createReadStream(file, opts)) as ReadableStream))
   const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') ?? '')
   if (!range) {
-    const body = Readable.toWeb(createReadStream(file)) as ReadableStream
+    const body = stream()
     return new Response(body, { headers: { 'content-type': type, 'content-length': String(size), 'accept-ranges': 'bytes' } })
   }
   // "bytes=-500" means the last 500 bytes; "bytes=100-" means from 100 to the end.
@@ -47,7 +51,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (start > end || start >= size) {
     return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } })
   }
-  const body = Readable.toWeb(createReadStream(file, { start, end })) as ReadableStream
+  const body = stream({ start, end })
   return new Response(body, {
     status: 206,
     headers: {
@@ -58,3 +62,5 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     },
   })
 }
+
+export const HEAD = GET

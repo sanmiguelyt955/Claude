@@ -11,6 +11,7 @@ import {
   chatToMarkdown,
   insertAnalysisRun,
 } from '@cva/memory-engine'
+import { readJsonObject } from '../../../../../lib/json-body'
 import { askVideo, type ChatVideo } from '@cva/perception/chat'
 
 export const runtime = 'nodejs'
@@ -88,7 +89,7 @@ export async function POST(request: Request, context: Params): Promise<NextRespo
     return NextResponse.json({ error: 'El chat está disponible cuando el video termina de analizarse.' }, { status: 409 })
   }
 
-  const body = (await request.json().catch(() => ({}))) as { question?: unknown }
+  const body = await readJsonObject(request)
   const question = typeof body.question === 'string' ? body.question.trim() : ''
   if (!question) return NextResponse.json({ error: 'Escribe una pregunta.' }, { status: 400 })
   if (question.length > MAX_QUESTION_CHARS) {

@@ -20,10 +20,17 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const video = getVideo(id)
   if (!video?.stored_path) return new Response(null, { status: 404 })
   const params = new URL(request.url).searchParams
-  const start = Number(params.get('start'))
-  const end = Number(params.get('end'))
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+  // Number('') is 0: a missing start used to be read as the beginning.
+  const start = numberParam(params.get('start'))
+  let end = numberParam(params.get('end'))
+  if (start === undefined || end === undefined || start < 0 || end <= start) {
     return new Response('start/end no válidos', { status: 400 })
+  }
+  // Past the end there is nothing to hear: an empty clip used to be cached
+  // for a day. A scene that runs past the end is cut at it.
+  if (video.duration_seconds) {
+    if (start >= video.duration_seconds) return new Response(null, { status: 416 })
+    end = Math.min(end, video.duration_seconds)
   }
   const length = Math.min(end - start, MAX_SECONDS)
   const out = path.join(DATA_DIR, 'clips', id, `${Math.round(start * 10)}-${Math.round(length * 10)}.webm`)
@@ -51,4 +58,10 @@ function clip(bytes: Buffer): Response {
   return new Response(new Uint8Array(bytes), {
     headers: { 'content-type': 'audio/webm', 'cache-control': 'private, max-age=86400', 'accept-ranges': 'none' },
   })
+}
+
+function numberParam(raw: string | null): number | undefined {
+  if (raw === null || raw.trim() === '') return undefined
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : undefined
 }

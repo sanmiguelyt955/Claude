@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getVideo, enqueueJobUnlessActive, setVideoStatus } from '@cva/memory-engine'
+import { getVideo, enqueueJobUnlessActive, setVideoStatus, isAnotherWorkerAlive } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 
@@ -34,5 +34,5 @@ export async function POST(
     return NextResponse.json({ error: 'Ya hay un job en curso para este video.' }, { status: 409 })
   }
 
-  return NextResponse.json({ video: getVideo(video.id), jobId: outcome.job.id }, { status: 202 })
+  return NextResponse.json({ video: getVideo(video.id), jobId: outcome.job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

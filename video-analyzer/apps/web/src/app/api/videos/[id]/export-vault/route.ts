@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getVideo } from '@cva/memory-engine'
 import { exportVideoToVault } from '@cva/vault-export'
 
 export const runtime = 'nodejs'
@@ -13,6 +14,7 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   const { id } = await context.params
+  if (!getVideo(id)) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
   try {
     const result = await exportVideoToVault(id)
     return NextResponse.json(result)

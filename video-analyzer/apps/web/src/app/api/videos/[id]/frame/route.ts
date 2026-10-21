@@ -17,7 +17,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params
   const video = getVideo(id)
   if (!video?.stored_path) return new Response(null, { status: 404 })
-  const t = Number(new URL(request.url).searchParams.get('t'))
+  const raw = new URL(request.url).searchParams.get('t')
+  // Number('') is 0: a missing t used to give the first frame.
+  const t = raw === null || raw.trim() === '' ? NaN : Number(raw)
   if (!Number.isFinite(t) || t < 0) return new Response('t no válido', { status: 400 })
   const at = video.duration_seconds ? Math.min(t, Math.max(video.duration_seconds - 0.1, 0)) : t
   const out = path.join(DATA_DIR, 'frames', id, `${Math.round(at * 10)}.jpg`)
