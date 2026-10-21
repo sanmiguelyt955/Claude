@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { recordChunks } from './record-chunks.js'
 import type { Db } from '../db.js'
 import { getDb } from '../db.js'
 import type { SceneRow, TranscriptChunkRow, VideoElementRow } from '../types.js'
@@ -170,6 +171,18 @@ export function saveAnalysisResult(videoId: string, result: FullAnalysisResult, 
         startSeconds: element.startSeconds,
         endSeconds: element.endSeconds,
         text: [element.label, element.detail].filter(Boolean).join(': '),
+      })
+    }
+
+    for (const piece of recordChunks(result.summary.protocolRecordMd)) {
+      insertMemoryChunk.run({
+        id: randomUUID(),
+        videoId,
+        source: piece.source,
+        sourceId: null,
+        startSeconds: piece.startSeconds,
+        endSeconds: piece.endSeconds,
+        text: piece.text,
       })
     }
   })

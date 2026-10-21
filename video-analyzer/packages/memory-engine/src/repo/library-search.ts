@@ -23,6 +23,9 @@ const STOPWORDS = new Set([
   'y', 'o', 'u', 'e', 'ni', 'pero', 'es', 'son', 'se', 'su', 'sus', 'lo', 'le',
   'les', 'mi', 'tu', 'este', 'esta', 'estos', 'estas', 'ese', 'esa', 'muy',
   'the', 'a', 'an', 'of', 'in', 'on', 'for', 'with', 'and', 'or', 'to', 'is',
+  // Question words: "¿qué dice del precio?" is about the price, not "qué".
+  'qué', 'que', 'cuál', 'cual', 'cuánto', 'cuanto', 'cuánta', 'cuanta', 'cuántos', 'cuantos', 'dónde', 'donde',
+  'cuándo', 'cuando', 'quién', 'quien', 'dice', 'hay', 'what', 'where', 'when', 'who', 'how', 'does',
 ])
 
 /**
@@ -35,13 +38,31 @@ const STOPWORDS = new Set([
  * to the "exact product name/phrase" role this is meant to play alongside
  * the semantic vector search. Returns null when nothing meaningful is left.
  */
-function buildFtsQuery(text: string): string | null {
+function buildFtsQuery(text: string, join: 'AND' | 'OR' = 'AND'): string | null {
   const tokens = text
-    .split(/\s+/)
-    .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+    // Punctuation is not part of a word ("precio?" → "precio", "¿qué" → "qué").
+    .split(/[^\p{L}\p{N}]+/u)
+    .map((t) => t.toLowerCase())
+    // Two-character terms and numbers count ("IA", "3D", "29"); one letter does not.
+    .filter((t) => (t.length >= 2 || /\p{N}/u.test(t)) && !STOPWORDS.has(t))
   if (!tokens.length) return null
-  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' AND ')
+  return [...new Set(tokens)].map((t) => `"${t.replace(/"/g, '""')}"`).join(` ${join} `)
+}
+
+/**
+ * FTS rows for the query: every term present first (the "exact" hits), then,
+ * when those are fewer than `limit`, chunks with any of the terms ranked by
+ * bm25 — a natural question rarely has all its words in one chunk.
+ */
+function ftsSearch<T extends { id: string }>(queryText: string, limit: number, run: (match: string, limit: number) => T[]): T[] {
+  const all = buildFtsQuery(queryText, 'AND')
+  if (!all) return []
+  const rows = run(all, limit)
+  if (rows.length >= limit) return rows
+  const any = buildFtsQuery(queryText, 'OR')!
+  if (any === all) return rows
+  const seen = new Set(rows.map((r) => r.id))
+  return [...rows, ...run(any, limit).filter((r) => !seen.has(r.id))].slice(0, limit)
 }
 
 const DISTANCE_FOR_KEYWORD_ONLY = 1 // vec0 cosine distance is in [0, 2]; treat an FTS-only hit as "close enough" to rank alongside vector results without a real distance to compare.
@@ -82,19 +103,20 @@ export function searchLibrary(
   }
 
   const ftsIds: string[] = []
-  const ftsQuery = buildFtsQuery(queryText)
-  if (ftsQuery) {
-    const ftsRows = db
-      .prepare(
-        `SELECT mc.*, v.title AS video_title, v.status AS video_status
-           FROM memory_chunks_fts
-           JOIN memory_chunks mc ON mc.rowid = memory_chunks_fts.rowid
-           JOIN videos v ON v.id = mc.video_id
-          WHERE memory_chunks_fts MATCH ?
-          ORDER BY rank
-          LIMIT ?`,
-      )
-      .all(ftsQuery, limit) as Array<MemoryChunkRow & { video_title: string; video_status: string }>
+  {
+    const ftsRows = ftsSearch(queryText, limit, (match, n) =>
+      db
+        .prepare(
+          `SELECT mc.*, v.title AS video_title, v.status AS video_status
+             FROM memory_chunks_fts
+             JOIN memory_chunks mc ON mc.rowid = memory_chunks_fts.rowid
+             JOIN videos v ON v.id = mc.video_id
+            WHERE memory_chunks_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?`,
+        )
+        .all(match, n) as Array<MemoryChunkRow & { video_title: string; video_status: string }>,
+    )
 
     ftsIds.push(...ftsRows.map((r) => r.id))
     for (const row of ftsRows) {
@@ -111,10 +133,12 @@ export function searchLibrary(
   // Sorting by distance put every keyword-only hit (distance 1) behind all
   // semantic ones, so with `limit` semantic results an exact product name
   // was never shown. A hit in both lists adds both scores and ranks first.
+  return fuse(byId, [vectorRows.map((r) => r.id), ftsIds], limit)
+}
+
+function fuse<T extends { id: string }>(byId: Map<string, T>, lists: string[][], limit: number): T[] {
   const score = new Map<string, number>()
-  const add = (ids: string[]) => ids.forEach((rowId, rank) => score.set(rowId, (score.get(rowId) ?? 0) + 1 / (RRF_K + rank + 1)))
-  add(vectorRows.map((r) => r.id))
-  add(ftsIds)
+  for (const ids of lists) ids.forEach((rowId, rank) => score.set(rowId, (score.get(rowId) ?? 0) + 1 / (RRF_K + rank + 1)))
   return Array.from(byId.values())
     .sort((a, b) => (score.get(b.id) ?? 0) - (score.get(a.id) ?? 0))
     .slice(0, limit)
@@ -134,17 +158,40 @@ export function searchVideoKeywords(
   limit: number,
   db: Db = getDb(),
 ): Array<MemoryChunkRow & { distance: number }> {
-  const ftsQuery = buildFtsQuery(queryText)
-  if (!ftsQuery) return []
-  const rows = db
-    .prepare(
-      `SELECT mc.*
-         FROM memory_chunks_fts
-         JOIN memory_chunks mc ON mc.rowid = memory_chunks_fts.rowid
-        WHERE memory_chunks_fts MATCH ? AND mc.video_id = ?
-        ORDER BY rank
-        LIMIT ?`,
-    )
-    .all(ftsQuery, videoId, limit) as MemoryChunkRow[]
+  const rows = ftsSearch(queryText, limit, (match, n) =>
+    db
+      .prepare(
+        `SELECT mc.*
+           FROM memory_chunks_fts
+           JOIN memory_chunks mc ON mc.rowid = memory_chunks_fts.rowid
+          WHERE memory_chunks_fts MATCH ? AND mc.video_id = ?
+          ORDER BY rank
+          LIMIT ?`,
+      )
+      .all(match, videoId, n) as MemoryChunkRow[],
+  )
   return rows.map((row) => ({ ...row, distance: DISTANCE_FOR_KEYWORD_ONLY }))
+}
+
+/**
+ * Search in one video, by meaning and by keyword, fused like searchLibrary.
+ * Vector-only, a video whose pieces were not embedded yet (its embed job
+ * still queued, or failed) found nothing at all.
+ */
+export function searchVideo<T extends MemoryChunkRow & { distance: number }>(
+  videoId: string,
+  semantic: T[],
+  queryText: string,
+  limit: number,
+  db: Db = getDb(),
+): Array<(T | (MemoryChunkRow & { distance: number })) & { match_type: 'semantic' | 'keyword' | 'both' }> {
+  type Row = (T | (MemoryChunkRow & { distance: number })) & { match_type: 'semantic' | 'keyword' | 'both' }
+  const byId = new Map<string, Row>(semantic.map((r) => [r.id, { ...r, match_type: 'semantic' as const }]))
+  const keyword = searchVideoKeywords(videoId, queryText, limit, db)
+  for (const row of keyword) {
+    const existing = byId.get(row.id)
+    if (existing) existing.match_type = 'both'
+    else byId.set(row.id, { ...row, match_type: 'keyword' })
+  }
+  return fuse(byId, [semantic.map((r) => r.id), keyword.map((r) => r.id)], limit)
 }

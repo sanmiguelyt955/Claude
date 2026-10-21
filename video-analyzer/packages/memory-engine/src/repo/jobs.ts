@@ -86,7 +86,10 @@ export function claimNextJob(db: Db = getDb()): JobRow | undefined {
         WHERE id = (
           SELECT id FROM jobs
            WHERE status = 'queued' AND run_after <= ?
-           ORDER BY priority DESC, created_at
+           -- Quick jobs first: an embed (seconds) waited behind every earlier
+           -- analysis (about 10 min each) before a finished video could be
+           -- searched by meaning. A probe is what makes a video analyzable.
+           ORDER BY priority DESC, CASE type WHEN 'embed' THEN 0 WHEN 'probe' THEN 0 ELSE 1 END, created_at
            LIMIT 1
         )
         RETURNING *`,
@@ -229,9 +232,14 @@ export function listJobsForVideo(videoId: string, db: Db = getDb()): JobRow[] {
  * explanation.
  */
 export function getActiveJobForVideo(videoId: string, db: Db = getDb()): JobRow | undefined {
+  // Every column but result_json: a running perception job keeps its
+  // checkpoint there (about 500 KB), and the page asks for this every 2 s.
   return db
     .prepare(
-      `SELECT * FROM jobs
+      `SELECT id, video_id, type, status, priority, payload_json, NULL AS result_json, progress_current,
+              progress_total, progress_label, attempts, max_attempts, run_after, last_error, created_at,
+              started_at, finished_at
+         FROM jobs
         WHERE video_id = ? AND status IN ('queued', 'running')
         ORDER BY created_at DESC
         LIMIT 1`,

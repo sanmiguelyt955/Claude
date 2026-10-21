@@ -89,7 +89,9 @@ export {
   isAnotherWorkerAlive,
   requeueOrphanedJobs,
 } from './repo/worker-lifecycle.js'
-export { searchLibrary, searchVideoKeywords } from './repo/library-search.js'
+export { searchLibrary, searchVideo, searchVideoKeywords } from './repo/library-search.js'
+export { recordChunks } from './repo/record-chunks.js'
+export type { RecordChunk } from './repo/record-chunks.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 
 export {
