@@ -105,7 +105,10 @@ export async function POST(request: Request, context: Params): Promise<NextRespo
       log: (msg) => console.log(`[chat] ${id}: ${msg}`),
       // Chat questions spend the same daily quota as analyses: count them.
       // The schema has no chat phase; deep_pass is the closest.
+      // Counted once answered: a web request is not cut off the way a
+      // killed worker is, so the early "sent" notice is not needed here.
       onAttempt: (a) =>
+        a.sent ||
         insertAnalysisRun({
           videoId: id,
           phase: 'deep_pass',

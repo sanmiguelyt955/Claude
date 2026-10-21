@@ -1,4 +1,4 @@
-import { describeWithFallback } from './chain.js'
+import { describeWithFallback, type Attempt } from './chain.js'
 import { claude } from './providers/claude.js'
 import { geminiProviders } from './providers/gemini.js'
 import type { VisionProvider } from './providers/types.js'
@@ -236,7 +236,7 @@ export async function askVideo(input: {
   providers?: VisionProvider[]
   log?: (msg: string) => void
   /** Every request sent, so the caller can count it in the daily quota. */
-  onAttempt?: (attempt: { provider: string; ok: boolean; error?: string; latencyMs: number }) => void
+  onAttempt?: (attempt: Attempt) => void
 }): Promise<{ answer: string; provider: string }> {
   const { value, provider } = await describeWithFallback(
     input.providers ?? chatProviders(),

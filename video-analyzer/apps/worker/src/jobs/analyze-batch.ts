@@ -70,9 +70,6 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
   if (!candidates.length) throw new Error('Ningun video del lote esta listo para analizar.')
 
   const { batch, skipped } = planBatch(candidates)
-  // Anything that did not fit goes back to the queue as its own job rather
-  // than being silently dropped.
-  for (const video of skipped) enqueueJob({ type: 'analyze', videoId: video.id }, db)
 
   const models = listVideoModelsWithQuota(db)
   if (!models.length) {
@@ -82,6 +79,16 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
     updateJobProgress(job.id, { label: reason }, db)
     deferJob(job.id, retryAfter.toISOString(), reason, db)
     throw new JobDeferred(reason)
+  }
+
+  // Anything that did not fit goes back to the queue as its own job rather
+  // than being silently dropped — once, after the quota check: before it,
+  // every deferral of this batch queued another copy.
+  for (const video of skipped) {
+    const active = db
+      .prepare("SELECT 1 FROM jobs WHERE video_id = ? AND type = 'analyze' AND status IN ('queued', 'running') AND id <> ? LIMIT 1")
+      .get(video.id, job.id)
+    if (!active) enqueueJob({ type: 'analyze', videoId: video.id }, db)
   }
 
   for (const video of batch) setVideoStatus(video.id, 'analyzing', null, db)
@@ -108,6 +115,35 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
       models,
       items,
       onProgress: (label) => updateJobProgress(job.id, { label }, db),
+      // Each refused call is a request Google counted, under its own model.
+      onFailedRequest: ({ model, error, latencyMs }) => {
+        // Only Google's daily quota is a daily limit: a per-minute 429
+        // carries its per-minute value ("5"), which was stored as the daily
+        // cap of the first model for good.
+        if (error.includes('PerDay')) {
+          const limit = parseQuotaLimit(new Error(error))
+          if (limit) recordModelDailyLimit(model, limit, db)
+        }
+        insertAnalysisRun(
+          {
+            videoId: batch[0]!.id,
+            jobId: job.id,
+            phase: 'first_pass',
+            model,
+            processingMode: 'STATIC',
+            inputTokens: 0,
+            outputTokens: 0,
+            cachedTokens: 0,
+            thoughtTokens: 0,
+            estimatedCostUsd: 0,
+            latencyMs,
+            succeeded: false,
+            errorMessage: error,
+            requestCount: 1,
+          },
+          db,
+        )
+      },
     })
     const latencyMs = Date.now() - startedAt
 
@@ -187,8 +223,6 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
         (missingKeys.length ? `, ${missingKeys.length} reencolados` : ''),
     )
   } catch (error) {
-    const limit = parseQuotaLimit(error)
-    if (limit) recordModelDailyLimit(models[0]!, limit, db)
     for (const video of batch) setVideoStatus(video.id, 'queued', null, db)
     insertAnalysisRun(
       {
@@ -205,6 +239,9 @@ export async function runAnalyzeBatchJob(job: JobRow, db: Db): Promise<void> {
         latencyMs: Date.now() - startedAt,
         succeeded: false,
         errorMessage: (error as Error).message,
+        // The requests themselves were counted one by one above; an upload
+        // failure sent none.
+        requestCount: 0,
       },
       db,
     )

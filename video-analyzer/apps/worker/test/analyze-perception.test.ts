@@ -28,6 +28,7 @@ mkdirSync(path.join(root, 'db'), { recursive: true })
 type MemoryEngine = typeof import('@cva/memory-engine')
 let me: MemoryEngine
 let runAnalyzePerceptionJob: typeof import('../src/jobs/analyze-perception.ts').runAnalyzePerceptionJob
+let providerRequestRecorder: typeof import('../src/jobs/analyze-perception.ts').providerRequestRecorder
 let server: http.Server
 let overloadNext = 0
 let rejectSummaryNext = 0
@@ -36,7 +37,7 @@ const imagesPerCall: number[] = []
 
 before(async () => {
   me = await import('@cva/memory-engine')
-  ;({ runAnalyzePerceptionJob } = await import('../src/jobs/analyze-perception.ts'))
+  ;({ runAnalyzePerceptionJob, providerRequestRecorder } = await import('../src/jobs/analyze-perception.ts'))
   me.migrate(me.getDb())
 
   server = http.createServer((req, res) => {
@@ -236,6 +237,20 @@ test('folders: a trimmed name per video, empty takes it out', () => {
   assert.equal(me.setVideoFolder(id, 'x'.repeat(100), db)!.length, me.MAX_FOLDER_CHARS)
   assert.equal(me.setVideoFolder(id, '   ', db), null)
   assert.equal(me.getVideo(id, db)!.folder, null)
+})
+
+test('a request is counted the moment it is sent, so closing the app mid-request does not lose it', () => {
+  const db = me.getDb()
+  const { id, job } = queueVideo('en vuelo')
+  const record = providerRequestRecorder(id, job.id, db)
+  const rows = () => db.prepare("SELECT succeeded, request_count, error_message FROM analysis_runs WHERE video_id = ? AND model = 'gemini-3.8-flash'").all(id) as Array<{ succeeded: number; request_count: number; error_message: string | null }>
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, latencyMs: 0, sent: true })
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, latencyMs: 0, sent: true })
+  // Killed here: both already count against today's quota.
+  assert.deepEqual(rows().map((r) => r.request_count), [1, 1])
+  record({ provider: 'gemini:gemini-3.8-flash', ok: true, latencyMs: 900 })
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, error: 'HTTP 503', latencyMs: 400 })
+  assert.deepEqual(rows().map((r) => [r.succeeded, r.request_count, r.error_message]).sort(), [[0, 1, 'HTTP 503'], [1, 1, null]])
 })
 
 // Last on purpose: the chain remembers a model's daily pause for the whole process.

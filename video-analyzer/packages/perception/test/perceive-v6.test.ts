@@ -345,6 +345,10 @@ test('once a window fails for good, no new window is asked; those in flight fini
   execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=95:r=5', '-f', 'lavfi', '-i', 'sine=f=440:d=95', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
   const calls: VisionRequest[] = []
   const good = fakeGemini(calls)
+  // The first window fails only once the second one's request is out, so
+  // that one is really in flight (a window not sent yet is not sent at all).
+  let inFlight!: () => void
+  const secondSent = new Promise<void>((r) => (inFlight = r))
   const breaking: VisionProvider = {
     name: 'breaking',
     available: () => true,
@@ -352,8 +356,10 @@ test('once a window fails for good, no new window is asked; those in flight fini
       if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
         if (/del segundo 0\.00 /.test(req.instruction)) {
           calls.push(req)
+          await secondSent
           throw new Error('breaking HTTP 400: imagen no válida')
         }
+        inFlight()
         await new Promise((r) => setTimeout(r, 300))
       }
       return good.describe(req)

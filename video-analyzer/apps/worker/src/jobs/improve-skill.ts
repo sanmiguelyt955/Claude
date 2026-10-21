@@ -9,7 +9,7 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { proposeSkillImprovements } from '@cva/ai-router'
 import { buildVideoDigest, readExternalSkillMd } from '@cva/skill-engine'
-import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
+import { listSkillModelsWithQuota, skillPoolBlock } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
 
 type ImproveSkillPayload = { videoId: string; skillId?: string; sourceSkillPath?: string }
@@ -44,9 +44,9 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
 
   const models = listSkillModelsWithQuota(db)
   if (!models.length) {
-    const quota = checkQuota(db, SKILL_MODEL)
-    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
-    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    // The earliest any model of the pool is free: Flash-Lite pacing itself
+    // frees up within a minute even when the Flash models are out for the day.
+    const { reason, retryAfter } = skillPoolBlock(db)
     updateJobProgress(job.id, { label: reason }, db)
     deferJob(job.id, retryAfter.toISOString(), reason, db)
     throw new JobDeferred(reason)

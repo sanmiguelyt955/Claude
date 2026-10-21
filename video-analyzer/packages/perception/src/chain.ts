@@ -30,6 +30,13 @@ export function shouldFallback(err: unknown): boolean {
   return /overload|high demand|UNAVAILABLE|RESOURCE_EXHAUSTED/i.test(String(err))
 }
 
+/**
+ * One request to a provider. `sent` comes first, the moment it leaves (Google
+ * counts it from then on, even if this process is killed before the answer);
+ * the same request then comes back without `sent`, answered or not.
+ */
+export type Attempt = { provider: string; ok: boolean; error?: string; latencyMs: number; sent?: true }
+
 export type FallbackOptions<T> = {
   /** Default pause for a provider that overloaded without saying how long. */
   cooldownMs?: number
@@ -52,7 +59,7 @@ export type FallbackOptions<T> = {
    * Called for every request actually sent to a provider, answered or not.
    * Quotas count requests, so the caller records each one under its model.
    */
-  onAttempt?: (attempt: { provider: string; ok: boolean; error?: string; latencyMs: number }) => void
+  onAttempt?: (attempt: Attempt) => void
   /**
    * Stops the retries: checked before every request and during every wait.
    * A request already sent is answered first. Aborting throws the signal's
@@ -205,6 +212,7 @@ export async function describeWithFallback<T = string>(
     if (strikes.get(p.name)) probing.set(p.name, now() + SPIKE_PAUSE_MS)
     let text: string
     const started = now()
+    opts.onAttempt?.({ provider: p.name, ok: false, latencyMs: 0, sent: true })
     try {
       text = await p.describe(req)
       opts.onAttempt?.({ provider: p.name, ok: true, latencyMs: now() - started })

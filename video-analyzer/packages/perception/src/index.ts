@@ -9,6 +9,7 @@ export {
 } from './perceive.js'
 export type { PerceiveOptions, PerceptionCheckpoint, PerceptionResult } from './perceive.js'
 export { describeWithFallback, shouldFallback } from './chain.js'
+export type { Attempt } from './chain.js'
 export { extractFrames, extractFramesAndCuts, extractAudio, probeMedia, DEFAULT_FRAME_OPTIONS } from './frames.js'
 export type { Frame, FrameOptions } from './frames.js'
 export { dedupFrames } from './frames.js'

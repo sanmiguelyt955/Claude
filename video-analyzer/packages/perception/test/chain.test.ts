@@ -334,3 +334,10 @@ test('Claude is a last resort: it does not take windows while Gemini only paces 
     else process.env.ANTHROPIC_API_KEY = saved
   }
 })
+
+test('each request is reported when it is sent and again when it is answered', async () => {
+  const events: string[] = []
+  const slow: VisionProvider = { name: 'slow', available: () => true, describe: async () => { events.push('answering'); return 'ok' } }
+  await describeWithFallback([slow], { frames: [], instruction: 'x' }, { onAttempt: (a) => events.push(a.sent ? 'sent' : a.ok ? 'answered' : 'failed') })
+  assert.deepEqual(events, ['sent', 'answering', 'answered'])
+})

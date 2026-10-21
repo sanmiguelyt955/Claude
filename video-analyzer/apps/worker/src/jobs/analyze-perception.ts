@@ -15,7 +15,7 @@ import {
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { perceive, parseCheckpoint, parseVtt, type Transcript } from '@cva/perception'
+import { perceive, parseCheckpoint, parseVtt, type Attempt, type Transcript } from '@cva/perception'
 import { parseQuotaLimit } from '@cva/ai-router'
 import { JobDeferred } from '../deferred.js'
 
@@ -51,7 +51,7 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     const result = await perceive(file, workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
       onProgress: (p) => updateJobProgress(job.id, p, db),
-      onAttempt: (a) => recordProviderRequest(video.id, job.id, a, db),
+      onAttempt: providerRequestRecorder(video.id, job.id, db),
       captions,
       checkpoint,
       title: video.title,
@@ -166,40 +166,71 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
  * One row per request sent to a provider, under the model's own name, so the
  * per-model daily quota (checkQuota) and the analysis history both count it.
  * The job's summary row keeps request_count 0 to avoid counting twice.
+ *
+ * The row is written when the request leaves, not when it is answered:
+ * Google counts it from then on, and requests in flight when the worker is
+ * closed used to be missing from the local count. The answer then fills in
+ * the oldest open row of that provider.
  */
-function recordProviderRequest(
-  videoId: string,
-  jobId: string,
-  a: { provider: string; ok: boolean; error?: string; latencyMs: number },
-  db: Db,
-): void {
-  const model = a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider
-  // Google's own daily cap, from its 429 ("quotaValue"), makes the quota
-  // screens a fact instead of an assumption. Only the PerDay quota counts:
-  // a per-minute 429 carries its per-minute value.
-  if (a.error?.includes('PerDay')) {
-    const limit = parseQuotaLimit(new Error(a.error))
-    if (limit) recordModelDailyLimit(model, limit, db)
+export function providerRequestRecorder(videoId: string, jobId: string, db: Db): (a: Attempt) => void {
+  const open = new Map<string, string[]>()
+  return (a) => {
+    const model = a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider
+    if (a.sent) {
+      const row = insertAnalysisRun(
+        {
+          videoId,
+          jobId,
+          phase: 'first_pass',
+          model,
+          processingMode: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          thoughtTokens: 0,
+          estimatedCostUsd: 0,
+          latencyMs: 0,
+          succeeded: false,
+          errorMessage: 'sin respuesta: el análisis se cerró antes de que llegara',
+          requestCount: 1,
+        },
+        db,
+      )
+      open.set(a.provider, [...(open.get(a.provider) ?? []), row.id])
+      return
+    }
+    // Google's own daily cap, from its 429 ("quotaValue"), makes the quota
+    // screens a fact instead of an assumption. Only the PerDay quota counts:
+    // a per-minute 429 carries its per-minute value.
+    if (a.error?.includes('PerDay')) {
+      const limit = parseQuotaLimit(new Error(a.error))
+      if (limit) recordModelDailyLimit(model, limit, db)
+    }
+    const id = open.get(a.provider)?.shift()
+    if (id) {
+      db.prepare('UPDATE analysis_runs SET succeeded = ?, error_message = ?, latency_ms = ? WHERE id = ?').run(a.ok ? 1 : 0, a.error ?? null, a.latencyMs, id)
+      return
+    }
+    insertAnalysisRun(
+      {
+        videoId,
+        jobId,
+        phase: 'first_pass',
+        model,
+        processingMode: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        thoughtTokens: 0,
+        estimatedCostUsd: 0,
+        latencyMs: a.latencyMs,
+        succeeded: a.ok,
+        errorMessage: a.error ?? null,
+        requestCount: 1,
+      },
+      db,
+    )
   }
-  insertAnalysisRun(
-    {
-      videoId,
-      jobId,
-      phase: 'first_pass',
-      model,
-      processingMode: null,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      thoughtTokens: 0,
-      estimatedCostUsd: 0,
-      latencyMs: a.latencyMs,
-      succeeded: a.ok,
-      errorMessage: a.error ?? null,
-      requestCount: 1,
-    },
-    db,
-  )
 }
 
 /** The platform captions the download saved next to the video, if any. */
