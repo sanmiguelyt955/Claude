@@ -18,7 +18,7 @@
     "test": "npm run test:whisper && npm run test:perception && npm run test:video-processor && npm run test:worker && npm run test:skills && npm run test:web && npm run test:memory",
     "test:whisper": "python3 -m unittest discover -s packages/perception/scripts/tests",
     "test:video-processor": "node --import tsx --test --test-reporter=dot packages/video-processor/test/*.test.ts",
-    "test:skills": "node --import tsx --test --test-reporter=dot packages/skill-engine/test/*.test.ts",
+    "test:skills": "node --import tsx --test --test-reporter=dot packages/skill-engine/test/*.test.ts packages/vault-export/test/*.test.ts",
     "test:web": "node --import tsx --test --test-reporter=dot apps/web/test/*.test.ts",
     "test:memory": "node --import tsx --test --test-reporter=dot packages/memory-engine/test/*.test.ts"
   },

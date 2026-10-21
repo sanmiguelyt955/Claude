@@ -11,10 +11,10 @@ import { generateSkillContent } from '@cva/ai-router'
 import { buildSegmentDigest, writeSkillFolder, normalizeSkillName, clampDescription } from '@cva/skill-engine'
 import { listSkillModelsWithQuota, skillPoolBlock } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
+import { requireGeminiKey, skillRequestLogger } from '../skill-requests.js'
 
 type GenerateSkillPayload = { skillId: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.8-flash'
 
 /**
  * Handles 'generate_skill' (PROJECT.md §12, "Crear Skill" button): writes
@@ -38,6 +38,7 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('La skill no tiene video o rango de tiempo asociado.')
   }
 
+  requireGeminiKey(job, db)
   const models = listSkillModelsWithQuota(db)
   if (!models.length) {
     // The earliest any model of the pool is free: Flash-Lite pacing itself
@@ -58,28 +59,10 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
       models,
       name: skill.name,
       description: skill.description,
-      rationale: `Detectado entre los segundos ${skill.start_seconds} y ${skill.end_seconds}.`,
+      rationale: skill.rationale || `Detectado entre los segundos ${skill.start_seconds} y ${skill.end_seconds}.`,
       segmentDigest: digest,
+      onRequest: skillRequestLogger(skill.video_id, job.id, 'skill_generation', db),
     })
-    const latencyMs = Date.now() - startedAt
-
-    insertAnalysisRun(
-      {
-        videoId: skill.video_id,
-        jobId: job.id,
-        phase: 'skill_generation',
-        model: modelUsed,
-        processingMode: null,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedTokens: usage.cachedTokens,
-        thoughtTokens: usage.thoughtTokens,
-        estimatedCostUsd: usage.estimatedCostUsd,
-        latencyMs,
-        succeeded: true,
-      },
-      db,
-    )
 
     const name = normalizeSkillName(content.name || skill.name)
     const description = clampDescription(content.description || skill.description)
@@ -90,6 +73,7 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
       bodyMarkdown: content.body_markdown,
       references: content.references ?? [],
       scripts: content.scripts ?? [],
+      owner: skillId,
     })
 
     saveGeneratedSkill(skillId, { skillMd, outputPath, assets }, db)
@@ -101,7 +85,7 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
         videoId: skill.video_id,
         jobId: job.id,
         phase: 'skill_generation',
-        model: SKILL_MODEL,
+        model: models[0]!,
         processingMode: null,
         inputTokens: 0,
         outputTokens: 0,
@@ -111,6 +95,8 @@ export async function runGenerateSkillJob(job: JobRow, db: Db): Promise<void> {
         latencyMs,
         succeeded: false,
         errorMessage: (error as Error).message,
+        // Each request was counted as it was sent; this row is the job's outcome.
+        requestCount: 0,
       },
       db,
     )

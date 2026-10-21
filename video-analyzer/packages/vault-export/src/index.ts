@@ -1,8 +1,8 @@
 import path from 'node:path'
-import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, readdir, access } from 'node:fs/promises'
 import { getVideo } from '@cva/memory-engine'
 import type { Db } from '@cva/memory-engine'
-import { buildVideoMarkdown, formatVaultDate } from './markdown.js'
+import { buildVideoMarkdown, formatVaultDate, noteMarker } from './markdown.js'
 
 export { buildVideoMarkdown, formatVaultDate } from './markdown.js'
 
@@ -24,7 +24,8 @@ export function getVaultFolder(): string {
  */
 function safeFileName(title: string): string {
   const cleaned = title
-    .replace(/\.[a-z0-9]{2,4}$/i, '') // drop a trailing file extension
+    // Only a video's extension: "Curso de Node.js" kept losing its ".js".
+    .replace(/\.(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|aac|ogg|flac)$/i, '')
     .replace(/[\\/:*?"<>|[\]#^]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -64,6 +65,16 @@ async function updateFolderIndex(folderPath: string, noteName: string): Promise<
   return true
 }
 
+async function existingNote(folderPath: string, videoId: string): Promise<string | undefined> {
+  const marker = noteMarker(videoId)
+  for (const file of await readdir(folderPath).catch(() => [] as string[])) {
+    if (!file.endsWith('.md') || file === '_Índice.md') continue
+    const text = await readFile(path.join(folderPath, file), 'utf8').catch(() => '')
+    if (text.includes(marker)) return file.slice(0, -3)
+  }
+  return undefined
+}
+
 export type VaultExportResult = {
   notePath: string
   noteName: string
@@ -91,14 +102,16 @@ export async function exportVideoToVault(videoId: string, db?: Db): Promise<Vaul
   const video = getVideo(videoId, db)
   if (!video) throw new Error(`El video ${videoId} no existe.`)
   if (video.status !== 'ready') {
-    throw new Error(`El video todavia no tiene analisis (esta en "${video.status}").`)
+    throw new Error(`El video todavía no tiene análisis (está en "${video.status}").`)
   }
 
   const markdown = buildVideoMarkdown(videoId, db)
-  const noteName = `${safeFileName(video.title)} (${formatVaultDate()})`
   const folderPath = path.join(vaultPath, getVaultFolder())
 
   await mkdir(folderPath, { recursive: true })
+  // The note already exported for this video, whatever day it was: the date
+  // in the name made each later export a second full copy.
+  const noteName = (await existingNote(folderPath, videoId)) ?? `${safeFileName(video.title)} (${formatVaultDate()})`
   const notePath = path.join(folderPath, `${noteName}.md`)
   await writeFile(notePath, markdown, 'utf8')
 

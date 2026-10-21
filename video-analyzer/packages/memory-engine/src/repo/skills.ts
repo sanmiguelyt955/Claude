@@ -9,6 +9,7 @@ export type SkillCandidateInput = {
   startSeconds: number | null
   endSeconds: number | null
   confidence: number | null
+  rationale?: string | null
 }
 
 /** Persists candidates found by the 'detect_skills' job, one row each, status='detected'. */
@@ -18,8 +19,8 @@ export function insertSkillCandidates(
   db: Db = getDb(),
 ): SkillRow[] {
   const insert = db.prepare(
-    `INSERT INTO skills (id, video_id, name, description, start_seconds, end_seconds, confidence)
-     VALUES (@id, @videoId, @name, @description, @startSeconds, @endSeconds, @confidence)`,
+    `INSERT INTO skills (id, video_id, name, description, start_seconds, end_seconds, confidence, rationale)
+     VALUES (@id, @videoId, @name, @description, @startSeconds, @endSeconds, @confidence, @rationale)`,
   )
   const ids = db.transaction(() => {
     return candidates.map((c) => {
@@ -32,6 +33,7 @@ export function insertSkillCandidates(
         startSeconds: c.startSeconds,
         endSeconds: c.endSeconds,
         confidence: c.confidence,
+        rationale: c.rationale ?? null,
       })
       return id
     })
@@ -110,4 +112,20 @@ export function listGeneratedSkills(db: Db = getDb()): SkillRow[] {
 export function updateSkillMd(id: string, skillMd: string, db: Db = getDb()): SkillRow {
   db.prepare('UPDATE skills SET skill_md = ?, version = version + 1 WHERE id = ?').run(skillMd, id)
   return getSkill(id, db)!
+}
+
+/**
+ * A new "Detectar skills" replaces the candidates of the previous one that
+ * were neither turned into a skill nor discarded: running it again used to
+ * stack a second copy of every candidate.
+ */
+export function replaceDetectedCandidates(videoId: string, candidates: SkillCandidateInput[], db: Db = getDb()): SkillRow[] {
+  return db.transaction(() => {
+    db.prepare("DELETE FROM skills WHERE video_id = ? AND status = 'detected'").run(videoId)
+    const kept = new Set(
+      (db.prepare("SELECT name FROM skills WHERE video_id = ? AND status IN ('generating', 'generated')").all(videoId) as Array<{ name: string }>).map((r) => r.name),
+    )
+    // One already being created or created is not offered again.
+    return insertSkillCandidates(videoId, candidates.filter((c) => !kept.has(c.name)), db)
+  })()
 }

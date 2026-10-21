@@ -90,12 +90,13 @@ export {
   requeueOrphanedJobs,
 } from './repo/worker-lifecycle.js'
 export { searchLibrary, searchVideo, searchVideoKeywords } from './repo/library-search.js'
-export { recordChunks } from './repo/record-chunks.js'
+export { recordChunks, recordSection } from './repo/record-chunks.js'
 export type { RecordChunk } from './repo/record-chunks.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 
 export {
   insertSkillCandidates,
+  replaceDetectedCandidates,
   getSkill,
   listSkillsForVideo,
   setSkillStatus,

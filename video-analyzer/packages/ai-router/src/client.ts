@@ -15,6 +15,9 @@ export function getGeminiClient(): GoogleGenAI {
       'Falta GEMINI_API_KEY. Copia .env.example a .env.local y agrega tu clave de https://aistudio.google.com/apikey.',
     )
   }
-  cached = new GoogleGenAI({ apiKey })
+  // GEMINI_BASE_URL points at a local stand-in (tests), as in @cva/perception:
+  // without it skills, embeddings and batches still went to Google.
+  const baseUrl = process.env.GEMINI_BASE_URL?.trim()
+  cached = new GoogleGenAI({ apiKey, ...(baseUrl ? { httpOptions: { baseUrl } } : {}) })
   return cached
 }

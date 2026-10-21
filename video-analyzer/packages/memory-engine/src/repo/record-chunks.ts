@@ -18,7 +18,8 @@ export function recordTime(t: string): number | undefined {
   return Math.round(parts.reduce((acc, p) => acc * 60 + p, 0) * 100) / 100
 }
 
-function section(md: string, id: string): string {
+/** One "## 9.x" section of the record without its heading; '' when absent. */
+export function recordSection(md: string, id: string): string {
   const at = md.search(new RegExp(`^## ${id.replace('.', '\\.')}\\b`, 'm'))
   if (at === -1) return ''
   const body = md.slice(md.indexOf('\n', at) + 1)
@@ -40,7 +41,7 @@ export function recordChunks(md: string | null | undefined): RecordChunk[] {
     if (current) entries.push({ start: current.start, end: current.end, text: current.lines.join(' ') })
     current = undefined
   }
-  for (const line of section(md, '9.5').split('\n')) {
+  for (const line of recordSection(md, '9.5').split('\n')) {
     const m = head.exec(line.trim())
     if (m) {
       close()
@@ -72,7 +73,7 @@ export function recordChunks(md: string | null | undefined): RecordChunk[] {
   flush()
 
   // 9.7: "**TX3** — aparece 01:32.52 / desaparece 01:36.04 (…)" then labelled lines.
-  const texts = section(md, '9.7').split(/^(?=\*\*TX)/m)
+  const texts = recordSection(md, '9.7').split(/^(?=\*\*TX)/m)
   for (const block of texts) {
     const m = new RegExp(String.raw`^\*\*(TX[^*]*)\*\*.*?aparece\s+${TIME}(?:.*?desaparece\s+${TIME})?`).exec(block)
     if (!m) continue

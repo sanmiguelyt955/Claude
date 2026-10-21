@@ -1,6 +1,4 @@
-import { getGeminiClient } from './client.js'
-import { isQuotaExhaustedError } from './analyze-video.js'
-import { estimateCostUsd } from './cost.js'
+import { callTextJson, type RequestEvent } from './analyze-video.js'
 import type { TokenUsage } from './types.js'
 
 /**
@@ -11,85 +9,25 @@ import type { TokenUsage } from './types.js'
  * are explicit that GEMINI_SKILL_MODEL still shares the account's 20 RPD
  * ceiling with video analysis, so every call here still spends real quota.
  */
-const MAX_OUTPUT_TOKENS = 16384
-
-function usageFromGenerateContent(usage: {
-  promptTokenCount?: number
-  candidatesTokenCount?: number
-  cachedContentTokenCount?: number
-  thoughtsTokenCount?: number
-}): TokenUsage {
-  const inputTokens = usage.promptTokenCount ?? 0
-  const outputTokens = usage.candidatesTokenCount ?? 0
-  const cachedTokens = usage.cachedContentTokenCount ?? 0
-  const thoughtTokens = usage.thoughtsTokenCount ?? 0
-  return {
-    inputTokens,
-    outputTokens,
-    cachedTokens,
-    thoughtTokens,
-    estimatedCostUsd: estimateCostUsd({ inputTokens, outputTokens, cachedTokens, thoughtTokens }),
-  }
-}
 
 /**
  * Runs the prompt against the first model in `models` that answers. Same
  * reasoning as analyzeVideo's rotation: Gemini's free-tier daily cap is per
  * model, so one model being out of quota is a reason to try the next, not to
- * fail the job. Skill detection/generation share that cap with video
- * analysis, which is exactly why they need the rotation too.
+ * fail the job. It goes through the same request path as the video windows
+ * (time limit, pacing, 503 cooldown): a bare call here could hang the worker
+ * for 5 minutes and retried a saturated model at once.
  */
 async function runTextJson<T>(
   models: string[],
   prompt: string,
   schema: object,
+  label: string,
+  onRequest?: (event: RequestEvent) => void,
 ): Promise<{ result: T; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   if (!models.length) throw new Error('Se requiere al menos un modelo.')
-
-  for (const [index, model] of models.entries()) {
-    try {
-      return { ...(await runTextJsonOnce<T>(model, prompt, schema)), modelUsed: model }
-    } catch (error) {
-      if (index === models.length - 1) throw error
-      const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : 'fallo'
-      console.warn(`[ai-router] ${model} ${reason}, probando ${models[index + 1]}...`)
-    }
-  }
-
-  throw new Error('No se pudo completar la llamada con ninguno de los modelos configurados.')
-}
-
-async function runTextJsonOnce<T>(
-  model: string,
-  prompt: string,
-  schema: object,
-): Promise<{ result: T; usage: TokenUsage; rawResponseText: string }> {
-  const ai = getGeminiClient()
-  const response = await ai.models.generateContent({
-    model,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: schema,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-    },
-  })
-
-  if (response.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
-    throw new Error(`Gemini corto la respuesta por exceder ${MAX_OUTPUT_TOKENS} tokens de salida.`)
-  }
-
-  const text = response.text
-  if (!text) throw new Error('Gemini no devolvio texto.')
-
-  let parsed: T
-  try {
-    parsed = JSON.parse(text.trim()) as T
-  } catch {
-    throw new Error('Gemini no devolvio JSON valido.')
-  }
-
-  return { result: parsed, usage: usageFromGenerateContent(response.usageMetadata ?? {}), rawResponseText: text }
+  const { value, usage, model, rawText } = await callTextJson<T>({ models, label, prompt, schema, onRequest })
+  return { result: value, usage, rawResponseText: rawText, modelUsed: model }
 }
 
 // ── Deteccion de Skills (PROJECT.md §12) ───────────────────────────────────
@@ -154,12 +92,16 @@ CONTENIDO DEL VIDEO:
 export async function detectSkillCandidates(input: {
   models: string[]
   videoDigest: string
+  /** Every request sent, answered or not, with its model: quotas count each one. */
+  onRequest?: (event: RequestEvent) => void
 }): Promise<{ candidates: SkillCandidate[]; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = SKILL_DETECTION_PROMPT_HEADER + input.videoDigest
   const { result, usage, rawResponseText, modelUsed } = await runTextJson<{ candidates: SkillCandidate[] }>(
     input.models,
     prompt,
     SKILL_CANDIDATES_SCHEMA,
+    'Detectar skills',
+    input.onRequest,
   )
   return { candidates: result.candidates ?? [], usage, rawResponseText, modelUsed }
 }
@@ -178,7 +120,7 @@ const SKILL_GENERATION_SCHEMA = {
   type: 'object',
   properties: {
     name: { type: 'string', description: 'Igual al name candidato, minusculas/numeros/guiones, <=64 caracteres.' },
-    description: { type: 'string', description: 'Frontmatter description, <=200 caracteres, en espanol.' },
+    description: { type: 'string', description: 'Frontmatter description, hasta 1024 caracteres, en espanol: que hace y cuando activarla.' },
     body_markdown: {
       type: 'string',
       description:
@@ -224,7 +166,7 @@ ${input.segmentDigest}
 
 Instrucciones:
 - "name" debe ser igual o una version corregida (minusculas/numeros/guiones, <=64 caracteres) del nombre candidato.
-- "description" <=200 caracteres, en espanol, describiendo que hace la skill y cuando activarla.
+- "description" hasta 1024 caracteres, en espanol, describiendo que hace la skill y cuando activarla (las frases o situaciones que deben dispararla).
 - "body_markdown" es el cuerpo del SKILL.md: explica el proceso paso a paso con el detalle exacto que el video da (herramientas, orden, decisiones, valores concretos si los hay), de forma que alguien que nunca vio el video pueda seguirlo.
 - Genera "references" o "scripts" SOLO si el video realmente da contenido para eso (una plantilla larga, un script literal). Si no, deja ambos arrays vacios.
 - Responde SOLO el JSON, sin markdown ni comentarios.`
@@ -236,12 +178,16 @@ export async function generateSkillContent(input: {
   description: string
   rationale: string
   segmentDigest: string
+  /** Every request sent, answered or not, with its model: quotas count each one. */
+  onRequest?: (event: RequestEvent) => void
 }): Promise<{ skill: GeneratedSkillContent; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = buildSkillGenerationPrompt(input)
   const { result, usage, rawResponseText, modelUsed } = await runTextJson<GeneratedSkillContent>(
     input.models,
     prompt,
     SKILL_GENERATION_SCHEMA,
+    'Crear skill',
+    input.onRequest,
   )
   return { skill: result, usage, rawResponseText, modelUsed }
 }
@@ -322,12 +268,16 @@ export async function proposeSkillImprovements(input: {
   models: string[]
   existingSkillMd: string
   videoDigest: string
+  /** Every request sent, answered or not, with its model: quotas count each one. */
+  onRequest?: (event: RequestEvent) => void
 }): Promise<{ improvements: ProposedSkillImprovement[]; usage: TokenUsage; rawResponseText: string; modelUsed: string }> {
   const prompt = buildSkillImprovementPrompt(input)
   const { result, usage, rawResponseText, modelUsed } = await runTextJson<{ improvements: ProposedSkillImprovement[] }>(
     input.models,
     prompt,
     SKILL_IMPROVEMENTS_SCHEMA,
+    'Mejorar skill',
+    input.onRequest,
   )
   return { improvements: result.improvements ?? [], usage, rawResponseText, modelUsed }
 }

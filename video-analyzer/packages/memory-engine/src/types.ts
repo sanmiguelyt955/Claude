@@ -172,6 +172,8 @@ export type SkillRow = {
   output_path: string | null
   assets_json: string
   confidence: number | null
+  /** Why detection found this stretch reusable (migration 009); null for older rows. */
+  rationale: string | null
   created_at: string
   updated_at: string
 }

@@ -1162,6 +1162,39 @@ async function callJsonWithRotation<T>(opts: {
   throw Object.assign(lastError ?? new Error(`${opts.label}: ningun modelo disponible.`), { requestsSpent: requests })
 }
 
+/**
+ * A text-only JSON call (the skill calls) with the same care as the video
+ * windows: a time limit per request, per-model pacing, a cooldown for a
+ * model answering 503, a skip for one out of daily quota, and every request
+ * reported through `onRequest` with its own model.
+ */
+export async function callTextJson<T>(opts: {
+  models: string[]
+  label: string
+  prompt: string
+  schema: object
+  onRequest?: (event: RequestEvent) => void
+}): Promise<{ value: T; usage: TokenUsage; model: string; rawText: string }> {
+  let rawText = ''
+  const { value, usage, model } = await callJsonWithRotation<T>({
+    models: opts.models,
+    deadModels: new Map(),
+    emit: opts.onRequest ?? (() => {}),
+    label: opts.label,
+    parts: [{ text: opts.prompt }],
+    schema: opts.schema,
+    parse: (text) => {
+      rawText = text
+      try {
+        return JSON.parse(text.trim()) as T
+      } catch {
+        throw new Error(`${opts.label}: Gemini no devolvió JSON válido.`)
+      }
+    },
+  })
+  return { value, usage, model, rawText }
+}
+
 /** "mm:ss" / "mm:ss.s" / "hh:mm:ss" → seconds; NaN if unreadable. */
 function parseClock(value: string): number {
   const m = value.match(/(\d+):(\d{1,2}(?:\.\d+)?)(?::(\d{1,2}(?:\.\d+)?))?/)
