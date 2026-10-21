@@ -21,7 +21,8 @@ faster-whisper runs on an NVIDIA graphics card when there is one (--device
 auto, the default): float16 on the card, int8 on the CPU otherwise. On
 Windows the CUDA libraries come from the nvidia-cublas-cu12 and
 nvidia-cudnn-cu12 pip packages, which the launcher installs when it finds
-nvidia-smi. Any failure on the card falls back to the CPU.
+nvidia-smi. Any failure on the card falls back to the CPU, and the JSON then
+carries the reason in "gpu_error".
 """
 import argparse
 import json
@@ -30,13 +31,15 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+SAMPLE_RATE = 16000  # what nuestro_whisper.audio.load_audio decodes to
 
-def run_propio(wav: str, model: str, language: str | None, beam_size: int, fallback: bool) -> dict:
+
+def run_propio(audio, model: str, language: str | None, beam_size: int, fallback: bool) -> dict:
     from nuestro_whisper import transcribe
     from nuestro_whisper.decoding import TEMPERATURES
 
     temperatures = TEMPERATURES if fallback else (0.0,)
-    return transcribe(wav, model=model, language=language, beam_size=beam_size, temperatures=temperatures)
+    return transcribe(audio, model=model, language=language, beam_size=beam_size, temperatures=temperatures)
 
 
 def split_sentences(words: list[dict], max_seconds: float = 8.0, pause: float = 0.8) -> list[dict]:
@@ -46,25 +49,42 @@ def split_sentences(words: list[dict], max_seconds: float = 8.0, pause: float = 
     the timeline, the player jumps and the speaker labels. A segment ends at
     sentence punctuation, at a pause longer than `pause`, or once it runs
     past `max_seconds` (8 s: the protocol V6.5 limit for one transcript line,
-    so a long line cannot hide the words it skipped)."""
+    so a long line cannot hide the words it skipped). A line that runs too
+    long is cut after its last comma, semicolon or colon when the words after
+    it still fit, so it ends on a phrase instead of mid-phrase."""
     out: list[dict] = []
     current: list[dict] = []
 
-    def close() -> None:
-        text = "".join(w["word"] for w in current).strip()
+    def close(upto: int | None = None) -> None:
+        part = current[:upto] if upto else list(current)
+        text = "".join(w["word"] for w in part).strip()
         if text:
-            out.append({"start": round(current[0]["start"], 2), "end": round(current[-1]["end"], 2), "text": text})
-        current.clear()
+            out.append({"start": round(part[0]["start"], 2), "end": round(part[-1]["end"], 2), "text": text})
+        del current[: len(part)]
 
     for w in words:
-        if current and (w["start"] - current[-1]["end"] > pause or w["end"] - current[0]["start"] > max_seconds):
+        if current and w["start"] - current[-1]["end"] > pause:
             close()
+        elif current and w["end"] - current[0]["start"] > max_seconds:
+            cut = max((i + 1 for i, x in enumerate(current) if x["word"].strip().endswith((",", ";", ":"))), default=0)
+            close(cut if 0 < cut < len(current) and w["end"] - current[cut]["start"] <= max_seconds else None)
         current.append(w)
         if w["word"].strip().endswith((".", "?", "!", "…", "。")):
             close()
     if current:
         close()
     return out
+
+
+def within(words: list[dict], duration: float) -> list[dict]:
+    """Word times capped at the end of the audio: the engines pad the last
+    stretch, and its last word could otherwise end after the file does. The
+    cap is the hundredth below, so the rounded segment times stay inside too."""
+    limit = int(duration * 100) / 100
+    for w in words:
+        w["start"] = min(w["start"], limit)
+        w["end"] = min(w["end"], limit)
+    return words
 
 
 def add_cuda_dll_dirs() -> None:
@@ -95,7 +115,7 @@ def pick_device(device: str) -> str:
         return "cpu"
 
 
-def run_faster_whisper_on(wav: str, model: str, language: str | None, beam_size: int, device: str, compute_type: str | None) -> dict:
+def run_faster_whisper_on(audio, model: str, language: str | None, beam_size: int, device: str, compute_type: str | None) -> dict:
     """faster-whisper on `device` (auto/cuda/cpu); a failure on the card retries on the CPU."""
     chosen = pick_device(device)
     if chosen == "cuda":
@@ -105,29 +125,36 @@ def run_faster_whisper_on(wav: str, model: str, language: str | None, beam_size:
         # small does on the CPU. WHISPER_GPU_MODEL= (empty) keeps `model`.
         gpu_model = os.environ.get("WHISPER_GPU_MODEL", "large-v3-turbo") or model
         try:
-            out = run_faster_whisper(wav, gpu_model, language, beam_size, "cuda", compute_type or "int8_float16")
+            out = run_faster_whisper(audio, gpu_model, language, beam_size, "cuda", compute_type or "int8_float16")
             return {**out, "device": "cuda"}
         except Exception as err:  # missing CUDA libraries, out of memory...
-            print(f"la gráfica falló ({str(err)[:200]}); transcribiendo en el procesador", file=sys.stderr)
-    out = run_faster_whisper(wav, model, language, beam_size, "cpu", compute_type if chosen == "cpu" and compute_type else "int8")
+            # In the JSON too, so the analysis log can say why the card was not used.
+            gpu_error = str(err)[:200]
+            print(f"la gráfica falló ({gpu_error}); transcribiendo en el procesador", file=sys.stderr)
+            out = run_faster_whisper(audio, model, language, beam_size, "cpu", "int8")
+            return {**out, "device": "cpu", "gpu_error": gpu_error}
+    out = run_faster_whisper(audio, model, language, beam_size, "cpu", compute_type if chosen == "cpu" and compute_type else "int8")
     return {**out, "device": "cpu"}
 
 
-def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: int, device: str, compute_type: str) -> dict:
+def run_faster_whisper(audio, model: str, language: str | None, beam_size: int, device: str, compute_type: str) -> dict:
+    """`audio` goes in already decoded (our FFmpeg loader, 16 kHz float32):
+    faster-whisper's own decoder needs a matching PyAV, and an older PyAV
+    already installed breaks it ("unexpected keyword 'metadata_errors'")."""
     from faster_whisper import BatchedInferencePipeline, WhisperModel
-    from nuestro_whisper.audio import load_audio
 
     fw = WhisperModel(model, device=device, compute_type=compute_type)
-    # The audio goes in already decoded (our FFmpeg loader, 16 kHz float32):
-    # faster-whisper's own decoder needs a matching PyAV, and an older PyAV
-    # already installed breaks it ("unexpected keyword 'metadata_errors'").
-    audio = load_audio(wav)
+    # With no language given (the app never gives one) each chunk is decoded
+    # in the language heard in it, detected on the encoder output it already
+    # has: forced to the first language found, English dialogue in a Spanish
+    # video came out translated into Spanish. `info.language` stays the first.
+    multilingual = language is None
     if os.environ.get("WHISPER_BATCHED", "1") != "0":
         # Batched: the voiced chunks are decoded several at a time (VAD is
         # built in), about 3x faster again on CPU.
         pipeline = BatchedInferencePipeline(model=fw)
         segments, info = pipeline.transcribe(
-            audio, language=language, beam_size=beam_size, word_timestamps=True,
+            audio, language=language, beam_size=beam_size, word_timestamps=True, multilingual=multilingual,
             # 4, not 8: on 4 CPU cores batch 4 was ~12% faster on 15 min of
             # English and 10 min of Spanish (REA-measured, 18 Oct 2026).
             batch_size=int(os.environ.get("WHISPER_BATCH_SIZE", "4")),
@@ -137,22 +164,23 @@ def run_faster_whisper(wav: str, model: str, language: str | None, beam_size: in
         # README); 0.5 s also skips the pauses between sentences.
         segments, info = fw.transcribe(
             audio, language=language, beam_size=beam_size, vad_filter=True, word_timestamps=True,
-            vad_parameters={"min_silence_duration_ms": 500},
+            vad_parameters={"min_silence_duration_ms": 500}, multilingual=multilingual,
         )
     words = [{"start": w.start, "end": w.end, "word": w.word} for s in segments for w in (s.words or [])]
-    return {"language": info.language, "segments": split_sentences(words)}
+    return {"language": info.language, "segments": split_sentences(within(words, len(audio) / SAMPLE_RATE))}
 
 
 PARAKEET_REPO = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 
 
-def run_parakeet(wav: str, language: str) -> dict:
+def run_parakeet(audio, language: str | None, model: str) -> dict:
     """Parakeet on the CPU: the voiced stretches (Silero VAD, the one
-    faster-whisper ships) decoded in batches, word times from its tokens."""
+    faster-whisper ships) decoded in batches, word times from its tokens.
+    Parakeet does not say which language it heard: without `language`,
+    Whisper `model` names it from the first 30 s of speech."""
     import sherpa_onnx
     from faster_whisper.vad import VadOptions, get_speech_timestamps
     from huggingface_hub import snapshot_download
-    from nuestro_whisper.audio import load_audio
 
     d = snapshot_download(PARAKEET_REPO, allow_patterns=["*.int8.onnx", "tokens.txt"])
     rec = sherpa_onnx.OfflineRecognizer.from_transducer(
@@ -163,7 +191,6 @@ def run_parakeet(wav: str, language: str) -> dict:
         model_type="nemo_transducer",
         num_threads=os.cpu_count() or 4,
     )
-    audio = load_audio(wav)
     chunks = get_speech_timestamps(audio, VadOptions(min_silence_duration_ms=500, max_speech_duration_s=25, speech_pad_ms=200))
     words: list[dict] = []
     # One stretch at a time: on 4 CPU cores batches of 4 took 100 s for 15 min
@@ -180,7 +207,21 @@ def run_parakeet(wav: str, language: str) -> dict:
         for c, s in zip(group, streams):
             r = s.result
             words += parakeet_words(c["start"] / 16000, r.tokens, r.timestamps, r.durations)
-    return {"language": language, "segments": split_sentences(words)}
+    if not language:
+        language = spoken_language(audio, chunks, model)
+    return {"language": language, "segments": split_sentences(within(words, len(audio) / SAMPLE_RATE))}
+
+
+def spoken_language(audio, chunks: list[dict], model: str) -> str:
+    """Language of the first 30 s of speech (the whole audio when VAD found
+    none), by faster-whisper's own detector on the CPU. `model` is the one the
+    Whisper engines use, already downloaded; detecting takes a second or two."""
+    import numpy as np
+    from faster_whisper import WhisperModel
+
+    voiced = np.concatenate([audio[c["start"] : c["end"]] for c in chunks]) if chunks else audio
+    language, _, _ = WhisperModel(model, device="cpu", compute_type="int8").detect_language(audio=voiced[: 30 * SAMPLE_RATE])
+    return language
 
 
 def parakeet_words(offset: float, tokens: list[str], starts: list[float], durations: list[float]) -> list[dict]:
@@ -230,22 +271,28 @@ def main() -> None:
     parser.add_argument("--compute-type", default=os.environ.get("WHISPER_COMPUTE_TYPE") or None, help="float16 en la gráfica e int8 en el procesador si se omite")
     args = parser.parse_args()
 
+    from nuestro_whisper.audio import load_audio
+
+    # Decoded once, before any model loads: a file FFmpeg cannot read fails
+    # here in a second with FFmpeg's reason, instead of once per engine and
+    # device as each fallback tried it again.
+    audio = load_audio(args.wav)
     engine = args.engine
     language = args.language
     if engine == "auto":
         engine = "faster-whisper" if has_faster_whisper() else "propio"
     if engine == "parakeet":
         try:
-            out = {**run_parakeet(args.wav, language or "es"), "device": "cpu", "engine": "parakeet"}
+            out = {**run_parakeet(audio, language, args.model), "device": "cpu", "engine": "parakeet"}
             emit(out)
             return
         except Exception as err:  # model download, sherpa-onnx missing...
             print(f"Parakeet falló ({str(err)[:200]}); transcribiendo con Whisper", file=sys.stderr)
             engine = "faster-whisper" if has_faster_whisper() else "propio"
     if engine == "propio":
-        out = run_propio(args.wav, args.model, args.language, args.beam_size, not args.no_fallback)
+        out = run_propio(audio, args.model, args.language, args.beam_size, not args.no_fallback)
     else:
-        out = run_faster_whisper_on(args.wav, args.model, language, args.beam_size, args.device, args.compute_type)
+        out = run_faster_whisper_on(audio, args.model, language, args.beam_size, args.device, args.compute_type)
     emit(out)
 
 

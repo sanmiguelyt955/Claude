@@ -5,6 +5,7 @@ import path from 'node:path'
 
 const run = promisify(execFile)
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'transcribe.py')
+const MAX_BUFFER = 64 * 1024 * 1024
 
 export type Segment = {
   start: number
@@ -20,6 +21,21 @@ export type Transcript = {
   device?: string
   /** "parakeet" when Parakeet transcribed instead of Whisper. */
   engine?: string
+  /** Why the NVIDIA card was not used after all (it failed and the CPU took over). */
+  gpu_error?: string
+}
+
+/**
+ * The reason a transcribe.py run failed, in one line: the last line it left
+ * on stderr without the Python exception name ("RuntimeError: FFmpeg no
+ * pudo leer el audio: ..." -> "FFmpeg no pudo leer el audio: ..."), else how
+ * the process ended.
+ */
+export function failureReason(err: unknown): string {
+  const e = err as { stderr?: string | Buffer; code?: number | string; signal?: string | null }
+  const last = String(e.stderr ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).at(-1)
+  if (last) return last.replace(/^[\w.]*(Error|Exception): /, '').slice(0, 300)
+  return e.signal ? `el proceso se cerró (${e.signal})` : `el proceso terminó con el código ${e.code ?? 'desconocido'}`
 }
 
 /**
@@ -28,7 +44,9 @@ export type Transcript = {
  * there is one; WHISPER_ENGINE=propio forces our NumPy Whisper and
  * WHISPER_ENGINE=parakeet NVIDIA Parakeet (faster on the CPU, less exact). A crash on
  * the card that Python cannot catch (a missing CUDA DLL can abort the
- * process) is retried once on the CPU.
+ * process) is retried once on the CPU. An error Python itself reported (a
+ * file FFmpeg cannot read...) is not: transcribe.py already falls back to
+ * the CPU on its own, so a second run would only fail the same way later.
  */
 export async function transcribe(
   wavPath: string,
@@ -40,12 +58,20 @@ export async function transcribe(
   const engine = opts.engine || process.env.WHISPER_ENGINE
   if (engine) args.push('--engine', engine)
   const forced = process.env.WHISPER_DEVICE
+  let first: string
   try {
-    const { stdout } = await run(python, args, { maxBuffer: 64 * 1024 * 1024 })
+    const { stdout } = await run(python, args, { maxBuffer: MAX_BUFFER })
     return JSON.parse(String(stdout)) as Transcript
   } catch (err) {
-    if (forced && forced !== 'auto') throw err
-    const { stdout } = await run(python, [...args, '--device', 'cpu'], { maxBuffer: 64 * 1024 * 1024 })
-    return JSON.parse(String(stdout)) as Transcript
+    first = failureReason(err)
+    const pythonError = /Traceback \(most recent call last\)/.test(String((err as { stderr?: unknown }).stderr ?? ''))
+    if ((forced && forced !== 'auto') || pythonError) throw new Error(`No se pudo transcribir el audio: ${first}`)
+    console.warn(`[perception] la transcripción se cerró de golpe (${first}); se repite en el procesador`)
+  }
+  try {
+    const { stdout } = await run(python, [...args, '--device', 'cpu'], { maxBuffer: MAX_BUFFER })
+    return { ...(JSON.parse(String(stdout)) as Transcript), gpu_error: first }
+  } catch (err) {
+    throw new Error(`No se pudo transcribir el audio: ${failureReason(err)}`)
   }
 }

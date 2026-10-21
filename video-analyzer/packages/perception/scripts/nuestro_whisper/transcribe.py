@@ -108,6 +108,11 @@ def transcribe(
 ) -> dict:
     """Returns {"language": code, "segments": [{"start", "end", "text", "temperature"}]}.
 
+    Without `language`, each 30 s window is decoded in the language heard in
+    it (as faster-whisper's `multilingual`), so English dialogue in a Spanish
+    video is written down in English rather than translated; "language" is
+    the first one heard.
+
     beam_size=5 is Whisper's usual setting; 1 is plain greedy decoding
     (faster, slightly less accurate on hard audio). `temperatures` is the
     retry ladder for windows that come out repetitive or unsure; pass (0.0,)
@@ -123,7 +128,7 @@ def transcribe(
 
     segments: list[dict] = []
     seek = 0
-    lang_code = language
+    first_language = language
     voiced = voiced_frames(audio) if skip_silence else None
     while seek < content_frames:
         if voiced is not None:
@@ -135,8 +140,8 @@ def transcribe(
                 seek = onset
         window_frames = min(N_FRAMES, content_frames - seek)
         features = whisper.encode(pad_or_trim(mel[:, seek : seek + N_FRAMES]))
-        if lang_code is None:
-            lang_code = detect_language(whisper, tok, features)
+        lang_code = language or detect_language(whisper, tok, features)
+        first_language = first_language or lang_code
         decoded = decode_with_fallback(
             whisper, tok, rules, features, tok.language_token(lang_code),
             beam_size=beam_size, best_of=best_of, temperatures=temperatures, rng=rng,
@@ -158,4 +163,4 @@ def transcribe(
         segments.extend(found)
         seek += consumed if consumed else window_frames
 
-    return {"language": lang_code or "en", "segments": segments}
+    return {"language": first_language or "en", "segments": segments}

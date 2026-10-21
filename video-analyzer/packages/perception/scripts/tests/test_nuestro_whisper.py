@@ -4,14 +4,17 @@ The end-to-end test downloads openai/whisper-tiny (~150 MB) on first run.
 """
 import os
 import sys
+import tempfile
+import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from nuestro_whisper.audio import N_FRAMES, log_mel_spectrogram, mel_filters, pad_or_trim  # noqa: E402
+from nuestro_whisper.audio import N_FRAMES, load_audio, log_mel_spectrogram, mel_filters, pad_or_trim  # noqa: E402
 from nuestro_whisper.decoding import (  # noqa: E402
     TimestampRules,
     beam_search_decode,
@@ -64,6 +67,25 @@ class AudioTest(unittest.TestCase):
         ref = FeatureExtractor(feature_size=80)(audio, padding=480000)
         n = min(ours.shape[1], ref.shape[1])
         self.assertLess(float(np.abs(ours[:, :n] - ref[:, :n]).max()), 1e-4)
+
+    def test_a_file_ffmpeg_cannot_read_gives_its_reason_in_one_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            broken = os.path.join(tmp, "roto.wav")
+            with open(broken, "w", encoding="utf-8") as f:
+                f.write("no es audio\n")
+            with self.assertRaises(RuntimeError) as ctx:
+                load_audio(broken)
+        message = str(ctx.exception)
+        self.assertTrue(message.startswith("FFmpeg no pudo leer el audio: "), message)
+        self.assertIn("Invalid data", message)
+        self.assertNotIn("\n", message)
+
+    def test_ffmpeg_path_is_honoured(self):
+        missing = os.path.join(os.sep, "no", "existe", "ffmpeg")
+        with mock.patch.dict(os.environ, {"FFMPEG_PATH": missing}), self.assertRaises(RuntimeError) as ctx:
+            load_audio(FIXTURE)
+        self.assertIn(missing, str(ctx.exception))
+        self.assertIn("FFMPEG_PATH", str(ctx.exception))
 
 
 class ModelOpsTest(unittest.TestCase):
@@ -279,6 +301,38 @@ class TemperatureFallbackTest(unittest.TestCase):
         a = sample_decode(model, self.tok, PassRules(), None, 50259, 0.8, rng=np.random.default_rng(42))
         b = sample_decode(model, self.tok, PassRules(), None, 50259, 0.8, rng=np.random.default_rng(42))
         self.assertEqual(a, b)
+
+
+class LanguagePerWindowTest(unittest.TestCase):
+    """Without a language, each 30 s window is decoded in the one heard in it
+    (the model, detector and decoder are stand-ins that record the calls)."""
+
+    def run_windows(self, language, heard):
+        import importlib
+
+        # The module, not the transcribe() the package exports under its name.
+        nt = importlib.import_module("nuestro_whisper.transcribe")
+        heard, used = iter(heard), []
+        tok = types.SimpleNamespace(timestamp_begin=FakeTok.timestamp_begin, language_token=lambda code: code, decode=lambda tokens: "")
+
+        def decode(whisper, tok, rules, features, language_token, **kwargs):
+            used.append(language_token)
+            return {"tokens": [], "avg_logprob": 0.0, "no_speech_prob": 0.0, "temperature": 0.0}
+
+        noise = (0.1 * np.random.default_rng(0).standard_normal(16000 * 70)).astype(np.float32)
+        with (
+            mock.patch.object(nt, "load_model", lambda name: (types.SimpleNamespace(encode=lambda mel: mel), tok, None, {})),
+            mock.patch.object(nt, "detect_language", lambda whisper, tok, features: next(heard)),
+            mock.patch.object(nt, "decode_with_fallback", decode),
+        ):
+            out = nt.transcribe(noise, model="fake", language=language)  # 70 s: three windows
+        return out["language"], used
+
+    def test_each_window_in_the_language_heard_in_it(self):
+        self.assertEqual(self.run_windows(None, ["en", "es", "es"]), ("en", ["en", "es", "es"]))
+
+    def test_a_given_language_is_used_everywhere(self):
+        self.assertEqual(self.run_windows("es", []), ("es", ["es", "es", "es"]))
 
 
 class EndToEndTest(unittest.TestCase):

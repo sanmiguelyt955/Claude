@@ -1,6 +1,7 @@
 """Tests for nuestras_voces (who speaks when)."""
 import os
 import sys
+import tempfile
 import unittest
 import urllib.request
 
@@ -84,10 +85,38 @@ class ClusterTest(unittest.TestCase):
         self.assertEqual(merged[-1], merged[10])
 
 
+def _phone_call(test: unittest.TestCase) -> tuple[np.ndarray, list[dict]]:
+    """pyannote's sample as (audio, true turns). It is downloaded into a
+    folder that is removed right away, so no run leaves files behind."""
+    from nuestro_whisper.audio import load_audio
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            for ext in ("wav", "rttm"):
+                urllib.request.urlretrieve(f"{SAMPLE}.{ext}", os.path.join(tmp, f"sample.{ext}"))
+        except OSError as err:
+            test.skipTest(f"sin red: {err}")
+        turns = []
+        with open(os.path.join(tmp, "sample.rttm"), encoding="utf-8") as f:
+            for line in f:
+                p = line.split()
+                turns.append({"start": float(p[3]), "end": float(p[3]) + float(p[4]), "who": p[7]})
+        return load_audio(os.path.join(tmp, "sample.wav")), turns
+
+
 class EndToEndTest(unittest.TestCase):
     def setUp(self):
         if os.environ.get("NUESTRO_WHISPER_SKIP_DOWNLOAD"):
             self.skipTest("descarga desactivada")
+
+    def assertOneLabelPerVoice(self, turns, got, voices):
+        # Same person, same label; different people, different labels.
+        mapping = {}
+        for t, label in zip(turns, got):
+            mapping.setdefault(t["who"], set()).add(label)
+        self.assertEqual(len(mapping), voices)
+        self.assertTrue(all(len(v) == 1 for v in mapping.values()), mapping)
+        self.assertEqual(len(set.union(*mapping.values())), voices, mapping)
 
     def test_one_voice_is_one_speaker(self):
         from nuestras_voces import diarize_segments
@@ -98,30 +127,37 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(set(diarize_segments(audio, [{"start": 0, "end": half}, {"start": half, "end": 2 * half}])), {"Hablante 1"})
 
     def test_two_people_on_the_phone(self):
-        import tempfile
+        from nuestras_voces import diarize_segments
 
+        audio, turns = _phone_call(self)
+        self.assertOneLabelPerVoice(turns, diarize_segments(audio, turns), 2)
+
+    def test_three_voices_over_almost_three_minutes(self):
+        # Long enough for over 100 windows, where linking each window to 20 %
+        # of the others tied a voice with fewer windows to the rest (hence
+        # MAX_NEIGHBOURS): the phone call five times, each after a different
+        # gap and with a little noise, and a third voice (the speech fixture)
+        # after every call. Without the cap this came out as 2 or 4 voices
+        # for 27 of 28 noise draws and gaps tried; with it, 3 every time.
         from nuestras_voces import diarize_segments
         from nuestro_whisper.audio import load_audio
 
-        tmp = tempfile.mkdtemp()
-        try:
-            for ext in ("wav", "rttm"):
-                urllib.request.urlretrieve(f"{SAMPLE}.{ext}", os.path.join(tmp, f"sample.{ext}"))
-        except OSError as err:
-            self.skipTest(f"sin red: {err}")
-        turns = []
-        with open(os.path.join(tmp, "sample.rttm"), encoding="utf-8") as f:
-            for line in f:
-                p = line.split()
-                turns.append({"start": float(p[3]), "end": float(p[3]) + float(p[4]), "who": p[7]})
-        got = diarize_segments(load_audio(os.path.join(tmp, "sample.wav")), turns)
-        # Same person, same label; different people, different labels.
-        mapping = {}
-        for t, label in zip(turns, got):
-            mapping.setdefault(t["who"], set()).add(label)
-        self.assertEqual(len(mapping), 2)
-        self.assertTrue(all(len(v) == 1 for v in mapping.values()), mapping)
-        self.assertEqual(len(set.union(*mapping.values())), 2)
+        call, call_turns = _phone_call(self)
+        third = load_audio(FIXTURE)
+        rng = np.random.default_rng(0)
+        parts, turns, t = [], [], 0.0
+        for k in range(5):
+            gap = np.zeros(int(16000 * 0.333 * (k + 1)), np.float32)
+            t += len(gap) / 16000
+            parts += [gap, call + 0.003 * rng.standard_normal(len(call)).astype(np.float32)]
+            turns += [{**x, "start": t + x["start"], "end": t + x["end"]} for x in call_turns]
+            t += len(call) / 16000
+            parts.append(third + 0.003 * rng.standard_normal(len(third)).astype(np.float32))
+            turns.append({"start": t, "end": t + len(third) / 16000, "who": "tercera"})
+            t += len(third) / 16000
+        audio = np.concatenate(parts)
+        self.assertGreater(len(audio) / 16000, 160)
+        self.assertOneLabelPerVoice(turns, diarize_segments(audio, turns), 3)
 
 
 if __name__ == "__main__":
