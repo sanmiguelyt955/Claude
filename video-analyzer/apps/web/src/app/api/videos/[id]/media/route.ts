@@ -1,7 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { Readable } from 'node:stream'
 import { getVideo, resolveDataPath } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
@@ -14,6 +13,27 @@ const TYPES: Record<string, string> = {
   '.webm': 'video/webm',
   '.mkv': 'video/x-matroska',
   '.avi': 'video/x-msvideo',
+}
+
+/**
+ * The file read a chunk at a time, only as the player asks for it.
+ * Readable.toWeb kept pushing chunks after the player hung up (seeking, or
+ * leaving the page), and Next logged "Controller is already closed" as an
+ * uncaught exception each time.
+ */
+function fileStream(file: string, opts?: { start: number; end: number }): ReadableStream<Uint8Array> {
+  const chunks = createReadStream(file, opts)[Symbol.asyncIterator]()
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { value, done } = await chunks.next()
+      if (done) controller.close()
+      else controller.enqueue(new Uint8Array(value as Buffer))
+    },
+    async cancel() {
+      // Ends the iterator, which destroys the stream and closes the file.
+      await chunks.return?.()
+    },
+  })
 }
 
 /**
@@ -37,7 +57,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   // HEAD gets the headers only: a stream opened for it was never read nor
   // closed, leaking one open file per request.
   const head = request.method === 'HEAD'
-  const stream = (opts?: { start: number; end: number }) => (head ? null : (Readable.toWeb(createReadStream(file, opts)) as ReadableStream))
+  const stream = (opts?: { start: number; end: number }) => (head ? null : fileStream(file, opts))
   const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.get('range') ?? '')
   if (!range) {
     const body = stream()

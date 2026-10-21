@@ -436,3 +436,35 @@ test('a complete upload still lands on disk byte for byte', async () => {
   assert.equal(video.title, 'ACLARACIÓN.mp4')
   assert.deepEqual(readFileSync(me.resolveDataPath(video.stored_path)), bytes)
 })
+
+test('the upload route refuses another site or host itself, since the middleware skips it', async () => {
+  const route = await import('../src/app/api/videos/upload/route')
+  const foreign = multipartRequest('clip.mp4', readFileSync(sample))
+  foreign.headers.set('origin', 'https://evil.example')
+  assert.equal((await route.POST(foreign)).status, 403)
+  const rebound = new Request('http://evil.example/api/videos/upload', { method: 'POST', body: 'x' })
+  assert.equal((await route.POST(rebound)).status, 403)
+})
+
+test('a player that stops reading /media mid-file closes the file without a server error', async () => {
+  const route = await import('../src/app/api/videos/[id]/media/route')
+  const id = storedVideo()
+  const video = me.getVideo(id)!
+  writeFileSync(me.resolveDataPath(video.stored_path!), Buffer.alloc(8 * 1024 * 1024, 7))
+  const crashes: unknown[] = []
+  const onCrash = (e: unknown) => crashes.push(e)
+  process.on('uncaughtException', onCrash)
+  try {
+    for (let i = 0; i < 5; i++) {
+      const res = await route.GET(req(`/api/videos/${id}/media`, { method: 'GET' }), ctx(id))
+      const reader = res.body!.getReader()
+      await reader.read()
+      await reader.cancel()
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  } finally {
+    process.off('uncaughtException', onCrash)
+  }
+  assert.deepEqual(crashes, [])
+  assert.equal(openFdsUnder(path.join(me.VIDEOS_DIR, id)), 0)
+})

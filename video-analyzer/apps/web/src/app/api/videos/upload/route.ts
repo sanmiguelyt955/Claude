@@ -8,6 +8,7 @@ import Busboy from 'busboy'
 import { NextResponse } from 'next/server'
 import { createVideo, enqueueJob, isAnotherWorkerAlive, toDataRelativePath, VIDEOS_DIR } from '@cva/memory-engine'
 import { isSupportedExtension, SUPPORTED_EXTENSIONS } from '@cva/video-processor'
+import { localOnlyRefusal } from '../../../../lib/local-only'
 
 // Busboy needs Node's fs/stream APIs — the Edge runtime does not have them.
 export const runtime = 'nodejs'
@@ -116,6 +117,9 @@ async function parseMultipart(request: Request, videoId: string): Promise<Parsed
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // Left out of the middleware (it would cut the body at 10 MB), so checked here.
+  const refusal = localOnlyRefusal(request)
+  if (refusal) return new NextResponse(refusal, { status: 403 })
   const videoId = randomUUID()
 
   let parsed: ParsedUpload
