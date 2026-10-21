@@ -94,10 +94,12 @@ planos — 9.4, UNO POR CADA PLANO de la lista "PLANOS QUE EMPIEZAN EN ESTE TRAM
 
 recreacion — 9.13, una ficha por cada uno de esos mismos planos, para volver a rodarlo sin haber visto el video (solo lo registrado; lo no visto u oído es [ND]): plano (ID) · sujetos_estado_inicial (entidades por ID y su configuración al empezar) · accion (qué se mueve, cómo y en qué orden, con tiempos) · camara (escala, ángulo, altura, movimiento) · luz_entorno · audio (lo que suena en el plano, con VOZ# y T#) · texto (TX# visibles y su animación) · estado_final (cómo queda todo al cortar).
 
+procedencia_audio — 9.2 del sonido del tramo, solo lo que oyes: ruido de fondo, saturación, compresión audible, reverberación, cortes de edición audibles, cambios bruscos de nivel, cada uno con su timestamp. Vacío si no hay audio.
+
 limites — todo lo [BAJA] o [ND] del tramo, con su timestamp y motivo, y cada discrepancia.
 Responde SOLO con el objeto JSON.`
 
-export const V6_PHASE3 = `ESTA LLAMADA — FASE 3 DE 3: SÍNTESIS (9.9 a 9.14). No tienes el video: tienes el registro de las fases 1 y 2 (ficha, entidades, planos medidos, escenas, cambios de estado, textos en pantalla y la transcripción completa con tiempos). Estas secciones REORGANIZAN y SINTETIZAN: todo lo que escribas remite a un timestamp o ID de abajo; lo que no está en el registro es [ND].
+export const V6_PHASE3 = `ESTA LLAMADA — FASE 3 DE 3: SÍNTESIS (9.9 a 9.14). No tienes el video: tienes el registro de las fases 1 y 2 (ficha, entidades, planos medidos, escenas, cambios de estado, textos en pantalla y la transcripción completa con tiempos). Estas secciones REORGANIZAN y SINTETIZAN: todo lo que escribas remite a un timestamp o ID de abajo; lo que no está en el registro es [ND]. Los % de tiempo visible salen de SEGUNDOS EN 9.5 POR ENTIDAD, y APERTURA y CIERRE de las entradas de 9.5 que van en el registro: no los estimes.
 
 gramatica (9.9) — OBSERVACIÓN medible, un campo por medición (la app pone el rótulo). Ninguna deducción ("indica", "sugiere", "denota", "revela", "actúa como", "sirve para", "con el fin de") ni nombre de papel en el relato (gancho, problema, diagnóstico, clímax, demostración): eso va a interpretacion. Porcentajes sobre la duración [META].
 - ritmo_montaje: secuencia de duraciones de plano (PL1 2.8s, PL2 0.9s…), si acelera o desacelera y dónde, patrón que se repite.

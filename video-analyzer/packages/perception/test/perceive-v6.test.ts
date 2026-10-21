@@ -6,8 +6,23 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { perceive } from '../src/perceive.ts'
-import { coverTimeline, phase3Problem, recreationByShot, renumberTexts, shotsFrom, v6Windows, withVoices, V6_PERCEPTION_PHASE1_SCHEMA, V6_PERCEPTION_WINDOW_SCHEMA } from '../src/v6/record.ts'
+import {
+  coverTimeline,
+  entitySeconds,
+  fixPhase1,
+  mergeFill,
+  phase3Problem,
+  probeVideo,
+  recreationByShot,
+  renumberTexts,
+  shotsFrom,
+  v6Windows,
+  withVoices,
+  V6_PERCEPTION_PHASE1_SCHEMA,
+  V6_PERCEPTION_WINDOW_SCHEMA,
+} from '../src/v6/record.ts'
 import type { VisionProvider, VisionRequest } from '../src/providers/types.ts'
+import { ProviderOverloadedError } from '../src/providers/types.ts'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const speech = path.join(here, 'fixtures-speech.wav')
@@ -60,6 +75,7 @@ function fakeGemini(calls: VisionRequest[]): VisionProvider {
           // Every shot the window owns, as listed in its instruction.
           planos: own.map((id) => ({ id, escala: id === 'PL2' ? 'general' : 'medio', angulo: 'frontal', altura: 'ND', movimiento: 'fija', composicion: 'E1 llena el cuadro', fondo_superficie: 'E1', iluminacion: 'uniforme', entrada_salida: 'corte' })),
           recreacion: own.map((id) => ({ plano: id, sujetos_estado_inicial: 'E1', accion: `campo de color en ${id}; TX1 visible`, camara: 'fija', luz_entorno: 'uniforme', audio: 'VOZ1', texto: 'TX1', estado_final: 'E1' })),
+          procedencia_audio: ['ruido de fondo constante, sin saturación'],
           limites: [],
         })
       }
@@ -104,6 +120,11 @@ test('perceive under protocol v6 writes the full record: measured shots, timelin
   assert.match(md, /\*\*TX1\*\* — aparece 00:00/)
   assert.match(md, /MAPA DE COBERTURA: VIS: fotogramas en/)
   assert.match(md, /CORTE en 00:02(?:\.0+)? → PL2/, 'cuts in 9.5 come from the measurement, even when the model lists none')
+  assert.match(md, /^- AUDIO \[tramo 1\]: ruido de fondo constante/m, '9.2 has the sound the windows heard')
+  assert.match(md, /^MAPA DE BLOQUES: tramo 1: 00:00–00:08/m)
+  assert.match(md, /^- EJE0 FUENTE: video; acceso muestreado: imagen muestreada .* y sonido directo continuo; alcance: video completo \[META\]/m)
+  assert.match(md, /^- EJE6 DURACION: <10 s \(00:08/m)
+  assert.match(md, /^relacion_aspecto: horizontal$/m, '320x180 measured, not the model\'s word')
   for (const id of ['PL1', 'PL2', 'PL3', 'PL4']) assert.match(md, new RegExp(`campo de color en ${id}`), `9.13 has ${id}, written by its window`)
   assert.doesNotMatch(md, /ningún tramo/)
 
@@ -111,6 +132,11 @@ test('perceive under protocol v6 writes the full record: measured shots, timelin
   assert.ok(windows.length >= 1)
   assert.ok(windows.every((w) => w.audio && w.audio.mimeType === 'audio/ogg'), 'every window hears its sound')
   assert.ok(windows.every((w) => /CORTES MEDIDOS EN ESTE TRAMO \[META\]: 00:02/.test(w.instruction)))
+  assert.ok(windows.every((w) => /del segundo 0\.00 \(00:00\) al 8\.\d\d /.test(w.instruction)), 'window times with two decimals')
+  const synthesis = calls.at(-1)!.instruction
+  assert.match(synthesis, /SEGUNDOS EN 9\.5 POR ENTIDAD[^\n]*\nE1: 8\.\d s \(100\.0 %\)/, 'screen time comes from 9.5')
+  assert.match(synthesis, /9\.5 DE LA APERTURA \(00:00–00:04\):\n\[00:00–00:01\] VIS: E1 en 0s/)
+  assert.match(synthesis, /9\.5 DEL CIERRE \(último plano, PL4, 00:06–00:08[^\n]*\n\[00:06–00:07\] VIS: E1 en 6s/)
   assert.equal(calls.length, windows.length + 2, 'phase 1 + one request per window + synthesis')
   assert.ok(!('planos' in (V6_PERCEPTION_PHASE1_SCHEMA.properties as object)), 'phase 1 no longer writes the shots')
   assert.ok(!calls.some((c) => /MAPA DE PLANOS \(9\.4\)/.test(c.instruction) && c.schema === V6_PERCEPTION_WINDOW_SCHEMA), 'windows do not carry every shot of the video')
@@ -225,17 +251,34 @@ test('a window no model answers whole is split in two halves, asked in parallel'
       if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
         const [a, b] = /del segundo ([\d.]+) .* al ([\d.]+)/.exec(req.instruction)!.slice(1).map(Number) as [number, number]
         if (b - a > 20) out.timeline = [{ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'todo junto', aud: 'a', txt: 't', cam: 'c', cortes: [] }]
+        const label = /ESTE TRAMO: (\S+) de/.exec(req.instruction)![1]!
+        out.textos_pantalla[0].id = `TX1-t${label}`
+        out.entidades_nuevas = [{ id: `TX1-t${label}`, primera_aparicion_segundo: a, descripcion_fisica: 'rótulo blanco', identificacion: 'rótulo con texto' }]
+        out.voces = [{ id: 'VOZ1', descripcion_acustica: `tono oído en ${label}` }]
+        out.limites = [`límite del tramo ${label}`]
       }
       return JSON.stringify(out)
     },
   }
   const logs: string[] = []
+  const progress: Array<{ label: string; current?: number; total?: number }> = []
   let saved: unknown
   const result = await perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-split-w-')), {
     protocol: 'v6', providers: [grouping], whisperModel: 'tiny', language: 'en', diarize: false, log: (m) => logs.push(m),
     onCheckpoint: (c) => { saved = JSON.parse(JSON.stringify(c)) },
+    onProgress: (p) => progress.push(p),
   })
   const md = result.protocolRecord!.markdown
+  // The halves keep their own label: "[tramo 2]" used to name half 1b.
+  assert.match(md, /\[tramo 1a\] límite del tramo 1a/)
+  assert.match(md, /\[tramo 1b\] límite del tramo 1b/)
+  assert.doesNotMatch(md, /\[tramo 2\]/)
+  assert.match(md, /tono oído en 1a \/ \[tramo 1b\] tono oído en 1b/)
+  assert.match(md, /^MAPA DE BLOQUES: tramo 1a: 00:00–00:15 \/ tramo 1b: 00:15–00:30/m)
+  assert.ok(progress.every((p) => !/(\d+) de (\d+) tramos/.test(p.label) || Number(/(\d+) de/.exec(p.label)![1]) <= Number(/de (\d+) tramos/.exec(p.label)![1])), 'never "2 de 1 tramos"')
+  assert.ok(progress.every((p) => (p.current ?? 0) <= (p.total ?? 0)), progress.map((p) => `${p.current}/${p.total}`).join(' '))
+  // Entities found by the windows: renumbered TX ids and the four 9.3 lines.
+  assert.match(md, /\*\*TX1\*\* — primera aparición 00:00\nDESCRIPCIÓN FÍSICA: rótulo blanco\nIDENTIFICACIÓN: \[ID\] rótulo con texto\nAPARICIONES: desde 00:00 \(tramo 1a\)/)
   assert.ok(logs.some((l) => /se parte en dos mitades/.test(l)))
   const windows = calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA)
   assert.equal(windows.length, 3, 'the whole window once, then its two halves')
@@ -307,7 +350,7 @@ test('once a window fails for good, no new window is asked; those in flight fini
     available: () => true,
     async describe(req) {
       if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
-        if (/del segundo 0\.0 /.test(req.instruction)) {
+        if (/del segundo 0\.00 /.test(req.instruction)) {
           calls.push(req)
           throw new Error('breaking HTTP 400: imagen no válida')
         }
@@ -335,4 +378,249 @@ test('once a window fails for good, no new window is asked; those in flight fini
   await new Promise((r) => setTimeout(r, 1500)) // windows asked after the failure would show up here
   assert.equal(calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).length, 2, 'the failed window and the one already in flight')
   assert.equal(Object.keys(checkpoint!.v6!.windows).length, 1, 'the one in flight was saved for the retry')
+})
+
+test('once a window fails for good, a window that is only waiting out a busy model stops retrying', { timeout: 300_000 }, async () => {
+  const video = path.join(mkdtempSync(path.join(tmpdir(), 'v6-abort-')), 'long.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=60:r=5', '-f', 'lavfi', '-i', 'sine=f=440:d=60', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  const good = fakeGemini([])
+  let busyCalls = 0
+  const provider: VisionProvider = {
+    name: 'busy',
+    available: () => true,
+    async describe(req) {
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
+        if (/del segundo 0\.00 /.test(req.instruction)) {
+          await new Promise((r) => setTimeout(r, 500))
+          throw new Error('busy HTTP 400: imagen no válida')
+        }
+        busyCalls++
+        throw new ProviderOverloadedError('busy', 503, 'saturado', 3000)
+      }
+      return good.describe(req)
+    },
+  }
+  const saved = { windows: process.env.VISION_CONCURRENCY, size: process.env.V6_WINDOW_SECONDS }
+  process.env.VISION_CONCURRENCY = '2'
+  process.env.V6_WINDOW_SECONDS = '30'
+  const started = Date.now()
+  try {
+    await assert.rejects(
+      perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-abort-w-')), { protocol: 'v6', providers: [provider], whisperModel: 'tiny', language: 'en', diarize: false }),
+      /imagen no válida/,
+    )
+  } finally {
+    process.env.VISION_CONCURRENCY = saved.windows
+    process.env.V6_WINDOW_SECONDS = saved.size
+  }
+  const window2 = busyCalls
+  await new Promise((r) => setTimeout(r, 4000)) // a retry still running would show up here
+  assert.equal(busyCalls, window2, 'no request after the job failed')
+  assert.ok(window2 <= 1, `the busy window asked ${window2} times`)
+  assert.ok(Date.now() - started < 60_000)
+})
+
+test('windows carry only the frames that fit the per-minute token limit', () => {
+  const frames = Array.from({ length: 300 }, (_, i) => ({ path: `${i}.jpg`, time: i / 3 }))
+  const saved = process.env.GEMINI_MEDIA_RESOLUTION
+  process.env.GEMINI_MEDIA_RESOLUTION = ''
+  try {
+    const sizes = v6Windows(frames, 100).map((w) => w.frames.length)
+    assert.ok(Math.max(...sizes) < 300, `Google's default resolution: ${sizes}`)
+    assert.equal(sizes.reduce((a, b) => a + b, 0), 300)
+  } finally {
+    if (saved === undefined) delete process.env.GEMINI_MEDIA_RESOLUTION
+    else process.env.GEMINI_MEDIA_RESOLUTION = saved
+  }
+  assert.deepEqual(v6Windows(frames, 100).map((w) => w.frames.length), [300], 'LOW resolution: unchanged')
+})
+
+const entry = (a: number, b: number, extra: Record<string, unknown> = {}) => ({ start_seconds: a, end_seconds: b, sin_cambios: false, vis: `v${a}`, aud: 'a', txt: 't', cam: 'c', cortes: [] as string[], ...extra })
+
+test('a window answered from 709.7 for a start of 709.68 continues the chain; so does an end 0.03 s short', () => {
+  const tl = [entry(709.7, 710)]
+  for (let t = 710; t < 809; t++) tl.push(entry(t, t + 1))
+  tl.push(entry(809, 809.05))
+  const out = coverTimeline({ timeline: tl } as never, { start: 709.68, end: 809.08 })
+  assert.equal(out.timeline[0]!.start_seconds, 709.68)
+  assert.equal(out.timeline.at(-1)!.end_seconds, 809.08)
+  assert.deepEqual(out.filled, [])
+})
+
+test('finer entries inside a whole second are kept inside it, not dropped', () => {
+  const out = coverTimeline({ timeline: [entry(0, 1, { vis: 'whole' }), entry(0, 0.5, { vis: 'first half: hand moves' }), entry(0.5, 1, { vis: 'second half: contact' }), entry(1, 2)] } as never, { start: 0, end: 2 })
+  assert.equal(out.timeline.length, 2)
+  assert.equal(out.timeline[0]!.vis, 'whole [00:00–00:00.50] first half: hand moves [00:00.50–00:01] second half: contact')
+  // Entries past the end of the window are not pulled into it.
+  const past = coverTimeline({ timeline: [entry(0, 1), entry(1, 2), entry(5, 6, { vis: 'after' })] } as never, { start: 0, end: 2 })
+  assert.doesNotMatch(past.timeline.map((e) => e.vis).join(' '), /after/)
+})
+
+test('a timeline whose CORTE lines sit seconds away from their entries is asked again; a last resort keeps it, declared', () => {
+  const tl = Array.from({ length: 30 }, (_, i) => entry(i, i + 1))
+  tl[10]!.cortes = ['CORTE en 00:13.50 → PL3']
+  tl[14]!.cortes = ['CORTE en 00:18.20 → PL4']
+  tl[20]!.cortes = ['CORTE en 00:24.90 → PL5']
+  assert.throws(() => coverTimeline({ timeline: tl } as never, { start: 0, end: 30 }), /desplazada: 3 cortes citados a más de 1 s de su entrada \(hasta 3\.9 s\)/)
+  const kept = coverTimeline({ timeline: tl } as never, { start: 0, end: 30 }, { lenient: true })
+  assert.ok(kept.filled.some((l) => /^\[00:10–00:21\] 3 cortes citados a más de 1 s de su entrada \(hasta 3\.9 s\): los tiempos de este intervalo pueden estar desplazados \[BAJA\]\.$/.test(l)), kept.filled.join(' | '))
+  // One or two slips are not a drifting timeline.
+  tl[20]!.cortes = ['CORTE en 00:20.40 → PL5']
+  assert.deepEqual(coverTimeline({ timeline: tl } as never, { start: 0, end: 30 }).filled, [])
+})
+
+test('a one-second "no changes" entry with a measured cut inside no longer claims none; a new line of speech alone is not a change', () => {
+  const still = (a: number) => entry(a, a + 1, { sin_cambios: true, vis: 'SIN CAMBIOS OBSERVABLES. Persisten: P10.' })
+  const out = coverTimeline({ timeline: [still(0), still(1), still(2)] } as never, { start: 0, end: 3 }, {
+    marks: [{ time: 0.52, what: 'un corte medido', cut: true }, { time: 1.4, what: 'el inicio de T3' }],
+  })
+  assert.equal(out.timeline[0]!.sin_cambios, false)
+  assert.equal(out.timeline[0]!.vis, '[BAJA] El tramo la dio como «SIN CAMBIOS OBSERVABLES. Persisten: P10.», pero en ella hay un corte medido en 00:00.52: lo que cambia no quedó descrito [ND].')
+  assert.equal(out.timeline[1]!.sin_cambios, true, 'speech that goes on in a still second is not hidden')
+  assert.deepEqual(out.filled, ['[00:00–00:01] marcada sin cambios pero contiene un corte medido en 00:00.52 [BAJA].'])
+})
+
+test('a follow-up reply fills the hole it was asked for; its texts keep their own ids', () => {
+  const tx = (id: string, contenido: string) => ({ id, aparece: '', desaparece: '', duracion: '', tipo: '', posicion: '', contenido, apariencia: '', animacion: '' })
+  const hole = { start_seconds: 25, end_seconds: 30, sin_cambios: false, vis: '[ND] — registro no producido para este intervalo.', aud: '[ND]', txt: '[ND]', cam: '[ND]', cortes: [] }
+  const main = {
+    timeline: [entry(0, 25, { txt: 'TX1 visible' }), hole],
+    textos_pantalla: [tx('TX1', 'HOLA')],
+    limites: ['[00:25–00:30] la línea de tiempo de este intervalo no se produjo; ver los fotogramas y el audio del tramo [ND].'],
+  } as never
+  const extra = {
+    timeline: [entry(25, 26, { txt: 'TX1 visible; TX2 aparece' }), entry(26, 30, { sin_cambios: true, vis: 'SIN CAMBIOS OBSERVABLES' })],
+    textos_pantalla: [tx('TX1', 'hola'), tx('TX2', 'ADIÓS')],
+    limites: ['[00:27] TX2 [BAJA]'],
+  } as never
+  const merged = mergeFill(main, extra, '1r')
+  assert.deepEqual(merged.timeline.map((e) => [e.start_seconds, e.end_seconds]), [[0, 25], [25, 26], [26, 30]])
+  assert.equal(merged.timeline[1]!.txt, 'TX1 visible; TX1-t1r aparece', 'the same text keeps the window id; a new one gets the follow-up suffix')
+  assert.deepEqual(merged.textos_pantalla.map((t) => t.id), ['TX1', 'TX1-t1r'])
+  assert.deepEqual(merged.limites, ['[00:25–00:30] registrado en una segunda petición (tramo 1r), solo para este intervalo, porque la primera respuesta lo dejó sin registrar.', '[00:27] TX1-t1r [BAJA]'])
+})
+
+/** A 30-s clip: one window. */
+function makeLongVideo(name: string): string {
+  const video = path.join(mkdtempSync(path.join(tmpdir(), `v6-${name}-`)), 'long.mp4')
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=30:r=10', '-f', 'lavfi', '-i', 'sine=f=440:d=30', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
+  return video
+}
+
+/** Like fakeGemini, but the first answer for the window stops at second 25. */
+function stopsEarly(calls: VisionRequest[], followUp?: () => never): VisionProvider {
+  const good = fakeGemini(calls)
+  return {
+    name: 'stops-early',
+    available: () => true,
+    async describe(req) {
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA && /COMPLETA UN HUECO/.test(req.instruction) && followUp) {
+        calls.push(req)
+        followUp()
+      }
+      const out = JSON.parse(await good.describe(req))
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA && !/COMPLETA UN HUECO/.test(req.instruction)) out.timeline = out.timeline.filter((e: { start_seconds: number }) => e.start_seconds < 25)
+      return JSON.stringify(out)
+    },
+  }
+}
+
+test('seconds a reply left out are asked once more on their own before they go to the record as [ND]', { timeout: 300_000 }, async () => {
+  const calls: VisionRequest[] = []
+  const result = await perceive(makeLongVideo('fill'), mkdtempSync(path.join(tmpdir(), 'v6-fill-w-')), {
+    protocol: 'v6', providers: [stopsEarly(calls)], whisperModel: 'tiny', language: 'en', diarize: false,
+  })
+  const windows = calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA)
+  assert.equal(windows.length, 2, 'the window, then its hole')
+  assert.match(windows[1]!.instruction, /ESTE TRAMO: 1r de 1, del segundo 25\.00 \(00:25\) al 30\.\d\d/)
+  assert.ok(windows[1]!.frames.every((f) => f.time >= 25), 'only the frames of the hole')
+  assert.ok((windows[1]!.audio?.seconds ?? 0) < 6, 'only the sound of the hole')
+  const md = result.protocolRecord!.markdown
+  assert.doesNotMatch(md, /registro no producido/)
+  assert.match(md, /\[00:27–00:28\]\nVIS: E1 en 27s/)
+  assert.match(md, /registrado en una segunda petición \(tramo 1r\)/)
+  assert.doesNotMatch(md, /\*\*TX2\*\*/, 'the same text seen again is one text')
+})
+
+const dailyQuota = () => {
+  throw Object.assign(new Error('Ningún proveedor de visión pudo responder: todos los modelos agotaron su cuota'), { name: 'DailyQuotaExhaustedError', retryAt: Date.now() + 3_600_000 })
+}
+
+test('with the daily quota spent, a window is not split in halves: the run stops with that error', { timeout: 300_000 }, async () => {
+  const calls: VisionRequest[] = []
+  const good = fakeGemini(calls)
+  const spent: VisionProvider = {
+    name: 'spent',
+    available: () => true,
+    async describe(req) {
+      if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
+        calls.push(req)
+        dailyQuota()
+      }
+      return good.describe(req)
+    },
+  }
+  let saved: { v6?: { split?: string[] } } | undefined
+  await assert.rejects(
+    perceive(makeLongVideo('quota'), mkdtempSync(path.join(tmpdir(), 'v6-quota-w-')), {
+      protocol: 'v6', providers: [spent], whisperModel: 'tiny', language: 'en', diarize: false,
+      onCheckpoint: (c) => { saved = JSON.parse(JSON.stringify(c)) },
+    }),
+    (err: Error) => err.name === 'DailyQuotaExhaustedError',
+  )
+  assert.equal(calls.filter((c) => c.schema === V6_PERCEPTION_WINDOW_SCHEMA).length, 1, 'no halves asked')
+  assert.equal(saved?.v6?.split, undefined, 'no split remembered for the retry')
+})
+
+test('with the daily quota spent during the follow-up, the window is kept with its hole and the run stops', { timeout: 300_000 }, async () => {
+  const calls: VisionRequest[] = []
+  let saved: { v6?: { windows: Record<string, { timeline: Array<{ vis: string }> }> } } | undefined
+  await assert.rejects(
+    perceive(makeLongVideo('quota-fill'), mkdtempSync(path.join(tmpdir(), 'v6-quota-fill-w-')), {
+      protocol: 'v6', providers: [stopsEarly(calls, dailyQuota)], whisperModel: 'tiny', language: 'en', diarize: false,
+      onCheckpoint: (c) => { saved = JSON.parse(JSON.stringify(c)) },
+    }),
+    (err: Error) => err.name === 'DailyQuotaExhaustedError',
+  )
+  const kept = Object.values(saved!.v6!.windows)
+  assert.equal(kept.length, 1, 'the answered window is saved for the retry')
+  assert.match(kept[0]!.timeline.at(-1)!.vis, /registro no producido/)
+})
+
+test('phase 1 cannot see the access, the duration band or the frame shape: the app sets them', () => {
+  const p1 = {
+    ficha: { relacion_aspecto: '16:9' }, ficha_tecnica: {}, triaje: { eje0_fuente: 'VIDEO, alcance: video completo.', eje1_naturaleza: 'real', eje6_duracion: '>10 min' },
+    procedencia: [], entidades: [], planos: [], textos_pantalla: [],
+  } as never
+  const shots = [{ id: 'PL1', start: 0, end: 120 }]
+  const vertical = fixPhase1(p1, shots, { title: 'x', durationSeconds: 120, width: 1080, height: 1920 }, [], true)
+  assert.equal(vertical.ficha.relacion_aspecto, 'vertical')
+  assert.equal(vertical.triaje.eje6_duracion, '1–10 min (02:00) [META]')
+  assert.match(vertical.triaje.eje0_fuente!, /^video; acceso muestreado: imagen muestreada .* y sonido directo continuo; alcance: video completo \[META\]$/)
+  assert.equal(vertical.triaje.eje1_naturaleza, 'real', 'the model keeps what it can see')
+  const mute = fixPhase1(p1, shots, { title: 'x', durationSeconds: 8 }, [], false)
+  assert.equal(mute.ficha.relacion_aspecto, '16:9', 'without a measured size the model\'s value stays')
+  assert.match(mute.triaje.eje0_fuente!, /; sin pista de audio;/)
+  assert.equal(mute.triaje.eje6_duracion, '<10 s (00:08) [META]')
+})
+
+test('screen time per entity comes from the seconds of 9.5 that name it', () => {
+  const lines = entitySeconds([entry(0, 1, { vis: 'P1 y O2 sobre E1' }), entry(1, 2, { vis: 'P1* gira' }), entry(2, 4, { vis: 'O2; PL3 empieza' })], 4)
+  assert.equal(lines, 'O2: 3.0 s (75.0 %)\nP1: 2.0 s (50.0 %), de ellos 1.0 s solo como P1*\nE1: 1.0 s (25.0 %)')
+})
+
+test('a short tail of frames joins the last window instead of costing a request of its own', () => {
+  const frames = (n: number, seconds: number) => Array.from({ length: n }, (_, i) => ({ path: `${i}.jpg`, time: (i * seconds) / n }))
+  assert.deepEqual(v6Windows(frames(312, 60), 60).map((w) => w.frames.length), [312], 'a 60-s clip of 312 frames: one window, not 300 + 12')
+  assert.deepEqual(v6Windows(frames(346, 60), 60).map((w) => w.frames.length), [300, 46], 'past 15 % it is a window of its own')
+  assert.deepEqual(v6Windows(frames(130, 130), 130).map((w) => [w.start, w.end]), [[0, 130]], '10 s past the 120-s limit')
+  assert.equal(v6Windows(frames(150, 150), 150).length, 2)
+})
+
+test('a phone video stored on its side is measured as it is seen', { timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'v6-rot-'))
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=1:r=10', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(dir, 'plain.mp4')])
+  execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-display_rotation', '90', '-i', path.join(dir, 'plain.mp4'), '-c', 'copy', path.join(dir, 'rot.mp4')])
+  assert.deepEqual(await probeVideo(path.join(dir, 'plain.mp4')), { width: 320, height: 180, fps: 10 })
+  assert.deepEqual(await probeVideo(path.join(dir, 'rot.mp4')), { width: 180, height: 320, fps: 10 })
 })

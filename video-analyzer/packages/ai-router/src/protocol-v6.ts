@@ -506,7 +506,8 @@ function renderTimeline(r: AnalysisResult): string {
       const cam = rest.find((l) => l.startsWith('CAM:')) ?? 'CAM: sin cambios'
       const cuts = rest.filter((l) => l.startsWith('CORTE'))
       const head = `[${mmss(s.start_seconds)}–${mmss(s.end_seconds)}]`
-      if (vis.includes('SIN CAMBIOS OBSERVABLES')) {
+      // Only an entry that opens with it: one flagged as hiding a cut quotes it.
+      if (/^VIS:\s*SIN CAMBIOS OBSERVABLES/.test(vis)) {
         // The protocol's SIN CAMBIOS line still records VIS, AUD and TXT: a
         // text that appears or goes in a still second must not vanish.
         const changed = (l: string) => !/^(TXT|CAM):\s*sin cambios\.?$/i.test(l.trim())
@@ -517,10 +518,17 @@ function renderTimeline(r: AnalysisResult): string {
     .join('\n\n')
 }
 
-function renderTranscript(r: AnalysisResult): string {
+/** `measured`: the line times come from the app's transcription [META], so the pauses between them are measured too. */
+function renderTranscript(r: AnalysisResult, measured = false): string {
   if (!r.transcript.length) return 'No se detecta habla.'
   return r.transcript
-    .map((t, i) => `T${i + 1} — ${mmss(t.start_seconds)}–${mmss(t.end_seconds)} — ${t.speaker ?? 'VOZ 1'}: "${t.text}"`)
+    .flatMap((t, i) => {
+      const line = `T${i + 1} — ${mmss(t.start_seconds)}–${mmss(t.end_seconds)} — ${t.speaker ?? 'VOZ 1'}: "${t.text}"`
+      // 9.6 marks long pauses: a second or more before the same voice speaks again.
+      const prev = r.transcript[i - 1]
+      const gap = measured && prev && prev.speaker === t.speaker ? t.start_seconds - prev.end_seconds : 0
+      return gap >= 1 ? [`[pausa ${gap.toFixed(1)} s] [META]`, line] : [line]
+    })
     .join('\n')
 }
 
@@ -531,17 +539,43 @@ function renderTranscript(r: AnalysisResult): string {
  * not a measurement. Returns the text and how many sentences were tagged.
  */
 const DEDUCTION = /\b(indica|indican|indicando|sugiere|sugieren|sugiriendo|denota|denotan|revela|revelan|actúa como|actúan como|sirve para|sirven para|con el fin de|lo que demuestra|lo que implica)\b/i
+/**
+ * Names of a stretch's role in the story, which 9.9 forbids (they go to
+ * 9.11): both real records of 19 Oct 2026 named their 9.9 stretches
+ * "introducción…" and "demostración…". Whole words only, outside quotes.
+ */
+const ROLE = /(?<![\p{L}\p{N}])(gancho|ganchos|problema|problemas|diagnóstico|diagnósticos|clímax|demostración|demostraciones|introducción|introducciones|presentación|presentaciones|planteamiento)(?![\p{L}\p{N}])/iu
+/** Quoted or bracketed text: a literal or an annotation, not the writer's own words. */
+const unquoted = (s: string) => s.replace(/"[^"]*"|«[^»]*»|“[^”]*”|\[[^\]]*\]/g, '')
 
-function tagDeductions(text: string): { text: string; tagged: number } {
+function tagDeductions(text: string, roles = false): { text: string; tagged: number; roles: number } {
   let tagged = 0
-  const out = text.replace(/[^.;\n]+[.;]?/g, (sentence) => {
-    if (!DEDUCTION.test(sentence) || /\[INT/.test(sentence)) return sentence
-    tagged++
+  let named = 0
+  // A point between digits (01:07.08, 15.00 s) does not end a sentence: the
+  // tag landed inside the number ("01:07 [INT …].08").
+  const out = text.replace(/(?:[^.;\n]|\.(?=\d))+[.;]?/g, (sentence) => {
+    if (/\[INT/.test(sentence)) return sentence
     const end = sentence.match(/[.;]$/)?.[0] ?? ''
-    return `${sentence.slice(0, sentence.length - end.length)} [INT — deducción en sección de observación]${end}`
+    const body = sentence.slice(0, sentence.length - end.length)
+    if (DEDUCTION.test(sentence)) {
+      tagged++
+      return `${body} [INT — deducción en sección de observación]${end}`
+    }
+    if (roles && ROLE.test(unquoted(sentence))) {
+      named++
+      return `${body} [INT — nombre de papel en el relato en sección de observación]${end}`
+    }
+    return sentence
   })
-  return { text: out, tagged }
+  return { text: out, tagged, roles: named }
 }
+
+/**
+ * Gender and age words (V6_CORE forbids inferring them; 9.13's recreation
+ * profile is the one place for an apparent age band, marked [INT]). Counted
+ * for 9.14 rather than tagged one by one: a real record had 122 of them.
+ */
+const GENDER_AGE = /(?<![\p{L}\p{N}])(hombre|hombres|mujer|mujeres|masculino|masculina|masculinos|masculinas|femenino|femenina|femeninos|femeninas|niño|niña|niños|niñas|joven|jóvenes|anciano|anciana|ancianos|ancianas|señor|señora|señores|señoras|varón|varones|adolescente|adolescentes)(?![\p{L}\p{N}])/giu
 
 /** A 9.9 measurement: free text (before v6.3) or one labeled field each. */
 function labeled(value: string | Record<string, string> | undefined, fields: LabeledFields, legacy: string): string {
@@ -550,41 +584,58 @@ function labeled(value: string | Record<string, string> | undefined, fields: Lab
   return fields.map(([key, label]) => `${label}: ${value[key] ?? '[ND]'}`).join('\n\n')
 }
 
-/** Applies tagDeductions to 9.8 and 9.9, counting what it tagged. */
-function guardObservation(p3: V6Phase3): { p3: V6Phase3; tagged: number } {
+/** Applies tagDeductions to 9.8 and 9.9 (and the role names to 9.9), counting what it tagged. */
+function guardObservation(p3: V6Phase3): { p3: V6Phase3; tagged: number; roles: number } {
   let tagged = 0
-  const fix = (s: string) => {
-    const r = tagDeductions(s)
+  let roles = 0
+  const fix = (s: string, role = false) => {
+    const r = tagDeductions(s, role)
     tagged += r.tagged
+    roles += r.roles
     return r.text
   }
+  const fix99 = (s: string) => fix(s, true)
   const fixAny = <T extends string | Record<string, string> | undefined>(v: T): T =>
-    (v === undefined ? v : typeof v === 'string' ? fix(v) : Object.fromEntries(Object.entries(v).map(([k, s]) => [k, fix(s)]))) as T
+    (v === undefined ? v : typeof v === 'string' ? fix99(v) : Object.fromEntries(Object.entries(v).map(([k, s]) => [k, fix99(s)]))) as T
   const g = p3.gramatica
   const out: V6Phase3 = {
     ...p3,
     cambios_estado: p3.cambios_estado.map((c) => ({ ...c, antes: fix(c.antes), transicion: fix(c.transicion), despues: fix(c.despues) })),
     gramatica: {
       ...g,
-      ritmo_montaje: fix(g.ritmo_montaje),
+      ritmo_montaje: fix99(g.ritmo_montaje),
       estructura_temporal: fixAny(g.estructura_temporal),
-      sincronia: fix(g.sincronia),
-      coreografia_texto: fix(g.coreografia_texto),
-      continuidad: fix(g.continuidad),
-      diseno_sonoro: fix(g.diseno_sonoro),
+      sincronia: fix99(g.sincronia),
+      coreografia_texto: fix99(g.coreografia_texto),
+      continuidad: fix99(g.continuidad),
+      diseno_sonoro: fix99(g.diseno_sonoro),
       arquitectura_retencion: fixAny(g.arquitectura_retencion),
       sujeto_principal_manipulacion: fixAny(g.sujeto_principal_manipulacion),
     },
   }
-  return { p3: out, tagged }
+  return { p3: out, tagged, roles }
 }
 
 const bullet = (items: string[], empty: string) => (items.length ? items.map((x) => `- ${x}`).join('\n') : empty)
 
-/** YAML-safe scalar for the frontmatter. */
+/**
+ * YAML-safe scalar for the frontmatter: bare only when YAML reads it back as
+ * the same text. "- Episodio 3 -" broke the whole properties block, and
+ * "2024", "null" or "No" came back as a number, nothing or a boolean.
+ */
 function yamlValue(v: string | number): string {
   const s = String(v)
-  return /[:#\[\]{},&*?|<>=!%@`'"]/.test(s) || s.trim() !== s ? JSON.stringify(s) : s
+  const bare = /^\p{L}[^:#\[\]{},&*?|<>=!%@`'"\\\n]*$/u.test(s) && s.trim() === s && !/^(y|n|yes|no|on|off|true|false|null)$/i.test(s)
+  return bare ? s : JSON.stringify(s)
+}
+
+/** An Obsidian tag needs a character that is not a digit: "2024" becomes "n2024". */
+const tagValue = (t: string) => yamlValue(/^\d+$/.test(t) ? `n${t}` : t)
+
+/** "[ID] qué parece ser" or "NO DETERMINABLE", as 9.3 writes it. */
+const idLabel = (s: string | undefined) => {
+  const t = (s ?? '').trim()
+  return !t || /^NO DETERMINABLE/i.test(t) ? 'NO DETERMINABLE' : /^\[ID\]/.test(t) ? t : `[ID] ${t}`
 }
 
 /**
@@ -606,6 +657,12 @@ export function renderV6Record(input: {
   access?: { acceso: string; detalle: string; cobertura: string }
   /** Texts on screen gathered window by window (perception), when phase 1 has none. */
   textosPantalla?: V6Phase1['textos_pantalla']
+  /** Entities first seen by the timeline windows (perception), in the 9.3 format; otherwise merged.elements. */
+  windowEntities?: V6Phase1['entidades']
+  /** 9.1 MAPA DE BLOQUES: the stretches the timeline was asked in, e.g. "tramo 1: 00:00–02:00 / tramo 2: 02:00–03:49.68". */
+  bloques?: string
+  /** The transcript is the app's (Whisper) [META], with measured line times: 9.6 then marks the pauses between lines. */
+  measuredTranscript?: boolean
 }): string {
   const { meta, phase1: p1, merged, windowLimits } = input
   const access = input.access ?? {
@@ -639,7 +696,7 @@ export function renderV6Record(input: {
     `audio: ${yamlValue(f.audio)}`,
     `sujetos: ${yamlValue(f.sujetos)}`,
     `idioma_habla: ${yamlValue(f.idioma_habla)}`,
-    `tags: [${['analisis-video', ...f.tags.filter((t) => t !== 'analisis-video')].map((t) => yamlValue(t.replace(/\s+/g, '-'))).join(', ')}]`,
+    `tags: [${['analisis-video', ...f.tags.filter((t) => t !== 'analisis-video')].map((t) => tagValue(t.replace(/\s+/g, '-'))).join(', ')}]`,
     '---',
     '',
     `# ${meta.title}`,
@@ -653,6 +710,7 @@ export function renderV6Record(input: {
     `DURACIÓN MEDIA DE PLANO: ${ft.duracion_media_plano}`,
     `PLANO MÁS LARGO: ${ft.plano_mas_largo}`,
     `PLANO MÁS CORTO: ${ft.plano_mas_corto}`,
+    ...(input.bloques ? [`MAPA DE BLOQUES: ${input.bloques} (los "[tramo N]" de 9.14 remiten a estos tramos).`] : []),
     `ALCANCE Y TRAMO: video completo, 00:00–${mmss(meta.durationSeconds)}. Tiempos del registro: del archivo, que es el original.`,
     `ACCESO: ${access.detalle}`,
     `MAPA DE COBERTURA: ${access.cobertura}`,
@@ -671,10 +729,18 @@ export function renderV6Record(input: {
   for (const e of p1.entidades) {
     out.push(`**${e.id}** — primera aparición ${e.primera_aparicion}`, `DESCRIPCIÓN FÍSICA: ${e.descripcion_fisica}`, `IDENTIFICACIÓN: ${e.identificacion}`, `APARICIONES: ${e.apariciones}`, '')
   }
-  const fromWindows = merged.elements
+  // Same four lines as above; the Gemini engine's elements carry "ID — identificación" as their label.
+  const fromWindows =
+    input.windowEntities ??
+    merged.elements.map((el) => {
+      const [id, ...rest] = el.label.split(' — ')
+      return { id: id!, primera_aparicion: mmss(el.start_seconds), descripcion_fisica: el.detail ?? '[ND]', identificacion: rest.join(' — '), apariciones: '[ND]' }
+    })
   if (fromWindows.length) {
     out.push('**Entidades registradas durante la línea de tiempo** (no estaban en el registro inicial):', '')
-    for (const el of fromWindows) out.push(`**${el.label}** — primera aparición ${mmss(el.start_seconds)}`, `DESCRIPCIÓN FÍSICA: ${el.detail ?? '[ND]'}`, '')
+    for (const e of fromWindows) {
+      out.push(`**${e.id}** — primera aparición ${e.primera_aparicion}`, `DESCRIPCIÓN FÍSICA: ${e.descripcion_fisica || '[ND]'}`, `IDENTIFICACIÓN: ${idLabel(e.identificacion)}`, `APARICIONES: ${e.apariciones || '[ND]'}`, '')
+    }
   }
   if (!p1.entidades.length && !fromWindows.length) out.push('No se registran entidades.', '')
 
@@ -695,7 +761,7 @@ export function renderV6Record(input: {
   }
 
   out.push('## 9.5 Línea de tiempo canónica', '', renderTimeline(merged), '')
-  out.push('## 9.6 Transcripción literal', '', renderTranscript(merged), '')
+  out.push('## 9.6 Transcripción literal', '', renderTranscript(merged, input.measuredTranscript), '')
 
   out.push('## 9.7 Texto en pantalla', '')
   const textos = p1.textos_pantalla.length ? p1.textos_pantalla : (input.textosPantalla ?? [])
@@ -749,7 +815,10 @@ export function renderV6Record(input: {
   )
   if (!p3.funcion.length) out.push('NO DETERMINABLE para todos los elementos: el video no demuestra un uso repetido ni un resultado directamente observable.', '')
   for (const fn of p3.funcion) {
-    out.push(`ELEMENTO: ${fn.elemento}`, `EVIDENCIA: ${fn.evidencia}`, `POSIBLE FUNCIÓN: ${fn.posible_funcion}`, `NO DETERMINABLE: ${fn.no_determinable}`, '')
+    // 9.10 writes every function with its [FUN] tag.
+    const fun = (fn.posible_funcion ?? '').trim()
+    const tagged = !fun || /^\[FUN\]/.test(fun) || /^NO DETERMINABLE/i.test(fun) ? fun : `[FUN] ${fun}`
+    out.push(`ELEMENTO: ${fn.elemento}`, `EVIDENCIA: ${fn.evidencia}`, `POSIBLE FUNCIÓN: ${tagged}`, `NO DETERMINABLE: ${fn.no_determinable}`, '')
   }
 
   out.push('## 9.11 Interpretación', '', bullet(p3.interpretacion, 'Sin interpretaciones.'), '')
@@ -789,6 +858,26 @@ export function renderV6Record(input: {
   const limits = [...new Set([...p3.limites, ...windowLimits])]
   if (guarded.tagged) {
     limits.push(`${guarded.tagged} frase(s) de 9.8/9.9 contenían una deducción ("indica", "sugiere", "actúa como"...) y quedaron marcadas [INT] automáticamente: léanse como interpretación, no como medición.`)
+  }
+  if (guarded.roles) {
+    limits.push(`${guarded.roles} frase(s) de 9.9 nombraban el papel de un tramo en el relato ("introducción", "demostración", "clímax"...) y quedaron marcadas [INT] automáticamente: ese nombre es interpretación (9.11).`)
+  }
+  // 9.12: at least 3 patterns, or say why there are fewer.
+  if (p3.patrones.length < 3 && !limits.some((l) => /patr[oó]n/i.test(l))) {
+    limits.push(`9.12 tiene ${p3.patrones.length} patrón(es), menos de los 3 que pide el protocolo, y la síntesis no explicó por qué el registro no sostiene más.`)
+  }
+  const doc = out.join('\n')
+  const words = ['9.3', '9.4', '9.5', '9.8', '9.9']
+    .map((n) => {
+      const from = doc.indexOf(`## ${n} `)
+      const to = doc.indexOf('\n## ', from + 1)
+      const text = from < 0 ? '' : doc.slice(from, to < 0 ? undefined : to).split('\n').filter((l) => !/\[INT/.test(l)).map(unquoted).join('\n')
+      return { n, count: text.match(GENDER_AGE)?.length ?? 0 }
+    })
+    .filter((w) => w.count)
+  if (words.length) {
+    const total = words.reduce((sum, w) => sum + w.count, 0)
+    limits.push(`${total} palabra(s) de género o edad ("hombre", "mujer", "joven"...) en las secciones de observación (${words.map((w) => `${w.n}: ${w.count}`).join(', ')}): el protocolo no permite inferirlos de la imagen ni de la voz; léanse como [INT].`)
   }
   out.push('## 9.14 Límites del análisis', '', bullet(limits, 'Sin límites declarados.'), '')
   return out.join('\n')
