@@ -293,6 +293,45 @@ const isDailyQuota = (err: unknown) => (err as Error | undefined)?.name === 'Dai
 /** Errors about the moment, not the request: two halves would meet the same quota or the same busy models. */
 const notTheRequest = (err: unknown) => isDailyQuota(err) || (err as Error | undefined)?.name === 'AllProvidersBusyError'
 
+/** 1700 read as 17:00 (1020 s); null when the number cannot be minutes and seconds written together. */
+function clockDigits(v: number): number | null {
+  if (!Number.isFinite(v) || v < 0) return null
+  const minutes = Math.floor(v / 100)
+  const seconds = v - minutes * 100
+  return seconds <= 60 + 1e-6 ? minutes * 60 + seconds : null
+}
+
+/**
+ * Flash-Lite wrote a window's seconds as its clock digits run together (the
+ * window 17:00–17:15 came back as 1700–1715, every CORTE line still saying
+ * 17:01.56) in 5 of 10 refused replies on 21 Oct 2026, and each was asked
+ * again until the window was lost. When the whole timeline lies outside the
+ * window and reading it that way puts all of it inside, the reply is read
+ * that way, declared in 9.14. Anything less clear-cut is left alone.
+ */
+export function clockDigitsAsSeconds(w: WindowOut, range: { start: number; end: number }): WindowOut {
+  const tl = w.timeline ?? []
+  const inside = (v: number) => v >= range.start - 0.5 && v <= range.end + 0.5
+  if (!tl.length || tl.some((e) => inside(e.start_seconds) || inside(e.end_seconds))) return w
+  const fixed = tl.map((e) => ({ ...e, start_seconds: clockDigits(e.start_seconds), end_seconds: clockDigits(e.end_seconds) }))
+  if (!fixed.every((e) => e.start_seconds !== null && e.end_seconds !== null && inside(e.start_seconds) && inside(e.end_seconds))) return w
+  const at = (v: number) => {
+    const c = clockDigits(v)
+    return c !== null && inside(c) ? c : v
+  }
+  return {
+    ...w,
+    timeline: fixed as WindowOut['timeline'],
+    escenas: (w.escenas ?? []).map((e) => ({ ...e, start_seconds: at(e.start_seconds), end_seconds: at(e.end_seconds) })),
+    elementos: (w.elementos ?? []).map((e) => ({ ...e, start_seconds: at(e.start_seconds), end_seconds: at(e.end_seconds) })),
+    entidades_nuevas: (w.entidades_nuevas ?? []).map((e) => ({ ...e, primera_aparicion_segundo: at(e.primera_aparicion_segundo) })),
+    limites: [
+      ...(w.limites ?? []),
+      `[${mmss(range.start)}–${mmss(range.end)}] el modelo escribió los tiempos de este tramo como minutos y segundos pegados (${tl[0]!.start_seconds} por ${mmss(fixed[0]!.start_seconds!)}); la app los convirtió [BAJA].`,
+    ],
+  }
+}
+
 /**
  * The window's timeline must run from its start to its end without holes: the
  * protocol's continuous coverage. Holes up to a quarter of the window are
@@ -620,7 +659,7 @@ export async function buildV6Record(input: V6Input): Promise<{ result: AnalysisR
         maxOutputTokens: MAX_REPLY_TOKENS,
       },
       (t) => {
-        const raw = parseJson<WindowOut>(t)
+        const raw = clockDigitsAsSeconds(parseJson<WindowOut>(t), range)
         // A half too short to split again, or the second look at a hole: its
         // grouped seconds are kept, each declared in 9.14, rather than the
         // whole analysis failing.

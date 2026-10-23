@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { perceive } from '../src/perceive.ts'
 import {
+  clockDigitsAsSeconds,
   coverTimeline,
   entitySeconds,
   fixPhase1,
@@ -392,15 +393,22 @@ test('once a window fails for good, a window that is only waiting out a busy mod
   execFileSync('ffmpeg', ['-hide_banner', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=320x180:d=60:r=5', '-f', 'lavfi', '-i', 'sine=f=440:d=60', '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', video])
   const good = fakeGemini([])
   let busyCalls = 0
+  // Window 1 is in flight before window 2 meets the busy model: when window
+  // 2's audio clip was ready first, its 503 paused the model, window 1 waited
+  // behind it and the run ended "busy" instead (flaky since 21 Oct 2026).
+  let firstSent!: () => void
+  const first = new Promise<void>((r) => { firstSent = r })
   const provider: VisionProvider = {
     name: 'busy',
     available: () => true,
     async describe(req) {
       if (req.schema === V6_PERCEPTION_WINDOW_SCHEMA) {
         if (/del segundo 0\.00 /.test(req.instruction)) {
+          firstSent()
           await new Promise((r) => setTimeout(r, 500))
           throw new Error('busy HTTP 400: imagen no válida')
         }
+        await first
         busyCalls++
         throw new ProviderOverloadedError('busy', 503, 'saturado', 3000)
       }
@@ -704,4 +712,37 @@ test('a video that is one short window answered badly still fails, to be retried
     perceive(video, mkdtempSync(path.join(tmpdir(), 'v6-nd1-')), { protocol: 'v6', providers: [elsewhere], whisperModel: 'tiny', language: 'en', diarize: false }),
     /Ningún proveedor de visión pudo responder/,
   )
+})
+
+test('a timeline written as clock digits (1700 for 17:00) is read as such, only when that is the one reading that fits', () => {
+  const entry = (a: number, b: number, cortes: string[] = []) => ({ start_seconds: a, end_seconds: b, sin_cambios: false, vis: 'v', aud: 'a', txt: 't', cam: 'c', cortes })
+  const reply = (timeline: ReturnType<typeof entry>[]) => ({
+    timeline, textos_pantalla: [], cambios_estado: [], elementos: [{ kind: 'object', label: 'x', detail: 'd', start_seconds: 1701.56, end_seconds: 1713.68 }],
+    escenas: [{ start_seconds: 1700, end_seconds: 1715, title: 't', description: 'd', audio_description: 'a' }],
+    entidades_nuevas: [{ id: 'O9-t9baa', primera_aparicion_segundo: 1705, descripcion_fisica: 'd', identificacion: 'i' }], limites: [],
+  })
+  const range = { start: 1020, end: 1035 }
+  const digits = reply(Array.from({ length: 15 }, (_, i) => entry(1700 + i, 1701 + i, i === 1 ? ['CORTE en 17:01.56'] : [])))
+  const fixed = clockDigitsAsSeconds(digits, range)
+  assert.deepEqual([fixed.timeline[0]!.start_seconds, fixed.timeline[14]!.end_seconds], [1020, 1035])
+  assert.deepEqual([fixed.escenas[0]!.start_seconds, fixed.escenas[0]!.end_seconds], [1020, 1035])
+  assert.ok(Math.abs(fixed.elementos[0]!.start_seconds - 1021.56) < 1e-9)
+  assert.equal(fixed.entidades_nuevas[0]!.primera_aparicion_segundo, 1025)
+  assert.match(fixed.limites.at(-1)!, /^\[17:00–17:15\] el modelo escribió los tiempos de este tramo como minutos y segundos pegados \(1700 por 17:00\); la app los convirtió \[BAJA\]\.$/)
+  // The repaired reply now passes the timeline checks it failed.
+  assert.throws(() => coverTimeline(digits, range), /deja 15 s del tramo sin registrar/)
+  assert.equal(coverTimeline(fixed, range).timeline.length, 15)
+  // A 59:60 tail is the next minute.
+  assert.equal(clockDigitsAsSeconds(reply([entry(2959, 2960)]), { start: 1799, end: 1800 }).timeline[0]!.end_seconds, 1800)
+
+  // Left alone: a timeline already in the window, one that is only partly
+  // elsewhere, and one that would still land outside.
+  const right = reply([entry(1020, 1035)])
+  assert.equal(clockDigitsAsSeconds(right, range), right)
+  const mixed = reply([entry(1020, 1030), entry(1730, 1735)])
+  assert.equal(clockDigitsAsSeconds(mixed, range), mixed)
+  const lost = reply([entry(2940, 2960)])
+  assert.equal(clockDigitsAsSeconds(lost, range), lost, '29:40–30:00 is not in 17:00–17:15')
+  const notClock = reply([entry(1775, 1790)])
+  assert.equal(clockDigitsAsSeconds(notClock, range), notClock, '17:75 is not a time')
 })

@@ -113,26 +113,37 @@ Las siguientes veces abre en segundos.
 
 ### Cuánto tarda un análisis
 
-Medido con Gemini real en un video de 15 minutos: **unos 11 minutos** (7 de
-ellos son Gemini). Los demás tiempos están calculados a partir de esa medición:
+Medido con Gemini real, en un servidor sin tarjeta gráfica:
 
-| Duración del video | Tiempo aproximado | Peticiones a los modelos buenos (40 al día) |
+| Video | Condiciones | Tiempo | Peticiones |
+|---|---|---|---|
+| 15 minutos | Google normal, modelos buenos | **11 min** | 12 |
+| 51 minutos | Google saturado toda la noche | **unos 74 min** | 219 (165 de Flash-Lite) |
+
+Calculado a partir de la medición de 15 minutos (sin medir todavía):
+
+| Duración del video | Con Google normal | Peticiones a los modelos buenos (40 al día) |
 |---|---|---|
 | 1 minuto | 2–3 min | 3 |
 | 5 minutos | 4–5 min | 5 |
-| 15 minutos | ~11 min | ~12 |
 | 30 minutos | 15–20 min | ~18 |
 | 1 hora | 25–35 min | ~33 |
-| 1 h 40 min | 45–60 min | ~53: no caben; el resto lo hace Flash-Lite, con menos detalle |
+| 1 h 40 min | 45–60 min | ~53: no caben; el resto lo hace Flash-Lite |
 
-- Gemini ve el video en partes de 2 minutos, 8 a la vez. Las partes de más
-  de 8 esperan turno.
-- Cuando Google está saturado (error 503), la app espera y reintenta. Eso
-  puede sumar varios minutos.
-- Con la tarjeta gráfica (RTX 3050), la transcripción debería ir más rápido
-  que en estas mediciones, que se hicieron sin tarjeta.
-- Si se acaban las peticiones del día, el análisis espera a que se renueven
-  (a la medianoche de California) y continúa solo, sin perder lo avanzado.
+- Gemini ve el video en partes de 2 minutos, 8 a la vez.
+- Google cuenta como gastadas las peticiones que rechaza por saturación
+  (error 503). En una noche saturada los modelos buenos se agotan pronto y
+  Flash-Lite hace casi todo: tarda más, porque muchas de sus respuestas no
+  pasan los controles y la app parte esas partes en trozos más pequeños.
+- Un trozo de 15 segundos que ningún modelo consigue describir queda marcado
+  como «sin registro» (con lo que se dice y los cortes medidos) y el análisis
+  sigue.
+- Con la tarjeta gráfica (RTX 3050), la transcripción debería ir más rápido.
+- Si se acaban todas las peticiones del día, el análisis espera a que se
+  renueven (medianoche de California) y continúa solo, sin perder lo avanzado.
+- Al terminar, la app indexa el video para la búsqueda en segundo plano. En
+  el video de 51 minutos eso son unos 1.260 fragmentos, unos 16 minutos más;
+  la búsqueda va encontrando más mientras tanto.
 
 ### Actualizaciones del lanzador
 
