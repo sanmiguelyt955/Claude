@@ -4,15 +4,8 @@ import Link from 'next/link'
 import { useState } from 'react'
 import { StatusBadge } from './StatusBadge'
 import { formatDuration } from '@/lib/format'
+import { SEARCH_SOURCE_LABEL } from '@/lib/status'
 import type { LibrarySearchResult } from '@/lib/types'
-
-const SOURCE_LABEL: Record<LibrarySearchResult['source'], string> = {
-  summary: 'Resumen',
-  scene: 'Escena',
-  transcript: 'Transcripción',
-  element: 'Objeto/texto',
-  skill: 'Skill',
-}
 
 const MATCH_LABEL: Record<LibrarySearchResult['match_type'], string> = {
   semantic: 'similar',
@@ -93,7 +86,7 @@ export function LibrarySearch() {
               </div>
               <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-(--color-ink-soft)">
                 {result.start_seconds !== null && <span className="timestamp">{formatDuration(result.start_seconds)}</span>}
-                <span>{SOURCE_LABEL[result.source]}</span>
+                <span>{SEARCH_SOURCE_LABEL[result.source]}</span>
                 <span>· {MATCH_LABEL[result.match_type]}</span>
               </p>
               <p className="mt-1">{result.text}</p>

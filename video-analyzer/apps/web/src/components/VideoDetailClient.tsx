@@ -9,7 +9,7 @@ import { AnalyzingProgress } from './AnalyzingProgress'
 import { FolderField } from './FolderField'
 import { VideoChat } from './VideoChat'
 import { formatDuration, formatSize } from '@/lib/format'
-import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL, friendlyError } from '@/lib/status'
+import { ELEMENT_KIND_LABEL, IMPROVEMENT_KIND_LABEL, SEARCH_SOURCE_LABEL, friendlyError } from '@/lib/status'
 import type { VideoDetailResponse, SemanticSearchResult, SkillDetail } from '@/lib/types'
 
 type Tab = 'resumen' | 'registro' | 'chat' | 'timeline' | 'transcripcion' | 'objetos' | 'texto' | 'skills' | 'detalles'
@@ -872,8 +872,8 @@ export function VideoDetailClient({ id }: { id: string }) {
                 {searchResults.map((result) => (
                   <li key={result.id} className="rounded-md border border-(--color-line) p-2.5 text-sm">
                     <p className="font-mono text-xs text-(--color-ink-soft)">
-                      {result.source}
-                      {result.start_seconds !== null && ` · ${formatDuration(result.start_seconds)}`}
+                      {SEARCH_SOURCE_LABEL[result.source]}
+                      {result.start_seconds !== null && <> · {video.stored_path ? at(result.start_seconds) : formatDuration(result.start_seconds)}</>}
                     </p>
                     <p>{result.text}</p>
                   </li>

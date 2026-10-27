@@ -1,4 +1,4 @@
-import type { ElementKind, VideoStatus, SkillImprovementKind } from './types'
+import type { ElementKind, VideoStatus, SkillImprovementKind, SemanticSearchResult } from './types'
 
 export const STATUS_LABEL: Record<VideoStatus, string> = {
   pending: 'En cola',
@@ -16,6 +16,15 @@ export const STATUS_COLOR: Record<VideoStatus, string> = {
   analyzing: 'var(--color-accent)',
   ready: 'var(--color-ok)',
   failed: 'var(--color-danger)',
+}
+
+/** What a search hit is, in both searches (the video's own listed "transcript", "scene"). */
+export const SEARCH_SOURCE_LABEL: Record<SemanticSearchResult['source'], string> = {
+  summary: 'Resumen',
+  scene: 'Escena',
+  transcript: 'Transcripción',
+  element: 'Objeto/texto',
+  skill: 'Skill',
 }
 
 export const ELEMENT_KIND_LABEL: Record<ElementKind, string> = {
