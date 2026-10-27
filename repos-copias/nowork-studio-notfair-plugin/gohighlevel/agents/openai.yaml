@@ -1,0 +1,4 @@
+interface:
+  display_name: "GoHighLevel"
+  short_description: "Operate connected GoHighLevel CRM safely"
+  default_prompt: "Use $gohighlevel to inspect my connected HighLevel location and make only the approved CRM change."

@@ -1,0 +1,1251 @@
+/**
+ * MCP Tool Definitions for PostEverywhere
+ *
+ * Each tool maps 1:1 to a REST API v1 endpoint.
+ * Tool descriptions follow Anthropic's best practices: 3-4 sentences
+ * explaining what, when, and what it returns.
+ */
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { z } from 'zod';
+import { PostEverywhereClient, currentTool } from './client.js';
+
+export interface RegisterToolsOptions {
+  /**
+   * Hide the generate_image tool. AI image generation is an unsupported use
+   * case for the Anthropic Connectors Directory, so the hosted /claude
+   * endpoint sets this; every other surface keeps the full toolset.
+   * Defaults to the MCP_DISABLE_IMAGE_GENERATION env var.
+   */
+  disableImageGeneration?: boolean;
+  /**
+   * Tool names to leave out on this surface. The ChatGPT app directory
+   * forbids tools that collect credentials (bot tokens, app passwords) or
+   * return secrets (webhook signing secrets), so the hosted /chatgpt
+   * endpoint hides those; every other surface keeps them.
+   */
+  hideTools?: readonly string[];
+}
+
+/**
+ * Tools left out of the ChatGPT app: those that collect credentials or return
+ * secrets (restricted data), and AI image generation (kept off to give the
+ * directory review the smallest possible surface; Jamie, 29 Sep 2026).
+ */
+export const CHATGPT_HIDDEN_TOOLS = [
+  'connect_credential_account',
+  'generate_image',
+  // ChatGPT writes captions itself, so this metered tool adds nothing there
+  // (Jamie, 14 Oct 2026); keeping it off also keeps the review surface small.
+  'generate_caption',
+  // New in 1.12.0: kept off the ChatGPT app until its tool scan is re-run
+  // (the directory compares against its cached scan of this server).
+  'get_brand',
+  'create_webhook',
+  'update_webhook',
+  'get_webhook',
+  'list_webhooks',
+  'delete_webhook',
+  'test_webhook',
+] as const;
+
+export function registerTools(rawServer: McpServer, client: PostEverywhereClient, opts?: RegisterToolsOptions) {
+  const hideImageGeneration = opts?.disableImageGeneration ?? (process.env.MCP_DISABLE_IMAGE_GENERATION === '1');
+  const hidden = new Set<string>(opts?.hideTools ?? []);
+  // Same API as McpServer.registerTool, but skips hidden tools for this surface.
+  const server = {
+    // Each tool runs with its name in scope, so the API calls it makes are
+    // labelled with it in the customer's logs (client.ts currentTool).
+    registerTool: ((name: string, config: any, cb: any) =>
+      hidden.has(name)
+        ? undefined
+        : rawServer.registerTool(name, config, (...args: any[]) => currentTool.run(name, () => cb(...args)))) as McpServer['registerTool'],
+  };
+
+  // ─── Brand ────────────────────────────────────────────────
+
+  server.registerTool(
+    'get_brand',
+    {
+      title: 'Get Brand',
+      description: 'Get the workspace\'s Brand Kit from PostEverywhere (app.posteverywhere.ai/brand): what the business does, its products, audience, voice, language, rules to follow, banned words, required hashtags, colours and fonts. Call this before writing captions yourself so posts sound like the brand and follow its rules. generate_caption already writes in this brand automatically. If brand is null, no brand is set up yet and the message says where to make one.',
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const result = await client.getBrand();
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── Posting queue ─────────────────────────────────────────
+
+  server.registerTool(
+    'get_queue',
+    {
+      title: 'Get Posting Queue',
+      description: 'Show the workspace posting queue: the recurring weekly slots it posts at, and the next openings coming up. Use this before create_post(use_queue: true) so you can tell the user exactly when their post will go out, and use it when they ask "when is my next slot" or "what does my schedule look like". The upcoming list is a FORECAST, not a reservation: a slot is only taken when a post is actually created with use_queue. If no queue is set up the queue field is null and the message explains where to create one.',
+      inputSchema: {
+        preview: z.number().optional().describe('How many upcoming openings to return (1-30, default 10).'),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ preview }) => {
+      const result = await client.getQueue({ preview });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'get_best_times',
+    {
+      title: 'Get Best Times to Post',
+      description: 'Find the best times to post for one or more connected accounts, or for a platform. Each slot gives the weekday (ISO, 1 = Monday), the local time in the requested timezone, the next concrete datetime, a score (1.25 = about 25% better than a typical post; null for general guidance) and a basis: "personal" (measured from that account\'s own posts), "platform" (what works for PostEverywhere users on that platform) or "general" (guidance, not measured). Pass several account_ids to get one combined recommendation for posting to all of them. next_best is the soonest of the top three slots. Use this when the user asks when to post, or before scheduling with create_post(schedule_at: "best_time"). Always tell the user the basis: never call a "platform" or "general" slot their own best time.',
+      inputSchema: {
+        account_ids: z.array(z.number()).max(20).optional().describe('Account IDs (from list_accounts). Several = one combined recommendation.'),
+        platform: z.string().optional().describe('Instead of accounts: a platform name (instagram, tiktok, linkedin, youtube, facebook, x, threads, pinterest, bluesky, telegram, discord, wordpress) for platform-wide times.'),
+        timezone: z.string().optional().describe('IANA timezone for the slots (e.g. America/New_York). Default: the user\'s profile timezone.'),
+        count: z.number().min(1).max(10).optional().describe('Slots per result (default 5).'),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ account_ids, platform, timezone, count }: { account_ids?: number[]; platform?: string; timezone?: string; count?: number }) => {
+      if (!account_ids?.length && !platform) {
+        throw new Error('Pass account_ids (from list_accounts) or a platform name.');
+      }
+      const result = await client.getBestTimes({ account_ids, platform, timezone, count });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── Accounts ──────────────────────────────────────────────
+
+  server.registerTool(
+    'list_accounts',
+    {
+      title: 'List Accounts',
+      description: 'List all connected social media accounts on PostEverywhere. Returns account IDs, platform names, usernames, and health status (whether each account can currently post). Use this to see which platforms are available before creating a post. While the workspace has no posts yet, the result ends with a next_step line: offer it to the user as an easy first post.',
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const result = await client.listAccounts();
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result.accounts, null, 2) },
+          // Only while the workspace has no posts (the API decides; see
+          // lib/activation/first-post-hint.ts). Agents that connect and then
+          // never post are the gap this closes.
+          ...(typeof result.next_step === 'string' && result.next_step
+            ? [{ type: 'text' as const, text: `next_step: ${result.next_step}` }]
+            : []),
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    'get_account',
+    {
+      title: 'Get Account',
+      description: 'Get detailed information about a specific connected social media account on PostEverywhere. Returns the account platform, username, health status, and whether it can currently post (Pinterest also lists its boards; WordPress names its site). Use this to check the status of a single account by its ID.',
+      inputSchema: {
+      account_id: z.number().describe('The numeric ID of the social account to retrieve'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ account_id }) => {
+      const result = await client.getAccount(account_id);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── Posts ─────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_posts',
+    {
+      title: 'List Posts',
+      description: 'List scheduled, published, or draft posts on PostEverywhere. Supports filtering by status (scheduled, published, draft) and platform. Returns post content, scheduling info, and per-platform destination statuses. Use this to check what posts are queued or to review published content.',
+      inputSchema: {
+      status: z.enum(['scheduled', 'published', 'draft']).optional().describe('Filter by post status'),
+      platform: z.string().optional().describe('Filter by platform (e.g., instagram, linkedin, x, wordpress, google_business)'),
+      limit: z.number().min(1).max(100).optional().default(20).describe('Number of posts to return'),
+      approval: z.enum(['pending', 'approved', 'changes_requested']).optional().describe('Approval workflow filter: "pending" lists posts waiting for a reviewer, "changes_requested" those sent back to their author.'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ status, platform, limit, approval }) => {
+      const result = await client.listPosts({ status, platform, limit, approval });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result.posts, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'get_post',
+    {
+      title: 'Get Post',
+      description: 'Get detailed information about a specific post on PostEverywhere, including its content, media attachments, schedule, and the publishing status on each destination platform. Use this to check if a post was published successfully or to see error details for failed destinations.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the post to retrieve'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ post_id }) => {
+      const result = await client.getPost(post_id);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'create_post',
+    {
+      title: 'Create Post',
+      description: 'Create a social media post on PostEverywhere. Three modes: (1) PUBLISH NOW — give content + account_ids, omit scheduled_for; (2) SCHEDULE — add scheduled_for; (3) DRAFT for human review — set draft: true, which saves the post WITHOUT publishing it (it appears in the user\'s PostEverywhere app and via list_posts(status:"draft"); you then publish it with schedule_post once approved). Use draft mode whenever a human wants to check posts before they go live. Supports per-platform overrides and media. THREADS: put part 1 in content and the parts that follow in thread_posts; the post goes out as a real linked thread (each part replies to the one before) on X and Bluesky, and as follow-up messages on Telegram and Discord (Threads chains are not available yet: a Threads account gets part 1 only). Returns the post ID, its status, and the next step to take. Irreversible in publish-now and schedule modes: a post that a social network has published stays public, and PostEverywhere cannot recall it.',
+      inputSchema: {
+      content: z.string().describe('The text content of the post'),
+      account_ids: z.array(z.number()).optional().describe('Social account IDs to post to (from list_accounts). REQUIRED to publish or schedule; OPTIONAL for a draft (accounts can be chosen later when you call schedule_post).'),
+      scheduled_for: z.string().optional().describe('ISO 8601 datetime to schedule the post (e.g., 2026-03-15T14:00:00Z). Without an offset it is read as UTC. Omit to publish immediately. When draft:true this is optional and just pre-fills the draft\'s suggested time.'),
+      timezone: z.string().optional().default('UTC').describe('IANA timezone (e.g., America/New_York), stored for display only. It does not change when the post goes out: scheduled_for without an offset is read as UTC. To post at 9:00 New York time, send the offset, e.g. 2026-03-15T09:00:00-05:00.'),
+      media_ids: z.array(z.string()).optional().describe('Array of media UUIDs to attach. Get these from upload_media_from_url (recommended) or generate_image. Existing library files can be looked up with list_media. Per-platform limits are enforced, not trimmed: e.g. Pinterest takes 1 video or up to 5 images, and more is refused with a 400 whose message names the limit. (get_platform_rules lists file sizes and formats, not how many files each platform takes.)'),
+      draft: z.boolean().optional().describe('Set true to save as a DRAFT for human review instead of publishing or scheduling. The draft is NOT published until you call schedule_post on it. Review drafts with list_posts(status:"draft") or get_post.'),
+      thread_posts: z.array(z.string().min(1)).max(25).optional().describe('Make the post a THREAD. The parts that come AFTER content, in order (content is part 1). Each part is posted as a reply to the one before. Works on X and Bluesky; Telegram and Discord get them as follow-up messages; Threads chains are not available yet (a Threads account gets part 1 only); any other account in the same post gets content only (the response lists those accounts). At least one account must be X, Bluesky, Telegram or Discord. Each part must fit the platform limit: X 280 characters (25,000 with X Premium), Bluesky 300, Telegram 4096, Discord 2000; get_platform_rules has the numbers. Up to 25 parts. Cannot be combined with an X Article. Works with draft: true (schedule_post then publishes the whole thread). Example: content "Three things I learned this year 🧵 1/3", thread_posts ["2/3 ...", "3/3 ..."].'),
+      campaign_id: z.number().int().optional().describe('Put the post in a campaign (id from create_campaign or list_campaigns).'),
+      request_approval: z.boolean().optional().describe('Only with draft: true: send the draft to the workspace\'s reviewers for approval instead of leaving it as a plain draft. Without draft: true the call is refused with a 400 and nothing is created. Reviewers use approve_post or request_post_changes; list_posts(approval:"pending") shows the queue.'),
+      cover_photo: z.object({
+        media_id: z.string().optional().describe('An IMAGE media id from upload_media_from_url (recommended). Some stored images can only be shared as a link that works for 7 days; if the post goes out later than that, the response notes say so, and you should send url instead.'),
+        url: z.string().url().optional().describe('Or a public https link to a JPG or PNG.'),
+      }).optional().describe('Cover image for a VIDEO post. On YouTube it becomes the video\'s custom THUMBNAIL (YouTube only allows custom thumbnails on verified channels: youtube.com/verify; 1280x720 JPG or PNG is best). Instagram Reels, Facebook videos and LinkedIn videos use it as the cover. TikTok does not take a cover image (pick a frame with platform_content.tiktok.settings.videoCoverTimestamp in milliseconds). Give media_id or url. For one platform only, set platform_content.<platform>.settings.coverPhotoUrl instead.'),
+      schedule_at: z.enum(['best_time']).optional().describe('Set to "best_time" to schedule at the next best time for these accounts: the soonest of their top three best times (see get_best_times), at least 30 minutes from now. Use it when the user says "post it at the best time" or "when it will do best". Needs account_ids. Mutually exclusive with scheduled_for and use_queue. The response says which time was picked and what it is based on; tell the user.'),
+      use_queue: z.boolean().optional().describe('Set true to let the workspace posting queue choose the time: the next free slot is allocated at create time. Use this instead of scheduled_for when the user says "add it to the queue", "post it at my usual times", or "whenever is next free". Mutually exclusive with scheduled_for - sending both is rejected. Call get_queue first if you want to tell the user WHICH slot they will get.'),
+      platform_content: z.record(z.any()).optional().describe('Per-platform overrides keyed by platform name (e.g. {"instagram": {...}}). Each entry may set "content" (platform-specific caption) and "contentType" (the post format for that platform). contentType values: Instagram "Post" | "Reels" | "Story" | "Trial Reel"; Facebook "Post" | "Reels" for a video ("Reels" posts it as a Reel, "Post" as a regular video; a landscape video always posts as a regular video; Facebook Stories are not supported and are refused with a 400); YouTube "Video" | "Short". Omit contentType to use the platform default (video media defaults to Reels on Instagram). Each entry may also set "settings" with platform-specific options, e.g. Pinterest {"settings": {"boardId": "...", "link": "https://...", "title": "..."}} to pick the board and destination link, YouTube {"settings": {"title": "..."}}. YOUTUBE SETTINGS (all optional, camelCase or snake_case): {"youtube": {"settings": {"title": "<max 100; default first caption line>", "description": "<max 5000; default the caption>", "tags": ["a","b"], "categoryId": "22 People & Blogs (default) | 23 Comedy | 24 Entertainment | 26 Howto & Style | 27 Education | 28 Science & Technology | 10 Music | 20 Gaming | 17 Sports", "privacyStatus": "public|unlisted|private", "madeForKids": false, "containsSyntheticMedia": true (discloses realistic AI-altered content), "notifySubscribers": true, "license": "youtube|creativeCommon", "embeddable": true, "publicStatsViewable": true, "defaultLanguage": "en" (title and description language), "coverPhotoUrl": "<https JPG/PNG: the YouTube thumbnail; or use the cover_photo parameter>"}}}. Adding to playlists and a first comment are NOT available yet. YouTube decides what is a Short (square or vertical, up to 3 minutes); contentType "Short" is informational. Age restriction, paid promotion, comments on/off, Shorts remixing and caption certification cannot be set through YouTube\'s API (YouTube Studio only). Invalid YouTube settings are refused with a 400. MORE PLATFORM SETTINGS (keys are camelCase unless shown; all optional; these snake_case spellings are also accepted and converted: first_comment, alt_text, media_alt_text, reply_settings, privacy_level, disable_comment, disable_duet, disable_stitch, video_type, cover_photo_url, topic_tag, link_attachment, board_id, board_section_id, comment_status): TIKTOK {"tiktok": {"settings": {"privacyLevel": "PUBLIC_TO_EVERYONE|MUTUAL_FOLLOW_FRIENDS|FOLLOWER_OF_CREATOR|SELF_ONLY", "disableComment": false, "disableDuet": false, "disableStitch": false, "commercialContentEnabled": true + "brandOrganicToggle": true (promoting your own business) and/or "brandContentToggle": true (paid partnership), "isAIGC": true (AI-generated label), "title": "...", "videoCoverTimestamp": <ms into the video for the cover frame>, "photoCoverIndex": <0-based cover image for photo posts>, "autoAddMusic": true (photo posts)}}}. TikTok takes no custom cover image. X (also): "replySettings": "everyone|following|mentionedUsers", a poll with "pollEnabled": true, "pollOptions": [{"text": "A"}, {"text": "B"}] (2-4, no media) and "pollDuration": <minutes, default 1440>, "quoteTweetUrl": "https://x.com/.../status/<id>", "mediaAltText": "<alt text for the images>", "firstComment": "<posted as a reply>". INSTAGRAM (also): "altText": "<alt text, image posts>", "location": "<place name>" + "locationId": "<Facebook Page id of the place>" (both needed). Tagging people, collaborators and product tags are not available. FACEBOOK: "link": "https://..." (link card), "videoType": "reel|regular" (a landscape video always posts as a regular video), "placeId": "<place id>" + "placeName": "...", "callToAction": {"type": "LEARN_MORE|SHOP_NOW|SIGN_UP|...", "value": "https://..."} (needs "link"). LINKEDIN: "visibility": "PUBLIC|CONNECTIONS|LOGGED_IN_MEMBERS", "disableReshare": true. THREADS: "topicTag": "<one topic>", "linkAttachment": "https://..." (text-only posts). PINTEREST (also): "description": "<max 500>", "altText": "...", "boardSectionId": "<section id>" (title max 100). BLUESKY: "altText": "...", "language": "en", "replyControl": "everybody|nobody|mentioned|following", "contentLabel": "sexual|nudity|porn|graphic-media". TELEGRAM: "silent": true, "protectContent": true (no forwarding or saving), "captionAboveMedia": true, "mediaSpoiler": true, "linkPreview": "off|large|small", "linkPreviewAboveText": true. DISCORD: "username": "<max 80, cannot contain clyde or discord>", "avatarUrl": "https://...", "suppressMentions": true, "silent": true. WORDPRESS (also): "commentStatus": "open|closed". A first comment (firstComment) works on X only today; on Instagram, Facebook, LinkedIn, Threads and YouTube it is not available, so it is removed and the response notes say so. X: {"x": {"settings": {"made_with_ai": true, "paid_partnership": true, "community_id": "<numeric X Community id>"}}} adds X\'s disclosure labels or posts into a Community the account belongs to. X ARTICLE (long-form, X Premium accounts only): {"x": {"content": "<body: # headings, - lists, > quotes, **bold**, *italic*, [links](https://...)>", "settings": {"post_type": "article", "title": "<max 100 chars>"}}} with ONLY X account ids, up to 5 images in media_ids (the first is the cover, 2000x800 looks best; place others inline with a line ![caption](image:2), or they go at the end), no video, body up to 25,000 characters. The body also supports --- dividers, ```code``` blocks, | tables |, a line that is just an X post link (embeds it) and ![caption](https://image-url). Limited to 2 published articles per X account per 24 hours. WORDPRESS BLOG POST: {"wordpress": {"content": "<body, same formatting as X Articles; raw HTML is kept as-is>", "settings": {"title": "<max 200 chars; default = a leading # Heading, else the first line>", "status": "publish|draft|pending|private", "excerpt": "<max 1000>", "tags": ["a"], "categories": ["News"], "slug": "...", "featuredImage": "first|none"}}} with WordPress account ids (other platforms in the same call use the top-level content), up to 20 images + 1 video in media_ids (the first image is the featured image; place others inline with ![caption](image:N), or they go at the end; the video goes at the top), body up to 200,000 characters. tags/categories take arrays or a comma string (categories also take numeric ids); missing tags are created. A blog post with no title is refused with a 400. GOOGLE BUSINESS PROFILE POST (google_business): {"google_business": {"content": "<optional text for Google only, max 1500 chars>", "settings": {"post_type": "update|event|offer", "button": "none|book|order|shop|learn_more|sign_up|call", "button_url": "https://...", "event_title": "<max 58>", "start_date": "YYYY-MM-DD or YYYY-MM-DDTHH:mm", "end_date": "...", "coupon_code": "...", "redeem_url": "https://...", "terms": "..."}}}. Text up to 1500 characters, at most 1 photo (JPG or PNG), no video. button_url is required for every button except call. Event and offer posts need event_title, start_date and end_date (business local time). Offer posts have no button. Do not put phone numbers in the text: Google may reject those posts. An invalid Google Business Profile post is refused with a 400.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const { content, account_ids, timezone, media_ids, draft, platform_content, use_queue, thread_posts, schedule_at, cover_photo, campaign_id, request_approval } = args;
+      let { scheduled_for } = args;
+      let picked: Awaited<ReturnType<typeof resolveBestTime>> | null = null;
+      if (schedule_at === 'best_time') {
+        if (scheduled_for || use_queue) {
+          throw new Error('schedule_at: "best_time" picks the time itself: do not also send scheduled_for or use_queue.');
+        }
+        picked = await resolveBestTime(client, account_ids, timezone);
+        scheduled_for = picked.scheduled_for;
+      }
+      const result = await client.createPost({
+        content,
+        account_ids,
+        scheduled_for,
+        timezone,
+        media_ids,
+        draft,
+        platform_content,
+        use_queue,
+        ...(thread_posts && thread_posts.length > 0 ? { thread_posts } : {}),
+        ...(cover_photo && (cover_photo.media_id || cover_photo.url) ? { cover_photo } : {}),
+        ...(typeof campaign_id === 'number' ? { campaign_id } : {}),
+        ...(request_approval ? { request_approval: true } : {}),
+      });
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          ...(picked ? [{ type: 'text' as const, text: `best_time: scheduled for ${picked.label}. ${picked.basis_note}` }] : []),
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    'schedule_post',
+    {
+      title: 'Schedule Post',
+      description: 'Publish or schedule a DRAFT (created with create_post(draft: true)). Pass scheduled_for to schedule it for a future time, or publish_now: true to publish it right away. Optionally pass account_ids to set/override which accounts it posts to (defaults to the accounts saved on the draft). This is the final step of the review workflow: create_post(draft:true) → review with list_posts(status:"draft")/get_post → schedule_post. Only works on drafts — to re-time an already-scheduled post, use update_post. A draft that targets a WordPress account must have a blog title (platform_content.wordpress.settings.title or a leading "# Heading"), or this returns a 400. A draft that targets a Google Business Profile account must follow its rules (see create_post), or this returns a 400. Irreversible once it publishes: the post becomes public on the connected social accounts, and PostEverywhere cannot recall it.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the draft to publish (from create_post or list_posts)'),
+      scheduled_for: z.string().optional().describe('ISO 8601 datetime to schedule for (e.g., 2026-06-20T14:00:00Z). Provide this OR publish_now.'),
+      publish_now: z.boolean().optional().describe('Set true to publish the draft immediately instead of scheduling it.'),
+      schedule_at: z.enum(['best_time']).optional().describe('Set to "best_time" to schedule the draft at the next best time for its accounts (the soonest of their top three, see get_best_times). Instead of scheduled_for or publish_now.'),
+      account_ids: z.array(z.number()).optional().describe('Optional: accounts to publish to, overriding the draft\'s saved targets.'),
+      timezone: z.string().optional().describe('IANA timezone for display (does not change when the post fires).'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ post_id, scheduled_for, publish_now, account_ids, timezone, schedule_at }: { post_id: string; scheduled_for?: string; publish_now?: boolean; account_ids?: number[]; timezone?: string; schedule_at?: 'best_time' }) => {
+      let picked: Awaited<ReturnType<typeof resolveBestTime>> | null = null;
+      if (schedule_at === 'best_time') {
+        if (scheduled_for || publish_now) {
+          throw new Error('schedule_at: "best_time" picks the time itself: do not also send scheduled_for or publish_now.');
+        }
+        let ids = account_ids;
+        if (!ids?.length) {
+          const draft = await client.getPost(post_id);
+          ids = [...new Set((draft.destinations || []).map(d => d.account_id).filter((n): n is number => typeof n === 'number'))];
+        }
+        picked = await resolveBestTime(client, ids, timezone);
+        scheduled_for = picked.scheduled_for;
+      }
+      const result = await client.schedulePost(post_id, { scheduled_for, publish_now, account_ids, timezone });
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          ...(picked ? [{ type: 'text' as const, text: `best_time: scheduled for ${picked.label}. ${picked.basis_note}` }] : []),
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    'update_post',
+    {
+      title: 'Update Post',
+      description: 'Update a scheduled or draft post on PostEverywhere. You can change the content, schedule time, timezone, target accounts, media attachments, or per-platform content (including a WordPress blog post\'s title, status, tags and categories). Only posts with status "scheduled" or "draft" can be edited — published posts cannot be modified. Returns the updated post with all its details. Fields you send replace the old values (per-platform settings are merged, see platform_content); PostEverywhere keeps no earlier version.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the post to update'),
+      content: z.string().optional().describe('New text content for the post'),
+      scheduled_for: z.string().optional().describe('New ISO 8601 datetime to schedule the post. Without an offset it is read as UTC.'),
+      timezone: z.string().optional().describe('New IANA timezone, stored for display only. It does not change when the post goes out: scheduled_for without an offset is read as UTC.'),
+      account_ids: z.array(z.number()).optional().describe('New array of social account IDs to post to. On a draft this only changes the saved targets; the draft still publishes only through schedule_post.'),
+      media_ids: z.array(z.string()).optional().describe('New array of media UUIDs to attach. Get these from upload_media_from_url or generate_image. The same per-platform limits as create_post apply (e.g. Pinterest: up to 5 images).'),
+      thread_posts: z.array(z.string().min(1)).max(25).optional().describe('Replace the thread parts that follow content (same as create_post). Send [] to turn a thread back into a single post.'),
+      platform_content: z.record(z.any()).optional().describe('Per-platform overrides keyed by platform name, same shape as create_post. Use this to correct a queued post, e.g. set the Pinterest board and destination link: {"pinterest": {"settings": {"boardId": "...", "link": "https://..."}}}. What happens: for each platform you send, the settings you send are added to the settings already saved (a key you send replaces that key; keys you leave out are kept). The platform caption changes only if you send "content", and the title, link and tags only if you send new ones. To clear a setting, send it with an empty value. For a draft, account_ids only changes which accounts the draft will go to; nothing is queued until schedule_post. For an X Article, set {"x": {"settings": {"post_type": "article", "title": "..."}}}. For a WordPress blog post, set {"wordpress": {"content": "...", "settings": {"title": "...", "status": "draft", "tags": ["a"]}}}. For a Google Business Profile post, set {"google_business": {"settings": {"post_type": "event", "event_title": "...", "start_date": "2026-11-02T18:00", "end_date": "2026-11-02T21:00", "button": "learn_more", "button_url": "https://..."}}}.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const { post_id, content, scheduled_for, timezone, account_ids, media_ids, platform_content, thread_posts } = args;
+      const result = await client.updatePost(post_id, {
+        content,
+        scheduled_for,
+        timezone,
+        account_ids,
+        media_ids,
+        platform_content,
+        ...(thread_posts !== undefined ? { thread_posts } : {}),
+      });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'delete_post',
+    {
+      title: 'Delete Post',
+      description: 'Delete a post from PostEverywhere. This permanently removes the post and all its platform destinations from PostEverywhere. A post that has ALREADY PUBLISHED stays live on the social platforms by default; set delete_on_x: true to also delete its published X (Twitter) copy (other platforms are not deleted). Only set delete_on_x when the user explicitly asks to remove the post from X. Cannot be undone.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the post to delete'),
+      delete_on_x: z.boolean().optional().describe('Also delete the published X copy of this post. Default false. Only when the user explicitly asks.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        // delete_on_x reaches X, an external system.
+        openWorldHint: true,
+      },
+    },
+    async ({ post_id, delete_on_x }) => {
+      const result: any = await client.deletePost(post_id, { deleteOnX: delete_on_x === true });
+      const xd: any[] = Array.isArray(result?.x_deletion) ? result.x_deletion : [];
+      const xNote = delete_on_x
+        ? (xd.length === 0 ? ' It had no published X copy.' : xd.every((r) => r.deleted) ? ' Its X copy was deleted too.' : ` X did not delete it: ${xd.find((r) => !r.deleted)?.error || 'unknown error'}.`)
+        : '';
+      return {
+        content: [{ type: 'text' as const, text: `Post ${post_id} deleted successfully.${xNote}` }],
+      };
+    }
+  );
+
+  // ─── Post Results ──────────────────────────────────────────
+
+  server.registerTool(
+    'get_post_results',
+    {
+      title: 'Get Post Results',
+      description: 'Get the per-platform publishing results for a specific post on PostEverywhere. Returns detailed status for each destination including published URLs, error messages, attempt counts, and retry schedules. Use this to check which platforms succeeded or failed after publishing.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the post to get results for'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ post_id }) => {
+      const result = await client.getPostResults(post_id);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── Retry ─────────────────────────────────────────────────
+
+  server.registerTool(
+    'retry_failed_post',
+    {
+      title: 'Retry Failed Post',
+      description: 'Retry all failed platform destinations for a specific post on PostEverywhere. Resets failed destinations back to queued status so they will be re-attempted by the publishing system. Use this when a post failed due to temporary issues like rate limits or token expiry (after the token has been refreshed). Irreversible once a retry succeeds: the post becomes public on that social account, and PostEverywhere cannot recall it.',
+      inputSchema: {
+      post_id: z.string().uuid().describe('The UUID of the post with failed destinations'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ post_id }) => {
+      const result = await client.retryPost(post_id);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── Media ─────────────────────────────────────────────────
+
+  server.registerTool(
+    'list_media',
+    {
+      title: 'List Media',
+      description: 'List media files in the PostEverywhere media library. Supports filtering by type (image, video, document) and pagination. Returns file metadata including URLs, dimensions, and upload status. Use this to find existing media to attach to posts.',
+      inputSchema: {
+      type: z.enum(['image', 'video', 'document']).optional().describe('Filter by media type'),
+      limit: z.number().min(1).max(100).optional().default(20).describe('Number of items to return'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ type, limit }) => {
+      const result = await client.listMedia({ type, limit });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result.media, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'get_media',
+    {
+      title: 'Get Media',
+      description: 'Get detailed information about a specific media file on PostEverywhere, including its type, dimensions, file size, upload status, and aspect ratio. Use this to check if an uploaded media file has finished processing before attaching it to a post.',
+      inputSchema: {
+      media_id: z.string().uuid().describe('The UUID of the media file to retrieve'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ media_id }) => {
+      const result = await client.getMediaStatus(media_id);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'delete_media',
+    {
+      title: 'Delete Media',
+      description: 'Delete a media file from the PostEverywhere media library. This permanently removes the file from storage and cannot be undone. If a post that has not gone out yet uses the file, nothing is deleted and the call fails with a 409 (media_in_use) that says how many posts use it. Ask the user before you retry with force: true: the file is then deleted and those posts are cancelled (marked failed), so they never publish.',
+      inputSchema: {
+      media_id: z.string().uuid().describe('The UUID of the media file to delete'),
+      force: z.boolean().optional().describe('Delete even if scheduled posts use the file. Those posts are cancelled (marked failed) and do not publish. Only when the user agrees.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ media_id, force }) => {
+      const result: any = await client.deleteMedia(media_id, { force: force === true });
+      const cancelled = Number(result?.cancelled_post_count ?? 0);
+      return {
+        content: [{ type: 'text' as const, text: `Media ${media_id} deleted.${cancelled > 0 ? ` ${cancelled} scheduled post destination${cancelled === 1 ? ' was' : 's were'} cancelled (marked failed) because ${cancelled === 1 ? 'it' : 'they'} used this file.` : ''}` }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'create_media_upload',
+    {
+      title: 'Start a Direct Media Upload',
+      description: 'Upload a LOCAL file (one with no public URL), including PDFs for LinkedIn document posts. Step 1: call this with filename, content_type and size in bytes; it returns media_id and a short-lived upload_url. Step 2: send the file to upload_url the way the protocol field in the response says. protocol "put" (videos and PDFs): PUT the raw bytes with header Content-Type set to the same content_type (curl -X PUT -H "Content-Type: application/pdf" --data-binary @file.pdf "<upload_url>"). protocol "multipart-form" (images): POST a multipart form with the file in a field named file (curl -X POST -F "file=@photo.jpg" "<upload_url>"). Step 3: call complete_media_upload with the media_id. Only use this when you can send the bytes yourself; for a file at a public URL use upload_media_from_url. Accepted: JPEG, PNG, GIF, WebP, HEIC, MP4 and PDF.',
+      inputSchema: {
+      filename: z.string().min(1).describe('File name including extension, e.g. "deck.pdf"'),
+      content_type: z.string().min(3).describe('MIME type, e.g. "application/pdf", "image/png", "video/mp4"'),
+      size: z.number().int().positive().describe('File size in bytes'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ filename, content_type, size }) => {
+      const result = await client.uploadMedia({ filename, content_type, size });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ ...result, next_step: result.protocol === 'multipart-form'
+          ? `POST the file to upload_url as a multipart form with the file in a field named "file", then call complete_media_upload with media_id ${result.media_id}.`
+          : `PUT the file bytes to upload_url with Content-Type: ${content_type}, then call complete_media_upload with media_id ${result.media_id}.` }, null, 2) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    'complete_media_upload',
+    {
+      title: 'Finish a Direct Media Upload',
+      description: 'Confirm a direct upload from create_media_upload after the file bytes were PUT to its upload_url. Checks the file arrived and matches its type. The media_id can then be used in media_ids (a PDF on a LinkedIn account becomes a document post). Calling it again on ready media is harmless.',
+      inputSchema: {
+      media_id: z.string().uuid().describe('The media_id returned by create_media_upload'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ media_id }) => {
+      const result = await client.completeMediaUpload(media_id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'approve_post',
+    {
+      title: 'Approve Post',
+      description: 'Approval workflow: approve a post that is waiting for review (see list_posts with approval:"pending"). Approving does not publish it: call schedule_post afterwards to send it out. Needs a reviewer role in the workspace.',
+      inputSchema: {
+      post_id: z.string().describe('The post ID'),
+      note: z.string().max(2000).optional().describe('Optional note for the author'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ post_id, note }) => {
+      const result = await client.approvePost(post_id, note);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'request_post_changes',
+    {
+      title: 'Request Changes to Post',
+      description: 'Approval workflow: send a post waiting for review back to its author with a note saying what to change. The post stays a draft. Needs a reviewer role in the workspace.',
+      inputSchema: {
+      post_id: z.string().describe('The post ID'),
+      note: z.string().min(1).max(2000).describe('What needs changing; the author sees this'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ post_id, note }) => {
+      const result = await client.requestPostChanges(post_id, note);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'upload_media_from_url',
+    {
+      title: 'Upload Media from URL',
+      description: 'Import an image OR VIDEO from a public URL into the PostEverywhere media library, ready to attach to posts via media_ids. IMAGES (JPEG, PNG, GIF, WebP, HEIC, HEIF — up to 25 MB) import synchronously: the response media_id is ready immediately. VIDEOS (MP4 only — up to 4 GB) import ASYNCHRONOUSLY: the response returns media_id with media_status "uploading" right away while the file streams in server-side — poll get_media until media_status is "ready" (typically well under a minute), THEN attach it to a post. If media_status becomes "failed", get_media\'s error_message states exactly why (file too large, not actually an MP4, storage quota, unreachable URL). Never attach a media_id whose status you have not seen reach "ready".',
+      inputSchema: {
+      url: z.string().url().describe('Public HTTPS URL pointing to the image or MP4 video. Must be reachable from the public internet (no private/loopback addresses).'),
+      filename: z.string().optional().describe('Optional filename to record in the library. If omitted, derived from the URL path.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ url, filename }) => {
+      const result = await client.uploadMediaFromUrl({ url, filename });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  // ─── AI ───────────────────────────────────────────────────
+
+  // AI image generation is an unsupported use case for the Anthropic
+  // Connectors Directory (rejection criterion). The hosted connector sets
+  // MCP_DISABLE_IMAGE_GENERATION=1 to drop this tool from its listing;
+  // stdio/npm installs and the v1 API keep it unless they opt out too.
+  if (!hideImageGeneration) {
+    server.registerTool(
+      'generate_image',
+      {
+        title: 'Generate AI Image',
+        description: 'Generate an AI image from a text prompt on PostEverywhere. The image is saved to your media library and can be attached to posts via media_ids. Choose from 4 models: gemini-3-pro (default, balanced quality, 5 credits), nano-banana-pro (photorealism, 15 credits), ideogram-v2 (good for text in images, 8 credits), flux-schnell (fastest, 1 credit). Requires the "ai" scope.',
+        inputSchema: {
+        prompt: z.string().max(2000).describe('Text description of the image to generate'),
+        aspect_ratio: z.enum(['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4']).optional().default('1:1').describe('Aspect ratio for the generated image'),
+        model: z.enum(['nano-banana-pro', 'ideogram-v2', 'gemini-3-pro', 'flux-schnell']).optional().default('gemini-3-pro').describe('AI model to use for generation'),
+        add_logo: z.boolean().optional().describe("Stamp the workspace's real logo (from its Brand Kit) onto the finished image, exact and undistorted. Needs a Brand Kit with a logo; the response's logo_added says whether it was added."),
+      },
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async ({ prompt, aspect_ratio, model, add_logo }) => {
+        const result = await client.generateImage({ prompt, aspect_ratio, model, ...(add_logo ? { add_logo: true } : {}) });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        };
+      }
+    );
+  }
+
+  server.registerTool(
+    'generate_caption',
+    {
+      title: 'Generate AI Caption',
+      description: 'Generate 1-5 AI caption variants for a social media post on PostEverywhere. Provide a topic and optionally tone, platform, length, hashtag/emoji preferences. Captions always fit the platform\'s character limit (X: 280 as X counts, Bluesky: 300, Threads: 500, LinkedIn: 3000, Instagram: 2200, Facebook: 5000, YouTube description: 5000, Google Business Profile: 1500); a caption the AI writes too long is cut at a word break to fit, and char_limit in the response gives the number used. Costs 1 AI credit per caption returned. Companion to generate_image — together they let you compose a complete post in two calls.',
+      inputSchema: {
+      topic: z.string().max(1000).describe('What the post should be about'),
+      platform: z.enum(['instagram','facebook','x','twitter','linkedin','youtube','tiktok','threads','pinterest','bluesky','wordpress','google_business']).optional().describe('Target platform — sets character limit + style conventions'),
+      tone: z.enum(['professional','casual','witty','enthusiastic','urgent','inspirational']).optional().default('professional').describe('Tone of voice for the caption'),
+      length: z.enum(['short','medium','long']).optional().default('medium').describe('Approximate caption length'),
+      include_hashtags: z.boolean().optional().default(true).describe('Whether to include hashtags (defaults to platform-appropriate)'),
+      include_emojis: z.boolean().optional().default(true).describe('Whether to include emojis'),
+      count: z.number().min(1).max(5).optional().default(1).describe('Number of caption variants to return (1-5)'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.generateCaption(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Introspection ────────────────────────────────────────
+
+  server.registerTool(
+    'get_me',
+    {
+      title: 'Get Workspace Info',
+      description: "Get the signed-in PostEverywhere account: the user, the workspace, the granted scopes, the organization's plan, and what is left on each quota (accounts, AI credits, storage). Useful at the start of a conversation to learn the organization_id, scopes and quota state. While the workspace has no posts yet, next_step suggests an easy first post to offer the user.",
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const result = await client.getMe();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Platform rules ───────────────────────────────────────
+
+  server.registerTool(
+    'get_platform_rules',
+    {
+      title: 'Get Platform Rules',
+      description: "Get the per-platform publishing limits PostEverywhere enforces: character limit, image and video constraints (size, dimensions, duration, formats), and supported features (threads, carousels, reels, alt text, blog posts). WordPress also lists its blog post fields under platforms.wordpress.blog, and Google Business Profile its post fields (post types, buttons, event and offer fields) under platforms.google_business.local_post. Call this BEFORE composing a post for an unfamiliar platform, or when a post was rejected for length or media format — it is the difference between one correct call and a failed publish. Server-authoritative and cheap: the values are static per deploy and cached, so a platform added server-side appears here with no update on your side. Takes no arguments and returns every platform at once.",
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const result = await client.getPlatformRules();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Analytics ────────────────────────────────────────────
+
+  server.registerTool(
+    'get_analytics_summary',
+    {
+      title: 'Get Analytics Summary',
+      description: 'Get aggregate posting metrics over a time window on PostEverywhere. Returns counts (scheduled/published/failed), per-platform breakdown, total views/likes/comments/shares/impressions/clicks across all published posts, AI credit usage, and AUDIENCE — the latest follower count per connected account plus its change over the period. One call answers "how many posts have I published this week and did my audience grow?" without listing every post. Follower snapshots begin 2026-08-31; an account with only one reading reports change_in_period as null, because a single point is not a trend.',
+      inputSchema: {
+      period: z.enum(['today','week','month','all','custom']).optional().default('month').describe('Time window — defaults to last 30 days'),
+      from: z.string().optional().describe('ISO timestamp lower bound (required if period=custom)'),
+      to: z.string().optional().describe('ISO timestamp upper bound (required if period=custom)'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.getAnalyticsSummary(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Campaigns ────────────────────────────────────────────
+
+  server.registerTool(
+    'list_campaigns',
+    {
+      title: 'List Campaigns',
+      description: 'List campaigns in the current workspace on PostEverywhere. Campaigns group related posts (e.g., "Q3 Launch", "Holiday 2026") and can be referenced via campaign_id when creating or filtering posts. Returns id, name, color, status, post_count for each.',
+      inputSchema: {
+      status: z.enum(['active','archived']).optional().describe('Filter by campaign status'),
+      limit: z.number().min(1).max(100).optional().default(50).describe('Page size'),
+      offset: z.number().min(0).optional().default(0).describe('Pagination offset'),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.listCampaigns(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'create_campaign',
+    {
+      title: 'Create Campaign',
+      description: 'Create a new campaign on PostEverywhere for grouping related posts. Returns the campaign id, which can then be passed as campaign_id when creating posts via create_post.',
+      inputSchema: {
+      name: z.string().min(1).max(100).describe('Campaign name'),
+      description: z.string().max(500).optional().describe('Optional description'),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe('Hex color like #3b82f6'),
+      status: z.enum(['active','archived']).optional().default('active'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.createCampaign(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'get_campaign',
+    {
+      title: 'Get Campaign',
+      description: 'Get details of a single campaign on PostEverywhere by its id, including post_count.',
+      inputSchema: { id: z.number().describe('Campaign id') },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.getCampaign(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'update_campaign',
+    {
+      title: 'Update Campaign',
+      description: 'Update a campaign on PostEverywhere (name, description, color, or active/archived status). Overwrites the previous values; PostEverywhere keeps no earlier version.',
+      inputSchema: {
+      id: z.number().describe('Campaign id'),
+      name: z.string().min(1).max(100).optional(),
+      description: z.string().max(500).optional(),
+      color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+      status: z.enum(['active','archived']).optional(),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id, ...body }) => {
+      const result = await client.updateCampaign(id, body);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'delete_campaign',
+    {
+      title: 'Delete Campaign',
+      description: 'Delete a campaign on PostEverywhere. Posts in the campaign survive — their campaign_id is set to NULL. Permanent: the campaign cannot be restored.',
+      inputSchema: { id: z.number().describe('Campaign id') },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.deleteCampaign(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Bulk Posts ───────────────────────────────────────────
+
+  server.registerTool(
+    'bulk_create_posts',
+    {
+      title: 'Bulk Create Posts',
+      description: 'Create up to 50 posts in one PostEverywhere call. Each post is checked one by one, exactly like create_post (rate limits included), including X Articles, WordPress blog posts (platform_content.wordpress) and Google Business Profile posts (platform_content.google_business). Returns per-item success/error so you can handle partial failures. Use this for bulk scheduling workflows. Irreversible for every post that publishes: it becomes public on the connected social accounts, and PostEverywhere cannot recall it.',
+      inputSchema: {
+      posts: z.array(z.any()).min(1).max(50).describe('Array of post objects (same shape as create_post body). Max 50. An item may use schedule_at: "best_time" (with account_ids, and no scheduled_for or use_queue): each one is given its own next best time.'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ posts }) => {
+      // schedule_at: "best_time" is resolved here, per item, like create_post. The API does not
+      // read schedule_at (it refuses it), so an unresolved item would be rejected.
+      const picks: string[] = [];
+      const items = await Promise.all((posts as any[]).map(async (item, i) => {
+        if (!item || typeof item !== 'object' || item.schedule_at === undefined) return item;
+        const { schedule_at, ...rest } = item;
+        if (schedule_at !== 'best_time') {
+          throw new Error(`posts[${i}].schedule_at must be "best_time" (or leave it out and send scheduled_for).`);
+        }
+        if (rest.scheduled_for || rest.use_queue) {
+          throw new Error(`posts[${i}]: schedule_at: "best_time" picks the time itself: do not also send scheduled_for or use_queue.`);
+        }
+        const picked = await resolveBestTime(client, rest.account_ids, rest.timezone);
+        picks.push(`posts[${i}] best_time: scheduled for ${picked.label}. ${picked.basis_note}`);
+        return { ...rest, scheduled_for: picked.scheduled_for };
+      }));
+      const result = await client.bulkCreatePosts(items);
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(result, null, 2) },
+          ...(picks.length ? [{ type: 'text' as const, text: picks.join('\n') }] : []),
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    'retry_failed_posts',
+    {
+      title: 'Retry Failed Posts',
+      description: 'Retry all failed destinations on PostEverywhere that match a filter (account_id, platform, date range, or explicit post_ids). Saves you from making one retry call per failed post. Requires at least one filter — refuses to retry the entire failure history. Irreversible once a retry succeeds: the posts become public on those social accounts, and PostEverywhere cannot recall them.',
+      inputSchema: {
+      post_ids: z.array(z.string().uuid()).max(200).optional().describe('Explicit list of post UUIDs to retry failed destinations on'),
+      account_id: z.number().optional().describe('Retry only failures on this social account'),
+      platform: z.enum(['instagram','facebook','x','twitter','linkedin','youtube','tiktok','threads','pinterest','bluesky','telegram','discord','wordpress','google_business']).optional(),
+      failed_after: z.string().optional().describe('ISO timestamp — only retry failures after this'),
+      failed_before: z.string().optional().describe('ISO timestamp — only retry failures before this'),
+      max_attempts: z.number().min(1).max(10).optional().describe('Skip destinations with attempt_count >= this'),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const result = await client.retryFailedPosts(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Account Health + Reconnect ───────────────────────────
+
+  server.registerTool(
+    'get_account_health',
+    {
+      title: 'Get Account Health',
+      description: 'Check the health of a connected social account on PostEverywhere. Returns status (healthy|warning|broken), can_post boolean, token expiry, needs_reconnection flag, recent failure count, last successful publish. Use this before publishing to detect a dead token BEFORE it causes a failed post.',
+      inputSchema: { id: z.number().describe('Social account id') },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.getAccountHealth(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Account Connect (agent-driven) ───────────────────────
+
+  server.registerTool(
+    'create_connect_link',
+    {
+      title: 'Create Account Connect Link',
+      description: 'Generate a short-lived authorization URL (10 min) to connect a NEW social account via OAuth: x, instagram, facebook, youtube, pinterest, threads, linkedin, tiktok, or google_business (Google Business Profile: the owner signs in with the Google account that owns or manages the business; if it manages several businesses, they choose which to add). Give the URL to the account owner to open in any browser and approve; the connected account then appears in list_accounts (poll it to confirm). For telegram, discord, bluesky or wordpress use connect_credential_account if you have it (no browser needed); if that tool is not available here, the user connects them in the PostEverywhere app at app.posteverywhere.ai/accounts.',
+      inputSchema: {
+        platform: z.enum(['x', 'instagram', 'facebook', 'youtube', 'pinterest', 'threads', 'linkedin', 'tiktok', 'google_business']).describe('OAuth platform to connect'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ platform }) => {
+      const result = await client.createConnectLink(platform);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'create_reconnect_link',
+    {
+      title: 'Create Account Reconnect Link',
+      description: 'Generate a short-lived authorization URL (10 min) to FIX an existing OAuth account whose token died (needs_reconnection from get_account_health). The owner opens it, approves while logged in as that same profile, and the existing account is repaired in place. Verify afterwards with get_account_health.',
+      inputSchema: { account_id: z.number().describe('Social account id to reconnect') },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async ({ account_id }) => {
+      const result = await client.createReconnectLink(account_id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'connect_credential_account',
+    {
+      title: 'Connect Credential Account',
+      description: 'Connect telegram, discord, bluesky or wordpress entirely in this conversation, no browser needed. telegram: bot_token (from @BotFather, bot must be channel admin) + channel (@username or chat id). discord: webhook_url. bluesky: handle + app_password (Settings > App Passwords, never the main password). wordpress (self-hosted, WordPress 5.6+): site_url + username + app_password (WordPress: Users > Profile > Application Passwords, never the login password). Credentials are validated live before saving; re-submitting for an existing account updates it in place.',
+      inputSchema: {
+        platform: z.enum(['telegram', 'discord', 'bluesky', 'wordpress']).describe('Credential-based platform'),
+        bot_token: z.string().optional().describe('telegram only: bot token from @BotFather'),
+        channel: z.string().optional().describe('telegram only: @channelusername or numeric chat id'),
+        webhook_url: z.string().optional().describe('discord only: incoming webhook URL'),
+        handle: z.string().optional().describe('bluesky only: account handle, e.g. me.bsky.social'),
+        app_password: z.string().optional().describe('bluesky or wordpress: app password / Application Password, not the main password'),
+        site_url: z.string().optional().describe('wordpress only: site address, e.g. https://example.com'),
+        username: z.string().optional().describe('wordpress only: the WordPress login name'),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (args) => {
+      const result = await client.connectCredentialAccount(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Webhooks ─────────────────────────────────────────────
+
+  server.registerTool(
+    'list_webhooks',
+    {
+      title: 'List Webhooks',
+      description: 'List all webhook subscriptions on PostEverywhere for the current organization. Returns id, url, subscribed events, is_active, recent delivery stats. Note: the signing secret is NEVER included in list responses.',
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async () => {
+      const result = await client.listWebhooks();
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'create_webhook',
+    {
+      title: 'Create Webhook',
+      description: "Create a webhook subscription on PostEverywhere. PostEverywhere will POST event payloads to the URL whenever a subscribed event occurs (post.published, post.failed, account.reconnect_needed, etc). Each request is signed with HMAC-SHA256 via the X-PostEverywhere-Signature header — verify it against the returned secret. The secret is shown ONLY ONCE in this response. Events that fire: post.scheduled (a post was created in the app or with create_post, to publish now or later, or a draft was scheduled with schedule_post), post.published (one platform published it), post.failed (one platform failed for good), post.partially_failed, post.warning (published with a warning, e.g. TikTok made it private), post.deleted, post.approval_requested, post.approved, post.changes_requested, account.disconnected, account.reconnect_needed, media.uploaded (a direct upload finished with complete_media_upload; not sent for upload_media_from_url), media.deleted.",
+      inputSchema: {
+      url: z.string().url().describe('HTTPS URL where events will be POSTed (must be public)'),
+      events: z.array(z.string()).min(1).describe('Array of event names to subscribe to'),
+      name: z.string().max(100).optional().describe('Human-readable name for the subscription'),
+      description: z.string().max(500).optional(),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.createWebhook(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'get_webhook',
+    {
+      title: 'Get Webhook',
+      description: 'Get details of a single webhook subscription on PostEverywhere (does NOT include the signing secret).',
+      inputSchema: { id: z.string().uuid().describe('Webhook id') },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.getWebhook(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'update_webhook',
+    {
+      title: 'Update Webhook',
+      description: 'Update a webhook subscription on PostEverywhere — change url/events/name/description/is_active. Setting is_active=true on an auto-disabled webhook clears the consecutive_failures counter.',
+      inputSchema: {
+      id: z.string().uuid(),
+      url: z.string().url().optional(),
+      events: z.array(z.string()).min(1).optional(),
+      name: z.string().max(100).optional(),
+      description: z.string().max(500).optional(),
+      is_active: z.boolean().optional(),
+    },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id, ...body }) => {
+      const result = await client.updateWebhook(id, body);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'delete_webhook',
+    {
+      title: 'Delete Webhook',
+      description: 'Delete a webhook subscription on PostEverywhere. Cascades to delete the delivery history.',
+      inputSchema: { id: z.string().uuid() },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.deleteWebhook(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.registerTool(
+    'test_webhook',
+    {
+      title: 'Test Webhook',
+      description: 'Send a synthetic test ping to a webhook URL on PostEverywhere so you can verify your endpoint receives the request and validates the HMAC signature. Returns the receiver\'s HTTP status + duration.',
+      inputSchema: { id: z.string().uuid() },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true,
+      },
+    },
+    async ({ id }) => {
+      const result = await client.testWebhook(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Enhanced list_posts (advanced filters) ───────────────
+
+  server.registerTool(
+    'list_posts_advanced',
+    {
+      title: 'Advanced Post Search',
+      description: 'List posts on PostEverywhere with the FULL set of filters available on the API (since June 2026). Like list_posts but accepts comma-separated multi-status (e.g. "failed,partially_failed"), comma-separated platforms, date ranges (created/scheduled/published/updated), account_id and campaign_id filters, content search, and sort options. Use this for any non-trivial query — e.g. "all failed TikTok posts from last week" — that the basic list_posts can\'t express.',
+      inputSchema: {
+      status: z.string().optional().describe('Comma-separated statuses (scheduled,publishing,published,partially_failed,failed,draft)'),
+      platform: z.string().optional().describe('Comma-separated platforms (e.g. "instagram,facebook")'),
+      account_id: z.number().optional().describe('Filter to one social account'),
+      campaign_id: z.number().optional().describe('Filter to a campaign'),
+      created_after: z.string().optional().describe('ISO timestamp lower bound on posts.created_at'),
+      created_before: z.string().optional(),
+      scheduled_after: z.string().optional().describe('ISO timestamp lower bound on posts.scheduled_for'),
+      scheduled_before: z.string().optional(),
+      published_after: z.string().optional().describe('ISO timestamp lower bound on destination published_at'),
+      published_before: z.string().optional(),
+      updated_after: z.string().optional().describe('ISO timestamp lower bound — for incremental sync polling'),
+      search: z.string().optional().describe('Full-text search on post content'),
+      sort: z.enum(['created_at','scheduled_for','published_at','updated_at']).optional().default('created_at'),
+      order: z.enum(['asc','desc']).optional().default('desc'),
+      limit: z.number().min(1).max(100).optional().default(20),
+      offset: z.number().min(0).optional().default(0),
+    },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    async (args) => {
+      const result = await client.listPostsAdvanced(args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+}
+
+/**
+ * schedule_at: "best_time" → a concrete ISO datetime, via GET /v1/best-times.
+ * Resolved in the MCP server, not the API, so POST /v1/posts keeps one meaning
+ * for scheduled_for and the agent is told exactly which time was chosen.
+ */
+async function resolveBestTime(client: PostEverywhereClient, accountIds: number[] | undefined, timezone: string | undefined) {
+  if (!accountIds?.length) {
+    throw new Error('schedule_at: "best_time" needs account_ids (from list_accounts), so it knows whose best times to use.');
+  }
+  const bt = await client.getBestTimes({ account_ids: accountIds, timezone, count: 5 });
+  const slot = bt.next_best;
+  if (!slot) {
+    throw new Error('No best time could be found for these accounts. Pick a time with scheduled_for instead.');
+  }
+  const basis_note = slot.basis === 'personal'
+    ? 'This is one of these accounts\' own best times.'
+    : slot.basis === 'platform'
+      ? 'This is a popular time for PostEverywhere users on this platform (the accounts do not have enough posts with stats for their own times yet).'
+      : 'This is general guidance, not measured from any audience.';
+  return { scheduled_for: slot.next.iso, label: `${slot.label} (${slot.next.date} ${slot.next.time} ${bt.timezone})`, basis: slot.basis, basis_note };
+}

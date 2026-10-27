@@ -1,0 +1,31 @@
+{
+  "skill_name": "paid-ads-tiktok",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "My connected TikTok Ads advertiser spent $2,600 yesterday. HTTP came back 200 but I am not sure the report is trustworthy, and I also need a Spark Ads creative brief.",
+      "expected_output": "A live-data-first diagnosis that confirms the TikTok Ads connector, treats API code as authoritative even on HTTP 200, uses advertiser currency units, and keeps any creative brief reviewable rather than published.",
+      "files": [],
+      "expectations": [
+        "Confirms the TikTok Ads connector and selected advertiser_id before claiming live access",
+        "Preserves long advertiser IDs as strings",
+        "Requires API code to be zero even when HTTP is 200",
+        "Treats budget and bid values as advertiser currency units, not micros",
+        "Does not call a creative brief published"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create a new TikTok campaign at $150/day and enable it immediately.",
+      "expected_output": "An approval-gated plan that previews the create, keeps new delivery entities disabled unless activation is explicitly approved, applies once, and reads back the result.",
+      "files": [],
+      "expectations": [
+        "Shows current and proposed spend in advertiser currency units",
+        "Treats preview as local validation only",
+        "Creates delivery entities DISABLE unless activation is explicitly requested",
+        "Does not automatically retry an ambiguous write",
+        "Verifies applied changes from returned evidence or a fresh read"
+      ]
+    }
+  ]
+}

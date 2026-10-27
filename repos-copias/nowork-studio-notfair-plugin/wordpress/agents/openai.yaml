@@ -1,0 +1,4 @@
+interface:
+  display_name: "WordPress"
+  short_description: "Operate connected WordPress sites safely"
+  default_prompt: "Use $wordpress to inspect my connected WordPress site and make only the approved content change."

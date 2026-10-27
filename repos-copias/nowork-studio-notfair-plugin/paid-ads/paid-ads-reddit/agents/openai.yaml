@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reddit Ads"
+  short_description: "Audit and operate Reddit Ads safely"
+  default_prompt: "Use $paid-ads-reddit to audit my connected Reddit Ads account and prioritize improvements."

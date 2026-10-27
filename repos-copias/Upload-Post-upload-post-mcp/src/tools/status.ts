@@ -1,0 +1,131 @@
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { UploadPostMcpClient } from "../client.js";
+import { compact } from "../client.js";
+import { genericResultOutputSchema, safe } from "../schemas.js";
+
+// /api/uploadposts/history answers 400 to any page size outside this set.
+const HISTORY_PAGE_SIZES = [10, 20, 50, 100] as const;
+
+export function historyPageSize(limit: number): number {
+  return HISTORY_PAGE_SIZES.find((size) => size >= limit) ?? 100;
+}
+
+export function registerStatusTools(server: McpServer, client: UploadPostMcpClient): void {
+  server.registerTool(
+    "get_status",
+    {
+      title: "Get async upload status",
+      description:
+        "Check the status of an async upload by `request_id`. Poll this until `status` is 'success' or 'failed'.",
+      inputSchema: {
+        requestId: z.string(),
+      },
+      outputSchema: genericResultOutputSchema,
+      annotations: {
+        title: "Get async upload status",
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
+    },
+    safe(async ({ requestId }) => client.sdk.getStatus(requestId as string))
+  );
+
+  server.registerTool(
+    "get_job_status",
+    {
+      title: "Get scheduled job status",
+      description:
+        "Check the status of a scheduled or queued upload by `job_id`. Use this for posts created with `addToQueue` or `scheduledDate`.",
+      inputSchema: {
+        jobId: z.string(),
+      },
+      outputSchema: genericResultOutputSchema,
+      annotations: {
+        title: "Get scheduled job status",
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
+    },
+    safe(async ({ jobId }) => client.sdk.getJobStatus(jobId as string))
+  );
+
+  server.registerTool(
+    "get_history",
+    {
+      title: "Get upload history",
+      description: "Paginated history of uploads across all profiles.",
+      inputSchema: {
+        page: z.number().int().positive().optional(),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(100)
+          .optional()
+          .describe("Items per page. The API pages in 10, 20, 50 or 100, so other values are rounded up to the next of those. Defaults to 10."),
+      },
+      outputSchema: genericResultOutputSchema,
+      annotations: {
+        title: "Get upload history",
+        readOnlyHint: true,
+        openWorldHint: false,
+        destructiveHint: false,
+      },
+    },
+    safe(async (args) => {
+      const { page, limit } = args as { page?: number; limit?: number };
+      return client.sdk.getHistory(
+        compact({ page, limit: limit === undefined ? undefined : historyPageSize(limit) }) as { page?: number; limit?: number }
+      );
+    })
+  );
+
+  server.registerTool(
+    "get_media",
+    {
+      title: "Get recent media from connected accounts",
+      description:
+        "Retrieve recent media (videos, photos, text posts) pulled directly from a profile's connected social accounts. Supports instagram, tiktok, youtube, linkedin, facebook, x, threads, pinterest, bluesky, reddit. Useful for browsing what already exists on a platform before posting more. Paginated: the response carries `pagination` = { limit, next_cursor, has_more }; pass `next_cursor` back as `cursor` for the next page (the last page returns next_cursor null and has_more false).",
+      inputSchema: {
+        user: z.string().optional().describe("Profile username to scope the query to."),
+        platform: z.string().optional().describe("Restrict to a single platform key."),
+        page_urn: z
+          .string()
+          .optional()
+          .describe(
+            "LinkedIn only. Numeric organization ID (e.g. '12345'), full URN ('urn:li:organization:12345'), or 'me' to force the personal profile. When omitted, accounts linked as an organization admin auto-resolve to the first administered organization; otherwise the personal profile is used.",
+          ),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(100)
+          .optional()
+          .describe(
+            "Items per page. Defaults to 25 and is clamped to 1-100. Per-platform caps: TikTok 20, YouTube 50, everything else 100.",
+          ),
+        cursor: z
+          .string()
+          .optional()
+          .describe(
+            "Opaque cursor from a previous response's `pagination.next_cursor`. LinkedIn, Discord and Telegram do not support cursors — passing one there fails with HTTP 400; use `limit` alone on those platforms.",
+          ),
+      },
+      outputSchema: genericResultOutputSchema,
+      annotations: {
+        title: "Get recent media from connected accounts",
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false,
+      },
+    },
+    safe(async (args) =>
+      client.request("GET", "/uploadposts/media", {
+        query: compact(args as Record<string, unknown>),
+      })
+    )
+  );
+}
