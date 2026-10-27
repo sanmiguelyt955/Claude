@@ -1,0 +1,23 @@
+{
+  "name": "memoria",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Memoria: notas tipo Obsidian en la nube (Cloudflare Workers + D1 + R2) con conector MCP para Claude.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler d1 migrations apply memoria --remote && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply memoria --local",
+    "test": "node --import tsx --test --test-reporter=dot test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261012.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "wrangler": "4.149.0"
+  }
+}

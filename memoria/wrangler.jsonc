@@ -1,0 +1,24 @@
+{
+  // Memoria: notas tipo Obsidian en la nube. Cloudflare Workers (siempre
+  // encendido), D1 para las notas y R2 para los archivos. Plan gratuito.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "memoria",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Every path goes to the Worker first: it decides what needs the password.
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "memoria", "database_id": "c45ebd68-e1eb-4afd-9614-e58e04bc39a2", "migrations_dir": "migrations" }
+  ],
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "memoria-archivos" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "8b597491bb4f474bbb706f4dc11a9ce8" }],
+  "observability": { "enabled": true }
+  // Secret (not here): MEMORIA_PASSWORD, set with `wrangler secret put MEMORIA_PASSWORD`
+  // or in the dashboard (Settings → Variables and Secrets).
+}
