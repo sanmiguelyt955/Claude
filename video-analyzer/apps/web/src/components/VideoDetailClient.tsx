@@ -49,6 +49,7 @@ export function VideoDetailClient({ id }: { id: string }) {
   const [searchNotice, setSearchNotice] = useState<string | null>(null)
   const [generatedSkills, setGeneratedSkills] = useState<SkillDetail[]>([])
   const [exportedNote, setExportedNote] = useState<string | null>(null)
+  const [exportedUrl, setExportedUrl] = useState<string | null>(null)
   const [improveSkillId, setImproveSkillId] = useState('')
   const [improveExternalPath, setImproveExternalPath] = useState('')
   const playerRef = useRef<HTMLVideoElement>(null)
@@ -139,9 +140,10 @@ export function VideoDetailClient({ id }: { id: string }) {
     setExportedNote(null)
     try {
       const res = await fetch(`/api/videos/${id}/export-vault`, { method: 'POST' })
-      const body = (await res.json()) as { error?: string; noteName?: string; notePath?: string }
+      const body = (await res.json()) as { error?: string; noteName?: string; notePath?: string; memoria?: { url: string } | null }
       if (!res.ok) throw new Error(body.error ?? 'No se pudo exportar al vault.')
       setExportedNote(body.noteName ?? 'Nota creada')
+      setExportedUrl(body.memoria?.url ?? null)
     } catch (error) {
       setErrorMessage((error as Error).message)
     } finally {
@@ -447,11 +449,20 @@ export function VideoDetailClient({ id }: { id: string }) {
               disabled={actionBusy}
               className="btn-ghost w-fit"
             >
-              {pendingAction === 'export' ? 'Exportando…' : 'Exportar todo a Obsidian'}
+              {pendingAction === 'export' ? 'Exportando…' : data.memoria ? 'Guardar en Memoria' : 'Exportar todo a Obsidian'}
             </button>
             {exportedNote && (
               <span className="text-sm" style={{ color: 'var(--color-ok)' }}>
-                Guardado en el vault: {exportedNote}
+                {exportedUrl ? (
+                  <>
+                    Guardado en Memoria:{' '}
+                    <a href={exportedUrl} target="_blank" rel="noreferrer" className="underline">
+                      {exportedNote}
+                    </a>
+                  </>
+                ) : (
+                  <>Guardado en el vault: {exportedNote}</>
+                )}
               </span>
             )}
           </div>

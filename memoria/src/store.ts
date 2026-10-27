@@ -23,6 +23,12 @@ export type FileRow = { path: string; size: number; content_type: string; upload
 export class NotFoundError extends Error {
   status = 404
 }
+export class TooLargeError extends Error {
+  status = 413
+}
+/** D1 keeps rows up to 2 MB; the note, its search copy and its version each take one. */
+export const MAX_NOTE_BYTES = 1_800_000
+
 export class ConflictError extends Error {
   status = 409
   constructor(
@@ -109,6 +115,10 @@ export async function saveNote(
   opts: { source: Source; baseUpdatedAt?: string | null; createOnly?: boolean },
 ): Promise<NoteRow> {
   const path = notePath(rawPath)
+  const bytes = new TextEncoder().encode(content).length
+  if (bytes > MAX_NOTE_BYTES) {
+    throw new TooLargeError(`La nota «${path}» pesa ${(bytes / 1e6).toFixed(1)} MB y el máximo es ${(MAX_NOTE_BYTES / 1e6).toFixed(1)} MB: divídela en varias notas enlazadas.`)
+  }
   const existing = await getNote(db, path)
   if (existing && !existing.deleted_at) {
     if (opts.createOnly) throw new ConflictError(`Ya existe la nota «${path}».`, existing)

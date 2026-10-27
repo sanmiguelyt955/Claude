@@ -44,17 +44,18 @@ test('login: wrong password refused, right one gives a session; nothing without 
 })
 
 test('notes, links, backlinks, rename that fixes links, search, versions, conflict, trash', { skip }, async () => {
-  const a = `${run}/Proyectos/Video Analyzer`
+  const VA = `Video Analyzer ${run}`
+  const a = `${run}/Proyectos/${VA}`
   const b = `${run}/Diario de prueba`
-  assert.equal((await api('PUT', '/api/note', { path: a, content: '---\ntags: [proyecto]\n---\n# Video Analyzer\nAnaliza videos con impresión 3D. #app\n' })).status, 200)
-  const put = await api('PUT', '/api/note', { path: b, content: 'Hoy trabajé en [[Video Analyzer]] y en [[Video Analyzer#Pendiente|lo pendiente]]. También [[Nota que no existe]].\nVideo Analyzer sin enlace.' })
+  assert.equal((await api('PUT', '/api/note', { path: a, content: `---\ntags: [proyecto]\n---\n# ${VA}\nAnaliza videos con impresión 3D. #app\n` })).status, 200)
+  const put = await api('PUT', '/api/note', { path: b, content: `Hoy trabajé en [[${VA}]] y en [[${VA}#Pendiente|lo pendiente]]. También [[Nota que no existe]].\n${VA} sin enlace.` })
   assert.equal(put.status, 200)
   const note = await api('GET', `/api/note?path=${encodeURIComponent(a)}`)
   assert.deepEqual(note.json.backlinks.map((x: any) => x.path), [`${b}.md`])
   assert.match(note.json.backlinks[0].context, /Hoy trabajé/)
   assert.deepEqual(note.json.properties, { tags: ['proyecto'] })
   const out = await api('GET', `/api/note?path=${encodeURIComponent(b)}`)
-  assert.deepEqual(out.json.outgoing.map((o: any) => [o.target, o.path]), [['Video Analyzer', `${a}.md`], ['Nota que no existe', null]])
+  assert.deepEqual(out.json.outgoing.map((o: any) => [o.target, o.path]), [[VA, `${a}.md`], ['Nota que no existe', null]])
 
   // Search: word start, accents ignored, tag operator.
   const s1 = await api('GET', `/api/search?q=${encodeURIComponent('impresion')}`)
@@ -83,7 +84,7 @@ test('notes, links, backlinks, rename that fixes links, search, versions, confli
   const versions = await api('GET', `/api/versions?path=${encodeURIComponent(b)}`)
   assert.ok(versions.json.versions.length >= 1)
   const v = await api('GET', `/api/version?id=${versions.json.versions.at(-1).id}`)
-  assert.match(v.json.version.content, /Hoy trabajé en \[\[Video Analyzer\]\]/)
+  assert.ok(v.json.version.content.includes(`Hoy trabajé en [[${VA}]]`), v.json.version.content)
 
   // Trash and back.
   assert.equal((await api('DELETE', `/api/note?path=${encodeURIComponent(b)}`)).status, 200)
@@ -220,4 +221,50 @@ test('MCP: no token, no access; with OAuth it lists and runs the tools', { skip 
   assert.match((await call('historial_nota', { nota: `${run}/MCP/Decisión` })).content[0].text, /id \d+/)
   assert.equal((await call('leer_nota', { nota: 'No existe nada así' })).isError, true)
   assert.equal((await rpc(token, 'metodo/raro')).error.code, -32601)
+})
+
+test('access keys made in the app: shown once, work as Bearer, cannot manage keys, stop working when deleted', { skip }, async () => {
+  const made = await api('POST', '/api/keys', { name: 'Video Analyzer' })
+  assert.equal(made.status, 201)
+  const key = made.json.key as string
+  assert.match(key, /^mem_[\w-]{32}$/)
+  const listed = await api('GET', '/api/keys')
+  const mine = listed.json.keys.find((k: any) => k.id === made.json.info.id)
+  assert.equal(mine.hint, key.slice(-4))
+  assert.ok(!JSON.stringify(listed.json).includes(key), 'the full key is never listed again')
+  const saved = cookie
+  cookie = ''
+  try {
+    assert.equal((await api('GET', '/api/tree', undefined, { authorization: `Bearer ${key}` })).status, 200)
+    assert.equal((await api('POST', '/api/keys', { name: 'otra' }, { authorization: `Bearer ${key}` })).status, 403)
+    assert.equal((await api('GET', '/api/tree', undefined, { authorization: `Bearer ${key}x` })).status, 401)
+  } finally {
+    cookie = saved
+  }
+  assert.equal((await api('DELETE', `/api/keys?id=${made.json.info.id}`)).status, 200)
+  cookie = ''
+  try {
+    assert.equal((await api('GET', '/api/tree', undefined, { authorization: `Bearer ${key}` })).status, 401)
+  } finally {
+    cookie = saved
+  }
+})
+
+test('a note over 1.8 MB is refused with a clear message, not cut', { skip }, async () => {
+  const big = 'x'.repeat(1_900_000)
+  const r = await api('PUT', '/api/note', { path: `${run}/Grande`, content: big })
+  assert.equal(r.status, 413)
+  assert.match(r.json.error, /pesa 1\.9 MB y el máximo es 1\.8 MB/)
+  const imp = await api('POST', '/api/import', { notes: [{ path: `${run}/Grande`, content: big }] })
+  assert.match(imp.json.failed[0].error, /divídela/)
+})
+
+test('a zipped vault imports with its folders; its single top folder is dropped; hidden folders stay out', { skip }, async () => {
+  const { zip } = await import('../src/zip.ts')
+  const e = (p: string, s: string) => ({ path: p, data: new TextEncoder().encode(s) })
+  const archive = zip([e(`boveda/${run}/Z/Uno.md`, `uno [[Dos ${run}]]`), e(`boveda/${run}/Z/Dos ${run}.md`, 'dos'), e(`boveda/.obsidian/app.json`, '{}'), e(`boveda/${run}/Z/datos.txt`, 'hola')])
+  const r = await api('POST', '/api/import/zip', archive, { 'content-type': 'application/zip' })
+  assert.deepEqual(r.json, { created: 2, updated: 0, unchanged: 0, files: 1, failed: [] })
+  assert.equal((await api('GET', `/api/note?path=${encodeURIComponent(`${run}/Z/Uno`)}`)).json.outgoing[0].path, `${run}/Z/Dos ${run}.md`)
+  assert.equal((await api('GET', '/api/tree')).json.files.some((f: any) => f.path.startsWith('.obsidian')), false)
 })

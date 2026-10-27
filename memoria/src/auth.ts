@@ -70,6 +70,12 @@ export async function authenticate(request: Request, env: Env): Promise<Caller |
   if (auth?.startsWith('Bearer ')) {
     const token = auth.slice(7).trim()
     if (env.MEMORIA_API_TOKEN && env.MEMORIA_API_TOKEN.length >= 16 && (await safeEqual(token, env.MEMORIA_API_TOKEN))) return { via: 'token' }
+    // Keys created in the app's settings: only their hash is stored.
+    if (token.startsWith('mem_')) {
+      const hash = await sha256(token)
+      const keys = await listKeys(env.DB)
+      if (keys.some((k) => k.hash === hash)) return { via: 'token' }
+    }
     return null
   }
   const cookie = readCookie(request)
@@ -98,4 +104,42 @@ export async function checkPassword(request: Request, env: Env, password: string
   }
   await env.OAUTH_KV.put(key, String(failures + 1), { expirationTtl: FAILURE_WINDOW_S })
   return 'wrong'
+}
+
+// ── Access keys for scripts and other apps (Video Analyzer) ────────────────
+
+export type ApiKey = { id: string; name: string; hash: string; created_at: string; hint: string }
+
+export async function sha256(text: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(text)))
+  return [...d].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function listKeys(db: D1Database): Promise<ApiKey[]> {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'api_keys'").first<{ value: string }>()
+  try {
+    return row ? (JSON.parse(row.value) as ApiKey[]) : []
+  } catch {
+    return []
+  }
+}
+
+async function saveKeys(db: D1Database, keys: ApiKey[]): Promise<void> {
+  await db.prepare("INSERT INTO settings (key, value) VALUES ('api_keys', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(JSON.stringify(keys)).run()
+}
+
+/** A new key: returned once, in full; only its hash is kept. */
+export async function createKey(db: D1Database, name: string): Promise<{ key: string; info: Omit<ApiKey, 'hash'> }> {
+  const bytes = crypto.getRandomValues(new Uint8Array(24))
+  const key = `mem_${btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
+  const info = { id: crypto.randomUUID(), name: name.trim().slice(0, 60) || 'Clave', created_at: new Date().toISOString(), hint: key.slice(-4) }
+  await saveKeys(db, [...(await listKeys(db)), { ...info, hash: await sha256(key) }])
+  return { key, info }
+}
+
+export async function deleteKey(db: D1Database, id: string): Promise<boolean> {
+  const keys = await listKeys(db)
+  const next = keys.filter((k) => k.id !== id)
+  await saveKeys(db, next)
+  return next.length !== keys.length
 }

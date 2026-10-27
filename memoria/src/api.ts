@@ -1,5 +1,5 @@
 // The JSON API the web app (public/) and scripts use, under /api/.
-import { authenticate, checkPassword, clearCookie, configured, sessionCookie, type Env } from './auth'
+import { authenticate, checkPassword, clearCookie, configured, createKey, deleteKey, listKeys, sessionCookie, type Env } from './auth'
 import { cleanPath, extractHeadings, notePath, splitFrontmatter, titleOf } from './parse'
 import {
   appendToNote,
@@ -21,6 +21,7 @@ import {
   listTemplates,
   moveFile,
   NotFoundError,
+  TooLargeError,
   outgoingLinks,
   putFile,
   renameFolder,
@@ -40,7 +41,7 @@ import {
   type Source,
 } from './store'
 import { guessType } from './mcp'
-import { zip } from './zip'
+import { unzip, zip } from './zip'
 
 const MAX_UPLOAD = 100 * 1024 * 1024
 
@@ -73,6 +74,58 @@ type AppSettings = { bookmarks: string[]; daily: typeof DEFAULT_DAILY }
 
 async function settings(db: D1Database): Promise<AppSettings> {
   return { bookmarks: await getSetting(db, 'bookmarks', [] as string[]), daily: await getSetting(db, 'daily', DEFAULT_DAILY) }
+}
+
+/**
+ * Notes and files from a .zip (an Obsidian vault, or a GitHub archive whose
+ * single top folder is dropped). Hidden folders (.obsidian, .git, .trash)
+ * are left out. Identical notes and same-size files are skipped.
+ */
+async function importArchive(db: D1Database, files: R2Bucket, archive: Uint8Array, prefix: string, source: Source) {
+  let entries = (await unzip(archive)).filter((e) => !e.path.split('/').some((p) => p.startsWith('.') || p === '__MACOSX'))
+  const tops = new Set(entries.map((e) => e.path.split('/')[0]))
+  if (tops.size === 1 && entries.every((e) => e.path.includes('/'))) entries = entries.map((e) => ({ ...e, path: e.path.slice(e.path.indexOf('/') + 1) }))
+  const existingFiles = new Map((await listFiles(db)).map((f) => [f.path, f.size]))
+  const dec = new TextDecoder()
+  let created = 0
+  let updated = 0
+  let unchanged = 0
+  let filesSaved = 0
+  const failed: Array<{ path: string; error: string }> = []
+  for (const e of entries) {
+    const path = prefix ? `${prefix}/${e.path}` : e.path
+    try {
+      if (/\.md$/i.test(path)) {
+        const content = dec.decode(e.data)
+        const before = await getNote(db, path)
+        if (before && !before.deleted_at && before.content === content) {
+          unchanged++
+          continue
+        }
+        await saveNote(db, path, content, { source: source === 'web' ? 'import' : source })
+        if (before && !before.deleted_at) updated++
+        else created++
+      } else if (existingFiles.get(path) === e.data.byteLength) {
+        unchanged++
+      } else {
+        await putFile(db, files, path, e.data.slice().buffer as ArrayBuffer, guessType(path), e.data.byteLength)
+        filesSaved++
+      }
+    } catch (err) {
+      failed.push({ path, error: (err as Error).message })
+    }
+  }
+  return { created, updated, unchanged, files: filesSaved, failed }
+}
+
+/** A public GitHub repository's default branch, in one archive download (no API calls, so no API rate limit). */
+async function importGithub(db: D1Database, files: R2Bucket, repo: string, prefix: string, source: Source) {
+  const res = await fetch(`https://codeload.github.com/${repo}/zip/HEAD`, { headers: { 'user-agent': 'memoria-app' } })
+  if (res.status === 404) throw new HttpError(404, `No encontré el repositorio público «${repo}».`)
+  if (!res.ok) throw new HttpError(502, `GitHub respondió ${res.status}; prueba en unos minutos.`)
+  const size = Number(res.headers.get('content-length') ?? 0)
+  if (size > MAX_UPLOAD) throw new HttpError(413, 'El repositorio pasa de 100 MB.')
+  return { repo, ...(await importArchive(db, files, new Uint8Array(await res.arrayBuffer()), prefix, source)) }
 }
 
 export async function handleApi(request: Request, env: Env): Promise<Response> {
@@ -242,6 +295,41 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         await moveFile(db, env.FILES, required(body.from, 'from'), required(body.to, 'to'))
         return Response.json({ ok: true })
       }
+      case 'GET /api/keys': {
+        // Only the signed-in owner manages keys, never a key itself.
+        if (caller.via !== 'cookie') throw new HttpError(403, 'Las claves se gestionan desde la app.')
+        return Response.json({ keys: (await listKeys(db)).map(({ hash: _h, ...k }) => k) })
+      }
+      case 'POST /api/keys': {
+        if (caller.via !== 'cookie') throw new HttpError(403, 'Las claves se gestionan desde la app.')
+        const body = await json<{ name?: string }>(request)
+        return Response.json(await createKey(db, String(body.name ?? '')), { status: 201 })
+      }
+      case 'DELETE /api/keys': {
+        if (caller.via !== 'cookie') throw new HttpError(403, 'Las claves se gestionan desde la app.')
+        if (!(await deleteKey(db, required(q('id'), 'id')))) throw new NotFoundError('No existe esa clave.')
+        return Response.json({ ok: true })
+      }
+      case 'POST /api/import/github': {
+        // A public GitHub repository (an Obsidian vault): its notes and files.
+        if (caller.via !== 'cookie') throw new HttpError(403, 'Se importa desde la app.')
+        const body = await json<{ repo?: string; prefix?: string }>(request)
+        const repo = required(body.repo, 'repo').trim().replace(/^https:\/\/github\.com\//, '').replace(/\.git$|\/+$/g, '')
+        if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new HttpError(400, 'Escribe el repositorio como «usuario/nombre».')
+        return Response.json(await importGithub(db, env.FILES, repo, body.prefix ? cleanPath(body.prefix) : '', source))
+      }
+      case 'POST /api/import/zip': {
+        // A zipped vault, uploaded as the request body.
+        const size = Number(request.headers.get('content-length') ?? 0)
+        if (size > MAX_UPLOAD) throw new HttpError(413, 'El .zip pasa de 100 MB.')
+        const prefix = q('prefix') ? cleanPath(q('prefix')) : ''
+        try {
+          return Response.json(await importArchive(db, env.FILES, new Uint8Array(await request.arrayBuffer()), prefix, source))
+        } catch (err) {
+          if (/zip|compresión|máximo/.test((err as Error).message)) throw new HttpError(400, (err as Error).message)
+          throw err
+        }
+      }
       case 'POST /api/import': {
         // Notes from an Obsidian vault or another app. Identical notes are
         // skipped; different ones replace the current content, which stays
@@ -296,7 +384,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
   } catch (err) {
     if (err instanceof ConflictError) return Response.json({ error: err.message, current: err.current ?? null }, { status: 409 })
-    const status = err instanceof HttpError ? err.status : err instanceof NotFoundError ? 404 : /no válida|vacía|no permitidos|se guardan como notas/.test((err as Error).message) ? 400 : 500
+    const status = err instanceof HttpError ? err.status : err instanceof NotFoundError ? 404 : err instanceof TooLargeError ? 413 : /no válida|vacía|no permitidos|se guardan como notas/.test((err as Error).message) ? 400 : 500
     if (status === 500) console.error(err)
     return Response.json({ error: (err as Error).message }, { status })
   }

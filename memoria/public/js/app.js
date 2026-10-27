@@ -1315,6 +1315,19 @@ async function uploadOne(file, path) {
 /** Uploads from the file pickers: .md become notes, anything else a file. */
 async function uploadFiles(files, folder, opts = {}) {
   if (!files.length) return
+  // A zipped vault: its notes and files come in, keeping their folders.
+  if (files.length === 1 && /\.zip$/i.test(files[0].name) && (await confirmBox('Importar .zip', `¿Importar las notas y archivos de «${files[0].name}»? (Si solo quieres guardar el .zip como archivo, elige Cancelar.)`, 'Importar'))) {
+    toast('Importando el .zip…')
+    try {
+      const res = await fetch(`/api/import/zip?prefix=${enc(folder)}`, { method: 'POST', body: files[0], credentials: 'same-origin', headers: { 'content-type': 'application/zip' } })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.error ?? `Error ${res.status}`)
+      toast(`Listo: ${r.created} notas nuevas, ${r.updated} actualizadas, ${r.unchanged} iguales, ${r.files} archivos${r.failed.length ? `, ${r.failed.length} con error` : ''}`)
+    } catch (err) {
+      toast(err.message, 'error')
+    }
+    return refreshTree()
+  }
   const notes = []
   let uploaded = 0
   let failed = 0
@@ -1590,6 +1603,8 @@ function openSettings() {
         el('p', { class: 'hint' }, 'En claude.ai → Ajustes → Conectores → Añadir conector personalizado, pega esta dirección. Te pedirá esta misma contraseña.'),
         el('div', { style: 'display:flex;gap:6px' }, el('input', { type: 'text', readonly: true, value: mcpUrl, 'aria-label': 'Dirección del conector' }), el('button', { class: 'btn', onClick: () => copy(mcpUrl) }, 'Copiar')),
       ),
+      keysSection(),
+      githubSection(),
     ),
     actions: [
       {
@@ -1614,6 +1629,99 @@ function openSettings() {
       },
     ],
   })
+}
+
+/** Access keys for scripts and other apps, such as Video Analyzer. */
+function keysSection() {
+  const list = el('div', {}, el('p', { class: 'muted' }, 'Cargando…'))
+  const shown = el('div')
+  const load = async () => {
+    const { keys } = await api('GET', '/api/keys')
+    list.replaceChildren(
+      ...(keys.length
+        ? keys.map((k) =>
+            el(
+              'div',
+              { class: 'tree-row' },
+              el('span', { class: 'tree-item' }, el('span', { class: 'name' }, `${k.name} · …${k.hint}`), el('span', { class: 'count' }, new Date(k.created_at).toLocaleDateString('es-MX'))),
+              el(
+                'button',
+                {
+                  class: 'btn danger',
+                  onClick: async () => {
+                    if (!(await confirmBox('Borrar clave', `Lo que use «${k.name}» dejará de poder entrar.`, 'Borrar'))) return
+                    await act(() => api('DELETE', `/api/keys?id=${enc(k.id)}`), 'Clave borrada')
+                    load()
+                  },
+                },
+                'Borrar',
+              ),
+            ),
+          )
+        : [el('p', { class: 'muted' }, 'Ninguna todavía.')]),
+    )
+  }
+  load().catch((err) => list.replaceChildren(el('p', { class: 'error' }, err.message)))
+  return el(
+    'div',
+    {},
+    el('strong', {}, 'Claves de acceso'),
+    el('p', { class: 'hint' }, 'Para que otras apps (por ejemplo Video Analyzer) guarden notas aquí. Cada clave se muestra completa una sola vez.'),
+    list,
+    shown,
+    el(
+      'button',
+      {
+        class: 'btn',
+        style: 'margin-top:6px',
+        onClick: async () => {
+          const name = await ask('Nueva clave', '¿Para qué es? (por ejemplo «Video Analyzer»)', 'Video Analyzer')
+          if (!name) return
+          const { key } = await act(() => api('POST', '/api/keys', { name }))
+          shown.replaceChildren(
+            el('p', { class: 'hint', style: 'margin-top:8px' }, 'Cópiala ahora; después solo se verán sus últimas letras:'),
+            el('div', { style: 'display:flex;gap:6px' }, el('input', { type: 'text', readonly: true, value: key, 'aria-label': 'Clave nueva' }), el('button', { class: 'btn primary', onClick: () => copy(key) }, 'Copiar')),
+          )
+          load()
+        },
+      },
+      '✚ Crear clave',
+    ),
+  )
+}
+
+/** Brings a public GitHub repository (an Obsidian vault) into Memoria. */
+function githubSection() {
+  const repo = el('input', { type: 'text', placeholder: 'usuario/repositorio', 'aria-label': 'Repositorio de GitHub', value: 'sanmiguelyt955/memoria-claude' })
+  const out = el('p', { class: 'hint' })
+  const btn = el(
+    'button',
+    {
+      class: 'btn',
+      onClick: async () => {
+        btn.disabled = true
+        out.textContent = 'Importando… puede tardar un minuto.'
+        try {
+          const r = await api('POST', '/api/import/github', { repo: repo.value })
+          out.textContent = `Listo: ${r.created} notas nuevas, ${r.updated} actualizadas, ${r.unchanged} iguales, ${r.files} archivos${r.failed.length ? `, ${r.failed.length} con error` : ''}.`
+          await refreshTree()
+        } catch (err) {
+          out.textContent = err.message
+        } finally {
+          btn.disabled = false
+        }
+      },
+    },
+    'Importar',
+  )
+  return el(
+    'div',
+    {},
+    el('strong', {}, 'Importar desde GitHub'),
+    el('p', { class: 'hint' }, 'Trae las notas y archivos de un repositorio público (por ejemplo una bóveda de Obsidian). Las notas iguales se saltan; las distintas reemplazan a las de aquí, que quedan en el historial.'),
+    el('div', { style: 'display:flex;gap:6px' }, repo, btn),
+    out,
+  )
 }
 
 function applyTheme() {

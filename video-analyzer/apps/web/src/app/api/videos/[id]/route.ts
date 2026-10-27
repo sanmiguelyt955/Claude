@@ -13,6 +13,7 @@ import {
   isAnotherWorkerAlive,
   getDb,
 } from '@cva/memory-engine'
+import { getMemoriaConfig } from '@cva/vault-export'
 import { readJsonObject } from '../../../../lib/json-body'
 import { deleteVideoUnlessBusy, removeVideoFiles } from '../../../../lib/video-delete'
 
@@ -60,6 +61,7 @@ export async function GET(
     // forever, so the page needs to know to say so. ("Another" worker is
     // any worker here: this server never runs one.)
     workerAlive: isAnotherWorkerAlive(),
+    memoria: Boolean(getMemoriaConfig()),
   })
 }
 

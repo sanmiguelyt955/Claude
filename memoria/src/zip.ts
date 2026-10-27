@@ -80,3 +80,52 @@ export function zip(entries: Array<{ path: string; data: Uint8Array; modified?: 
   }
   return out
 }
+
+export type ZipEntry = { path: string; data: Uint8Array }
+
+/**
+ * Reads a ZIP archive (stored or deflated entries, as GitHub and Obsidian
+ * vault exports make them). Directories are skipped. Throws on anything else.
+ */
+export async function unzip(buf: Uint8Array, opts: { maxEntries?: number; maxBytes?: number } = {}): Promise<ZipEntry[]> {
+  const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
+  let eocd = -1
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (v.getUint32(i, true) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('No es un archivo .zip válido.')
+  const count = v.getUint16(eocd + 10, true)
+  let at = v.getUint32(eocd + 16, true)
+  if (count > (opts.maxEntries ?? 5000)) throw new Error(`El .zip tiene demasiados archivos (${count}).`)
+  const dec = new TextDecoder()
+  const out: ZipEntry[] = []
+  let total = 0
+  for (let n = 0; n < count; n++) {
+    if (v.getUint32(at, true) !== 0x02014b50) throw new Error('El índice del .zip está dañado.')
+    const method = v.getUint16(at + 10, true)
+    const compressed = v.getUint32(at + 20, true)
+    const size = v.getUint32(at + 24, true)
+    const nameLen = v.getUint16(at + 28, true)
+    const extraLen = v.getUint16(at + 30, true)
+    const commentLen = v.getUint16(at + 32, true)
+    const local = v.getUint32(at + 42, true)
+    const path = dec.decode(buf.subarray(at + 46, at + 46 + nameLen))
+    at += 46 + nameLen + extraLen + commentLen
+    if (path.endsWith('/')) continue
+    total += size
+    if (total > (opts.maxBytes ?? 200 * 1024 * 1024)) throw new Error('El contenido del .zip pasa del máximo permitido.')
+    const start = local + 30 + v.getUint16(local + 26, true) + v.getUint16(local + 28, true)
+    const raw = buf.subarray(start, start + compressed)
+    let data: Uint8Array
+    if (method === 0) data = raw
+    else if (method === 8) {
+      const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+      data = new Uint8Array(await new Response(stream).arrayBuffer())
+    } else throw new Error(`«${path}» usa una compresión que no se puede leer (${method}).`)
+    out.push({ path, data })
+  }
+  return out
+}

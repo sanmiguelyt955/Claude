@@ -80,3 +80,27 @@ test('the zip has every file intact', () => {
   const name = new TextDecoder().decode(z.subarray(30, 30 + v.getUint16(26, true)))
   assert.equal(name, 'Carpeta/Ñandú.md')
 })
+
+test('unzip reads stored and deflated entries (Python zipfile) and refuses what is not a zip', async () => {
+  const { unzip } = await import('../src/zip.ts')
+  const { execFileSync } = await import('node:child_process')
+  const { mkdtempSync, readFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const path = await import('node:path')
+  const dir = mkdtempSync(path.join(tmpdir(), 'unzip-'))
+  const file = path.join(dir, 'v.zip')
+  execFileSync('python3', ['-I', '-c', `import zipfile
+z = zipfile.ZipFile(${JSON.stringify(file)}, 'w')
+z.writestr('Bóveda/Nota.md', '# Hola ñ\\n' * 500, compress_type=zipfile.ZIP_DEFLATED)
+z.writestr('Bóveda/img.bin', bytes(range(256)) * 10, compress_type=zipfile.ZIP_STORED)
+z.writestr('Bóveda/carpeta/', '')
+z.close()`])
+  const entries = await unzip(new Uint8Array(readFileSync(file)))
+  assert.deepEqual(entries.map((e) => e.path), ['Bóveda/Nota.md', 'Bóveda/img.bin'])
+  assert.equal(new TextDecoder().decode(entries[0]!.data), '# Hola ñ\n'.repeat(500))
+  assert.equal(entries[1]!.data.length, 2560)
+  // Our own zip reads back too.
+  const again = await unzip(zip([{ path: 'a/b.md', data: new TextEncoder().encode('x') }]))
+  assert.deepEqual(again.map((e) => [e.path, new TextDecoder().decode(e.data)]), [['a/b.md', 'x']])
+  await assert.rejects(unzip(new TextEncoder().encode('no soy un zip')), /No es un archivo \.zip válido/)
+})

@@ -144,6 +144,8 @@ export type VideoDetailResponse = {
   skillJob: { type: string; status: string; error: string | null } | null
   /** False when no worker process is running: queued jobs will not move. */
   workerAlive: boolean
+  /** True when MEMORIA_URL and MEMORIA_KEY are set: exports go to Memoria. */
+  memoria: boolean
 }
 
 export type SemanticSearchResult = {
