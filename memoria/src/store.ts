@@ -34,8 +34,10 @@ export class ConflictError extends Error {
 }
 
 const now = () => new Date().toISOString()
-/** Autosaves closer than this to the previous version from the same place replace it instead of piling up. */
+/** Web autosaves closer than this to the previous one are not each kept as a version… */
 const VERSION_COALESCE_MS = 2 * 60_000
+/** …but a long writing session still keeps one version at least this often. */
+const VERSION_EVERY_MS = 10 * 60_000
 
 // ── Reading ────────────────────────────────────────────────────────────────
 
@@ -81,12 +83,17 @@ function indexStatements(db: D1Database, path: string, content: string | null): 
 
 /**
  * The statement that keeps `previous` as a version. Only one case skips it:
- * the web app autosaving over its own autosave of a moment ago, whose
- * predecessor is already a version. A version is never overwritten (an
- * autosave right after a rename used to replace the version the rename kept).
+ * the web app autosaving over its own autosave of a moment ago, when a
+ * version of that note was kept in the last 10 minutes (so a long writing
+ * session still leaves one every 10 minutes). A version is never
+ * overwritten: an autosave right after a rename used to replace the version
+ * the rename kept.
  */
-function versionStatement(db: D1Database, previous: NoteRow, source: Source): D1PreparedStatement[] {
-  if (source === 'web' && previous.updated_by === 'web' && Date.now() - Date.parse(previous.updated_at) < VERSION_COALESCE_MS) return []
+async function versionStatement(db: D1Database, previous: NoteRow, source: Source): Promise<D1PreparedStatement[]> {
+  if (source === 'web' && previous.updated_by === 'web' && Date.now() - Date.parse(previous.updated_at) < VERSION_COALESCE_MS) {
+    const last = await db.prepare('SELECT saved_at FROM note_versions WHERE path = ? ORDER BY id DESC LIMIT 1').bind(previous.path).first<{ saved_at: string }>()
+    if (last && Date.now() - Date.parse(last.saved_at) < VERSION_EVERY_MS) return []
+  }
   return [db.prepare('INSERT INTO note_versions (path, content, saved_at, source) VALUES (?, ?, ?, ?)').bind(previous.path, previous.content, now(), previous.updated_by || source)]
 }
 
@@ -112,7 +119,7 @@ export async function saveNote(
   }
   const at = now()
   const stmts: D1PreparedStatement[] = []
-  if (existing) stmts.push(...versionStatement(db, existing, opts.source))
+  if (existing) stmts.push(...(await versionStatement(db, existing, opts.source)))
   stmts.push(
     existing
       ? db.prepare('UPDATE notes SET content = ?, updated_at = ?, updated_by = ?, deleted_at = NULL WHERE path = ?').bind(content, at, opts.source, path)
@@ -212,7 +219,7 @@ export async function renameNote(db: D1Database, rawFrom: string, rawTo: string,
     if (next === other.content) continue
     updatedLinks.push(other.path)
     stmts.push(
-      ...versionStatement(db, other, 'rename'),
+      ...(await versionStatement(db, other, 'rename')),
       db.prepare("UPDATE notes SET content = ?, updated_at = ?, updated_by = 'rename' WHERE path = ?").bind(next, at, other.path),
       ...indexStatements(db, other.path, next),
     )

@@ -1,0 +1,11 @@
+{
+  "name": "Memoria",
+  "short_name": "Memoria",
+  "description": "Tus notas y archivos en la nube, conectados a Claude.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6d4ce0",
+  "lang": "es",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
