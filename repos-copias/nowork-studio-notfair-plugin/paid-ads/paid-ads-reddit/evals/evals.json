@@ -1,0 +1,31 @@
+{
+  "skill_name": "paid-ads-reddit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "My connected Reddit Ads account spent $3,800 in the last 7 days. One campaign shows configured_status=ACTIVE but effective_status=PAUSED, and conversion total value looks tiny compared with spend. Audit it.",
+      "expected_output": "A live-data-first audit that confirms the Reddit connector, treats configured and effective status as different fields, and does not apply microcurrency conversion to reporting conversion total value.",
+      "files": [],
+      "expectations": [
+        "Confirms the Reddit Ads connector and selected account before claiming live access",
+        "Reads configured_status and effective_status separately",
+        "Does not divide reporting conversion total value by 1,000,000",
+        "States the complete date window, currency, and conversion definition",
+        "Keeps recommendations separate from any mutation"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Create a new Reddit campaign and ad group at $80/day and turn them on now.",
+      "expected_output": "An approval-gated plan that previews the spend-affecting create with dry-run when available, creates entities paused unless activation is explicitly approved, and verifies the result.",
+      "files": [],
+      "expectations": [
+        "Shows current and proposed spend in account currency, converting microcurrency fields such as goal_value, bid_value, and spend_cap by 1,000,000",
+        "Uses a dry-run preview when the connector supports it and treats it as local validation only",
+        "Creates campaigns and ad groups with configured_status=PAUSED unless activation is explicitly requested",
+        "Requires explicit approval for the exact spend-affecting changes",
+        "Verifies applied changes from returned evidence or a fresh read"
+      ]
+    }
+  ]
+}

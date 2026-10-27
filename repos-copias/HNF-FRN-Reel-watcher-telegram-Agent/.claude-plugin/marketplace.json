@@ -1,0 +1,30 @@
+{
+  "name": "reel-agent",
+  "owner": {
+    "name": "HNF-FRN",
+    "url": "https://github.com/HNF-FRN"
+  },
+  "metadata": {
+    "description": "Let Claude Code watch videos: Instagram reels, TikToks, YouTube, X and local files."
+  },
+  "plugins": [
+    {
+      "name": "reel-watch",
+      "displayName": "Reel Watch",
+      "source": "./",
+      "strict": false,
+      "skills": ["./.claude/skills/reel-watch"],
+      "description": "Let Claude watch a video. Paste an Instagram reel, TikTok, YouTube, X link or a local video: it downloads it for free, breaks it down on your computer (Whisper transcript, OCR of every screen, a local model for the summary) or has Gemini watch it if you add a key, and writes down the exact tools, links and commands it shows.",
+      "version": "1.0.0",
+      "author": {
+        "name": "HNF-FRN",
+        "url": "https://github.com/HNF-FRN"
+      },
+      "homepage": "https://hnf-frn.github.io/Reel-watcher-telegram-Agent/",
+      "repository": "https://github.com/HNF-FRN/Reel-watcher-telegram-Agent",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["video", "instagram", "reels", "tiktok", "youtube", "whisper", "ocr", "ollama", "gemini", "yt-dlp", "transcript"]
+    }
+  ]
+}

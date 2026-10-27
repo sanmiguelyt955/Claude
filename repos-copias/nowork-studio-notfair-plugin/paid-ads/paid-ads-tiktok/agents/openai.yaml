@@ -1,0 +1,4 @@
+interface:
+  display_name: "TikTok Ads"
+  short_description: "Audit and operate TikTok Ads safely"
+  default_prompt: "Use $paid-ads-tiktok to audit my connected TikTok Ads account and prioritize improvements."

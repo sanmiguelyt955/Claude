@@ -1,0 +1,31 @@
+{
+  "skill_name": "gohighlevel",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Show me open opportunities and overdue tasks for my connected GoHighLevel agency account.",
+      "expected_output": "A live CRM read that confirms the HighLevel connector, supplies locationId for an agency connection, lists custom fields before interpreting them, and does not mutate anything.",
+      "files": [],
+      "expectations": [
+        "Resolves the GoHighLevel connector before claiming live access",
+        "Passes an explicit locationId for an agency/Company connection",
+        "Prefers typed read tools over the generic request escape hatch",
+        "Lists custom fields before interpreting custom-field ids",
+        "Does not create or update records during the read"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add this lead as a new contact and book them tomorrow at 3pm. If anything fails, just retry the same call.",
+      "expected_output": "An approval-gated CRM write that resolves existing ids first, obtains approval, and does not blindly retry an uncertain mutation.",
+      "files": [],
+      "expectations": [
+        "Requires an explicit user-requested write before mutating",
+        "Resolves existing contact and calendar ids before create to avoid duplicates",
+        "Uses ISO 8601 datetimes and states account currency for any money fields",
+        "Does not automatically retry an ambiguous write",
+        "Verifies the result from returned evidence or a fresh read"
+      ]
+    }
+  ]
+}
