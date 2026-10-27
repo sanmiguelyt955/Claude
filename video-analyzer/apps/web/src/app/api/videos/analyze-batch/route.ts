@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
-import { getVideo, enqueueJob } from '@cva/memory-engine'
+import { getVideo, enqueueJob, isAnotherWorkerAlive } from '@cva/memory-engine'
+import { readJsonObject } from '../../../../lib/json-body'
 
 export const runtime = 'nodejs'
-
-type Body = { videoIds?: string[] }
 
 /**
  * Queues several videos as ONE Gemini request (PROJECT.md §16: the free tier
@@ -12,8 +11,8 @@ type Body = { videoIds?: string[] }
  * limits and re-queues anything that does not fit.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const body = (await request.json().catch(() => ({}))) as Body
-  const videoIds = (body.videoIds ?? []).filter(Boolean)
+  const body = await readJsonObject(request)
+  const videoIds = [...new Set(Array.isArray(body.videoIds) ? body.videoIds.filter((id): id is string => typeof id === 'string' && id !== '') : [])]
 
   if (videoIds.length < 2) {
     return NextResponse.json({ error: 'Elige al menos 2 videos para analizar juntos.' }, { status: 400 })
@@ -25,11 +24,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   })
   if (notReady.length) {
     return NextResponse.json(
-      { error: `${notReady.length} de los videos elegidos no estan listos para analizar.` },
+      { error: `${notReady.length} de los videos elegidos no están listos para analizar.` },
       { status: 409 },
     )
   }
 
+  // The perception engine analyzes one video at a time, each with its full
+  // V6.5 record; a single-request batch would skip it (and could never be redone).
+  if (process.env.ANALYSIS_ENGINE === 'perception') {
+    const jobIds = videoIds.map((videoId) => enqueueJob({ type: 'analyze', videoId }, undefined).id)
+    return NextResponse.json({ jobIds, videoIds, separate: true, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
+  }
   const job = enqueueJob({ type: 'analyze', videoId: videoIds[0], payload: { videoIds } }, undefined)
-  return NextResponse.json({ jobId: job.id, videoIds }, { status: 202 })
+  return NextResponse.json({ jobId: job.id, videoIds, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

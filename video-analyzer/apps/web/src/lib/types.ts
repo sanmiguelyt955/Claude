@@ -17,6 +17,8 @@ export type VideoRow = {
   title: string
   source_kind: 'file' | 'url'
   source_url: string | null
+  /** Set once the file is on disk; the player and the thumbnail need it. */
+  stored_path: string | null
   status: VideoStatus
   duration_seconds: number | null
   width: number | null
@@ -29,6 +31,7 @@ export type VideoRow = {
   size_bytes: number | null
   content_hash: string | null
   error_message: string | null
+  folder: string | null
   created_at: string
   updated_at: string
   activeJob: ActiveJob
@@ -39,6 +42,10 @@ export type VideoSummary = {
   full_summary: string
   topics_json: string
   language: string | null
+  /** "v6.5" when the analysis produced the full protocol record. */
+  protocol_version?: string | null
+  /** The full Protocolo V6.5 record as Markdown (9.0 to 9.14). */
+  protocol_record_md?: string | null
 }
 
 export type SceneDetail = {
@@ -133,6 +140,10 @@ export type VideoDetailResponse = {
   analysisRuns: AnalysisRunSummary[]
   skills: SkillDetail[]
   skillImprovements: SkillImprovementDetail[]
+  /** The latest skill job, so a failed "Detectar skills" is not silent. */
+  skillJob: { type: string; status: string; error: string | null } | null
+  /** False when no worker process is running: queued jobs will not move. */
+  workerAlive: boolean
 }
 
 export type SemanticSearchResult = {

@@ -94,8 +94,17 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
 
   // A video analyzed under the V6.0 protocol already has its complete record,
   // in the protocol's own section order (frontmatter first). That IS the note.
+  // The protocol does not cover where the video came from nor the skills;
+  // they follow it, so the note still stands on its own.
   if (summary?.protocol_record_md) {
-    return [summary.protocol_record_md.trimEnd(), '', ...processingSection(runs), ...exportFooter()].join('\n')
+    return [
+      summary.protocol_record_md.trimEnd(),
+      '',
+      ...originSection(video),
+      ...skillSections(skills, improvements, video.duration_seconds),
+      ...processingSection(runs),
+      ...exportFooter(video.id),
+    ].join('\n')
   }
 
   const topics: string[] = summary ? (JSON.parse(summary.topics_json) as string[]) : []
@@ -192,6 +201,22 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
     }
   }
 
+  out.push(...skillSections(skills, improvements, video.duration_seconds))
+
+  out.push(...processingSection(runs), ...exportFooter(video.id))
+
+  return out.join('\n')
+}
+
+type AnalysisRun = ReturnType<typeof listAnalysisRunsForVideo>[number]
+
+/** Skills found in the video, the SKILL.md written for each, and the improvements proposed. */
+function skillSections(
+  skills: ReturnType<typeof listSkillsForVideo>,
+  improvements: ReturnType<typeof listSkillImprovementsForVideo>,
+  duration: number | null,
+): string[] {
+  const out: string[] = []
   // ── Skills ──────────────────────────────────────────────────────────────
   if (skills.length) {
     out.push('## Procesos reutilizables detectados (skills)')
@@ -201,7 +226,7 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
     for (const skill of skills) {
       const confidence = skill.confidence === null ? '—' : `${Math.round(skill.confidence * 100)}%`
       out.push(
-        `| \`${cell(skill.name)}\` | ${rangeWithin(skill.start_seconds, skill.end_seconds, video.duration_seconds)} | ${confidence} | ${skill.status} | ${cell(skill.description)} |`,
+        `| \`${cell(skill.name)}\` | ${rangeWithin(skill.start_seconds, skill.end_seconds, duration)} | ${confidence} | ${skill.status} | ${cell(skill.description)} |`,
       )
     }
     out.push('')
@@ -237,12 +262,18 @@ export function buildVideoMarkdown(videoId: string, db?: Db): string {
     }
   }
 
-  out.push(...processingSection(runs), ...exportFooter())
-
-  return out.join('\n')
+  return out
 }
 
-type AnalysisRun = ReturnType<typeof listAnalysisRunsForVideo>[number]
+/** Where the video came from and which file it was: the note's link back to the post. */
+function originSection(video: NonNullable<ReturnType<typeof getVideo>>): string[] {
+  const out = ['## Origen del video', '', '| Dato | Valor |', '|---|---|']
+  out.push(`| Origen | ${video.source_kind === 'url' ? cell(video.source_url) : 'Archivo local'} |`)
+  if (video.original_filename) out.push(`| Archivo | ${cell(video.original_filename)} |`)
+  if (video.content_hash) out.push(`| Hash (SHA-256) | \`${video.content_hash}\` |`)
+  out.push(`| Analizado | ${new Date(video.updated_at).toLocaleString('es-MX')} |`, '')
+  return out
+}
 
 /**
  * Token/cost table plus the real number of Gemini calls, failures included —
@@ -250,18 +281,22 @@ type AnalysisRun = ReturnType<typeof listAnalysisRunsForVideo>[number]
  * Rows with no tokens (per-job summary rows) are left out of the table.
  */
 function processingSection(runs: AnalysisRun[]): string[] {
-  const okRuns = runs.filter((r) => r.succeeded && (r.input_tokens ?? 0) + (r.output_tokens ?? 0) > 0)
-  if (!okRuns.length) return []
   const calls = runs.reduce((n, r) => n + (r.request_count ?? 1), 0)
+  // The perception engine logs its requests without tokens: counting only
+  // rows with tokens left its notes with no log at all.
+  if (!calls) return []
+  const okRuns = runs.filter((r) => r.succeeded && (r.input_tokens ?? 0) + (r.output_tokens ?? 0) > 0)
   const failed = runs.filter((r) => !r.succeeded).reduce((n, r) => n + (r.request_count ?? 1), 0)
+  const byModel = new Map<string, number>()
+  for (const r of runs) if (r.request_count) byModel.set(r.model, (byModel.get(r.model) ?? 0) + r.request_count)
   const out: string[] = [
     '## Registro de procesamiento',
     '',
-    `Llamadas a Gemini: **${calls}** (${calls - failed} correctas, ${failed} rechazadas o fallidas; las rechazadas también consumen cupo diario).`,
+    `Llamadas a la IA: **${calls}** (${calls - failed} correctas, ${failed} rechazadas o fallidas; las rechazadas también consumen cupo diario). Por modelo: ${[...byModel].map(([m, n]) => `${m} ${n}`).join(' · ')}.`,
     '',
-    '| Fase | Modelo | Modo | Tokens | Costo |',
-    '|---|---|---|---|---|',
   ]
+  if (!okRuns.length) return out
+  out.push('| Fase | Modelo | Modo | Tokens | Costo |', '|---|---|---|---|---|')
   let totalTokens = 0
   let totalCost = 0
   for (const run of okRuns) {
@@ -276,11 +311,16 @@ function processingSection(runs: AnalysisRun[]): string[] {
   return out
 }
 
-function exportFooter(): string[] {
+/** Marks the note as this video's, so a later export overwrites it instead of adding a copy. */
+export const noteMarker = (videoId: string) => `<!-- video-analyzer:${videoId} -->`
+
+function exportFooter(videoId: string): string[] {
   return [
     '---',
     '',
     `*Exportado desde Video Analyzer el ${formatVaultDate()}. Fuente de verdad: la base de datos local de la app (\`data/db/app.sqlite\`).*`,
+    '',
+    noteMarker(videoId),
     '',
   ]
 }

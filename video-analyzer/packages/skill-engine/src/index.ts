@@ -1,10 +1,12 @@
 import path from 'node:path'
-import { mkdir, writeFile, readFile, access } from 'node:fs/promises'
+import { mkdir, writeFile, readFile, access, rm } from 'node:fs/promises'
 import {
   SKILLS_OUT_DIR,
   getVideoSummary,
   listScenes,
   listTranscriptChunks,
+  recordChunks,
+  recordSection,
   toDataRelativePath,
   resolveDataPath,
 } from '@cva/memory-engine'
@@ -39,7 +41,9 @@ export type ProposedImprovement = {
 
 /** Agent Skills spec constraints, enforced before anything is written to disk. */
 export const SKILL_NAME_MAX = 64
-export const SKILL_DESCRIPTION_MAX = 200
+// 1024 is the spec's limit; 200 cut the "when to use it" triggers Claude
+// matches to decide when to load the skill.
+export const SKILL_DESCRIPTION_MAX = 1024
 export const SKILL_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
 /**
@@ -54,6 +58,9 @@ export function normalizeSkillName(raw: string): string {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '') // strip accents (after NFD decomposition)
     .replace(/[^a-z0-9]+/g, '-')
+    // Reserved by the spec: a name with them is refused.
+    .replace(/(^|-)(claude|anthropic)(?=-|$)/g, '$1')
+    .replace(/-{2,}/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, SKILL_NAME_MAX)
     .replace(/-+$/g, '')
@@ -78,6 +85,33 @@ function formatSeconds(seconds: number): string {
  * transcript+scenes already carry everything a process/method needs to be
  * recognized in.
  */
+/** About 30k tokens: the whole 9.5 of a 15-min video is 160k characters. */
+const RECORD_DIGEST_CHARS = 120_000
+
+/**
+ * What the V6.5 record saw between `from` and `to`: the per-second detail
+ * (9.5), the on-screen texts (9.7) and, for the whole video, the replicable
+ * patterns (9.12). A process shown on screen, or done in silence, lives only
+ * there: the scenes and the transcript were about 6 % of the analysis.
+ */
+function recordDigest(md: string | null | undefined, from: number, to: number): string[] {
+  if (!md) return []
+  const pieces = recordChunks(md).filter((p) => (p.endSeconds ?? p.startSeconds) >= from && p.startSeconds <= to)
+  const line = (p: (typeof pieces)[number]) =>
+    `[${formatSeconds(p.startSeconds)}-${formatSeconds(p.endSeconds ?? p.startSeconds)}] ${p.text}`
+  const out: string[] = []
+  let detail = pieces.filter((p) => p.source === 'scene').map(line).join('\n')
+  if (detail.length > RECORD_DIGEST_CHARS) detail = detail.slice(0, RECORD_DIGEST_CHARS) + '\n[…recortado]'
+  if (detail) out.push('DETALLE POR SEGUNDO (registro V6.5, 9.5):\n' + detail)
+  const texts = pieces.filter((p) => p.source === 'element').map(line).join('\n')
+  if (texts) out.push('TEXTO EN PANTALLA (9.7):\n' + texts)
+  if (from === 0 && to === Infinity) {
+    const patterns = recordSection(md, '9.12').trim()
+    if (patterns) out.push('PATRONES REPLICABLES (9.12):\n' + patterns)
+  }
+  return out
+}
+
 export function buildVideoDigest(videoId: string, db?: Parameters<typeof getVideoSummary>[1]): string {
   const summary = getVideoSummary(videoId, db)
   const scenes = listScenes(videoId, db)
@@ -99,6 +133,7 @@ export function buildVideoDigest(videoId: string, db?: Parameters<typeof getVide
         transcript.map((t) => `[${formatSeconds(t.start_seconds)}] ${t.speaker ? t.speaker + ': ' : ''}${t.text}`).join('\n'),
     )
   }
+  parts.push(...recordDigest(summary?.protocol_record_md, 0, Infinity))
   return parts.join('\n\n')
 }
 
@@ -136,11 +171,25 @@ export function buildSegmentDigest(
         transcript.map((t) => `[${formatSeconds(t.start_seconds)}] ${t.speaker ? t.speaker + ': ' : ''}${t.text}`).join('\n'),
     )
   }
+  parts.push(...recordDigest(getVideoSummary(videoId, db)?.protocol_record_md, from, to))
   return parts.join('\n\n')
 }
 
 function buildSkillMd(name: string, description: string, bodyMarkdown: string): string {
-  return `---\nname: ${name}\ndescription: ${description.replace(/\n/g, ' ')}\n---\n\n${bodyMarkdown.trim()}\n`
+  // Quoted: a description with ": " ("Uso: ...") or starting with "-", "[" or
+  // "#" broke the YAML frontmatter and Claude could not load the skill. A
+  // JSON string is a valid YAML double-quoted scalar.
+  return `---\nname: ${name}\ndescription: ${JSON.stringify(description.replace(/\s*\n\s*/g, ' '))}\n---\n\n${bodyMarkdown.trim()}\n`
+}
+
+/**
+ * A file name the model proposed, reduced to a plain name inside its folder:
+ * "../../scripts/launcher.ps1" would otherwise be written outside the skill,
+ * over the app's own files.
+ */
+export function safeAssetName(raw: string, fallback: string): string {
+  const base = (raw ?? '').split(/[\\/]/).pop()!.replace(/[^\w.\-]+/g, '_').replace(/^\.+/, '')
+  return base || fallback
 }
 
 /**
@@ -155,11 +204,17 @@ export async function writeSkillFolder(input: {
   bodyMarkdown: string
   references: { filename: string; contents: string }[]
   scripts: { filename: string; contents: string }[]
+  /** The skill's id: its folder is marked with it, so another skill never writes over it. */
+  owner?: string
 }): Promise<{ outputPath: string; skillMd: string; assets: { path: string; contents: string }[] }> {
-  const skillMd = buildSkillMd(input.name, input.description, input.bodyMarkdown)
-  const dir = path.join(SKILLS_OUT_DIR, input.name)
+  const name = await folderNameFor(input.name, input.owner)
+  const skillMd = buildSkillMd(name, input.description, input.bodyMarkdown)
+  const dir = path.join(SKILLS_OUT_DIR, name)
 
+  // A retry of the same skill starts clean: old references/ and scripts/ went stale.
+  await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
+  if (input.owner) await writeFile(path.join(dir, OWNER_FILE), input.owner, 'utf8')
   await writeFile(path.join(dir, 'SKILL.md'), skillMd, 'utf8')
 
   const assets: { path: string; contents: string }[] = []
@@ -168,7 +223,7 @@ export async function writeSkillFolder(input: {
     const refDir = path.join(dir, 'references')
     await mkdir(refDir, { recursive: true })
     for (const ref of input.references) {
-      const relPath = path.join('references', ref.filename)
+      const relPath = path.join('references', safeAssetName(ref.filename, 'referencia.md'))
       await writeFile(path.join(dir, relPath), ref.contents, 'utf8')
       assets.push({ path: relPath, contents: ref.contents })
     }
@@ -178,13 +233,33 @@ export async function writeSkillFolder(input: {
     const scriptDir = path.join(dir, 'scripts')
     await mkdir(scriptDir, { recursive: true })
     for (const script of input.scripts) {
-      const relPath = path.join('scripts', script.filename)
+      const relPath = path.join('scripts', safeAssetName(script.filename, 'script.txt'))
       await writeFile(path.join(dir, relPath), script.contents, 'utf8')
       assets.push({ path: relPath, contents: script.contents })
     }
   }
 
   return { outputPath: toDataRelativePath(dir), skillMd, assets }
+}
+
+const OWNER_FILE = '.video-analyzer-skill'
+
+/**
+ * The folder (and frontmatter name: the spec wants them equal) for a new
+ * skill: its own name, or name-2, name-3… when that folder belongs to
+ * another skill (the same name detected in another video) or is not ours at
+ * all. It used to be overwritten while the other skill's row still pointed at it.
+ */
+async function folderNameFor(name: string, owner: string | undefined): Promise<string> {
+  for (let n = 1; ; n++) {
+    const suffix = n === 1 ? '' : `-${n}`
+    const candidate = `${name.slice(0, SKILL_NAME_MAX - suffix.length).replace(/-+$/, '')}${suffix}`
+    const dir = path.join(SKILLS_OUT_DIR, candidate)
+    const exists = await access(dir).then(() => true, () => false)
+    if (!exists) return candidate
+    const mark = await readFile(path.join(dir, OWNER_FILE), 'utf8').catch(() => null)
+    if (owner && mark === owner) return candidate
+  }
 }
 
 // ── Mejora de Skills (PROJECT.md §13, bloque 7) ────────────────────────────

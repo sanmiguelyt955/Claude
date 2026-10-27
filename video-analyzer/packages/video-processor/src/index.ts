@@ -2,6 +2,8 @@ export type { VideoMetadata, SegmentPlan } from './types.js'
 export { probe } from './ffmpeg.js'
 export { hashFile } from './hash.js'
 export { downloadToFile } from './download.js'
+export { downloadWithYtDlp, downloadCaptions, pickCaptionTrack, isSocialVideoUrl, socialPlatformOf, explainYtDlpError } from './social.js'
+export type { SocialDownload, SocialPlatform } from './social.js'
 export {
   SUPPORTED_VIDEO_EXTENSIONS,
   SUPPORTED_AUDIO_EXTENSIONS,

@@ -33,7 +33,7 @@ export function checkQuota(db: Db, model: string): QuotaCheck {
     return {
       ok: false,
       retryAfter: nextQuotaResetDate(),
-      reason: `Se alcanzo el limite diario de ${model} (${counts.requestsToday}/${limit} peticiones hoy).`,
+      reason: `Se alcanzó el límite diario de ${model} (${counts.requestsToday}/${limit} peticiones hoy).`,
     }
   }
 
@@ -45,20 +45,30 @@ export function checkQuota(db: Db, model: string): QuotaCheck {
   if (counts.requestsLastMinute >= MAX_RPM) {
     return {
       ok: false,
-      retryAfter: new Date(Date.now() + 60_000),
-      reason: `Se alcanzo el limite por minuto de ${model} (${counts.requestsLastMinute}/${MAX_RPM} peticiones en el ultimo minuto).`,
+      retryAfter: minuteFreesAt(db, model),
+      reason: `Se alcanzó el límite por minuto de ${model} (${counts.requestsLastMinute}/${MAX_RPM} peticiones en el último minuto).`,
     }
   }
 
   if (counts.tokensLastMinute >= MAX_TPM) {
     return {
       ok: false,
-      retryAfter: new Date(Date.now() + 60_000),
-      reason: `Se alcanzo el limite de tokens por minuto de ${model} (${counts.tokensLastMinute}/${MAX_TPM}).`,
+      retryAfter: minuteFreesAt(db, model),
+      reason: `Se alcanzó el límite de tokens por minuto de ${model} (${counts.tokensLastMinute}/${MAX_TPM}).`,
     }
   }
 
   return { ok: true }
+}
+
+/** When the oldest request of the last minute leaves the window: the model can take another then. */
+function minuteFreesAt(db: Db, model: string): Date {
+  const oldest = (
+    db
+      .prepare('SELECT MIN(created_at) AS at FROM analysis_runs WHERE model = ? AND created_at >= ? AND request_count > 0')
+      .get(model, new Date(Date.now() - 60_000).toISOString()) as { at: string | null }
+  ).at
+  return new Date(Math.max(Date.now() + 1_000, (oldest ? Date.parse(oldest) : Date.now()) + 60_000))
 }
 
 export type ModelChoice = { ok: true; model: string } | { ok: false; retryAfter: Date; reason: string }
@@ -87,11 +97,24 @@ export function listVideoModelsWithQuota(db: Db): string[] {
  * to die once gemini-3.7-flash alone ran out.
  */
 export function listSkillModelsWithQuota(db: Db): string[] {
+  return skillModels().filter((model) => checkQuota(db, model).ok)
+}
+
+/**
+ * GEMINI_SKILL_MODELS when set; otherwise GEMINI_SKILL_MODEL first (it used
+ * to be only a label, so setting it to Flash-Lite still spent the scarce
+ * 20/day of gemini-3.8-flash on every skill call), then the video pool.
+ */
+function skillModels(): string[] {
   const configured = process.env.GEMINI_SKILL_MODELS?.trim()
-  const pool = configured
-    ? configured.split(',').map((m) => m.trim()).filter(Boolean)
-    : videoModels()
-  return pool.filter((model) => checkQuota(db, model).ok)
+  if (configured) return configured.split(',').map((m) => m.trim()).filter(Boolean)
+  const first = process.env.GEMINI_SKILL_MODEL?.trim()
+  return [...new Set([...(first ? [first] : []), ...videoModels()])]
+}
+
+/** Why no skill model can take a request now, and the earliest moment one can. */
+export function skillPoolBlock(db: Db): { retryAfter: Date; reason: string } {
+  return poolBlock(db, skillModels())
 }
 
 /**
@@ -122,14 +145,13 @@ const DEFAULT_VIDEO_MODELS = [
   // retiro. Dejarlos aqui solo gasta 2 peticiones inutiles (intento + retry)
   // en cada rotacion, en el peor momento posible: cuando ya se esta cayendo
   // en cascada por otros modelos con problemas reales.
-  // Orden por generacion distinta: 3.7 y 3.8 se saturaron a la vez en sep-oct 2026
-  // (foro oficial de Google AI), asi que 3.6 va entre ambos para no gastar dos
-  // intentos seguidos contra la misma capacidad caida.
+  // gemini-3.7-flash y gemini-3.5-flash salieron por lo mismo: ya no aparecen
+  // en la lista de modelos de Google (ai.google.dev/gemini-api/docs/models,
+  // revisada el 17 oct 2026). gemini-3-flash-preview salió también: la
+  // página de modelos obsoletos de Google lo da por reemplazado por
+  // gemini-3.6-flash, que ya está aquí.
   'gemini-3.8-flash',
   'gemini-3.6-flash',
-  'gemini-3.7-flash',
-  'gemini-3.5-flash',
-  'gemini-3-flash-preview',
   // Flash Lite: calidad menor pero 500/dia los de 3.x — es donde vive la
   // capacidad real, asi que van al final como caballo de batalla.
   'gemini-3.5-flash-lite',
@@ -151,21 +173,28 @@ function videoModels(): string[] {
  */
 export function pickVideoModel(db: Db): ModelChoice {
   const models = videoModels()
-  let lastBlock: { retryAfter: Date; reason: string } | undefined
-
   for (const model of models) {
-    const check = checkQuota(db, model)
-    if (check.ok) return { ok: true, model }
-    lastBlock = { retryAfter: check.retryAfter, reason: check.reason }
     // Every limit is per model, so a blocked model just means "try the next".
+    if (checkQuota(db, model).ok) return { ok: true, model }
   }
+  return { ok: false, ...poolBlock(db, models) }
+}
 
+/**
+ * The earliest moment any model of the pool is free again. Taking the last
+ * model's block instead put a job off until midnight because the Flash models
+ * were out for the day, although Flash-Lite was only pacing itself and free
+ * again within a minute.
+ */
+function poolBlock(db: Db, models: string[]): { retryAfter: Date; reason: string } {
+  const blocks = models
+    .map((model) => checkQuota(db, model))
+    .filter((c): c is Extract<QuotaCheck, { ok: false }> => !c.ok)
+  if (!blocks.length) return { retryAfter: new Date(Date.now() + 60_000), reason: 'Sin cupo disponible.' }
+  const earliest = blocks.reduce((a, b) => (b.retryAfter < a.retryAfter ? b : a))
+  const allDaily = blocks.length === models.length && blocks.every((b) => b.reason.includes('límite diario'))
   return {
-    ok: false,
-    retryAfter: lastBlock?.retryAfter ?? new Date(Date.now() + 60_000),
-    reason:
-      models.length > 1 && lastBlock?.reason.includes('limite diario')
-        ? `Sin cupo diario en ninguno de los modelos configurados (${models.join(', ')}).`
-        : (lastBlock?.reason ?? 'Sin cupo disponible.'),
+    retryAfter: earliest.retryAfter,
+    reason: allDaily && models.length > 1 ? `Sin cupo diario en ninguno de los modelos configurados (${models.join(', ')}).` : earliest.reason,
   }
 }

@@ -1,4 +1,5 @@
 import {
+  enqueueJob,
   getDb,
   inspectSchema,
   closeDb,
@@ -34,11 +35,13 @@ const HANDLERS: Partial<Record<JobType, JobHandler>> = {
   // videos in a single Gemini request), anything else is the single-video
   // path. Keeping one type avoids migrating the jobs.type CHECK constraint.
   analyze: async (job, db) => {
-    // ANALYSIS_ENGINE=perception routes single videos through @cva/perception.
-    // Batches stay on the Gemini path: perception analyzes one video at a time.
+    // ANALYSIS_ENGINE=perception routes every video through @cva/perception.
+    // A batch queued before the web stopped making them (they skipped the
+    // V6.5 record) becomes one perception analysis per video.
     if (process.env.ANALYSIS_ENGINE === 'perception') {
       const single = JSON.parse(job.payload_json) as { videoIds?: string[] }
-      if (!Array.isArray(single.videoIds)) return runAnalyzePerceptionJob(job, db)
+      for (const id of new Set(single.videoIds ?? [])) if (id !== job.video_id) enqueueJob({ type: 'analyze', videoId: id }, db)
+      return runAnalyzePerceptionJob(job, db)
     }
     const payload = JSON.parse(job.payload_json) as { videoIds?: string[] }
     return Array.isArray(payload.videoIds) && payload.videoIds.length > 1
@@ -75,7 +78,16 @@ async function main(): Promise<void> {
   writeWorkerHeartbeat(db)
   // Timer-based, not per poll: the poll loop sits inside one long job for
   // many minutes, and the heartbeat must keep beating the whole time.
-  const heartbeat = setInterval(() => writeWorkerHeartbeat(db), WORKER_HEARTBEAT_INTERVAL_MS)
+  // A database locked longer than busy_timeout (SQLITE_BUSY) used to throw
+  // out of the loop and end the worker for good; now it waits and goes on.
+  const busy = (what: string, err: unknown) => console.error(`[worker] la base de datos no respondió al ${what} (${(err as Error).message}); sigo en unos segundos.`)
+  const heartbeat = setInterval(() => {
+    try {
+      writeWorkerHeartbeat(db)
+    } catch (err) {
+      busy('latido', err)
+    }
+  }, WORKER_HEARTBEAT_INTERVAL_MS)
   heartbeat.unref()
 
   const recovered = requeueOrphanedJobs(db)
@@ -95,7 +107,14 @@ async function main(): Promise<void> {
   process.on('SIGTERM', stop)
 
   while (!stopping) {
-    const job = claimNextJob(db)
+    let job: JobRow | undefined
+    try {
+      job = claimNextJob(db)
+    } catch (err) {
+      busy('buscar trabajo', err)
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS * 2))
+      continue
+    }
     if (!job) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
       continue
@@ -115,7 +134,12 @@ async function main(): Promise<void> {
         continue
       }
       console.error(`[worker] ${job.type} ${job.id} fallo: ${(error as Error).message}`)
-      retryOrFailJob(job, error as Error, db)
+      try {
+        retryOrFailJob(job, error as Error, db)
+      } catch (err) {
+        // The job stays 'running'; requeueOrphanedJobs picks it up on the next start.
+        busy('guardar el fallo', err)
+      }
     }
   }
 

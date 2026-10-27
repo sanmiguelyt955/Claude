@@ -9,12 +9,12 @@ import {
 import type { Db, JobRow } from '@cva/memory-engine'
 import { proposeSkillImprovements } from '@cva/ai-router'
 import { buildVideoDigest, readExternalSkillMd } from '@cva/skill-engine'
-import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
+import { listSkillModelsWithQuota, skillPoolBlock } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
+import { requireGeminiKey, skillRequestLogger } from '../skill-requests.js'
 
 type ImproveSkillPayload = { videoId: string; skillId?: string; sourceSkillPath?: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.7-flash'
 
 /**
  * Handles 'improve_skill' (PROJECT.md §13): compares an already-generated
@@ -42,11 +42,12 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
     throw new Error('Se requiere skillId o sourceSkillPath.')
   }
 
+  requireGeminiKey(job, db)
   const models = listSkillModelsWithQuota(db)
   if (!models.length) {
-    const quota = checkQuota(db, SKILL_MODEL)
-    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
-    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    // The earliest any model of the pool is free: Flash-Lite pacing itself
+    // frees up within a minute even when the Flash models are out for the day.
+    const { reason, retryAfter } = skillPoolBlock(db)
     updateJobProgress(job.id, { label: reason }, db)
     deferJob(job.id, retryAfter.toISOString(), reason, db)
     throw new JobDeferred(reason)
@@ -61,26 +62,8 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
       models,
       existingSkillMd,
       videoDigest: digest,
+      onRequest: skillRequestLogger(videoId, job.id, 'skill_improvement', db),
     })
-    const latencyMs = Date.now() - startedAt
-
-    insertAnalysisRun(
-      {
-        videoId,
-        jobId: job.id,
-        phase: 'skill_improvement',
-        model: modelUsed,
-        processingMode: null,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedTokens: usage.cachedTokens,
-        thoughtTokens: usage.thoughtTokens,
-        estimatedCostUsd: usage.estimatedCostUsd,
-        latencyMs,
-        succeeded: true,
-      },
-      db,
-    )
 
     if (improvements.length) {
       insertSkillImprovements(
@@ -105,7 +88,7 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
         videoId,
         jobId: job.id,
         phase: 'skill_improvement',
-        model: SKILL_MODEL,
+        model: models[0]!,
         processingMode: null,
         inputTokens: 0,
         outputTokens: 0,
@@ -115,6 +98,8 @@ export async function runImproveSkillJob(job: JobRow, db: Db): Promise<void> {
         latencyMs,
         succeeded: false,
         errorMessage: (error as Error).message,
+        // Each request was counted as it was sent; this row is the job's outcome.
+        requestCount: 0,
       },
       db,
     )

@@ -9,7 +9,15 @@ function formatDuration(totalSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`
 }
 
-type Pace = { lastCurrent: number; lastAtMs: number; etaBaselineSeconds: number | null; etaBaselineAtMs: number }
+type Pace = {
+  lastCurrent: number
+  lastAtMs: number
+  etaBaselineSeconds: number | null
+  etaBaselineAtMs: number
+  /** The first step seen and when: the pace is measured from here. */
+  originCurrent: number | null
+  originAtMs: number
+}
 
 /**
  * Live-progress indicator for an analysis in flight. When the job carries no
@@ -51,25 +59,34 @@ export function AnalyzingProgress({
   const elapsed = Math.max(0, Math.floor((nowMs - startMs) / 1000))
   const hasRealProgress = typeof total === 'number' && total > 0 && typeof current === 'number'
 
-  const paceRef = useRef<Pace>({ lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs })
+  const paceRef = useRef<Pace>({ lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs, originCurrent: null, originAtMs: startMs })
 
   // A new job (new startedAt) starts a fresh pace history — otherwise a
   // just-restarted analysis would inherit the previous run's baseline.
   useEffect(() => {
-    paceRef.current = { lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs }
+    paceRef.current = { lastCurrent: 0, lastAtMs: startMs, etaBaselineSeconds: null, etaBaselineAtMs: startMs, originCurrent: null, originAtMs: startMs }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startedAt])
 
   // Re-baseline synchronously during render (not in an effect) so the very
   // render that receives a new `current` already shows the corrected ETA
   // instead of lagging one tick behind.
+  // The pace counts only from the first step seen: before it come the local
+  // frames, transcription and phase 1, much slower than a window, and the
+  // windows then run in parallel. Measured from the start, the first ETA was
+  // about 4x too long ("quedan ~32:06" with 7:17 left). No ETA until two
+  // steps after that origin have finished.
   if (hasRealProgress && current! > paceRef.current.lastCurrent) {
     const pace = paceRef.current
-    const windowsDone = current! - pace.lastCurrent
-    const msPerWindow = (nowMs - pace.lastAtMs) / windowsDone
-    const remaining = total! - current!
-    pace.etaBaselineSeconds = remaining > 0 ? (msPerWindow * remaining) / 1000 : 0
-    pace.etaBaselineAtMs = nowMs
+    if (pace.originCurrent === null) {
+      pace.originCurrent = current!
+      pace.originAtMs = nowMs
+    } else if (current! - pace.originCurrent >= 2) {
+      const msPerStep = (nowMs - pace.originAtMs) / (current! - pace.originCurrent)
+      const remaining = total! - current!
+      pace.etaBaselineSeconds = remaining > 0 ? (msPerStep * remaining) / 1000 : 0
+      pace.etaBaselineAtMs = nowMs
+    }
     pace.lastCurrent = current!
     pace.lastAtMs = nowMs
   }
@@ -82,7 +99,15 @@ export function AnalyzingProgress({
 
   return (
     <div className="flex flex-col gap-2 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) p-4">
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--color-line)">
+      <div
+        role="progressbar"
+        aria-label="Progreso del análisis"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent ?? undefined}
+        aria-valuetext={label ?? 'Analizando…'}
+        className="h-1.5 w-full overflow-hidden rounded-full bg-(--color-line)"
+      >
         {hasRealProgress ? (
           <div
             className="h-full rounded-full bg-(--color-accent) transition-[width] duration-500 ease-out"
@@ -93,7 +118,7 @@ export function AnalyzingProgress({
         )}
       </div>
       <div className="flex items-center justify-between text-xs text-(--color-ink-soft)">
-        <span>{label ?? 'Analizando...'}</span>
+        <span>{label ?? 'Analizando…'}</span>
         <span className="font-mono">
           {hasRealProgress ? (
             <>

@@ -25,6 +25,14 @@ from .weights import model_dir, read_safetensors
 SECONDS_PER_FRAME = HOP_LENGTH / SAMPLE_RATE  # 0.01 s per mel frame
 INPUT_STRIDE = 2  # conv2 halves the frames: one timestamp step (0.02 s) = 2 mel frames
 
+# Silence skipping, a cheap stand-in for the Silero VAD that faster-whisper
+# and whisper.cpp use: 10 ms frames quieter than this (RMS, dB below full
+# scale) count as silence. -50 dBFS is well under quiet speech (about -35),
+# so a soft voice is never skipped; only real silence is.
+SILENCE_DBFS = -50.0
+SPEECH_PAD_FRAMES = 20  # start 0.2 s before the voice, so the first syllable is whole
+MIN_SKIP_FRAMES = 100  # jump only over silences of 1 s or more
+
 _loaded: dict = {}
 
 
@@ -78,6 +86,16 @@ def _segments(tokens: list[int], tok: Tokenizer, offset: float):
     return segments, None
 
 
+def voiced_frames(audio: np.ndarray, silence_dbfs: float = SILENCE_DBFS) -> np.ndarray:
+    """Indexes of the 10 ms mel frames that have sound above `silence_dbfs`."""
+    n = len(audio) // HOP_LENGTH
+    if n == 0:
+        return np.zeros(0, np.int64)
+    frames = audio[: n * HOP_LENGTH].reshape(n, HOP_LENGTH).astype(np.float64)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    return np.flatnonzero(rms > 10 ** (silence_dbfs / 20))
+
+
 def transcribe(
     path_or_audio,
     model: str = "tiny",
@@ -86,13 +104,22 @@ def transcribe(
     temperatures=TEMPERATURES,
     best_of: int = 5,
     seed: int = 0,
+    skip_silence: bool = True,
 ) -> dict:
     """Returns {"language": code, "segments": [{"start", "end", "text", "temperature"}]}.
+
+    Without `language`, each 30 s window is decoded in the language heard in
+    it (as faster-whisper's `multilingual`), so English dialogue in a Spanish
+    video is written down in English rather than translated; "language" is
+    the first one heard.
 
     beam_size=5 is Whisper's usual setting; 1 is plain greedy decoding
     (faster, slightly less accurate on hard audio). `temperatures` is the
     retry ladder for windows that come out repetitive or unsure; pass (0.0,)
-    to disable retries. `seed` makes the sampled retries reproducible."""
+    to disable retries. `seed` makes the sampled retries reproducible.
+    `skip_silence` jumps over stretches with no sound at all instead of
+    running the model on them: faster, and Whisper cannot invent words
+    over silence it never sees."""
     rng = np.random.default_rng(seed)
     whisper, tok, rules, _ = load_model(model)
     audio = load_audio(path_or_audio) if isinstance(path_or_audio, str) else np.asarray(path_or_audio, np.float32)
@@ -101,12 +128,20 @@ def transcribe(
 
     segments: list[dict] = []
     seek = 0
-    lang_code = language
+    first_language = language
+    voiced = voiced_frames(audio) if skip_silence else None
     while seek < content_frames:
+        if voiced is not None:
+            nxt = np.searchsorted(voiced, seek)
+            if nxt >= len(voiced):
+                break  # nothing but silence until the end
+            onset = int(voiced[nxt]) - SPEECH_PAD_FRAMES
+            if onset - seek >= MIN_SKIP_FRAMES:
+                seek = onset
         window_frames = min(N_FRAMES, content_frames - seek)
         features = whisper.encode(pad_or_trim(mel[:, seek : seek + N_FRAMES]))
-        if lang_code is None:
-            lang_code = detect_language(whisper, tok, features)
+        lang_code = language or detect_language(whisper, tok, features)
+        first_language = first_language or lang_code
         decoded = decode_with_fallback(
             whisper, tok, rules, features, tok.language_token(lang_code),
             beam_size=beam_size, best_of=best_of, temperatures=temperatures, rng=rng,
@@ -128,4 +163,4 @@ def transcribe(
         segments.extend(found)
         seek += consumed if consumed else window_frames
 
-    return {"language": lang_code or "en", "segments": segments}
+    return {"language": first_language or "en", "segments": segments}

@@ -8,7 +8,10 @@ import {
   listChatMessages,
   addChatMessage,
   clearChatMessages,
+  chatToMarkdown,
+  insertAnalysisRun,
 } from '@cva/memory-engine'
+import { readJsonObject } from '../../../../../lib/json-body'
 import { askVideo, type ChatVideo } from '@cva/perception/chat'
 
 export const runtime = 'nodejs'
@@ -50,13 +53,25 @@ function chatVideo(id: string, title: string, durationSeconds: number | null): C
       start: e.start_seconds,
       end: e.end_seconds,
     })),
+    // The V6.5 record: second-by-second detail (9.5) and every on-screen text (9.7).
+    record: summary?.protocol_record_md ?? null,
   }
 }
 
-/** The conversation so far. */
-export async function GET(_request: Request, context: Params): Promise<NextResponse> {
+/** The conversation so far; `?format=md` downloads it as Markdown. */
+export async function GET(request: Request, context: Params): Promise<NextResponse> {
   const { id } = await context.params
-  if (!getVideo(id)) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  const video = getVideo(id)
+  if (!video) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  if (new URL(request.url).searchParams.get('format') === 'md') {
+    const file = `chat-${video.title.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').slice(0, 60) || id}.md`
+    return new NextResponse(chatToMarkdown(video.title, listChatMessages(id)), {
+      headers: {
+        'content-type': 'text/markdown; charset=utf-8',
+        'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file)}`,
+      },
+    })
+  }
   return NextResponse.json({ messages: listChatMessages(id) })
 }
 
@@ -74,7 +89,7 @@ export async function POST(request: Request, context: Params): Promise<NextRespo
     return NextResponse.json({ error: 'El chat está disponible cuando el video termina de analizarse.' }, { status: 409 })
   }
 
-  const body = (await request.json().catch(() => ({}))) as { question?: unknown }
+  const body = await readJsonObject(request)
   const question = typeof body.question === 'string' ? body.question.trim() : ''
   if (!question) return NextResponse.json({ error: 'Escribe una pregunta.' }, { status: 400 })
   if (question.length > MAX_QUESTION_CHARS) {
@@ -88,6 +103,27 @@ export async function POST(request: Request, context: Params): Promise<NextRespo
       question,
       history,
       log: (msg) => console.log(`[chat] ${id}: ${msg}`),
+      // Chat questions spend the same daily quota as analyses: count them.
+      // The schema has no chat phase; deep_pass is the closest.
+      // Counted once answered: a web request is not cut off the way a
+      // killed worker is, so the early "sent" notice is not needed here.
+      onAttempt: (a) =>
+        a.sent ||
+        insertAnalysisRun({
+          videoId: id,
+          phase: 'deep_pass',
+          model: a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider,
+          processingMode: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          thoughtTokens: 0,
+          estimatedCostUsd: 0,
+          latencyMs: a.latencyMs,
+          succeeded: a.ok,
+          errorMessage: a.error ?? null,
+          requestCount: 1,
+        }),
     })
     addChatMessage({ videoId: id, role: 'user', text: question })
     addChatMessage({ videoId: id, role: 'assistant', text: answer, provider })

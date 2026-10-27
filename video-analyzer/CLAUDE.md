@@ -29,6 +29,16 @@ No cambiar sin preguntar primero:
 5. **Nada bloqueante en la UI.** El análisis corre en el worker; la interfaz muestra progreso en vivo y sigue navegable.
 6. **Sincronización audio-video es requisito, no extra.** Todo evento del análisis lleva su timestamp y relaciona lo visual con lo hablado.
 
+## Cómo trabajar (adaptado de andrej-karpathy-skills, MIT)
+
+- Di tus suposiciones en voz alta. Si algo no está claro, pregunta.
+- Nada de funciones que no se pidieron ni abstracciones para código de un solo uso.
+- Toca solo lo necesario: no "mejores" código, comentarios o formato vecinos. Cada línea cambiada debe venir de lo que se pidió.
+- "Arregla el bug" → primero un test que lo reproduzca, luego hazlo pasar. En tareas de varios pasos: "1. [paso] → verificar: [comprobación]".
+- **Todo cambio se prueba antes de darlo por terminado.** La mejora es prueba y error: tests automáticos, y además una prueba real del comportamiento (la app corriendo, un análisis real o una captura con REA) que muestre que funciona. Si algo no se puede probar aquí (p. ej. la tarjeta gráfica), se prueba lo más cercano y se dice qué quedó sin probar.
+- No pegues archivos o logs enteros en la conversación: referéncialos con Read o pega solo las últimas ~50 líneas del error (de ahorra-tokens-claude, MIT).
+- Ahorro de tokens medido: los `npm run test:*` ya salen compactos (solo puntos y el detalle de lo que falla); para REA usa `node scripts/rea-capture.mjs -- <comando>` (resume la captura, deja la completa en un archivo). Workflows y subagentes gastan mucho límite de sesión: solo para trabajo que de verdad lo necesite.
+
 ## Convenciones
 
 - Código, nombres de variables y comentarios en **inglés**. Textos de la interfaz en **español**.

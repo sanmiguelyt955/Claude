@@ -91,6 +91,8 @@ export async function analyzeVideosBatch(input: {
   models: string[]
   items: BatchItem[]
   onProgress?: (label: string) => void
+  /** Called once per generate call that failed, with its model: quotas count every request sent. */
+  onFailedRequest?: (event: { model: string; error: string; latencyMs: number }) => void
 }): Promise<BatchAnalysisOutput> {
   if (!input.items.length) throw new Error('El lote no tiene videos.')
   if (!input.models.length) throw new Error('Se requiere al menos un modelo.')
@@ -108,6 +110,7 @@ export async function analyzeVideosBatch(input: {
   const ai = getGeminiClient()
 
   for (const [index, model] of input.models.entries()) {
+    const sentAt = Date.now()
     try {
       notify(`Gemini (${model}) esta analizando ${input.items.length} videos en una sola llamada...`)
       const response = await ai.models.generateContent({
@@ -147,6 +150,7 @@ export async function analyzeVideosBatch(input: {
 
       return { results, usage: usageFrom(response.usageMetadata ?? {}), modelUsed: model, rawResponseText: text, missingKeys }
     } catch (error) {
+      input.onFailedRequest?.({ model, error: (error as Error)?.message ?? String(error), latencyMs: Date.now() - sentAt })
       if (index === input.models.length - 1) throw error
       const reason = isQuotaExhaustedError(error) ? 'sin cupo diario' : 'fallo'
       console.warn(`[ai-router] lote: ${model} ${reason}, probando ${input.models[index + 1]}...`)

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSkill, claimSkillForGeneration, enqueueJob } from '@cva/memory-engine'
+import { getSkill, claimSkillForGeneration, enqueueJob, isAnotherWorkerAlive } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 
@@ -32,5 +32,5 @@ export async function POST(
   }
 
   const job = enqueueJob({ type: 'generate_skill', videoId: skill.video_id ?? undefined, payload: { skillId: id } })
-  return NextResponse.json({ jobId: job.id }, { status: 202 })
+  return NextResponse.json({ jobId: job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

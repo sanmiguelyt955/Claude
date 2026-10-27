@@ -1,5 +1,16 @@
 # Nuestro Whisper (motor por defecto): solo NumPy y la descarga de pesos.
 numpy>=1.26
 huggingface_hub>=0.20
-# Opcional: WHISPER_ENGINE=faster-whisper
-# faster-whisper>=1.0
+# Descarga de videos de TikTok e Instagram (y YouTube en modo perception).
+# curl_cffi deja a yt-dlp presentarse como un navegador real, que TikTok exige.
+yt-dlp>=2025.1.1
+curl_cffi>=0.7
+# Separar quién habla (nuestras_voces): el modelo de voces WeSpeaker en ONNX.
+onnxruntime>=1.17
+# Transcripción rápida (motor por defecto): faster-whisper por lotes transcribe
+# 15 minutos de voz en ~1,5 min contra ~14 min de nuestro Whisper en NumPy.
+faster-whisper>=1.1
+# Parakeet TDT 0.6B v3 (NVIDIA, int8), solo si se elige WHISPER_ENGINE=parakeet:
+# un 35 % más rápido que Whisper en el procesador, pero mezcla inglés en frases
+# en español. El modelo (~640 MB) se descarga la primera vez que se usa.
+sherpa-onnx>=1.12

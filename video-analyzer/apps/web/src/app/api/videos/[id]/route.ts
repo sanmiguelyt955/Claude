@@ -9,7 +9,12 @@ import {
   listSkillsForVideo,
   listSkillImprovementsForVideo,
   getActiveJobForVideo,
+  setVideoFolder,
+  isAnotherWorkerAlive,
+  getDb,
 } from '@cva/memory-engine'
+import { readJsonObject } from '../../../../lib/json-body'
+import { deleteVideoUnlessBusy, removeVideoFiles } from '../../../../lib/video-delete'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -49,5 +54,65 @@ export async function GET(
     analysisRuns: listAnalysisRunsForVideo(id),
     skills: listSkillsForVideo(id),
     skillImprovements: listSkillImprovementsForVideo(id),
+    // The latest skill job, so a failed "Detectar skills" is shown, not silent.
+    skillJob: latestSkillJob(id),
+    // The worker is its own process; without it every job stays queued
+    // forever, so the page needs to know to say so. ("Another" worker is
+    // any worker here: this server never runs one.)
+    workerAlive: isAnotherWorkerAlive(),
   })
+}
+
+/** Edits the video's library data; today only `folder` (null or "" = sin carpeta). */
+export async function PATCH(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await context.params
+  if (!getVideo(id)) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  const { folder } = await readJsonObject(request)
+  if (folder !== null && typeof folder !== 'string') {
+    return NextResponse.json({ error: 'Indica el nombre de la carpeta.' }, { status: 400 })
+  }
+  return NextResponse.json({ folder: setVideoFolder(id, folder) })
+}
+
+/**
+ * Deletes the video from the library and frees its disk space: the stored
+ * file, the frames, audio clips and thumbnail made for it, and the analysis
+ * work folders. Refused while a job is still working on it.
+ */
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await context.params
+  const outcome = deleteVideoUnlessBusy(id)
+  if (outcome === 'missing') return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
+  if (outcome === 'busy') {
+    return NextResponse.json(
+      { error: 'Este video se está procesando ahora. Espera a que termine para borrarlo.' },
+      { status: 409 },
+    )
+  }
+  const left = await removeVideoFiles(id)
+  if (left.length) {
+    console.warn(`[videos] ${id}: borrado, pero no se pudieron quitar: ${left.join(', ')}`)
+    return NextResponse.json({
+      ok: true,
+      warning: 'El video se borró, pero algunos de sus archivos están en uso y no se pudieron quitar del disco.',
+    })
+  }
+  return NextResponse.json({ ok: true })
+}
+
+function latestSkillJob(videoId: string): { type: string; status: string; error: string | null } | null {
+  const row = getDb()
+    .prepare(
+      `SELECT type, status, last_error FROM jobs
+        WHERE video_id = ? AND type IN ('detect_skills', 'generate_skill', 'improve_skill')
+        ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(videoId) as { type: string; status: string; last_error: string | null } | undefined
+  return row ? { type: row.type, status: row.status, error: row.last_error } : null
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createVideo, enqueueJob } from '@cva/memory-engine'
+import { createVideo, enqueueJob, isAnotherWorkerAlive } from '@cva/memory-engine'
+import { readJsonObject, stringField } from '../../../../lib/json-body'
 
 export const runtime = 'nodejs'
 
@@ -10,37 +11,37 @@ export const runtime = 'nodejs'
  * blocking the request on a possibly slow remote transfer.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  let body: { url?: string; title?: string }
-  try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ error: 'Cuerpo invalido: se esperaba JSON.' }, { status: 400 })
-  }
-
-  const url = body.url?.trim()
+  const body = await readJsonObject(request)
+  const url = stringField(body, 'url')
   if (!url) {
-    return NextResponse.json({ error: 'Falta el campo "url".' }, { status: 400 })
+    return NextResponse.json({ error: 'Pega el enlace del video.' }, { status: 400 })
   }
 
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    return NextResponse.json({ error: 'La URL no es valida.' }, { status: 400 })
+    return NextResponse.json({ error: 'El enlace no es válido.' }, { status: 400 })
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    return NextResponse.json({ error: 'Solo se aceptan URLs http(s).' }, { status: 400 })
+    return NextResponse.json({ error: 'Solo se aceptan enlaces que empiecen por http:// o https://.' }, { status: 400 })
   }
 
-  const fallbackTitle = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() ?? url)
+  // A bare '%' (oferta-50%.mp4) is not valid percent-encoding: keep it as typed.
+  const last = parsed.pathname.split('/').filter(Boolean).pop() ?? url
+  let fallbackTitle = last
+  try {
+    fallbackTitle = decodeURIComponent(last)
+  } catch {}
 
   const video = createVideo({
-    title: body.title?.trim() || fallbackTitle,
+    title: stringField(body, 'title') || fallbackTitle,
     sourceKind: 'url',
     sourceUrl: url,
   })
 
-  const job = enqueueJob({ type: 'probe', videoId: video.id })
+  // analyze: "Agregar y analizar" — the worker queues the analysis once the download is done.
+  const job = enqueueJob({ type: 'probe', videoId: video.id, payload: body.analyze === true ? { analyze: true } : undefined })
 
-  return NextResponse.json({ video, jobId: job.id }, { status: 202 })
+  return NextResponse.json({ video, jobId: job.id, workerAlive: isAnotherWorkerAlive() }, { status: 202 })
 }

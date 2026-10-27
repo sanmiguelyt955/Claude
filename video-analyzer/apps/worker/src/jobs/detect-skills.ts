@@ -1,19 +1,19 @@
 import {
   getVideo,
   insertAnalysisRun,
-  insertSkillCandidates,
+  replaceDetectedCandidates,
   updateJobProgress,
   deferJob,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
 import { detectSkillCandidates } from '@cva/ai-router'
-import { buildVideoDigest, normalizeSkillName, clampDescription, SKILL_NAME_PATTERN } from '@cva/skill-engine'
-import { listSkillModelsWithQuota, checkQuota } from '../quota.js'
+import { buildVideoDigest, normalizeSkillName, clampDescription } from '@cva/skill-engine'
+import { listSkillModelsWithQuota, skillPoolBlock } from '../quota.js'
 import { JobDeferred } from '../deferred.js'
+import { requireGeminiKey, skillRequestLogger } from '../skill-requests.js'
 
 type DetectSkillsPayload = { videoId: string }
 
-const SKILL_MODEL = process.env.GEMINI_SKILL_MODEL ?? 'gemini-3.7-flash'
 
 /**
  * Handles 'detect_skills' (PROJECT.md §12): a text-only Gemini call over the
@@ -30,11 +30,12 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
     throw new Error(`El video debe estar analizado ("ready") para detectar skills (esta en "${video.status}").`)
   }
 
+  requireGeminiKey(job, db)
   const models = listSkillModelsWithQuota(db)
   if (!models.length) {
-    const quota = checkQuota(db, SKILL_MODEL)
-    const reason = quota.ok ? 'Sin cupo disponible en ningun modelo.' : quota.reason
-    const retryAfter = quota.ok ? new Date(Date.now() + 60_000) : quota.retryAfter
+    // The earliest any model of the pool is free: Flash-Lite pacing itself
+    // frees up within a minute even when the Flash models are out for the day.
+    const { reason, retryAfter } = skillPoolBlock(db)
     updateJobProgress(job.id, { label: reason }, db)
     deferJob(job.id, retryAfter.toISOString(), reason, db)
     throw new JobDeferred(reason)
@@ -45,42 +46,26 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
 
   const startedAt = Date.now()
   try {
-    const { candidates, usage, rawResponseText, modelUsed } = await detectSkillCandidates({
+    const { candidates } = await detectSkillCandidates({
       models,
       videoDigest: digest,
+      onRequest: skillRequestLogger(videoId, job.id, 'skill_detection', db),
     })
-    const latencyMs = Date.now() - startedAt
-
-    insertAnalysisRun(
-      {
-        videoId,
-        jobId: job.id,
-        phase: 'skill_detection',
-        model: modelUsed,
-        processingMode: null,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedTokens: usage.cachedTokens,
-        thoughtTokens: usage.thoughtTokens,
-        estimatedCostUsd: usage.estimatedCostUsd,
-        latencyMs,
-        succeeded: true,
-      },
-      db,
-    )
 
     const cleaned = candidates.map((c) => ({
-      name: SKILL_NAME_PATTERN.test(c.name) && c.name.length <= 64 ? c.name : normalizeSkillName(c.name),
+      name: normalizeSkillName(c.name),
       description: clampDescription(c.description),
       startSeconds: c.start_seconds,
       endSeconds: c.end_seconds,
       confidence: c.confidence,
+      // Kept for "Crear Skill": it is the reason this stretch is a method.
+      rationale: c.rationale,
     }))
 
-    if (cleaned.length) insertSkillCandidates(videoId, cleaned, db)
+    // Replaces the candidates of an earlier run instead of adding copies.
+    replaceDetectedCandidates(videoId, cleaned, db)
 
     console.log(`[detect-skills] ${videoId}: ${cleaned.length} skill(s) candidata(s) detectada(s).`)
-    void rawResponseText
   } catch (error) {
     const latencyMs = Date.now() - startedAt
     insertAnalysisRun(
@@ -88,7 +73,7 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
         videoId,
         jobId: job.id,
         phase: 'skill_detection',
-        model: SKILL_MODEL,
+        model: models[0]!,
         processingMode: null,
         inputTokens: 0,
         outputTokens: 0,
@@ -98,6 +83,8 @@ export async function runDetectSkillsJob(job: JobRow, db: Db): Promise<void> {
         latencyMs,
         succeeded: false,
         errorMessage: (error as Error).message,
+        // Each request was counted as it was sent; this row is the job's outcome.
+        requestCount: 0,
       },
       db,
     )

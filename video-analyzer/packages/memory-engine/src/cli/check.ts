@@ -26,17 +26,27 @@ try {
     const vector = new Float32Array(dims).fill(0.1)
 
     db.transaction(() => {
+      // A free id: 1 is taken in any library that has an embedding, and the
+      // check used to fail there with a UNIQUE error on a healthy database.
+      const free = (
+        db
+          .prepare(
+            `SELECT MAX(COALESCE((SELECT MAX(chunk_rowid) FROM vec_memory_chunks), 0),
+                        COALESCE((SELECT MAX(embedding_rowid) FROM memory_chunks), 0)) + 1 AS id`,
+          )
+          .get() as { id: number }
+      ).id
       db.prepare(
         `INSERT INTO videos (id, title, source_kind, status)
          VALUES ('__selftest__', 'self test', 'file', 'pending')`,
       ).run()
       db.prepare(
         `INSERT INTO memory_chunks (id, video_id, source, text, embedding_rowid)
-         VALUES ('__selftest__', '__selftest__', 'summary', 'prueba de memoria semantica', 1)`,
-      ).run()
+         VALUES ('__selftest__', '__selftest__', 'summary', 'prueba de memoria semantica', ?)`,
+      ).run(free)
       db.prepare(
-        'INSERT INTO vec_memory_chunks (chunk_rowid, video_id, embedding) VALUES (1, ?, ?)',
-      ).run('__selftest__', vector)
+        'INSERT INTO vec_memory_chunks (chunk_rowid, video_id, embedding) VALUES (?, ?, ?)',
+      ).run(BigInt(free), '__selftest__', vector)
 
       const neighbour = db
         .prepare(
@@ -56,8 +66,8 @@ try {
       db.prepare(`DELETE FROM videos WHERE id = '__selftest__'`).run()
 
       const orphan = db
-        .prepare('SELECT COUNT(*) AS n FROM vec_memory_chunks WHERE chunk_rowid = 1')
-        .get() as { n: number }
+        .prepare('SELECT COUNT(*) AS n FROM vec_memory_chunks WHERE chunk_rowid = ?')
+        .get(free) as { n: number }
       if (orphan.n !== 0) throw new Error('el vector quedo huerfano tras borrar el video')
     })()
 

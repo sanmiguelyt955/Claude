@@ -4,6 +4,7 @@ Matches Whisper's own feature extractor: 25 ms Hann window (n_fft=400),
 10 ms hop (160), Slaney-scale mel filters, log10 with an 8-decade dynamic
 range clamp, then scaled to roughly [-1, 1].
 """
+import os
 import subprocess
 
 import numpy as np
@@ -16,10 +17,21 @@ N_SAMPLES = CHUNK_SECONDS * SAMPLE_RATE  # 480000 samples per window
 N_FRAMES = N_SAMPLES // HOP_LENGTH  # 3000 mel frames per window
 
 
-def load_audio(path: str, ffmpeg: str = "ffmpeg") -> np.ndarray:
-    """Decode any audio/video file to float32 mono 16 kHz in [-1, 1]."""
+def load_audio(path: str, ffmpeg: str | None = None) -> np.ndarray:
+    """Decode any audio/video file to float32 mono 16 kHz in [-1, 1].
+
+    FFmpeg is FFMPEG_PATH when set, as in the rest of the app. A file it
+    cannot read raises a one-line RuntimeError with FFmpeg's own reason."""
+    ffmpeg = ffmpeg or os.environ.get("FFMPEG_PATH") or "ffmpeg"
     cmd = [ffmpeg, "-nostdin", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(SAMPLE_RATE), "-"]
-    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    try:
+        raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    except FileNotFoundError:
+        raise RuntimeError(f"No se encontró FFmpeg ({ffmpeg}): instálalo o indica dónde está en FFMPEG_PATH") from None
+    except subprocess.CalledProcessError as err:
+        lines = err.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        reason = lines[-1].strip() if lines else f"terminó con el código {err.returncode}"
+        raise RuntimeError(f"FFmpeg no pudo leer el audio: {reason[:300]}") from None
     return np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
 
 

@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { mkdir, readFile, rename, rm } from 'node:fs/promises'
 import {
   getVideo,
   setVideoStatus,
@@ -6,10 +7,17 @@ import {
   insertAnalysisRun,
   saveAnalysisResult,
   enqueueJob,
+  saveJobCheckpoint,
+  updateJobProgress,
+  getLatestFailedAnalyzeCheckpoint,
+  deferJob,
+  recordModelDailyLimit,
   DATA_DIR,
 } from '@cva/memory-engine'
 import type { Db, JobRow } from '@cva/memory-engine'
-import { perceive } from '@cva/perception'
+import { perceive, parseCheckpoint, parseVtt, type Attempt, type Transcript } from '@cva/perception'
+import { parseQuotaLimit } from '@cva/ai-router'
+import { JobDeferred } from '../deferred.js'
 
 type AnalyzeJobPayload = { videoId: string }
 
@@ -32,9 +40,22 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
   const startedAt = Date.now()
   const workDir = path.join(DATA_DIR, 'perception', video.id)
 
+  // A retry of this job keeps its own checkpoint; a new analyze job (the
+  // "Reintentar" button) picks up the one its failed predecessor left.
+  const checkpoint = parseCheckpoint(job.result_json) ?? parseCheckpoint(getLatestFailedAnalyzeCheckpoint(video.id, db))
+
+  const file = resolveDataPath(video.stored_path)
+  const captions = await readCaptions(path.join(path.dirname(file), 'captions.vtt'))
+
   try {
-    const result = await perceive(resolveDataPath(video.stored_path), workDir, {
+    const result = await perceive(file, workDir, {
       log: (msg) => console.log(`[perception] ${video.id}: ${msg}`),
+      onProgress: (p) => updateJobProgress(job.id, p, db),
+      onAttempt: providerRequestRecorder(video.id, job.id, db),
+      captions,
+      checkpoint,
+      title: video.title,
+      onCheckpoint: (cp) => saveJobCheckpoint(job.id, JSON.stringify(cp), db),
     })
 
     insertAnalysisRun(
@@ -64,6 +85,8 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
           fullSummary: result.summary.full_summary,
           topics: result.summary.topics,
           language: result.summary.language,
+          protocolVersion: result.protocolRecord?.version ?? null,
+          protocolRecordMd: result.protocolRecord?.markdown ?? null,
         },
         scenes: result.scenes.map((s) => ({
           index: s.index,
@@ -92,10 +115,34 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
       db,
     )
     setVideoStatus(video.id, 'ready', null, db)
+    // Frames, the WAV and the window clips (about 88 MB per 15 min) are only
+    // needed to resume a failed run; the page draws its stills and audio
+    // straight from the video. They used to pile up forever.
+    // The replies the record refused stay, to see later what the models got wrong.
+    const refused = path.join(DATA_DIR, 'tmp', 'rechazadas', video.id)
+    await rm(refused, { recursive: true, force: true })
+      .then(() => mkdir(path.dirname(refused), { recursive: true }))
+      .then(() => rename(path.join(workDir, 'rechazadas'), refused))
+      .catch(() => {})
+    await rm(workDir, { recursive: true, force: true }).catch((err) => console.warn(`[perception] ${video.id}: no se pudo borrar ${workDir}: ${(err as Error).message}`))
     // Same as the Gemini path: index the new analysis for library search.
     enqueueJob({ type: 'embed', videoId: video.id }, db)
     console.log(`[perception] ${video.id}: ${result.scenes.length} escenas, ${result.transcript.length} frases.`)
   } catch (error) {
+    // Waiting, not failing: a spent daily quota comes back at midnight
+    // (Pacific) and busy models within minutes. The checkpoint already holds
+    // every answered window, so the deferred job resumes where it stopped
+    // without using up one of its attempts.
+    const name = (error as Error | undefined)?.name
+    if (name === 'DailyQuotaExhaustedError' || name === 'AllProvidersBusyError') {
+      const retryAt = Number((error as { retryAt?: number }).retryAt) || 0
+      const reason =
+        name === 'DailyQuotaExhaustedError'
+          ? 'Se acabó la cuota de Gemini de hoy; el análisis seguirá solo cuando se renueve (medianoche, hora de California).'
+          : 'Los modelos de Google están saturados ahora mismo; el análisis seguirá solo en unos minutos.'
+      deferJob(job.id, new Date(Math.max(retryAt, Date.now() + (name === 'AllProvidersBusyError' ? 5 * 60_000 : 60_000))).toISOString(), reason, db)
+      throw new JobDeferred(reason)
+    }
     insertAnalysisRun(
       {
         videoId: video.id,
@@ -118,5 +165,85 @@ export async function runAnalyzePerceptionJob(job: JobRow, db: Db): Promise<void
     // Status stays 'analyzing' so the retry passes the guard above;
     // retryOrFailJob marks the video 'failed' once retries run out.
     throw error
+  }
+}
+
+/**
+ * One row per request sent to a provider, under the model's own name, so the
+ * per-model daily quota (checkQuota) and the analysis history both count it.
+ * The job's summary row keeps request_count 0 to avoid counting twice.
+ *
+ * The row is written when the request leaves, not when it is answered:
+ * Google counts it from then on, and requests in flight when the worker is
+ * closed used to be missing from the local count. The answer then fills in
+ * the oldest open row of that provider.
+ */
+export function providerRequestRecorder(videoId: string, jobId: string, db: Db): (a: Attempt) => void {
+  const open = new Map<string, string[]>()
+  return (a) => {
+    const model = a.provider.startsWith('gemini:') ? a.provider.slice('gemini:'.length) : a.provider
+    if (a.sent) {
+      const row = insertAnalysisRun(
+        {
+          videoId,
+          jobId,
+          phase: 'first_pass',
+          model,
+          processingMode: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          thoughtTokens: 0,
+          estimatedCostUsd: 0,
+          latencyMs: 0,
+          succeeded: false,
+          errorMessage: 'sin respuesta: el análisis se cerró antes de que llegara',
+          requestCount: 1,
+        },
+        db,
+      )
+      open.set(a.provider, [...(open.get(a.provider) ?? []), row.id])
+      return
+    }
+    // Google's own daily cap, from its 429 ("quotaValue"), makes the quota
+    // screens a fact instead of an assumption. Only the PerDay quota counts:
+    // a per-minute 429 carries its per-minute value.
+    if (a.error?.includes('PerDay')) {
+      const limit = parseQuotaLimit(new Error(a.error))
+      if (limit) recordModelDailyLimit(model, limit, db)
+    }
+    const id = open.get(a.provider)?.shift()
+    if (id) {
+      db.prepare('UPDATE analysis_runs SET succeeded = ?, error_message = ?, latency_ms = ? WHERE id = ?').run(a.ok ? 1 : 0, a.error ?? null, a.latencyMs, id)
+      return
+    }
+    insertAnalysisRun(
+      {
+        videoId,
+        jobId,
+        phase: 'first_pass',
+        model,
+        processingMode: null,
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedTokens: 0,
+        thoughtTokens: 0,
+        estimatedCostUsd: 0,
+        latencyMs: a.latencyMs,
+        succeeded: a.ok,
+        errorMessage: a.error ?? null,
+        requestCount: 1,
+      },
+      db,
+    )
+  }
+}
+
+/** The platform captions the download saved next to the video, if any. */
+async function readCaptions(vttPath: string): Promise<Transcript | undefined> {
+  try {
+    return parseVtt(await readFile(vttPath, 'utf8'), 'es')
+  } catch {
+    return undefined
   }
 }

@@ -1,4 +1,4 @@
-import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts, getModelDailyLimits } from '@cva/memory-engine'
+import { getDb, inspectSchema, SQLITE_PATH, getQuotaWindowCounts, quotaModels, resolveModelDailyLimit } from '@cva/memory-engine'
 import { BibliotecaGrid } from '@/components/BibliotecaGrid'
 import { LibrarySearch } from '@/components/LibrarySearch'
 
@@ -22,19 +22,15 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
 
     // Daily capacity is per model, so what matters is the sum across every
     // configured model, not the 20 of whichever one happens to be first.
-    const maxRpd = Number(process.env.GEMINI_MAX_RPD ?? 20)
-    const models = (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean)
-    const learnedLimits = status.ok ? getModelDailyLimits(db) : {}
+    // Same models and limits as /api/quota: the ones the analysis engine uses.
+    const models = quotaModels()
     const quota = models.reduce(
       (acc, model) => {
-        const limit = learnedLimits[model] ?? maxRpd
+        const { limit, source } = status.ok ? resolveModelDailyLimit(model, db) : { limit: Number(process.env.GEMINI_MAX_RPD ?? 20), source: 'assumed' }
         const used = status.ok ? getQuotaWindowCounts(db, model).requestsToday : 0
         acc.total += limit
         acc.remaining += Math.max(0, limit - used)
-        if (learnedLimits[model] !== undefined) acc.confirmed += 1
+        if (source === 'google') acc.confirmed += 1
         return acc
       },
       { models: models.length, total: 0, remaining: 0, confirmed: 0 },
@@ -53,8 +49,8 @@ function readSystemStatus(): { checks: Check[]; problems: string[] } {
         { label: 'Videos en memoria', value: String(videos), ok: true },
         { label: 'Jobs pendientes', value: String(jobs), ok: true },
         {
-          label: 'Analisis disponibles hoy',
-          value: `${quota.remaining} de ${quota.total} · ${quota.models} modelos, ${quota.confirmed} con limite confirmado`,
+          label: 'Peticiones a Gemini disponibles hoy',
+          value: `${quota.remaining} de ${quota.total} · ${quota.models} modelos, ${quota.confirmed} con límite confirmado por Google`,
           ok: quota.remaining > 0,
         },
         {
@@ -77,26 +73,27 @@ export default function HomePage() {
   const { checks, problems } = readSystemStatus()
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-6 px-6 py-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Biblioteca</h1>
-        <p className="text-sm text-(--color-ink-soft)">Tus videos analizados y su memoria buscable.</p>
+    <main className="mx-auto flex max-w-6xl flex-col gap-7 px-4 py-10 sm:px-6">
+      <header className="flex flex-col gap-2">
+        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Biblioteca</h1>
+        <p className="text-(--color-ink-soft)">Lo que se ve y se escucha en tus videos, guardado y listo para buscar.</p>
       </header>
 
       <LibrarySearch />
 
       <BibliotecaGrid />
 
-      <details className="mt-6 rounded-(--radius-card) border border-(--color-line) bg-(--color-surface) text-sm">
+      <details className="card mt-6 text-sm">
         <summary className="cursor-pointer select-none px-5 py-3 font-medium text-(--color-ink-soft)">
           Estado del sistema
         </summary>
         <dl className="divide-y divide-(--color-line) border-t border-(--color-line)">
           {checks.map((check) => (
             <div key={check.label} className="flex items-center justify-between gap-4 px-5 py-2.5">
-              <dt className="text-(--color-ink-soft)">{check.label}</dt>
-              <dd className="flex items-center gap-2 text-right font-mono text-xs">
-                <span className="truncate">{check.value}</span>
+              <dt className="shrink-0 text-(--color-ink-soft)">{check.label}</dt>
+              <dd className="flex min-w-0 items-center gap-2 text-right font-mono text-xs">
+                {/* Long paths wrap instead of pushing the page sideways on a phone. */}
+                <span className="min-w-0 [overflow-wrap:anywhere]">{check.value}</span>
                 <span
                   aria-hidden
                   className="size-2 shrink-0 rounded-full"

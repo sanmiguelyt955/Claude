@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -108,7 +109,31 @@ export function migrate(db: Db = getDb()): MigrateResult {
   ).v
   setMeta.run('schema_version', String(maxVersion))
   setMeta.run('embedding_dimensions', String(EMBEDDING_DIMENSIONS))
+  reindexIfModelChanged(db)
   setMeta.run('embedding_model', EMBEDDING_MODEL)
 
   return { applied: done, alreadyAt: maxVersion }
+}
+
+/**
+ * Vectors from two embedding models are not comparable: after a change of
+ * GEMINI_EMBEDDING_MODEL (same dimensions, so the guard above lets it
+ * through) search ranked old vectors against new queries and returned
+ * arbitrary neighbours. The old vectors are dropped and every video with
+ * pieces gets an embed job, so the library is indexed again with the new model.
+ */
+function reindexIfModelChanged(db: Db): void {
+  const stored = (db.prepare("SELECT value FROM meta WHERE key='embedding_model'").get() as { value: string } | undefined)?.value
+  if (!stored || stored === EMBEDDING_MODEL) return
+  db.transaction(() => {
+    db.prepare('DELETE FROM vec_memory_chunks').run()
+    db.prepare('UPDATE memory_chunks SET embedding_rowid = NULL, embedding_model = NULL WHERE embedding_rowid IS NOT NULL').run()
+    const videos = db.prepare("SELECT DISTINCT video_id AS id FROM memory_chunks").all() as Array<{ id: string }>
+    const queue = db.prepare(
+      `INSERT INTO jobs (id, video_id, type, payload_json) SELECT ?, ?, 'embed', ?
+        WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE video_id = ? AND type = 'embed' AND status IN ('queued', 'running'))`,
+    )
+    for (const v of videos) queue.run(randomUUID(), v.id, JSON.stringify({ videoId: v.id }), v.id)
+    console.log(`Modelo de embeddings cambiado (${stored} → ${EMBEDDING_MODEL}): ${videos.length} videos se volverán a indexar.`)
+  })()
 }

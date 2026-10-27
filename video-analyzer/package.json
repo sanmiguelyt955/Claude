@@ -13,10 +13,15 @@
     "db:migrate": "npm run migrate --workspace=@cva/memory-engine",
     "db:check": "npm run check --workspace=@cva/memory-engine",
     "typecheck": "tsc --noEmit -p packages/memory-engine && tsc --noEmit -p packages/video-processor && tsc --noEmit -p packages/ai-router && tsc --noEmit -p packages/skill-engine && tsc --noEmit -p packages/vault-export && tsc --noEmit -p apps/worker && tsc --noEmit -p apps/web && tsc --noEmit -p packages/perception",
-    "test:perception": "node --import tsx --test packages/perception/test/*.test.ts",
-    "test:worker": "node --import tsx --test apps/worker/test/*.test.ts",
-    "test": "npm run test:whisper && npm run test:perception && npm run test:worker",
-    "test:whisper": "python3 -m unittest discover -s packages/perception/scripts/tests -v"
+    "test:perception": "node --import tsx --test --test-reporter=dot packages/perception/test/*.test.ts",
+    "test:worker": "node --import tsx --test --test-reporter=dot apps/worker/test/*.test.ts",
+    "test": "npm run test:whisper && npm run test:perception && npm run test:video-processor && npm run test:worker && npm run test:skills && npm run test:web && npm run test:memory && npm run test:desktop",
+    "test:whisper": "python3 -m unittest discover -s packages/perception/scripts/tests",
+    "test:video-processor": "node --import tsx --test --test-reporter=dot packages/video-processor/test/*.test.ts",
+    "test:skills": "node --import tsx --test --test-reporter=dot packages/skill-engine/test/*.test.ts packages/vault-export/test/*.test.ts",
+    "test:web": "node --import tsx --test --test-reporter=dot apps/web/test/*.test.ts",
+    "test:memory": "node --import tsx --test --test-reporter=dot packages/memory-engine/test/*.test.ts",
+    "test:desktop": "node --test --test-reporter=dot desktop/test/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

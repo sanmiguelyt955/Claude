@@ -37,6 +37,8 @@ export {
   setVideoStoredPath,
   applyVideoMetadata,
   setVideoTitle,
+  setVideoFolder,
+  MAX_FOLDER_CHARS,
   deleteVideo,
 } from './repo/videos.js'
 export type { CreateVideoInput } from './repo/videos.js'
@@ -79,7 +81,7 @@ export type {
 export { getPendingChunks, insertEmbeddingsBatch, searchMemoryChunks } from './repo/embeddings.js'
 export type { PendingChunk, SemanticSearchResult } from './repo/embeddings.js'
 
-export { getModelDailyLimits, recordModelDailyLimit, resolveModelDailyLimit } from './repo/model-limits.js'
+export { getModelDailyLimits, quotaModels, recordModelDailyLimit, resolveModelDailyLimit } from './repo/model-limits.js'
 export type { ModelDailyLimit } from './repo/model-limits.js'
 export {
   WORKER_HEARTBEAT_INTERVAL_MS,
@@ -87,11 +89,14 @@ export {
   isAnotherWorkerAlive,
   requeueOrphanedJobs,
 } from './repo/worker-lifecycle.js'
-export { searchLibrary, searchVideoKeywords } from './repo/library-search.js'
+export { searchLibrary, searchVideo, searchVideoKeywords } from './repo/library-search.js'
+export { recordChunks, recordSection } from './repo/record-chunks.js'
+export type { RecordChunk } from './repo/record-chunks.js'
 export type { LibrarySearchResult } from './repo/library-search.js'
 
 export {
   insertSkillCandidates,
+  replaceDetectedCandidates,
   getSkill,
   listSkillsForVideo,
   setSkillStatus,
@@ -109,5 +114,5 @@ export {
   setSkillImprovementStatus,
 } from './repo/skill-improvements.js'
 export type { SkillImprovementInput } from './repo/skill-improvements.js'
-export { listChatMessages, addChatMessage, clearChatMessages } from './repo/chat.js'
+export { listChatMessages, addChatMessage, clearChatMessages, chatToMarkdown } from './repo/chat.js'
 export type { ChatMessageRow } from './repo/chat.js'

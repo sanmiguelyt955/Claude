@@ -44,6 +44,40 @@ function Run([string]$what, [scriptblock]$cmd) {
 
 function Get-Hash([string]$path) { (Get-FileHash -Path $path -Algorithm SHA256).Hash }
 
+# What answers on the port: $null when nothing does, else whether it is this
+# app (another program on port 3000 was taken for it) and whether its worker
+# runs (the page says to open this launcher again when it does not).
+function Get-AppState {
+  if (-not (Test-Port $Port)) { return $null }
+  try {
+    $answer = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Uri "http://127.0.0.1:$Port/api/videos"
+    $json = $answer.Content | ConvertFrom-Json
+    if ($null -ne $json.videos) { return [pscustomobject]@{ Ours = $true; WorkerAlive = [bool]$json.workerAlive } }
+  } catch {}
+  return [pscustomobject]@{ Ours = $false; WorkerAlive = $false }
+}
+
+# .env.local is UTF-8 (Node reads it so). Get-Content/Set-Content in Windows
+# PowerShell 5.1 use the ANSI code page and could mangle accented paths. A
+# file that is not valid UTF-8 is left alone (returns $null).
+$Utf8 = New-Object System.Text.UTF8Encoding($false, $true)
+function Read-EnvLines([string]$path) {
+  try { return ,[System.IO.File]::ReadAllLines($path, $Utf8) } catch { return $null }
+}
+function Set-EnvLine([string]$path, [string]$from, [string]$to) {
+  $lines = Read-EnvLines $path
+  if ($null -eq $lines -or -not ($lines -contains $from)) { return $false }
+  $out = foreach ($line in $lines) { if ($line -eq $from) { $to } else { $line } }
+  [System.IO.File]::WriteAllLines($path, [string[]]$out, $Utf8)
+  return $true
+}
+
+function Start-Worker {
+  $worker = Start-Process cmd.exe -PassThru -WorkingDirectory $Root -WindowStyle Minimized -ArgumentList '/k', "title $WorkerTitle & npm run start --workspace=@cva/worker"
+  New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+  Add-Content -Path $PidFile -Value $worker.Id
+}
+
 function Test-Changed([string]$name, [string]$value) {
   $file = Join-Path $StateDir "$name.txt"
   if (-not (Test-Path $file)) { return $true }
@@ -60,7 +94,11 @@ function Save-State([string]$name, [string]$value) {
 function Stop-App {
   if (Test-Path $PidFile) {
     foreach ($id in (Get-Content $PidFile)) {
-      if ($id) { & taskkill.exe /PID $id /T /F *> $null }
+      if (-not $id) { continue }
+      # A PID saved by an earlier run may belong to another program by now:
+      # only the cmd.exe windows this launcher opens are closed.
+      $proc = Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue
+      if ($proc -and $proc.ProcessName -eq 'cmd') { & taskkill.exe /PID $id /T /F *> $null }
     }
     Remove-Item $PidFile -Force
   }
@@ -99,7 +137,11 @@ if (-not $python) { Fail 'Falta Python. Instalalo con:  winget install Python.Py
 Say "Node $nodeVersion, Python y FFmpeg encontrados."
 
 # --- 2. Updates ---------------------------------------------------------------
-$running = Test-Port $Port
+$state = Get-AppState
+if ($state -and -not $state.Ours) {
+  Fail "El puerto $Port lo esta usando otro programa. Cierralo, o elige otro puerto para Video Analyzer con la variable VIDEO_ANALYZER_PORT (por ejemplo 3001)."
+}
+$running = [bool]$state
 $updated = $false
 Step 'Buscando actualizaciones'
 $repo = (& git -C $Root rev-parse --show-toplevel 2>$null)
@@ -132,6 +174,13 @@ if ($LASTEXITCODE -ne 0 -or -not $repo) {
 
 if ($running) {
   Step 'La app ya estaba abierta'
+  # The web answers but nothing analyzes: start the worker again.
+  if (-not $state.WorkerAlive) {
+    Say 'El analizador estaba cerrado: se vuelve a abrir.'
+    $env:PYTHON_BIN = $python
+    Set-Location $Root
+    Start-Worker
+  }
   Start-Process $Url
   exit 0
 }
@@ -144,7 +193,10 @@ if (-not (Test-Path (Join-Path $Root 'package-lock.json'))) { Fail "No encuentro
 $lockHash = Get-Hash (Join-Path $Root 'package-lock.json')
 if (-not (Test-Path (Join-Path $Root 'node_modules')) -or (Test-Changed 'npm' $lockHash)) {
   Say 'Instalando dependencias de Node (la primera vez tarda unos minutos)...'
-  Run 'npm ci' { & npm ci --no-audit --no-fund }
+  # --ignore-scripts: better-sqlite3 ships prebuilt binaries, but npm would
+  # still try to compile it (it has a binding.gyp) and that needs Visual
+  # Studio, which a normal Windows PC does not have.
+  Run 'npm ci' { & npm ci --no-audit --no-fund --ignore-scripts }
   Save-State 'npm' $lockHash
 }
 
@@ -152,20 +204,59 @@ $requirements = Join-Path $Root 'packages\perception\scripts\requirements.txt'
 $reqHash = Get-Hash $requirements
 if (Test-Changed 'pip' $reqHash) {
   Say 'Instalando dependencias de Python (Whisper)...'
-  Run 'pip install' { & $python -m pip install --disable-pip-version-check -q -r $requirements }
+  & $python -m pip install --disable-pip-version-check -q -r $requirements
+  if ($LASTEXITCODE -ne 0) {
+    # A Python installed for every user needs administrator rights there;
+    # the user's own folder does not.
+    Say 'Reintentando en tu carpeta de usuario (sin permisos de administrador)...'
+    Run 'pip install' { & $python -m pip install --user --disable-pip-version-check -q -r $requirements }
+  }
   Save-State 'pip' $reqHash
+}
+
+# NVIDIA card (nvidia-smi comes with its driver): the CUDA libraries that
+# let faster-whisper transcribe on it, several times faster than the CPU.
+# About 1 GB, downloaded once; without them it simply stays on the CPU.
+if ((Get-Command nvidia-smi -ErrorAction SilentlyContinue) -and (Test-Changed 'pip-gpu' 'cu12-v1')) {
+  Say 'Tarjeta NVIDIA encontrada: instalando lo necesario para transcribir con ella (una sola vez, ~1 GB)...'
+  & $python -m pip install --disable-pip-version-check -q 'nvidia-cublas-cu12' 'nvidia-cudnn-cu12>=9,<10'
+  if ($LASTEXITCODE -ne 0) { & $python -m pip install --user --disable-pip-version-check -q 'nvidia-cublas-cu12' 'nvidia-cudnn-cu12>=9,<10' }
+  if ($LASTEXITCODE -eq 0) { Save-State 'pip-gpu' 'cu12-v1' } else { Say 'No se pudo instalar; se transcribe con el procesador.' }
 }
 
 $envLocal = Join-Path $Root '.env.local'
 if (-not (Test-Path $envLocal)) {
   Copy-Item (Join-Path $Root '.env.example') $envLocal
   # The analysis this launcher is for: frames + our Whisper + Gemini/Claude.
-  (Get-Content $envLocal) -replace '^ANALYSIS_ENGINE=$', 'ANALYSIS_ENGINE=perception' | Set-Content $envLocal
+  Set-EnvLine $envLocal 'ANALYSIS_ENGINE=' 'ANALYSIS_ENGINE=perception' | Out-Null
   Write-Host ''
   Write-Host '  Se creo el archivo de configuracion .env.local.' -ForegroundColor Yellow
   Write-Host '  Pon tu clave de Anthropic (ANTHROPIC_API_KEY) y/o de Gemini (GEMINI_API_KEY),' -ForegroundColor Yellow
   Write-Host '  guarda el archivo y cierralo para continuar.' -ForegroundColor Yellow
   Start-Process notepad.exe $envLocal -Wait
+}
+
+# Settings that older templates wrote and that now slow the app down:
+# WHISPER_ENGINE=propio forced the NumPy Whisper (~14 min per 15 min of voice)
+# over batched faster-whisper (~1.5 min). Empty means "the fast one if
+# installed". Done once: whoever sets propio again afterwards keeps it.
+if (Test-Changed 'env-fast-whisper' 'v1') {
+  if (Set-EnvLine $envLocal 'WHISPER_ENGINE=propio' 'WHISPER_ENGINE=') { Say 'Whisper rapido activado (faster-whisper por lotes).' }
+  Save-State 'env-fast-whisper' 'v1'
+}
+
+# MEDIUM was the default frame resolution until 300-frame windows at LOW
+# proved to read on-screen text as well at half the tokens. Done once.
+if (Test-Changed 'env-low-resolution' 'v1') {
+  Set-EnvLine $envLocal 'GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_MEDIUM' 'GEMINI_MEDIA_RESOLUTION=MEDIA_RESOLUTION_LOW' | Out-Null
+  Save-State 'env-low-resolution' 'v1'
+}
+
+# VISION_CONCURRENCY=3 was the default until the per-minute pacing made more
+# windows at once safe. Done once.
+if (Test-Changed 'env-concurrency' 'v1') {
+  Set-EnvLine $envLocal 'VISION_CONCURRENCY=3' 'VISION_CONCURRENCY=8' | Out-Null
+  Save-State 'env-concurrency' 'v1'
 }
 
 Say 'Actualizando la base de datos...'
@@ -182,10 +273,12 @@ if ($updated -or -not (Test-Path (Join-Path $Root 'apps\web\.next\BUILD_ID')) -o
 # --- 4. Start -----------------------------------------------------------------
 Step 'Abriendo Video Analyzer'
 $env:PYTHON_BIN = $python  # the pipeline would otherwise call "python3", which Windows usually lacks
-$worker = Start-Process cmd.exe -PassThru -WorkingDirectory $Root -WindowStyle Minimized -ArgumentList '/k', "title $WorkerTitle & npm run start --workspace=@cva/worker"
-$web = Start-Process cmd.exe -PassThru -WorkingDirectory (Join-Path $Root 'apps\web') -WindowStyle Minimized -ArgumentList '/k', "title $WebTitle & npx next start -p $Port"
-New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
-Set-Content -Path $PidFile -Value @($worker.Id, $web.Id)
+# Something took the port while this ran (the check above was before the update).
+if (Test-Port $Port) { Fail "El puerto $Port lo esta usando otro programa. Cierralo, o elige otro puerto con la variable VIDEO_ANALYZER_PORT." }
+if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+Start-Worker
+$web = Start-Process cmd.exe -PassThru -WorkingDirectory (Join-Path $Root 'apps\web') -WindowStyle Minimized -ArgumentList '/k', "title $WebTitle & npx next start -H 127.0.0.1 -p $Port"
+Add-Content -Path $PidFile -Value $web.Id
 
 $ready = $false
 for ($i = 0; $i -lt 60; $i++) {

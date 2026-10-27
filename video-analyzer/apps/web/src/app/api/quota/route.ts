@@ -1,22 +1,15 @@
 import { NextResponse } from 'next/server'
-import { getQuotaWindowCounts, nextQuotaResetDate, resolveModelDailyLimit } from '@cva/memory-engine'
+import { getQuotaWindowCounts, nextQuotaResetDate, quotaModels, resolveModelDailyLimit } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-function models(): string[] {
-  return (process.env.GEMINI_VIDEO_MODELS ?? process.env.GEMINI_VIDEO_MODEL ?? 'gemini-3.7-flash')
-    .split(',')
-    .map((m) => m.trim())
-    .filter(Boolean)
-}
 
 /**
  * Remaining daily capacity, per model. Google's cap is per model, so the
  * useful number is not "20 left" but the sum across every configured model.
  */
 export async function GET(): Promise<NextResponse> {
-  const perModel = models().map((model) => {
+  const perModel = quotaModels().map((model) => {
     const used = getQuotaWindowCounts(undefined, model).requestsToday
     const { limit, source } = resolveModelDailyLimit(model)
     return {

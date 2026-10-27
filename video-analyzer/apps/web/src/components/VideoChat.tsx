@@ -12,17 +12,50 @@ type ChatMessage = {
 
 const SUGGESTIONS = ['¿De qué trata el video?', '¿Qué producto se muestra?', '¿En qué momento mencionan el precio?']
 
+// Ready-made documents from the video, like memories.ai's summary templates.
+// The answer stays in the chat, so it can be exported with the rest.
+const TEMPLATES: Array<{ label: string; prompt: string }> = [
+  {
+    label: 'Pasos a seguir',
+    prompt: 'Escribe los pasos que se siguen en el video como una lista numerada, cada paso con su momento [m:ss] y lo necesario (materiales, herramientas, datos).',
+  },
+  {
+    label: 'Notas de reunión',
+    prompt: 'Haz notas de reunión del video: participantes o voces, temas tratados, decisiones, tareas pendientes con responsable si se dice, y el momento [m:ss] de cada punto.',
+  },
+  {
+    label: 'Capítulos',
+    prompt: 'Divide el video en capítulos: para cada uno, el momento de inicio [m:ss], un título corto y una frase de qué pasa.',
+  },
+  {
+    label: 'Puntos clave',
+    prompt: 'Resume el video en 5 a 8 puntos clave, cada uno con el momento [m:ss] donde se ve o se dice.',
+  },
+]
+
 // [0:14], [1:02–1:10] or [1:02:05]: the timestamps the assistant cites.
 const TIMESTAMP = /(\[\d{1,2}:\d{2}(?::\d{2})?(?:\s*[–-]\s*\d{1,2}:\d{2}(?::\d{2})?)?\])/g
 
-function MessageText({ text }: { text: string }) {
+/** "[1:02–1:10]" -> 62: where the cited moment starts. */
+function startSeconds(stamp: string): number {
+  const first = stamp.slice(1, -1).split(/\s*[–-]\s*/)[0] ?? ''
+  return first.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+}
+
+function MessageText({ text, onSeek }: { text: string; onSeek?: (seconds: number) => void }) {
   return (
     <>
       {text.split(TIMESTAMP).map((part, i) =>
         i % 2 === 1 ? (
-          <span key={i} className="rounded bg-(--color-line) px-1 font-mono text-xs">
-            {part.slice(1, -1)}
-          </span>
+          onSeek ? (
+            <button key={i} type="button" className="timestamp mx-0.5" onClick={() => onSeek(startSeconds(part))} title="Ver en el video">
+              {part.slice(1, -1)}
+            </button>
+          ) : (
+            <span key={i} className="timestamp mx-0.5">
+              {part.slice(1, -1)}
+            </span>
+          )
         ) : (
           <span key={i}>{part}</span>
         ),
@@ -32,7 +65,7 @@ function MessageText({ text }: { text: string }) {
 }
 
 /** Q&A over the video's stored analysis, with the answers citing timestamps. */
-export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean }) {
+export function VideoChat({ videoId, ready, onSeek }: { videoId: string; ready: boolean; onSeek?: (seconds: number) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
@@ -89,9 +122,14 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
           Pregunta lo que quieras sobre lo que se ve y se escucha. Las respuestas citan el momento del video.
         </p>
         {messages.length > 0 && (
-          <button type="button" onClick={clear} className="text-xs text-(--color-ink-soft) underline">
-            Borrar conversación
-          </button>
+          <div className="flex shrink-0 gap-3">
+            <a href={`/api/videos/${videoId}/chat?format=md`} className="text-xs text-(--color-ink-soft) underline">
+              Exportar
+            </a>
+            <button type="button" onClick={clear} className="text-xs text-(--color-ink-soft) underline">
+              Borrar conversación
+            </button>
+          </div>
         )}
       </div>
 
@@ -102,7 +140,7 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
               key={s}
               type="button"
               onClick={() => ask(s)}
-              className="rounded-full border border-(--color-line) px-3 py-1 text-sm hover:border-(--color-accent)"
+              className="btn-ghost !py-1.5"
             >
               {s}
             </button>
@@ -110,28 +148,49 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-(--color-ink-soft)">Plantillas:</span>
+        {TEMPLATES.map((t) => (
+          <button
+            key={t.label}
+            type="button"
+            disabled={asking}
+            onClick={() => ask(t.prompt)}
+            className="chip hover:border-(--color-accent) disabled:opacity-50"
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex max-h-[28rem] flex-col gap-2 overflow-y-auto">
         {messages.map((m) => (
           <div
             key={m.id}
             className={
               m.role === 'user'
-                ? 'max-w-[85%] self-end rounded-lg bg-(--color-accent) px-3 py-2 text-sm text-white'
-                : 'max-w-[85%] self-start whitespace-pre-wrap rounded-lg border border-(--color-line) px-3 py-2 text-sm'
+                ? 'max-w-[85%] self-end rounded-2xl rounded-br-md px-4 py-2.5 text-sm text-white shadow-md [background:linear-gradient(135deg,var(--color-btn-from),var(--color-btn-to))]'
+                : 'card max-w-[85%] self-start whitespace-pre-wrap !rounded-2xl !rounded-bl-md px-4 py-2.5 text-sm leading-relaxed'
             }
           >
-            <MessageText text={m.text} />
+            <MessageText text={m.text} onSeek={m.role === 'assistant' ? onSeek : undefined} />
             {m.role === 'assistant' && m.provider && (
               <p className="mt-1 font-mono text-[10px] text-(--color-ink-soft)">{m.provider}</p>
             )}
           </div>
         ))}
-        {asking && <p className="self-start text-sm text-(--color-ink-soft)">Pensando…</p>}
+        {asking && (
+          <p className="card flex items-center gap-1.5 self-start !rounded-2xl px-4 py-3" aria-label="Pensando">
+            {[0, 150, 300].map((d) => (
+              <span key={d} className="size-1.5 animate-bounce rounded-full bg-(--color-ink-soft)" style={{ animationDelay: `${d}ms` }} />
+            ))}
+          </p>
+        )}
         <div ref={endRef} />
       </div>
 
       {error && (
-        <p role="alert" className="text-sm" style={{ color: 'oklch(0.62 0.22 25)' }}>
+        <p role="alert" className="text-sm" style={{ color: 'var(--color-danger)' }}>
           {error}
         </p>
       )}
@@ -141,7 +200,7 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
           e.preventDefault()
           void ask(question)
         }}
-        className="flex gap-2"
+        className="card flex items-center gap-2 !rounded-full p-1.5 pl-4 focus-within:border-(--color-accent)"
       >
         <input
           type="text"
@@ -149,13 +208,9 @@ export function VideoChat({ videoId, ready }: { videoId: string; ready: boolean 
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ej: ¿cuándo explica cómo se carga?"
           maxLength={2000}
-          className="flex-1 rounded-md border border-(--color-line) bg-transparent px-3 py-2 text-sm outline-none focus:border-(--color-accent)"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-(--color-ink-soft)"
         />
-        <button
-          type="submit"
-          disabled={asking || !question.trim()}
-          className="rounded-md bg-(--color-accent) px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-        >
+        <button type="submit" disabled={asking || !question.trim()} className="btn-primary !py-2">
           {asking ? 'Preguntando…' : 'Preguntar'}
         </button>
       </form>

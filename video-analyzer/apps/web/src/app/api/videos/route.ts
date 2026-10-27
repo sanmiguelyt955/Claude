@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { listVideos, getActiveJobForVideo } from '@cva/memory-engine'
+import { listVideos, getActiveJobForVideo, isAnotherWorkerAlive } from '@cva/memory-engine'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,5 +31,5 @@ export async function GET(): Promise<NextResponse> {
         : null,
     }
   })
-  return NextResponse.json({ videos })
+  return NextResponse.json({ videos, workerAlive: isAnotherWorkerAlive() })
 }

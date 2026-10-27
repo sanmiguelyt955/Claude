@@ -24,7 +24,8 @@ import { guessMimeType } from './mime.js'
 
 type AnalyzeJobPayload = { videoId: string }
 
-const VIDEO_PROCESSING = (process.env.GEMINI_VIDEO_PROCESSING ?? 'AGENTIC') as 'AGENTIC' | 'STATIC'
+// STATIC, as .env.example documents: the agentic mode hung on long videos.
+const VIDEO_PROCESSING = (process.env.GEMINI_VIDEO_PROCESSING ?? 'STATIC') as 'AGENTIC' | 'STATIC'
 
 
 /**

@@ -3,9 +3,12 @@
 // real Claude provider code, the fallback chain and the persistence all run.
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
+
+// These tests cover the basic scene analysis; the V6.5 record has its own (perceive-v6.test.ts).
+process.env.PERCEPTION_PROTOCOL = 'basico'
 import http from 'node:http'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,19 +28,27 @@ mkdirSync(path.join(root, 'db'), { recursive: true })
 type MemoryEngine = typeof import('@cva/memory-engine')
 let me: MemoryEngine
 let runAnalyzePerceptionJob: typeof import('../src/jobs/analyze-perception.ts').runAnalyzePerceptionJob
+let providerRequestRecorder: typeof import('../src/jobs/analyze-perception.ts').providerRequestRecorder
 let server: http.Server
 let overloadNext = 0
+let rejectSummaryNext = 0
+let dailyOut = false
 const imagesPerCall: number[] = []
 
 before(async () => {
   me = await import('@cva/memory-engine')
-  ;({ runAnalyzePerceptionJob } = await import('../src/jobs/analyze-perception.ts'))
+  ;({ runAnalyzePerceptionJob, providerRequestRecorder } = await import('../src/jobs/analyze-perception.ts'))
   me.migrate(me.getDb())
 
   server = http.createServer((req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
     req.on('end', () => {
+      if (dailyOut) {
+        res.writeHead(429)
+        res.end('{"error":{"code":429,"message":"Quota exceeded","details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"20"}]}]}}')
+        return
+      }
       if (overloadNext > 0) {
         overloadNext--
         res.writeHead(529, { 'retry-after': '1' })
@@ -45,6 +56,12 @@ before(async () => {
         return
       }
       const content = JSON.parse(body).messages[0].content as Array<{ type: string; text?: string }>
+      if (rejectSummaryNext > 0 && !content.some((c) => c.type === 'image')) {
+        rejectSummaryNext--
+        res.writeHead(400)
+        res.end('{"type":"error","error":{"type":"invalid_request_error","message":"rechazado"}}')
+        return
+      }
       imagesPerCall.push(content.filter((c) => c.type === 'image').length)
       const times = content
         .filter((c) => c.type === 'text' && c.text!.startsWith('[t='))
@@ -100,8 +117,13 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   process.env.ANTHROPIC_API_KEY = 'test-key'
   process.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   const { id, job } = queueVideo('con claude')
+  // A reply the record refused during the run, as record.ts leaves it.
+  mkdirSync(path.join(root, 'perception', id, 'rechazadas'), { recursive: true })
+  writeFileSync(path.join(root, 'perception', id, 'rechazadas', '01-gemini_gemini-3.5-flash-lite.txt'), 'Error: deja 15 s\n\n{}')
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
+  assert.equal(existsSync(path.join(root, 'perception', id)), false, 'the work folder goes once the analysis is stored')
+  assert.equal(readFileSync(path.join(root, 'tmp', 'rechazadas', id, '01-gemini_gemini-3.5-flash-lite.txt'), 'utf8'), 'Error: deja 15 s\n\n{}', 'the refused replies stay')
   assert.ok(countRows('scenes', id) >= 2)
   assert.ok(countRows('transcript_chunks', id) >= 1)
   // The invented kind "logo" was mapped instead of breaking the CHECK constraint.
@@ -117,14 +139,70 @@ test('analyzes and stores scenes, transcript, elements and summary', { timeout: 
   assert.equal(me.searchVideoKeywords(id, 'palabrainexistente', 8).length, 0)
   const library = me.searchLibrary(null, 'heard', 15)
   assert.ok(library.some((r) => r.video_id === id && r.match_type === 'keyword'))
+
+  // An exact word must survive closer semantic matches: give every chunk a
+  // vector near the query except the one that has the word.
+  const db = me.getDb()
+  const dims = Number((db.prepare("SELECT value FROM meta WHERE key = 'embedding_dimensions'").get() as { value: string } | undefined)?.value ?? 768)
+  const near = (k: number) => Array.from({ length: dims }, (_, i) => (i === 0 ? 1 : i === k ? 0.2 : 0))
+  const pending = me.getPendingChunks(id)
+  me.insertEmbeddingsBatch(id, pending.map((c, k) => ({ chunkRowid: c.rowid, embedding: /heard/i.test(c.text) ? near(dims - 1).map((v, i) => (i === 0 ? -1 : v)) : near(k + 1) })), 'prueba', db)
+  const blended = me.searchLibrary(near(0), 'heard', 3)
+  assert.ok(blended.some((r) => /heard/i.test(r.text)), `exact hit kept: ${blended.map((r) => r.match_type).join(',')}`)
 })
 
 test('a 529 with Retry-After is waited out, not fatal', { timeout: 300_000 }, async () => {
   overloadNext = 1
+  imagesPerCall.length = 0
   const { id, job } = queueVideo('claude saturado')
   await runAnalyzePerceptionJob(job, me.getDb())
   assert.equal(overloadNext, 0)
   assert.equal(me.getVideo(id, me.getDb())!.status, 'ready')
+
+  // Every request is counted under its model: the 529 and each answered call.
+  const rows = me.getDb().prepare("SELECT succeeded, request_count FROM analysis_runs WHERE video_id = ? AND model = 'claude'").all(id) as Array<{ succeeded: number; request_count: number }>
+  assert.equal(rows.length, imagesPerCall.length + 1, 'the answered windows and summary, plus the failed 529')
+  assert.equal(rows.filter((r) => r.succeeded === 0).length, 1)
+  assert.ok(rows.every((r) => r.request_count === 1))
+  // The job's own row stays at 0 requests, so nothing is counted twice.
+  const summary = me.getDb().prepare("SELECT request_count FROM analysis_runs WHERE video_id = ? AND model = 'perception'").get(id) as { request_count: number }
+  assert.equal(summary.request_count, 0)
+})
+
+test('a failed analysis leaves a checkpoint and the retry reuses it', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  rejectSummaryNext = 1
+  const { id, job } = queueVideo('reintento')
+  await assert.rejects(runAnalyzePerceptionJob(job, db), /HTTP 400/)
+  const saved = JSON.parse(me.getJob(job.id, db)!.result_json!)
+  assert.equal(saved.engine, 'perception')
+  assert.ok(saved.transcript.segments.length >= 1)
+  assert.ok(Object.keys(saved.windows).length >= 1)
+
+  // "Reintentar" creates a new job: it picks up the failed one's checkpoint
+  // and only the summary is asked again.
+  db.prepare("UPDATE jobs SET status = 'failed' WHERE id = ?").run(job.id)
+  const retry = me.enqueueJob({ type: 'analyze', videoId: id }, db)
+  imagesPerCall.length = 0
+  await runAnalyzePerceptionJob(retry, db)
+  assert.deepEqual(imagesPerCall, [0])
+  assert.equal(me.getVideo(id, db)!.status, 'ready')
+  assert.ok(countRows('scenes', id) >= 2)
+})
+
+test('captions saved by the download are used instead of Whisper', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  const { id, job } = queueVideo('con subtítulos')
+  writeFileSync(path.join(root, 'videos', id, 'captions.vtt'), 'WEBVTT\nLanguage: es\n\n00:00:00.500 --> 00:00:03.000\nLo que dice el subtítulo\n')
+  const saved = process.env.WHISPER_MODEL
+  process.env.WHISPER_MODEL = 'no-such-model' // transcribing would throw
+  try {
+    await runAnalyzePerceptionJob(job, db)
+  } finally {
+    process.env.WHISPER_MODEL = saved
+  }
+  const rows = db.prepare('SELECT text, language FROM transcript_chunks WHERE video_id = ?').all(id) as Array<{ text: string; language: string }>
+  assert.deepEqual(rows, [{ text: 'Lo que dice el subtítulo', language: 'es' }])
 })
 
 test('the chat history is stored per video and goes away with the video', { timeout: 300_000 }, async () => {
@@ -139,6 +217,11 @@ test('the chat history is stored per video and goes away with the video', { time
   assert.equal(chat[1]!.provider, 'claude')
   assert.throws(() => me.addChatMessage({ videoId: id, role: 'system' as 'user', text: 'x' }, db), /CHECK/)
 
+  const md = me.chatToMarkdown('chat', chat)
+  assert.match(md, /^# Chat: chat\n/)
+  assert.match(md, /\*\*Tú\*\* · .*\n\n¿Cuánto cuesta\?/)
+  assert.match(md, /\*\*Asistente \(claude\)\*\* · .*\n\n29 dólares \[0:20\]\./)
+
   assert.equal(me.clearChatMessages(id, db), 3)
   assert.equal(me.listChatMessages(id, db).length, 0)
 
@@ -146,4 +229,49 @@ test('the chat history is stored per video and goes away with the video', { time
   me.deleteVideo(id, db)
   const left = db.prepare('SELECT count(*) AS n FROM video_chat_messages WHERE video_id = ?').get(id) as { n: number }
   assert.equal(left.n, 0)
+})
+
+test('folders: a trimmed name per video, empty takes it out', () => {
+  const db = me.getDb()
+  const id = crypto.randomUUID()
+  me.createVideo({ id, title: 'carpeta', sourceKind: 'file', }, db)
+  assert.equal(me.getVideo(id, db)!.folder, null)
+  assert.equal(me.setVideoFolder(id, '  Recetas   de  cocina ', db), 'Recetas de cocina')
+  assert.equal(me.getVideo(id, db)!.folder, 'Recetas de cocina')
+  assert.equal(me.setVideoFolder(id, 'x'.repeat(100), db)!.length, me.MAX_FOLDER_CHARS)
+  assert.equal(me.setVideoFolder(id, '   ', db), null)
+  assert.equal(me.getVideo(id, db)!.folder, null)
+})
+
+test('a request is counted the moment it is sent, so closing the app mid-request does not lose it', () => {
+  const db = me.getDb()
+  const { id, job } = queueVideo('en vuelo')
+  const record = providerRequestRecorder(id, job.id, db)
+  const rows = () => db.prepare("SELECT succeeded, request_count, error_message FROM analysis_runs WHERE video_id = ? AND model = 'gemini-3.8-flash'").all(id) as Array<{ succeeded: number; request_count: number; error_message: string | null }>
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, latencyMs: 0, sent: true })
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, latencyMs: 0, sent: true })
+  // Killed here: both already count against today's quota.
+  assert.deepEqual(rows().map((r) => r.request_count), [1, 1])
+  record({ provider: 'gemini:gemini-3.8-flash', ok: true, latencyMs: 900 })
+  record({ provider: 'gemini:gemini-3.8-flash', ok: false, error: 'HTTP 503', latencyMs: 400 })
+  assert.deepEqual(rows().map((r) => [r.succeeded, r.request_count, r.error_message]).sort(), [[0, 1, 'HTTP 503'], [1, 1, null]])
+})
+
+// Last on purpose: the chain remembers a model's daily pause for the whole process.
+test('with the daily quota spent the job waits for it instead of failing, and Google\'s cap is learned', { timeout: 300_000 }, async () => {
+  const db = me.getDb()
+  dailyOut = true
+  const { id, job } = queueVideo('sin cuota')
+  const claimed = db.prepare("UPDATE jobs SET status = 'running', attempts = attempts + 1 WHERE id = ? RETURNING *").get(job.id) as typeof job
+  try {
+    await assert.rejects(runAnalyzePerceptionJob(claimed, db), (err: Error) => err.name === 'JobDeferred' && /cuota de Gemini de hoy/.test(err.message))
+  } finally {
+    dailyOut = false
+  }
+  const after = me.getJob(job.id, db)!
+  assert.equal(after.status, 'queued')
+  assert.equal(after.attempts, 0, 'the wait does not use up an attempt')
+  assert.ok(new Date(after.run_after!).getTime() > Date.now() + 30 * 60_000, `run_after ${after.run_after}`)
+  assert.notEqual(me.getVideo(id, db)!.status, 'failed')
+  assert.equal(me.getModelDailyLimits(db).claude, 20)
 })

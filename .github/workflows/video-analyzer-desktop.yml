@@ -1,0 +1,150 @@
+# Builds the Video Analyzer desktop installers (Windows and Mac), checks that
+# each one really works on its own OS, and publishes them on Releases. The
+# installed app updates itself from the "video-analyzer-latest" release.
+#
+# Its releases are marked pre-release and never "latest": the video editor's
+# updater follows the repository's latest release, so Video Analyzer must not
+# take that slot or the editor would try to install it as an update.
+name: Video Analyzer - app de escritorio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "video-analyzer/**"
+      - ".github/workflows/video-analyzer-desktop.yml"
+  pull_request:
+    paths:
+      - "video-analyzer/**"
+      - ".github/workflows/video-analyzer-desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: video-analyzer-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Construir y probar (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            script: dist:win
+            artifact: video-analyzer-windows
+          - os: macos-latest
+            name: Mac
+            script: dist:mac
+            artifact: video-analyzer-mac
+    defaults:
+      run:
+        working-directory: video-analyzer
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Same major as the Node shipped inside the app (prepare-runtime.mjs):
+          # the native modules installed here are the ones the app runs.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            video-analyzer/package-lock.json
+            video-analyzer/desktop/package-lock.json
+
+      - name: Dependencias de la app
+        # --ignore-scripts: better-sqlite3 ships prebuilt binaries for every
+        # OS, but because it has a binding.gyp npm would still try to compile
+        # it, which needs a C++ toolchain (Windows runners have no Visual
+        # Studio). The prebuilt binary is the one the app ships.
+        run: npm ci --ignore-scripts
+
+      - name: Compilar la web (standalone)
+        env:
+          NEXT_OUTPUT: standalone
+        run: npm run build
+
+      - name: Dependencias de escritorio
+        working-directory: video-analyzer/desktop
+        run: npm ci
+
+      - name: Caché de Node y Python portátiles
+        uses: actions/cache@v6
+        with:
+          path: video-analyzer/desktop/.cache
+          key: va-desktop-runtime-${{ runner.os }}-${{ hashFiles('video-analyzer/desktop/scripts/prepare-runtime.mjs') }}
+
+      - name: Armar el runtime (Node, Python con NumPy, FFmpeg, web y worker)
+        working-directory: video-analyzer/desktop
+        run: node scripts/prepare-runtime.mjs
+
+      - name: Prueba completa con el runtime armado
+        # Upload, analysis (frames + our Whisper), chat, search and a forced
+        # close, on this OS, with the files that go into the installer.
+        working-directory: video-analyzer/desktop
+        run: node scripts/smoke.mjs
+
+      - name: Número de versión
+        working-directory: video-analyzer/desktop
+        run: npm version "1.0.${{ github.run_number }}" --no-git-tag-version --allow-same-version
+
+      - name: Generar instalador
+        working-directory: video-analyzer/desktop
+        env:
+          # No Apple signing certificate: build the Mac app unsigned.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run ${{ matrix.script }}
+
+      - name: Subir instalador
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            video-analyzer/desktop/release/*.exe
+            video-analyzer/desktop/release/*.dmg
+            video-analyzer/desktop/release/*.zip
+            video-analyzer/desktop/release/*.blockmap
+            video-analyzer/desktop/release/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publicar versión
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: 1.0.${{ github.run_number }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Versión numerada (historial)
+        run: |
+          gh release create "video-analyzer-v$VERSION" dist/* \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Video Analyzer $VERSION" \
+            --notes "Instaladores de Video Analyzer $VERSION. La app instalada se actualiza sola desde la versión video-analyzer-latest."
+
+      - name: Canal de actualización (video-analyzer-latest)
+        # The installed app reads latest.yml from this fixed release; it is
+        # recreated on every build so it only holds the newest installers.
+        run: |
+          gh release delete video-analyzer-latest --yes --cleanup-tag || true
+          gh release create video-analyzer-latest dist/* \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Video Analyzer (última versión)" \
+            --notes "Video Analyzer $VERSION. Descarga el instalador: Windows (.exe) o Mac (.dmg). La app instalada se actualiza sola."

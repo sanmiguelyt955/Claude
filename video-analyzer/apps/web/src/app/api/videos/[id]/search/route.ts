@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getVideo, searchMemoryChunks, searchVideoKeywords, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from '@cva/memory-engine'
+import { getVideo, searchMemoryChunks, searchVideo, EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from '@cva/memory-engine'
 import { embedTexts } from '@cva/ai-router'
 
 export const runtime = 'nodejs'
@@ -33,10 +33,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!video) return NextResponse.json({ error: 'El video no existe.' }, { status: 404 })
 
   const q = new URL(request.url).searchParams.get('q')?.trim()
-  if (!q) return NextResponse.json({ error: 'Falta el parametro "q".' }, { status: 400 })
+  if (!q) return NextResponse.json({ error: 'Escribe qué buscar.' }, { status: 400 })
 
   const { embedding, notice } = await embedQuery(q)
-  const results = embedding ? searchMemoryChunks(id, embedding, 8) : searchVideoKeywords(id, q, 8)
+  // By meaning and by keyword together: pieces not embedded yet are still found.
+  const results = searchVideo(id, embedding ? searchMemoryChunks(id, embedding, 8) : [], q, 8)
 
   return NextResponse.json({ query: q, results, semantic: embedding !== null, notice })
 }
