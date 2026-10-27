@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import pytest
+
+from skyvern import analytics
+
+
+@pytest.fixture(autouse=True)
+def _telemetry_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise capture(), so turn telemetry on rather than inherit it from the environment.
+
+    CI sets SKYVERN_TELEMETRY=false so the test suite never sends events to PostHog.
+    """
+    monkeypatch.setattr(analytics.settings, "SKYVERN_TELEMETRY", True)
+
+
+class FakePosthog:
+    def __init__(self, api_key: str, **_: object) -> None:
+        self.api_key = api_key
+
+    def join(self) -> None:
+        pass
+
+    def flush(self) -> None:
+        pass
+
+
+def test_capture_includes_dynamic_test_id() -> None:
+    original_test_id = analytics.settings.ANALYTICS_TEST_ID
+    analytics.settings.ANALYTICS_TEST_ID = "smoke-test-123"
+    fake_capture = Mock()
+    fake_client = SimpleNamespace(capture=fake_capture)
+
+    try:
+        with patch.object(analytics, "_resolve_posthog_client", return_value=fake_client):
+            analytics.capture("mcp_request", data={"ok": True}, distinct_id="distinct-123")
+    finally:
+        analytics.settings.ANALYTICS_TEST_ID = original_test_id
+
+    fake_capture.assert_called_once_with(
+        distinct_id="distinct-123",
+        event="mcp_request",
+        properties={"analytics_test_id": "smoke-test-123", "ok": True},
+    )
+
+
+def test_reconfigure_posthog_client_uses_project_settings() -> None:
+    original_api_key = analytics.settings.POSTHOG_PROJECT_API_KEY
+    original_host = analytics.settings.POSTHOG_PROJECT_HOST
+
+    analytics.settings.POSTHOG_PROJECT_API_KEY = "phc_test_project_key"
+    analytics.settings.POSTHOG_PROJECT_HOST = "https://app.posthog.com"
+
+    try:
+        with patch.object(analytics, "_load_posthog_class", return_value=FakePosthog):
+            analytics.reconfigure_posthog_client()
+            assert analytics.posthog is not None
+            assert analytics.posthog.api_key == "phc_test_project_key"
+    finally:
+        analytics.settings.POSTHOG_PROJECT_API_KEY = original_api_key
+        analytics.settings.POSTHOG_PROJECT_HOST = original_host
+        analytics.reconfigure_posthog_client()
+
+
+def test_capture_can_use_custom_posthog_client() -> None:
+    fake_capture = Mock()
+    fake_client = SimpleNamespace(capture=fake_capture)
+
+    with patch.object(analytics, "_build_posthog_client", return_value=fake_client):
+        analytics._custom_posthog_clients.clear()
+        analytics.capture(
+            "mcp_tool_call",
+            data={"ok": True},
+            distinct_id="distinct-123",
+            api_key="phc_mcp_project",
+            host="https://app.posthog.com",
+        )
+
+    fake_capture.assert_called_once_with(
+        distinct_id="distinct-123",
+        event="mcp_tool_call",
+        properties={"ok": True},
+    )
+
+
+@pytest.mark.parametrize("gate_allows", [None, True, False])
+def test_capture_gate_can_veto_an_event_and_never_adds_the_organization_id(
+    monkeypatch: pytest.MonkeyPatch, gate_allows: bool | None
+) -> None:
+    seen: list[str | None] = []
+
+    def gate(_: object, organization_id: str | None) -> bool:
+        seen.append(organization_id)
+        return bool(gate_allows)
+
+    monkeypatch.setattr(analytics, "_capture_gate", None if gate_allows is None else gate)
+    fake_capture = Mock()
+
+    with patch.object(analytics, "_resolve_posthog_client", return_value=SimpleNamespace(capture=fake_capture)):
+        analytics.capture("skyvern-oss-run-task", data={"url": "https://example.com"}, organization_id="org_1")
+
+    if gate_allows is False:
+        fake_capture.assert_not_called()
+    else:
+        assert "org_1" not in str(fake_capture.call_args)
+    assert seen == ([] if gate_allows is None else ["org_1"])

@@ -1,0 +1,89 @@
+import os
+import random
+import re
+import string
+import unicodedata
+import uuid
+from collections.abc import Sequence
+
+RANDOM_STRING_POOL = string.ascii_letters + string.digits
+
+
+UNTRUSTED_WEB_PAGE_DATA_BEGIN = "BEGIN_UNTRUSTED_WEB_PAGE_DATA"
+UNTRUSTED_WEB_PAGE_DATA_END = "END_UNTRUSTED_WEB_PAGE_DATA"
+_UNTRUSTED_WEB_PAGE_DATA_SENTINELS = (
+    UNTRUSTED_WEB_PAGE_DATA_BEGIN,
+    UNTRUSTED_WEB_PAGE_DATA_END,
+)
+_NEUTRALIZED_UNTRUSTED_WEB_PAGE_DATA_SENTINEL = "UNTRUSTED_BLOCK_SENTINEL_REMOVED"
+
+
+def generate_random_string(length: int = 5) -> str:
+    # Use the os.urandom(16) as the seed
+    random.seed(os.urandom(16))
+    return "".join(random.choices(RANDOM_STRING_POOL, k=length))
+
+
+def is_uuid(string: str) -> bool:
+    try:
+        uuid.UUID(string)
+        return True
+    except ValueError:
+        return False
+
+
+def sanitize_identifier(value: str, default: str = "identifier") -> str:
+    """Sanitizes a string to be a valid Python/Jinja2 identifier.
+
+    Replaces non-alphanumeric characters (except underscores) with underscores,
+    collapses consecutive underscores, strips leading/trailing underscores,
+    and prepends an underscore if the result starts with a digit.
+
+    Args:
+        value: The raw value to sanitize.
+        default: Fallback value if everything is stripped.
+
+    Returns:
+        A sanitized string that is a valid Python identifier.
+    """
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", value)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    sanitized = sanitized.strip("_")
+
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "_" + sanitized
+
+    if not sanitized:
+        sanitized = default
+
+    return sanitized
+
+
+def join_phrases(items: Sequence[str], conjunction: str, *, serial_comma: bool = True) -> str:
+    if len(items) <= 2:
+        return f" {conjunction} ".join(items)
+    return f"{', '.join(items[:-1])}{',' if serial_comma else ''} {conjunction} {items[-1]}"
+
+
+def escape_code_fences(text: str | None, escape_quotes: bool = False) -> str:
+    """Neutralize Markdown code-fence delimiters so fenced untrusted content
+    can't break out of the fence and inject instructions. ``escape_quotes`` also
+    rewrites ``"`` to ``'`` for values rendered inside a ``"..."`` literal
+    (lossy, but harmless for the prompt).
+    """
+    if text is None:
+        return ""
+    text = unicodedata.normalize("NFKC", text)
+    # Space out the whole run, not just the first three chars: replacing each
+    # "```" in isolation leaves a trailing backtick that re-seams with the rest
+    # of a longer run (e.g. 5 backticks), reforming an intact fence.
+    text = re.sub(r"`{3,}|~{3,}", lambda m: " ".join(m.group()), text)
+    if escape_quotes:
+        text = text.replace('"', "'")
+    return text
+
+
+def neutralize_untrusted_web_page_data_sentinels(text: str) -> str:
+    for sentinel in _UNTRUSTED_WEB_PAGE_DATA_SENTINELS:
+        text = text.replace(sentinel, _NEUTRALIZED_UNTRUSTED_WEB_PAGE_DATA_SENTINEL)
+    return text

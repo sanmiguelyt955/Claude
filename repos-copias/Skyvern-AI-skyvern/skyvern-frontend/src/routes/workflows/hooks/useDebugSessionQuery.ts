@@ -1,0 +1,141 @@
+import { getClient } from "@/api/AxiosClient";
+import { isForbiddenError } from "@/api/forbidden";
+import { isPaymentRequiredError } from "@/api/paymentRequired";
+import { DebugSessionApiResponse } from "@/api/types";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+import { useQuery } from "@tanstack/react-query";
+import { waitForBrowserSessionPrewarm } from "@/routes/tasks/create/useBrowserSessionPrewarm";
+
+const DEBUG_SESSION_KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000;
+const DEBUG_SESSION_ERROR_REFETCH_INTERVAL_MS = 30 * 1000;
+const DEBUG_SESSION_MAX_RETRIES = 3;
+
+type DebugSessionRefetchState = {
+  status: "pending" | "error" | "success";
+  data?: { browser_session_id?: string | null } | null;
+  error?: unknown;
+};
+
+// Reading a debug session creates its browser session when none exists, so an
+// out-of-credits org gets a 402 here. A 401/403 means the session is expired or
+// belongs to another org. Neither recovers on its own, so retrying or polling
+// the same request can only reproduce the error — stop in both cases.
+function isTerminalDebugSessionError(error: unknown): boolean {
+  return isPaymentRequiredError(error) || isForbiddenError(error);
+}
+
+function shouldRetryDebugSessionRead(
+  failureCount: number,
+  error: unknown,
+): boolean {
+  return (
+    !isTerminalDebugSessionError(error) &&
+    failureCount < DEBUG_SESSION_MAX_RETRIES
+  );
+}
+
+type DebugSessionInvalidationState = {
+  debugSession?: { browser_session_id?: string | null } | null;
+  debugSessionError?: unknown;
+  shouldFetchDebugSession: boolean;
+  workflowPermanentId?: string;
+  isRateLimited: boolean;
+};
+
+// The workflow editor drives its own 5s invalidation loop to acquire a browser
+// session, which refetches the debug-session query independently of the query's
+// refetchInterval. A terminal 401/403/402 can only reproduce itself, so the loop
+// must stop on those just like the query's own polling does — otherwise the
+// forbidden request keeps firing every 5s despite refetchInterval being false.
+function shouldPollDebugSessionInvalidation({
+  debugSession,
+  debugSessionError,
+  shouldFetchDebugSession,
+  workflowPermanentId,
+  isRateLimited,
+}: DebugSessionInvalidationState): boolean {
+  if (isTerminalDebugSessionError(debugSessionError)) {
+    return false;
+  }
+  return (
+    (!debugSession || !debugSession.browser_session_id) &&
+    shouldFetchDebugSession &&
+    !!workflowPermanentId &&
+    !isRateLimited
+  );
+}
+
+function getDebugSessionRefetchInterval(
+  queryState: DebugSessionRefetchState,
+  isRateLimited = false,
+  keepAliveBrowserSession = false,
+): number | false {
+  if (isRateLimited) {
+    return false;
+  }
+  if (queryState.status === "error") {
+    return isTerminalDebugSessionError(queryState.error)
+      ? false
+      : DEBUG_SESSION_ERROR_REFETCH_INTERVAL_MS;
+  }
+  if (keepAliveBrowserSession && queryState.data?.browser_session_id) {
+    return DEBUG_SESSION_KEEP_ALIVE_INTERVAL_MS;
+  }
+  return false;
+}
+
+interface Opts {
+  workflowPermanentId?: string;
+  enabled?: boolean;
+  isRateLimited?: boolean;
+  keepAliveBrowserSession?: boolean;
+}
+
+function useDebugSessionQuery({
+  workflowPermanentId,
+  enabled,
+  isRateLimited,
+  keepAliveBrowserSession,
+}: Opts) {
+  const credentialGetter = useCredentialGetter();
+
+  const baseEnabled =
+    enabled !== undefined
+      ? enabled && !!workflowPermanentId
+      : !!workflowPermanentId;
+
+  return useQuery<DebugSessionApiResponse>({
+    queryKey: ["debugSession", workflowPermanentId],
+    queryFn: async () => {
+      await waitForBrowserSessionPrewarm();
+      const client = await getClient(credentialGetter, "sans-api-v1");
+      return client
+        .get(`/debug-session/${workflowPermanentId}`)
+        .then((response) => response.data);
+    },
+    enabled: baseEnabled && !isRateLimited,
+    // Reduce polling frequency on errors
+    retry: shouldRetryDebugSessionRead,
+    retryDelay: 10000,
+    refetchOnWindowFocus: false,
+    // Don't keep retrying if in error state
+    refetchInterval: (query) =>
+      getDebugSessionRefetchInterval(
+        query.state,
+        isRateLimited,
+        keepAliveBrowserSession,
+      ),
+    // Keep lease renewal polling active even when the editor tab is backgrounded.
+    refetchIntervalInBackground: keepAliveBrowserSession,
+  });
+}
+
+export {
+  DEBUG_SESSION_ERROR_REFETCH_INTERVAL_MS,
+  DEBUG_SESSION_KEEP_ALIVE_INTERVAL_MS,
+  DEBUG_SESSION_MAX_RETRIES,
+  getDebugSessionRefetchInterval,
+  shouldPollDebugSessionInvalidation,
+  shouldRetryDebugSessionRead,
+  useDebugSessionQuery,
+};

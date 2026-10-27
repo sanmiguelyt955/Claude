@@ -1,0 +1,228 @@
+import time
+
+import structlog
+from opentelemetry import metrics
+from playwright.async_api import Locator, Page
+
+from skyvern.config import settings
+from skyvern.forge.sdk.event.base import CursorEventStrategy, InputEventStrategy, ScrollEventStrategy
+from skyvern.forge.sdk.event.default import DefaultCursorStrategy, DefaultInputStrategy, DefaultScrollStrategy
+from skyvern.forge.sdk.settings_manager import SettingsManager
+from skyvern.webeye.cursor_visualization import VisualizingCursorStrategy
+
+LOG = structlog.get_logger(__name__)
+
+_meter = metrics.get_meter("skyvern.event_strategy")
+_event_duration_histogram = _meter.create_histogram(
+    name="skyvern.event_strategy.duration",
+    unit="s",
+    description="Duration of browser cursor/input/scroll events, tagged by event_type.",
+)
+
+_default_cursor = DefaultCursorStrategy()
+_default_input = DefaultInputStrategy()
+_default_scroll = DefaultScrollStrategy()
+
+
+class _EventMetrics:
+    """Records per-event-type timing as an OTEL histogram (no-op when metrics are unconfigured)."""
+
+    def __init__(self, histogram: metrics.Histogram = _event_duration_histogram) -> None:
+        self._histogram = histogram
+
+    def record(self, event_type: str, duration: float) -> None:
+        self._histogram.record(duration, {"event_type": event_type})
+
+
+class EventStrategyFactory:
+    __cursor: CursorEventStrategy | None = None
+    __cursor_vis_cache: CursorEventStrategy | None = None
+    __input: InputEventStrategy | None = None
+    __scroll: ScrollEventStrategy | None = None
+    __metrics: _EventMetrics = _EventMetrics()
+
+    # -- setters ----------------------------------------------------------------
+
+    @staticmethod
+    def set_cursor_strategy(strategy: CursorEventStrategy) -> None:
+        EventStrategyFactory.__cursor = strategy
+
+    @staticmethod
+    def set_input_strategy(strategy: InputEventStrategy) -> None:
+        EventStrategyFactory.__input = strategy
+
+    @staticmethod
+    def set_scroll_strategy(strategy: ScrollEventStrategy) -> None:
+        EventStrategyFactory.__scroll = strategy
+
+    @staticmethod
+    def reset() -> None:
+        """Clear all custom strategies, reverting to defaults."""
+        EventStrategyFactory.__cursor = None
+        EventStrategyFactory.__cursor_vis_cache = None
+        EventStrategyFactory.__input = None
+        EventStrategyFactory.__scroll = None
+        EventStrategyFactory.__metrics = _EventMetrics()
+
+    # -- getters (always return a non-None strategy) ----------------------------
+
+    @staticmethod
+    def get_cursor_strategy() -> CursorEventStrategy:
+        base = EventStrategyFactory.__cursor or _default_cursor
+        if SettingsManager.get_settings().BROWSER_CURSOR_VISUALIZATION:
+            # Cache the wrapper so we don't create a new one every call
+            cached = EventStrategyFactory.__cursor_vis_cache
+            if cached is not None and getattr(cached, "_inner", None) is base:
+                return cached
+            wrapped = VisualizingCursorStrategy(base)
+            EventStrategyFactory.__cursor_vis_cache = wrapped
+            return wrapped
+        return base
+
+    @staticmethod
+    def get_input_strategy() -> InputEventStrategy:
+        return EventStrategyFactory.__input or _default_input
+
+    @staticmethod
+    def get_scroll_strategy() -> ScrollEventStrategy:
+        return EventStrategyFactory.__scroll or _default_scroll
+
+    # -- cursor convenience methods ---------------------------------------------
+
+    @staticmethod
+    async def move_cursor(page: Page, x: float, y: float) -> None:
+        """Move cursor using the active strategy."""
+        start = time.perf_counter()
+        try:
+            await EventStrategyFactory.get_cursor_strategy().move_to(page, x, y)
+        finally:
+            EventStrategyFactory.__metrics.record("move_cursor", time.perf_counter() - start)
+
+    @staticmethod
+    async def move_to_element(page: Page, locator: Locator) -> None:
+        """Move cursor to element. Failures are logged and swallowed."""
+        start = time.perf_counter()
+        try:
+            await EventStrategyFactory.get_cursor_strategy().move_to_element(page, locator)
+        except Exception:
+            LOG.debug("Cursor move_to_element failed, proceeding with action", exc_info=True)
+        finally:
+            EventStrategyFactory.__metrics.record("move_to_element", time.perf_counter() - start)
+
+    @staticmethod
+    def sync_cursor_position(page: Page, x: float, y: float) -> None:
+        """Update cursor position without generating movement."""
+        EventStrategyFactory.get_cursor_strategy().sync_position(page, x, y)
+
+    @staticmethod
+    async def warmup_cursor(page: Page) -> None:
+        """Run the active cursor strategy's per-page warmup hook (idempotent, no-op by default)."""
+        start = time.perf_counter()
+        try:
+            await EventStrategyFactory.get_cursor_strategy().warmup(page)
+        except Exception:
+            LOG.debug("Cursor warmup failed, proceeding with action", exc_info=True)
+        finally:
+            EventStrategyFactory.__metrics.record("warmup_cursor", time.perf_counter() - start)
+
+    @staticmethod
+    async def click_element(page: Page, locator: Locator, timeout: float | None = None) -> None:
+        """Click an element through the active cursor strategy.
+
+        The default strategy delegates to ``locator.click(timeout=...)`` so
+        Playwright's actionability checks remain in force. An alternate strategy
+        dispatches explicit ``page.mouse.down``/``page.mouse.up`` events with a
+        press dwell at the resolved destination coordinates, avoiding the implicit
+        mousemove that ``page.mouse.click``/``locator.click`` inserts before
+        mousedown.
+        """
+        start = time.perf_counter()
+        try:
+            await EventStrategyFactory.get_cursor_strategy().click(page, locator, timeout=timeout)
+        finally:
+            EventStrategyFactory.__metrics.record("click_element", time.perf_counter() - start)
+
+    # -- input convenience methods ----------------------------------------------
+
+    @staticmethod
+    async def type_text(
+        page: Page,
+        locator: Locator | None,
+        text: str,
+        *,
+        timeout: float | None = settings.BROWSER_ACTION_TIMEOUT_MS,
+        delay: float | None = None,
+        no_wait_after: bool | None = None,
+        allow_batched_playwright: bool = False,
+    ) -> None:
+        """Type text using the active input strategy under the caller's timeout contract."""
+        start = time.perf_counter()
+        try:
+            strategy = EventStrategyFactory.get_input_strategy()
+            if delay is None and no_wait_after is None and not allow_batched_playwright:
+                await strategy.type_text(page, locator, text, timeout=timeout)
+            else:
+                await strategy.type_text(
+                    page,
+                    locator,
+                    text,
+                    timeout=timeout,
+                    delay=delay,
+                    no_wait_after=no_wait_after,
+                    allow_batched_playwright=allow_batched_playwright,
+                )
+        finally:
+            EventStrategyFactory.__metrics.record("type_text", time.perf_counter() - start)
+
+    @staticmethod
+    async def clear_field(
+        page: Page,
+        locator: Locator,
+        char_count: int,
+        *,
+        timeout: float | None = settings.BROWSER_ACTION_TIMEOUT_MS,
+        force: bool | None = None,
+        no_wait_after: bool | None = None,
+    ) -> None:
+        """Clear field using the active input strategy under the caller's timeout contract."""
+        start = time.perf_counter()
+        try:
+            strategy = EventStrategyFactory.get_input_strategy()
+            if force is None and no_wait_after is None:
+                await strategy.clear_field(page, locator, char_count, timeout=timeout)
+            else:
+                await strategy.clear_field(
+                    page,
+                    locator,
+                    char_count,
+                    timeout=timeout,
+                    force=force,
+                    no_wait_after=no_wait_after,
+                )
+        finally:
+            EventStrategyFactory.__metrics.record("clear_field", time.perf_counter() - start)
+
+    # -- scroll convenience methods ---------------------------------------------
+
+    @staticmethod
+    async def scroll_by(page: Page, scroll_x: float, scroll_y: float) -> None:
+        """Scroll using the active strategy for vertical-only, raw wheel for horizontal."""
+        start = time.perf_counter()
+        try:
+            if scroll_x == 0:
+                await EventStrategyFactory.get_scroll_strategy().scroll_by(page, scroll_y)
+            else:
+                await page.mouse.wheel(scroll_x, scroll_y)
+        finally:
+            EventStrategyFactory.__metrics.record("scroll_by", time.perf_counter() - start)
+
+    @staticmethod
+    async def scroll_to_element(page: Page, locator: Locator) -> None:
+        """Scroll to element using the active strategy. Failures are logged and swallowed."""
+        start = time.perf_counter()
+        try:
+            await EventStrategyFactory.get_scroll_strategy().scroll_to_element(page, locator)
+        except Exception:
+            LOG.debug("scroll_to_element failed, proceeding with action", exc_info=True)
+        finally:
+            EventStrategyFactory.__metrics.record("scroll_to_element", time.perf_counter() - start)

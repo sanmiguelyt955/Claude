@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import asyncio
+import os
+from enum import Enum
+from pathlib import Path
+from typing import Protocol
+
+import aiofiles
+import structlog
+from playwright.async_api import Page
+from pydantic import BaseModel, PrivateAttr
+
+from skyvern.webeye.native_downloads import NativeDownloads
+
+LOG = structlog.get_logger()
+
+
+async def _append_line(path: str, msg: str) -> int:
+    async with aiofiles.open(path, "a") as f:
+        return await f.write(msg)
+
+
+class ActionDownloadObservation(Protocol):
+    """One action's view of a provider-owned remote download destination.
+
+    ``deadline`` is a ``time.monotonic()`` value: the same monotonic budget the ActionHandler uses
+    for its own download wait bounds every provider list and file transfer, so no single call gets a
+    fresh full timeout. Materialization lands only baseline-new completed files into ``destination_dir``.
+    """
+
+    async def poll_and_materialize(self, *, destination_dir: Path, deadline: float) -> None: ...
+
+
+class ActionDownloadSource(Protocol):
+    """A provider-neutral factory for one browser's action-scoped download observation.
+
+    ``begin_observation`` freezes a pre-action baseline (metadata only) and returns the observation,
+    or ``None`` when the baseline is unavailable/incomplete so the ActionHandler disables provider
+    attribution for that action and preserves its existing event/local/PBS download paths.
+    """
+
+    async def begin_observation(self, *, deadline: float) -> ActionDownloadObservation | None: ...
+
+
+class DownloadBinding(str, Enum):
+    """Where this browser's downloads are bound.
+
+    RUN_DIR (default): the run-scoped directory; downloads are rebound there and read locally. This is
+    the local/default behavior for local runs and any non-provider-owned session.
+    SESSION_DIR: a provider-owned remote download destination. The run-dir rebind must be skipped and a
+    URL replay is forbidden, so the provider-selected destination is preserved.
+    """
+
+    RUN_DIR = "run_dir"
+    SESSION_DIR = "session_dir"
+
+
+class VideoArtifact(BaseModel):
+    video_path: str | None = None
+    video_artifact_id: str | None = None
+    video_file_extension: str | None = None
+    video_data: bytes = b""
+
+
+class RecordingPrefixSnapshot(BaseModel):
+    """A per-step upload plan for one growing recording: upload exactly ``prefix_len`` bytes of ``path``
+    (captured once) to the existing ``video_artifact_id``, streamed rather than buffered."""
+
+    video_artifact_id: str
+    path: str
+    prefix_len: int
+
+
+class BrowserArtifacts(BaseModel):
+    video_artifacts: list[VideoArtifact] = []
+    har_path: str | None = None
+    traces_dir: str | None = None
+    browser_session_dir: str | None = None
+    browser_console_log_path: str | None = None
+    # Set by remote-CDP creators so RealBrowserManager attaches a CDP frame
+    # publisher. Local Playwright contexts leave it False. Type must stay
+    # ``bool`` — the manager guards with ``is True`` identity, not truthiness.
+    needs_cdp_frame_publisher: bool = False
+    # Optional opaque identifier for a remote browser session.
+    remote_browser_session_id: str | None = None
+    # Download destination binding for this browser. SESSION_DIR (a provider-owned remote destination)
+    # means the run-dir rebind must be skipped and URL replay forbidden; RUN_DIR (default) preserves
+    # local/default delivery. See DownloadBinding.
+    download_binding: DownloadBinding = DownloadBinding.RUN_DIR
+    # The saved browser profile the creator actually applied to this browser's user-data-dir.
+    # None when none was requested or the chosen creator could not load one (remote/vendor browsers,
+    # storage miss, corruption fallback) — consumers must treat None as "profile not applied".
+    applied_browser_profile_id: str | None = None
+    local_display_recording_eligible: bool = False
+    # ((input_w, input_h), (output_w, output_h)) for the whole-display recorder, resolved from the final
+    # launch --window-size at the configure seam and carried to the acquire seam. None → fixed full screen.
+    _display_capture_sizes: tuple[tuple[int, int], tuple[int, int]] | None = PrivateAttr(default=None)
+    _display_recorder: object | None = PrivateAttr(default=None)
+    # The pre-context acquire seam stashes its DisplayRecorderAcquisition here so the shared consumer can set
+    # up ``started_display_recorder`` for the outer cleanup (release a newly-started recorder on a later
+    # context-creation failure; leave a reused/adopted one live). Object-typed to avoid a display_recorder import.
+    _display_recorder_acquisition: object | None = PrivateAttr(default=None)
+    _browser_console_log_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+    # Latches so a wiped or unwritable console log is reported once per browser rather than once per console
+    # message — a chatty page emits hundreds per second and would otherwise set the error volume itself.
+    _browser_console_log_recreated: bool = PrivateAttr(default=False)
+    _browser_console_log_write_failed: bool = PrivateAttr(default=False)
+    # Tombstoned synchronously before any await, so set_popup_video_listener can't
+    # re-register a page's video after RealBrowserState decides to discard it.
+    _discarded_pages: set[Page] = PrivateAttr(default_factory=set)
+    # Freshness-guard state, captured at seed and read at write-back (in-memory only, per browser run).
+    # _seed_cookie_snapshot / _seed_profile_etag record what the profile held when this run seeded it;
+    # _run_performed_fresh_login flips true once a login block types a fresh sign-in.
+    _seed_cookie_snapshot: list[dict] | None = PrivateAttr(default=None)
+    _seed_profile_etag: str | None = PrivateAttr(default=None)
+    _run_performed_fresh_login: bool = PrivateAttr(default=False)
+    # _seed_load_failed flips true when a saved profile failed to launch (corruption/stale lock) and the
+    # run fell back to a blank dir — its end-state is not this profile's, so write-back must be suppressed.
+    _seed_load_failed: bool = PrivateAttr(default=False)
+    # _seed_capture_failed flips true when the seed fingerprint could not be captured — the guard then
+    # treats the seed as UNKNOWN and never full-overwrites (a None etag would otherwise read "unchanged").
+    _seed_capture_failed: bool = PrivateAttr(default=False)
+    _action_download_source: ActionDownloadSource | None = PrivateAttr(default=None)
+    # The GL flags (--use-gl / --use-angle) a local creator handed the driver, for launch telemetry; no other arg.
+    _requested_graphics_flags: tuple[str, ...] | None = PrivateAttr(default=None)
+    # Whether the creator started this browser's process on this host itself, rather than dialing one.
+    _spawned_local_browser: bool = PrivateAttr(default=False)
+    _native_downloads: NativeDownloads | None = PrivateAttr(default=None)
+    # Log-only provider session id for runtime events. Unlike remote_browser_session_id it must not drive
+    # page selection, downloads or any other behavior.
+    _provider_session_id: str | None = PrivateAttr(default=None)
+
+    @property
+    def native_downloads(self) -> NativeDownloads | None:
+        return self._native_downloads
+
+    def attach_native_downloads(self, observer: NativeDownloads | None) -> None:
+        self._native_downloads = observer
+
+    def local_paths(self) -> list[str]:
+        """Files and folders on this host that the browser writes to: recordings, HAR, traces, profile, console log."""
+        paths = [video.video_path for video in self.video_artifacts if video.video_path]
+        paths += [
+            path
+            for path in (self.har_path, self.traces_dir, self.browser_session_dir, self.browser_console_log_path)
+            if path
+        ]
+        return paths
+
+    def note_requested_launch_args(self, args: object) -> None:
+        # Args a creator could not see stay unrecorded, which telemetry reads as unknown.
+        if isinstance(args, list):
+            self._requested_graphics_flags = tuple(
+                arg for arg in args if isinstance(arg, str) and arg.split("=", 1)[0] in ("--use-gl", "--use-angle")
+            )
+
+    @property
+    def requested_graphics_flags(self) -> tuple[str, ...] | None:
+        return self._requested_graphics_flags
+
+    def note_provider_session_id(self, session_id: str | None) -> None:
+        self._provider_session_id = session_id or None
+
+    @property
+    def provider_session_id(self) -> str | None:
+        return self._provider_session_id
+
+    def note_spawned_local_browser(self) -> None:
+        self._spawned_local_browser = True
+
+    @property
+    def spawned_local_browser(self) -> bool:
+        return self._spawned_local_browser
+
+    def attach_action_download_source(self, source: ActionDownloadSource | None) -> None:
+        self._action_download_source = source
+
+    def get_action_download_source(self) -> ActionDownloadSource | None:
+        return self._action_download_source
+
+    def record_seed_profile_state(self, cookies: list[dict], etag: str | None) -> None:
+        self._seed_cookie_snapshot = cookies
+        self._seed_profile_etag = etag
+
+    def mark_run_performed_fresh_login(self) -> None:
+        self._run_performed_fresh_login = True
+
+    def mark_seed_load_failed(self) -> None:
+        self._seed_load_failed = True
+
+    def mark_seed_capture_failed(self) -> None:
+        self._seed_capture_failed = True
+
+    def discard_page_video(self, page: Page) -> None:
+        self._discarded_pages.add(page)
+
+    def is_page_video_discarded(self, page: Page) -> bool:
+        return page in self._discarded_pages
+
+    async def append_browser_console_log(self, msg: str) -> int:
+        if self.browser_console_log_path is None:
+            return 0
+
+        log_path = self.browser_console_log_path
+        async with self._browser_console_log_lock:
+            try:
+                try:
+                    return await _append_line(log_path, msg)
+                except FileNotFoundError:
+                    # Activity teardown and the stale sweep remove per-day dirs under the shared log root while
+                    # a browser context that outlives its activity still holds a path there. Append mode
+                    # recreates the file but not its parent; only the lines already on disk are lost.
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    if not self._browser_console_log_recreated:
+                        self._browser_console_log_recreated = True
+                        LOG.warning("Browser console log directory was wiped mid-run, recreating it", log_path=log_path)
+                    return await _append_line(log_path, msg)
+            except OSError:
+                # Raising would only reach a pyee listener as an unhandled exception, once per console message.
+                if not self._browser_console_log_write_failed:
+                    self._browser_console_log_write_failed = True
+                    LOG.warning(
+                        "Browser console log is no longer writable, dropping this browser's console output",
+                        log_path=self.browser_console_log_path,
+                        exc_info=True,
+                    )
+                return 0
+
+    async def _read_console_log_file(self) -> bytes:
+        if self.browser_console_log_path is None:
+            return b""
+
+        if not os.path.exists(self.browser_console_log_path):
+            return b""
+        async with aiofiles.open(self.browser_console_log_path, "rb") as f:
+            return await f.read()
+
+    async def read_browser_console_log(self, timeout: float = 5) -> bytes:
+        if self.browser_console_log_path is None:
+            return b""
+
+        try:
+            async with asyncio.timeout(timeout):
+                async with self._browser_console_log_lock:
+                    return await self._read_console_log_file()
+        except asyncio.TimeoutError:
+            LOG.warning(
+                "Failed to acquire browser console log lock, reading file without lock (may be incomplete)",
+                timeout=timeout,
+            )
+            return await self._read_console_log_file()

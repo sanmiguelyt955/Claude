@@ -1,0 +1,708 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Callable
+from dataclasses import dataclass
+
+import structlog
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
+
+from skyvern.forge.sdk.db._error_handling import db_operation
+from skyvern.forge.sdk.db.base_repository import BaseRepository
+from skyvern.forge.sdk.db.datetime_utils import naive_utc_now
+from skyvern.forge.sdk.db.models import GmailSendDispatchModel, GoogleOAuthCredentialModel
+from skyvern.forge.sdk.encrypt.base import EncryptMethod
+from skyvern.forge.sdk.schemas.google_oauth import GoogleOAuthCredentialBase
+from skyvern.schemas.emails import GmailSendErrorCode
+
+LOG = structlog.get_logger()
+
+# Credential lifecycle states. Kept as plain strings so DB rows survive code rewrites;
+# the CHECK constraint in the migration pins the valid set. The repository owns these
+# because the DB schema defines them — service re-exports for callers that previously
+# imported through the service module.
+STATE_PENDING_CONSENT = "pending_consent"
+STATE_ACTIVE = "active"
+STATE_REVOKED = "revoked"
+STATE_ERROR = "error"
+
+DISPATCH_DISPATCHING = "dispatching"
+DISPATCH_ACCEPTED = "accepted"
+DISPATCH_FAILED = "failed"
+
+
+class InvalidConsentNonceError(ValueError):
+    """Raised when the OAuth callback nonce is unknown, expired, or already consumed.
+
+    Defined here (not in the service) because ``promote_pending_to_active`` is the
+    only place it's raised — keeping it next to the raiser avoids the
+    service<->repo circular import that an in-method import previously dodged.
+    """
+
+
+class GmailSendUpgradeUnavailableError(ValueError):
+    """Raised when send permission is requested for a connection that has no stored account identity."""
+
+
+@dataclass(frozen=True)
+class PendingConsentContext:
+    credential_id: str
+    consent_redirect_uri: str | None
+    consent_code_verifier: str | None
+    consent_app_origin: str | None = None
+    client_id: str | None = None
+    scopes_requested: tuple[str, ...] = ()
+    email_address: str | None = None
+    google_subject: str | None = None
+
+
+@dataclass(frozen=True)
+class GmailSendDispatch:
+    gmail_send_dispatch_id: str
+    status: str
+    modified_at: datetime.datetime
+    provider_message_id: str | None = None
+    error_code: GmailSendErrorCode | None = None
+    provider_status: int | None = None
+    provider_reason: str | None = None
+
+
+def _to_gmail_send_dispatch(model: GmailSendDispatchModel) -> GmailSendDispatch:
+    return GmailSendDispatch(
+        gmail_send_dispatch_id=model.gmail_send_dispatch_id,
+        status=model.status,
+        modified_at=model.modified_at,
+        provider_message_id=model.provider_message_id,
+        error_code=GmailSendErrorCode(model.error_code) if model.error_code else None,
+        provider_status=model.provider_status,
+        provider_reason=model.provider_reason,
+    )
+
+
+@dataclass(frozen=True)
+class ActiveCredentialCiphertext:
+    encrypted_refresh_token: str
+    encrypted_method: EncryptMethod
+    scopes_granted: list[str]
+    client_id: str | None = None
+    credential_version: datetime.datetime | None = None
+
+
+@dataclass(frozen=True)
+class RevocableCiphertext:
+    exists: bool
+    encrypted_refresh_token: str | None = None
+    encrypted_method: EncryptMethod | None = None
+
+
+class GoogleOAuthRepository(BaseRepository):
+    """All DB access for Google OAuth credentials. Owns session lifecycle."""
+
+    @db_operation("get_credential_state")
+    async def get_credential_state(self, organization_id: str, credential_id: str) -> str | None:
+        async with self.Session() as session:
+            return await session.scalar(
+                select(GoogleOAuthCredentialModel.state).where(
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.id == credential_id,
+                )
+            )
+
+    @db_operation("insert_pending_credential")
+    async def insert_pending_credential(
+        self,
+        credential_id: str,
+        organization_id: str,
+        credential_name: str,
+        scopes_requested: list[str],
+        consent_nonce: str,
+        consent_redirect_uri: str,
+        consent_expires_at: datetime.datetime,
+        consent_code_verifier: str,
+        consent_app_origin: str | None = None,
+        client_id: str | None = None,
+    ) -> GoogleOAuthCredentialBase:
+        async with self.Session() as session:
+            model = GoogleOAuthCredentialModel(
+                id=credential_id,
+                organization_id=organization_id,
+                credential_name=credential_name,
+                provider="google",
+                state=STATE_PENDING_CONSENT,
+                scopes_requested=scopes_requested,
+                scopes_granted=[],
+                consent_nonce=consent_nonce,
+                consent_redirect_uri=consent_redirect_uri,
+                consent_expires_at=consent_expires_at,
+                consent_app_origin=consent_app_origin,
+                consent_code_verifier=consent_code_verifier,
+                client_id=client_id,
+            )
+            session.add(model)
+            await session.flush()
+            result = GoogleOAuthCredentialBase.model_validate(model, from_attributes=True)
+            await session.commit()
+            return result
+
+    @db_operation("load_pending_by_nonce")
+    async def load_pending_by_nonce(
+        self,
+        organization_id: str,
+        nonce: str,
+        now: datetime.datetime | None = None,
+    ) -> PendingConsentContext | None:
+        # Reject expired rows here so the route layer doesn't burn Google's one-time
+        # auth code on a doomed exchange — promote_pending_to_active would catch the
+        # stale nonce, but only after the code has already been consumed.
+        cutoff = now if now is not None else datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+        async with self.Session() as session:
+            # A consent nonce lives on a fresh ``pending_consent`` row (first connect) or on an
+            # existing ``active``/``error`` row that is being re-authorized in place. The nonce is
+            # globally unique while set, so matching nonce + org + unexpired identifies the row in
+            # either case; a successful promotion (or revoke) nulls the nonce afterward.
+            stmt = select(
+                GoogleOAuthCredentialModel.id,
+                GoogleOAuthCredentialModel.consent_redirect_uri,
+                GoogleOAuthCredentialModel.consent_code_verifier,
+                GoogleOAuthCredentialModel.consent_app_origin,
+                GoogleOAuthCredentialModel.client_id,
+                GoogleOAuthCredentialModel.scopes_requested,
+                GoogleOAuthCredentialModel.email_address,
+                GoogleOAuthCredentialModel.google_subject,
+            ).where(
+                GoogleOAuthCredentialModel.consent_nonce == nonce,
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state.in_([STATE_PENDING_CONSENT, STATE_ACTIVE, STATE_ERROR]),
+                GoogleOAuthCredentialModel.consent_expires_at >= cutoff,
+            )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return None
+            return PendingConsentContext(
+                credential_id=row[0],
+                consent_redirect_uri=row[1],
+                consent_code_verifier=row[2],
+                consent_app_origin=row[3],
+                client_id=row[4],
+                scopes_requested=tuple(row[5] or ()),
+                email_address=row[6],
+                google_subject=row[7],
+            )
+
+    @db_operation("get_credential")
+    async def get_credential(self, organization_id: str, credential_id: str) -> GoogleOAuthCredentialBase | None:
+        async with self.Session() as session:
+            row = (
+                await session.execute(
+                    select(GoogleOAuthCredentialModel).where(
+                        GoogleOAuthCredentialModel.id == credential_id,
+                        GoogleOAuthCredentialModel.organization_id == organization_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return GoogleOAuthCredentialBase.model_validate(row, from_attributes=True)
+
+    @db_operation("begin_reauthorization", expected_errors=(GmailSendUpgradeUnavailableError,))
+    async def begin_reauthorization(
+        self,
+        credential_id: str,
+        organization_id: str,
+        consent_nonce: str,
+        consent_redirect_uri: str,
+        consent_expires_at: datetime.datetime,
+        consent_code_verifier: str,
+        now: datetime.datetime,
+        consent_app_origin: str | None = None,
+        client_id: str | None = None,
+        requested_scopes: list[str] | None = None,
+        fallback_scopes: list[str] | None = None,
+        adjust_scopes: Callable[[GoogleOAuthCredentialBase, list[str]], list[str]] | None = None,
+    ) -> GoogleOAuthCredentialBase | None:
+        """Stamp a fresh consent challenge onto an existing connectable row so re-auth
+        preserves the credential id.
+
+        The row's live ``encrypted_refresh_token`` and ``state`` are left untouched, so any
+        workflow referencing this credential keeps working until the callback promotes it with
+        the new token. Only ``active``/``error`` rows are re-authorizable; returns None otherwise.
+        """
+        async with self.Session() as session:
+            stmt = (
+                select(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.id == credential_id,
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state.in_([STATE_ACTIVE, STATE_ERROR]),
+                )
+                .with_for_update()
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                return None
+            scopes = list(
+                requested_scopes
+                if requested_scopes is not None
+                else row.scopes_requested or row.scopes_granted or fallback_scopes or []
+            )
+            if adjust_scopes is not None:
+                scopes = adjust_scopes(GoogleOAuthCredentialBase.model_validate(row, from_attributes=True), scopes)
+            row.scopes_requested = scopes
+            row.consent_nonce = consent_nonce
+            row.consent_redirect_uri = consent_redirect_uri
+            row.consent_expires_at = consent_expires_at
+            row.consent_code_verifier = consent_code_verifier
+            row.consent_app_origin = consent_app_origin
+            row.client_id = client_id
+            row.modified_at = now
+            await session.flush()
+            result = GoogleOAuthCredentialBase.model_validate(row, from_attributes=True)
+            await session.commit()
+            return result
+
+    @db_operation("mark_needs_reconnect")
+    async def mark_needs_reconnect(
+        self,
+        organization_id: str,
+        credential_id: str,
+        now: datetime.datetime,
+        expected_version: datetime.datetime | None = None,
+    ) -> str | None:
+        """Flip an active credential to ``error`` after its refresh token is rejected upstream.
+
+        No-op when the row is no longer active or changed after the failing refresh loaded it.
+        """
+        async with self.Session() as session:
+            filters = [
+                GoogleOAuthCredentialModel.id == credential_id,
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+            ]
+            if expected_version is not None:
+                filters.append(GoogleOAuthCredentialModel.modified_at == expected_version)
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(*filters)
+                .values(state=STATE_ERROR, modified_at=now)
+                .returning(GoogleOAuthCredentialModel.id)
+            )
+            flipped = (await session.execute(stmt)).scalar_one_or_none()
+            await session.commit()
+            return flipped
+
+    @db_operation("mark_active_mismatched_client_as_error")
+    async def mark_active_mismatched_client_as_error(
+        self,
+        organization_id: str,
+        new_client_id: str | None,
+        now: datetime.datetime,
+    ) -> int:
+        async with self.Session() as session:
+            filters = [
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+                GoogleOAuthCredentialModel.client_id.is_not(None),
+            ]
+            if new_client_id is not None:
+                filters.append(GoogleOAuthCredentialModel.client_id != new_client_id)
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(*filters)
+                .values(
+                    state=STATE_ERROR,
+                    modified_at=now,
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    @db_operation("promote_pending_to_active")
+    async def promote_pending_to_active(
+        self,
+        organization_id: str,
+        nonce: str,
+        encrypted_refresh_token: str,
+        encrypted_method: EncryptMethod,
+        scopes_granted: list[str],
+        now: datetime.datetime,
+        google_subject: str | None = None,
+        email_address: str | None = None,
+    ) -> GoogleOAuthCredentialBase:
+        async with self.Session() as session:
+            # Promotes both a first-connect row (``pending_consent``) and an in-place re-auth of an
+            # existing ``active``/``error`` row: whichever row currently holds this nonce receives the
+            # new refresh token and is (re)set to ``active``, preserving the credential id so workflows
+            # keep referencing the same connection.
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.consent_nonce == nonce,
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state.in_([STATE_PENDING_CONSENT, STATE_ACTIVE, STATE_ERROR]),
+                    GoogleOAuthCredentialModel.consent_expires_at >= now,
+                )
+                .values(
+                    state=STATE_ACTIVE,
+                    encrypted_refresh_token=encrypted_refresh_token,
+                    encrypted_method=encrypted_method.value,
+                    scopes_granted=scopes_granted,
+                    email_address=email_address,
+                    google_subject=google_subject,
+                    consent_nonce=None,
+                    consent_redirect_uri=None,
+                    consent_expires_at=None,
+                    consent_code_verifier=None,
+                    consent_app_origin=None,
+                    modified_at=now,
+                )
+                .returning(GoogleOAuthCredentialModel)
+            )
+            promoted = (await session.execute(stmt)).scalar_one_or_none()
+            if promoted is None:
+                fallback = (
+                    await session.execute(
+                        select(GoogleOAuthCredentialModel).where(
+                            GoogleOAuthCredentialModel.consent_nonce == nonce,
+                            GoogleOAuthCredentialModel.organization_id == organization_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+                # A successful promotion (or revoke) nulls the nonce, so a missing row means the
+                # nonce is unknown or already consumed. A row that still holds the nonce but failed
+                # the UPDATE only failed the expiry guard.
+                if fallback is None:
+                    raise InvalidConsentNonceError("Unknown or already consumed OAuth consent nonce")
+                raise InvalidConsentNonceError("OAuth consent nonce expired")
+            result = GoogleOAuthCredentialBase.model_validate(promoted, from_attributes=True)
+            await session.commit()
+            LOG.info(
+                "Promoted pending Google OAuth credential",
+                credential_id=result.id,
+                organization_id=organization_id,
+            )
+            return result
+
+    @db_operation("list_active_for_org")
+    async def list_active_for_org(self, organization_id: str) -> list[GoogleOAuthCredentialBase]:
+        async with self.Session() as session:
+            stmt = (
+                select(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+                )
+                .order_by(GoogleOAuthCredentialModel.created_at.desc())
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [GoogleOAuthCredentialBase.model_validate(r, from_attributes=True) for r in rows]
+
+    @db_operation("list_for_org")
+    async def list_for_org(self, organization_id: str) -> list[GoogleOAuthCredentialBase]:
+        """Return every credential row for the organization, regardless of state."""
+        async with self.Session() as session:
+            stmt = (
+                select(GoogleOAuthCredentialModel)
+                .where(GoogleOAuthCredentialModel.organization_id == organization_id)
+                .order_by(GoogleOAuthCredentialModel.created_at.desc())
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [GoogleOAuthCredentialBase.model_validate(r, from_attributes=True) for r in rows]
+
+    @db_operation("list_visible_for_org")
+    async def list_visible_for_org(self, organization_id: str) -> list[GoogleOAuthCredentialBase]:
+        async with self.Session() as session:
+            stmt = (
+                select(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state.in_([STATE_ACTIVE, STATE_ERROR]),
+                )
+                .order_by(GoogleOAuthCredentialModel.created_at.desc())
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [GoogleOAuthCredentialBase.model_validate(r, from_attributes=True) for r in rows]
+
+    @db_operation("load_active_ciphertext")
+    async def load_active_ciphertext(
+        self,
+        organization_id: str,
+        credential_id: str,
+    ) -> ActiveCredentialCiphertext | None:
+        async with self.Session() as session:
+            stmt = select(
+                GoogleOAuthCredentialModel.encrypted_refresh_token,
+                GoogleOAuthCredentialModel.encrypted_method,
+                GoogleOAuthCredentialModel.scopes_granted,
+                GoogleOAuthCredentialModel.client_id,
+                GoogleOAuthCredentialModel.modified_at,
+            ).where(
+                GoogleOAuthCredentialModel.id == credential_id,
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+            )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return None
+            ciphertext, method, scopes, client_id, credential_version = row
+            if not ciphertext or not method:
+                return None
+            return ActiveCredentialCiphertext(
+                encrypted_refresh_token=ciphertext,
+                encrypted_method=EncryptMethod(method),
+                scopes_granted=list(scopes or []),
+                client_id=client_id,
+                credential_version=credential_version,
+            )
+
+    @db_operation("load_ciphertext_for_revoke")
+    async def load_ciphertext_for_revoke(
+        self,
+        organization_id: str,
+        credential_id: str,
+    ) -> RevocableCiphertext:
+        async with self.Session() as session:
+            stmt = select(
+                GoogleOAuthCredentialModel.encrypted_refresh_token,
+                GoogleOAuthCredentialModel.encrypted_method,
+            ).where(
+                GoogleOAuthCredentialModel.id == credential_id,
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state != STATE_REVOKED,
+            )
+            row = (await session.execute(stmt)).one_or_none()
+            if row is None:
+                return RevocableCiphertext(exists=False)
+            ciphertext, method = row
+            if not ciphertext or not method:
+                return RevocableCiphertext(exists=True)
+            return RevocableCiphertext(
+                exists=True,
+                encrypted_refresh_token=ciphertext,
+                encrypted_method=EncryptMethod(method),
+            )
+
+    @db_operation("rename_active")
+    async def rename_active(
+        self,
+        organization_id: str,
+        credential_id: str,
+        credential_name: str,
+        now: datetime.datetime,
+    ) -> GoogleOAuthCredentialBase | None:
+        async with self.Session() as session:
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.id == credential_id,
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state.in_([STATE_ACTIVE, STATE_ERROR]),
+                )
+                .values(credential_name=credential_name, modified_at=now)
+                .returning(GoogleOAuthCredentialModel)
+            )
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row is None:
+                # No-match path: skip commit (nothing to persist) and let the
+                # session context manager close cleanly. Postgres has no row
+                # lock to release because the WHERE filtered out every row.
+                return None
+            result = GoogleOAuthCredentialBase.model_validate(row, from_attributes=True)
+            await session.commit()
+            return result
+
+    @db_operation("update_active_refresh_token")
+    async def update_active_refresh_token(
+        self,
+        *,
+        organization_id: str,
+        credential_id: str,
+        encrypted_refresh_token: str,
+        encrypted_method: EncryptMethod,
+        now: datetime.datetime,
+        expected_encrypted_refresh_token: str,
+    ) -> bool:
+        async with self.Session() as session:
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.id == credential_id,
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+                    GoogleOAuthCredentialModel.encrypted_refresh_token == expected_encrypted_refresh_token,
+                )
+                .values(
+                    encrypted_refresh_token=encrypted_refresh_token,
+                    encrypted_method=encrypted_method.value,
+                    modified_at=now,
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    @db_operation("update_email_address")
+    async def update_email_address(
+        self,
+        *,
+        organization_id: str,
+        credential_id: str,
+        email_address: str,
+        only_if_null: bool,
+        expected_version: datetime.datetime | None = None,
+    ) -> bool:
+        async with self.Session() as session:
+            filters = [
+                GoogleOAuthCredentialModel.id == credential_id,
+                GoogleOAuthCredentialModel.organization_id == organization_id,
+                GoogleOAuthCredentialModel.state == STATE_ACTIVE,
+            ]
+            if only_if_null:
+                filters.append(GoogleOAuthCredentialModel.email_address.is_(None))
+            if expected_version is not None:
+                filters.append(GoogleOAuthCredentialModel.modified_at == expected_version)
+            # modified_at is the refresh-token optimistic-lock version and email enrichment must not advance it.
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(*filters)
+                .values(
+                    email_address=email_address,
+                    modified_at=GoogleOAuthCredentialModel.modified_at,
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount > 0
+
+    @db_operation("mark_revoked_and_scrub")
+    async def mark_revoked_and_scrub(
+        self,
+        organization_id: str,
+        credential_id: str,
+        now: datetime.datetime,
+    ) -> str | None:
+        async with self.Session() as session:
+            stmt = (
+                update(GoogleOAuthCredentialModel)
+                .where(
+                    GoogleOAuthCredentialModel.id == credential_id,
+                    GoogleOAuthCredentialModel.organization_id == organization_id,
+                    GoogleOAuthCredentialModel.state != STATE_REVOKED,
+                )
+                .values(
+                    state=STATE_REVOKED,
+                    encrypted_refresh_token=None,
+                    encrypted_method=None,
+                    email_address=None,
+                    google_subject=None,
+                    consent_nonce=None,
+                    consent_redirect_uri=None,
+                    consent_expires_at=None,
+                    consent_code_verifier=None,
+                    consent_app_origin=None,
+                    modified_at=now,
+                )
+                .returning(GoogleOAuthCredentialModel.id)
+            )
+            revoked_id = (await session.execute(stmt)).scalar_one_or_none()
+            await session.commit()
+            return revoked_id
+
+    @db_operation("get_gmail_send_dispatch")
+    async def get_gmail_send_dispatch(self, workflow_run_id: str, execution_key: str) -> GmailSendDispatch | None:
+        async with self.Session() as session:
+            row = (
+                await session.execute(
+                    select(GmailSendDispatchModel).where(
+                        GmailSendDispatchModel.workflow_run_id == workflow_run_id,
+                        GmailSendDispatchModel.execution_key == execution_key,
+                    )
+                )
+            ).scalar_one_or_none()
+            return _to_gmail_send_dispatch(row) if row is not None else None
+
+    @db_operation("claim_gmail_send_dispatch")
+    async def claim_gmail_send_dispatch(
+        self,
+        *,
+        organization_id: str,
+        workflow_run_id: str,
+        execution_key: str,
+        block_label: str,
+        credential_id: str,
+    ) -> GmailSendDispatch | None:
+        """Take the one send claim for this execution; None means another execution already holds it."""
+        async with self.Session() as session:
+            model = GmailSendDispatchModel(
+                organization_id=organization_id,
+                workflow_run_id=workflow_run_id,
+                execution_key=execution_key,
+                block_label=block_label,
+                credential_id=credential_id,
+                status=DISPATCH_DISPATCHING,
+            )
+            session.add(model)
+            try:
+                await session.flush()
+                claimed = _to_gmail_send_dispatch(model)
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                return None
+            return claimed
+
+    @db_operation("reclaim_failed_gmail_send_dispatch")
+    async def reclaim_failed_gmail_send_dispatch(
+        self, *, gmail_send_dispatch_id: str, observed_modified_at: datetime.datetime, credential_id: str
+    ) -> bool:
+        """Take back a rejected send for one more attempt; False when the row changed since it was read."""
+        async with self.Session() as session:
+            result = await session.execute(
+                update(GmailSendDispatchModel)
+                .where(
+                    GmailSendDispatchModel.gmail_send_dispatch_id == gmail_send_dispatch_id,
+                    GmailSendDispatchModel.status == DISPATCH_FAILED,
+                    GmailSendDispatchModel.modified_at == observed_modified_at,
+                )
+                .values(
+                    status=DISPATCH_DISPATCHING,
+                    credential_id=credential_id,
+                    provider_message_id=None,
+                    error_code=None,
+                    provider_status=None,
+                    provider_reason=None,
+                    modified_at=naive_utc_now(),
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    @db_operation("finalize_gmail_send_dispatch")
+    async def finalize_gmail_send_dispatch(
+        self,
+        *,
+        gmail_send_dispatch_id: str,
+        status: str,
+        provider_message_id: str | None = None,
+        error_code: GmailSendErrorCode | None = None,
+        provider_status: int | None = None,
+        provider_reason: str | None = None,
+    ) -> bool:
+        async with self.Session() as session:
+            result = await session.execute(
+                update(GmailSendDispatchModel)
+                .where(
+                    GmailSendDispatchModel.gmail_send_dispatch_id == gmail_send_dispatch_id,
+                    GmailSendDispatchModel.status == DISPATCH_DISPATCHING,
+                )
+                .values(
+                    status=status,
+                    provider_message_id=provider_message_id,
+                    error_code=error_code.value if error_code else None,
+                    provider_status=provider_status,
+                    provider_reason=provider_reason,
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0

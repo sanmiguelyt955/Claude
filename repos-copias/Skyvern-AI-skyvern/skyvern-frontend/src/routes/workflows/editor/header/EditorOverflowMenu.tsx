@@ -1,0 +1,217 @@
+import { runIsLogicallyActive } from "@/routes/workflows/workflowRun/runRetryState";
+import {
+  CounterClockwiseClockIcon,
+  DotsHorizontalIcon,
+  FileTextIcon,
+} from "@radix-ui/react-icons";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type AxiosError } from "axios";
+import { useId } from "react";
+import { useWorkflowPermanentId } from "@/routes/workflows/WorkflowPermanentIdContext";
+
+import { getClient } from "@/api/AxiosClient";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { toast } from "@/components/ui/use-toast";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+
+import { useWorkflowQuery } from "@/routes/workflows/hooks/useWorkflowQuery";
+import { useWorkflowRunQuery } from "@/routes/workflows/hooks/useWorkflowRunQuery";
+import { useProductTourStore } from "@/store/ProductTourStore";
+import {
+  SaveRefusedError,
+  SaveStaleError,
+  useWorkflowHasChangesStore,
+} from "@/store/WorkflowHasChangesStore";
+import {
+  selectSaveLockReason,
+  useWorkflowYamlEditorStore,
+} from "@/store/WorkflowYamlEditorStore";
+import { cn } from "@/util/utils";
+
+import { SaveFailedError, useSaveWorkflow } from "../hooks/useSaveWorkflow";
+import { useToggleHistoryPanel } from "../hooks/useToggleHistoryPanel";
+import { CodeSubmenu } from "./CodeSubmenu";
+
+export function EditorOverflowMenu({
+  triggerClassName = "size-10 min-w-[2.5rem]",
+  onVersionHistory,
+  embedded = false,
+}: {
+  triggerClassName?: string;
+  // Studio override: the shell collapses to an editor-only layout before
+  // opening the panel (comparison renders in the editor canvas).
+  onVersionHistory?: () => void;
+  // Embedded (studio) hosts provide their own TooltipProvider with the shell's
+  // fast timing; standalone (legacy header) brings a local one.
+  embedded?: boolean;
+} = {}) {
+  const workflowPermanentId = useWorkflowPermanentId();
+  const { data: workflow } = useWorkflowQuery({ workflowPermanentId });
+  const { data: workflowRun } = useWorkflowRunQuery();
+  const isTemplate = workflow?.is_template ?? false;
+  const saving = useWorkflowHasChangesStore((s) => s.saveIsPending);
+  const saveBlockedReason = useWorkflowHasChangesStore(
+    (s) => s.saveBlockedReason,
+  );
+  const saveLockReason = useWorkflowYamlEditorStore(selectSaveLockReason);
+  const templateSaveReason = saveBlockedReason ?? saveLockReason;
+  const templateReasonId = useId();
+  const requestTour = useProductTourStore((s) => s.requestTour);
+  const onSave = useSaveWorkflow();
+  const credentialGetter = useCredentialGetter();
+  const queryClient = useQueryClient();
+
+  const toggleHistoryPanel = useToggleHistoryPanel();
+  // Entry point into the same YAML/schema editor Studio's Editor pane header
+  // opens. Null for a global/template workflow (Workspace never registers one
+  // there); the "View schema" item below is also gated `!embedded` since
+  // Studio already surfaces its own toggle.
+  const enterYamlMode = useWorkflowYamlEditorStore((s) => s.enterYamlMode);
+
+  const workflowRunIsRunningOrQueued = Boolean(
+    workflowRun && runIsLogicallyActive(workflowRun),
+  );
+
+  const templateMutation = useMutation({
+    mutationFn: async (newIsTemplate: boolean) => {
+      const client = await getClient(credentialGetter, "sans-api-v1");
+      return client.put(
+        `/workflows/${workflowPermanentId}/template?is_template=${newIsTemplate}`,
+      );
+    },
+    onSuccess: (_, newIsTemplate) => {
+      queryClient.invalidateQueries({ queryKey: ["workflows"] });
+      queryClient.invalidateQueries({ queryKey: ["orgTemplates"] });
+      queryClient.invalidateQueries({
+        queryKey: ["workflow", workflowPermanentId],
+      });
+      toast({
+        title: newIsTemplate ? "Saved as template" : "Removed from templates",
+        variant: "success",
+      });
+    },
+    onError: (error: AxiosError) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to update template status",
+        description: error.message,
+      });
+    },
+  });
+
+  const disabled = templateMutation.isPending || saving;
+  // Only adding a template saves first. Radix skips a `disabled` item in keyboard navigation,
+  // so the held item stays focusable and carries aria-disabled to keep its reason reachable.
+  const templateSaveHeld = !isTemplate && Boolean(templateSaveReason);
+
+  const handleTemplateToggle = async () => {
+    const newIsTemplate = !isTemplate;
+    if (newIsTemplate) {
+      await onSave();
+    }
+    templateMutation.mutate(newIsTemplate);
+  };
+
+  // Disabled-trigger idiom: the span keeps the tooltip firing (and keyboard
+  // reachable) while recording disables the button underneath.
+  const trigger = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex shrink-0">
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon"
+              variant="tertiary"
+              className={triggerClassName}
+              aria-label="More actions"
+            >
+              <DotsHorizontalIcon className="size-5" />
+            </Button>
+          </DropdownMenuTrigger>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>More actions</TooltipContent>
+    </Tooltip>
+  );
+
+  return (
+    <DropdownMenu modal={false}>
+      {embedded ? trigger : <TooltipProvider>{trigger}</TooltipProvider>}
+      <DropdownMenuContent align="end" className="min-w-[12rem]">
+        {!embedded && enterYamlMode && (
+          <DropdownMenuItem onSelect={() => enterYamlMode()}>
+            <FileTextIcon className="mr-2 size-4" />
+            View schema
+          </DropdownMenuItem>
+        )}
+        <CodeSubmenu />
+        {!workflowRunIsRunningOrQueued && (
+          <DropdownMenuItem
+            onSelect={() => (onVersionHistory ?? toggleHistoryPanel)()}
+          >
+            <CounterClockwiseClockIcon className="mr-2 size-4" />
+            Version history
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={disabled}
+          aria-disabled={disabled || templateSaveHeld || undefined}
+          // The name stays the action; the visible reason line below is its description.
+          aria-label={templateSaveHeld ? "Save as Template" : undefined}
+          aria-describedby={templateSaveHeld ? templateReasonId : undefined}
+          className={cn(templateSaveHeld && "flex-col items-start gap-1")}
+          onSelect={(event) => {
+            if (disabled || templateSaveHeld) {
+              event.preventDefault();
+              return;
+            }
+            void handleTemplateToggle().catch((error: unknown) => {
+              if (
+                error instanceof SaveRefusedError ||
+                error instanceof SaveStaleError ||
+                error instanceof SaveFailedError
+              )
+                return;
+              console.error("Failed to save workflow as template:", error);
+            });
+          }}
+        >
+          {isTemplate ? (
+            "Remove from Templates"
+          ) : templateSaveHeld ? (
+            <>
+              <span className="text-muted-foreground">Save as Template</span>
+              <span
+                id={templateReasonId}
+                className="max-w-xs whitespace-normal text-xs text-muted-foreground"
+              >
+                {templateSaveReason}
+              </span>
+            </>
+          ) : (
+            "Save as Template"
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={requestTour}>
+          <span className="flex-1">Take a tour</span>
+          <kbd className="ml-4 text-xs text-muted-foreground">Shift+?</kbd>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

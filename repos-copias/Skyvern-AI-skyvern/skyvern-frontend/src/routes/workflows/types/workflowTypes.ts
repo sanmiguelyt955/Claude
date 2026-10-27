@@ -1,0 +1,905 @@
+import { JsonObjectExtendable } from "@/types";
+import { ProxyLocation, RunEngine } from "@/api/types";
+
+export type WorkflowParameterBase = {
+  parameter_type: WorkflowParameterType;
+  key: string;
+  description: string | null;
+};
+
+export type AWSSecretParameter = WorkflowParameterBase & {
+  parameter_type: "aws_secret";
+  workflow_id: string;
+  aws_secret_parameter_id: string;
+  aws_key: string;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type BitwardenLoginCredentialParameter = WorkflowParameterBase & {
+  parameter_type: "bitwarden_login_credential";
+  workflow_id: string;
+  bitwarden_login_credential_parameter_id: string;
+  bitwarden_client_id_aws_secret_key: string;
+  bitwarden_client_secret_aws_secret_key: string;
+  bitwarden_master_password_aws_secret_key: string;
+  bitwarden_collection_id: string | null;
+  bitwarden_item_id: string | null;
+  url_parameter_key: string | null;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type BitwardenSensitiveInformationParameter = WorkflowParameterBase & {
+  parameter_type: "bitwarden_sensitive_information";
+  workflow_id: string;
+  bitwarden_sensitive_information_parameter_id: string;
+  bitwarden_client_id_aws_secret_key: string;
+  bitwarden_client_secret_aws_secret_key: string;
+  bitwarden_master_password_aws_secret_key: string;
+  bitwarden_collection_id: string;
+  bitwarden_identity_key: string;
+  bitwarden_identity_fields: Array<string>;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type BitwardenCreditCardDataParameter = WorkflowParameterBase & {
+  parameter_type: "bitwarden_credit_card_data";
+  workflow_id: string;
+  bitwarden_credit_card_data_parameter_id: string;
+  bitwarden_client_id_aws_secret_key: string;
+  bitwarden_client_secret_aws_secret_key: string;
+  bitwarden_master_password_aws_secret_key: string;
+  bitwarden_collection_id: string;
+  bitwarden_item_id: string;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type OnePasswordCredentialParameter = WorkflowParameterBase & {
+  parameter_type: "onepassword";
+  workflow_id: string;
+  onepassword_credential_parameter_id: string;
+  vault_id: string;
+  item_id: string;
+  totp_field_name: string | null;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type AzureVaultCredentialParameter = WorkflowParameterBase & {
+  parameter_type: "azure_vault_credential";
+  workflow_id: string;
+  azure_vault_credential_parameter_id: string;
+  vault_name: string;
+  username_key: string;
+  password_key: string;
+  totp_secret_key: string | null;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type CredentialSelectionStrategy = "round_robin" | "random";
+export type CredentialFallbackTrigger = "credential_failures" | "any_failure";
+
+export type CredentialParameter = WorkflowParameterBase & {
+  parameter_type: "credential";
+  workflow_id: string;
+  credential_parameter_id: string;
+  credential_id: string;
+  credential_ids?: Array<string> | null;
+  selection_strategy?: CredentialSelectionStrategy | null;
+  fallback_credential_ids?: Array<string> | null;
+  fallback_trigger?: CredentialFallbackTrigger | null;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type WorkflowParameter = WorkflowParameterBase & {
+  parameter_type: "workflow";
+  workflow_id: string;
+  workflow_parameter_id: string;
+  workflow_parameter_type: WorkflowParameterValueType;
+  default_value: unknown;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export type ContextParameter = WorkflowParameterBase & {
+  parameter_type: "context";
+  source: OutputParameter | ContextParameter | WorkflowParameter;
+  value: unknown;
+};
+
+export type OutputParameter = WorkflowParameterBase & {
+  parameter_type: "output";
+  output_parameter_id: string;
+  workflow_id: string;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+};
+
+export const WorkflowParameterValueType = {
+  String: "string",
+  Integer: "integer",
+  Float: "float",
+  Boolean: "boolean",
+  JSON: "json",
+  FileURL: "file_url",
+  CredentialId: "credential_id",
+} as const;
+
+export type WorkflowParameterValueType =
+  (typeof WorkflowParameterValueType)[keyof typeof WorkflowParameterValueType];
+
+export const WorkflowParameterTypes = {
+  Workflow: "workflow",
+  Context: "context",
+  Output: "output",
+  AWS_Secret: "aws_secret",
+  Bitwarden_Login_Credential: "bitwarden_login_credential",
+  Bitwarden_Sensitive_Information: "bitwarden_sensitive_information",
+  Bitwarden_Credit_Card_Data: "bitwarden_credit_card_data",
+  OnePassword: "onepassword",
+  Azure_Vault_Credential: "azure_vault_credential",
+  Credential: "credential",
+} as const;
+
+export type WorkflowParameterType =
+  (typeof WorkflowParameterTypes)[keyof typeof WorkflowParameterTypes];
+
+export function isDisplayedInWorkflowEditor(
+  parameter: Parameter,
+): parameter is
+  | WorkflowParameter
+  | ContextParameter
+  | BitwardenCreditCardDataParameter
+  | BitwardenLoginCredentialParameter
+  | BitwardenSensitiveInformationParameter
+  | OnePasswordCredentialParameter
+  | AzureVaultCredentialParameter
+  | CredentialParameter {
+  return (
+    parameter.parameter_type === WorkflowParameterTypes.Workflow ||
+    parameter.parameter_type ===
+      WorkflowParameterTypes.Bitwarden_Login_Credential ||
+    parameter.parameter_type === WorkflowParameterTypes.Context ||
+    parameter.parameter_type ===
+      WorkflowParameterTypes.Bitwarden_Sensitive_Information ||
+    parameter.parameter_type ===
+      WorkflowParameterTypes.Bitwarden_Credit_Card_Data ||
+    parameter.parameter_type === WorkflowParameterTypes.OnePassword ||
+    parameter.parameter_type ===
+      WorkflowParameterTypes.Azure_Vault_Credential ||
+    parameter.parameter_type === WorkflowParameterTypes.Credential
+  );
+}
+
+export type Parameter =
+  | WorkflowParameter
+  | OutputParameter
+  | ContextParameter
+  | BitwardenLoginCredentialParameter
+  | BitwardenSensitiveInformationParameter
+  | BitwardenCreditCardDataParameter
+  | OnePasswordCredentialParameter
+  | AzureVaultCredentialParameter
+  | AWSSecretParameter
+  | CredentialParameter;
+
+export type WorkflowBlock =
+  | TaskBlock
+  | ForLoopBlock
+  | WhileLoopBlock
+  | ConditionalBlock
+  | TextPromptBlock
+  | CodeBlock
+  | UploadToS3Block
+  | FileUploadBlock
+  | DownloadToS3Block
+  | SendEmailBlock
+  | FileURLParserBlock
+  | ValidationBlock
+  | HumanInteractionBlock
+  | DataExportBlock
+  | ActionBlock
+  | NavigationBlock
+  | ExtractionBlock
+  | LoginBlock
+  | WaitBlock
+  | TerminateBlock
+  | FileDownloadBlock
+  | PDFParserBlock
+  | Taskv2Block
+  | URLBlock
+  | HttpRequestBlock
+  | WebSearchBlock
+  | PrintPageBlock
+  | WorkflowTriggerBlock
+  | EmailInboxBlock
+  | GoogleSheetsReadBlock
+  | GoogleSheetsWriteBlock
+  | PdfFillBlock
+  | SplitPdfBlock;
+
+export const WorkflowBlockTypes = {
+  Task: "task",
+  ForLoop: "for_loop",
+  WhileLoop: "while_loop",
+  Conditional: "conditional",
+  Code: "code",
+  TextPrompt: "text_prompt",
+  DownloadToS3: "download_to_s3",
+  UploadToS3: "upload_to_s3",
+  FileUpload: "file_upload",
+  SendEmail: "send_email",
+  FileURLParser: "file_url_parser",
+  Validation: "validation",
+  HumanInteraction: "human_interaction",
+  DataExport: "data_export",
+  Action: "action",
+  Navigation: "navigation",
+  Extraction: "extraction",
+  Login: "login",
+  Wait: "wait",
+  Terminate: "terminate",
+  FileDownload: "file_download",
+  PDFParser: "pdf_parser",
+  Taskv2: "task_v2",
+  URL: "goto_url",
+  HttpRequest: "http_request",
+  WebSearch: "web_search",
+  PrintPage: "print_page",
+  WorkflowTrigger: "workflow_trigger",
+  EmailInbox: "email_inbox",
+  GoogleSheetsRead: "google_sheets_read",
+  GoogleSheetsWrite: "google_sheets_write",
+  PDFFill: "pdf_fill",
+  SplitPDF: "split_pdf",
+} as const;
+
+// all of them
+export const debuggableWorkflowBlockTypes: Set<WorkflowBlockType> = new Set(
+  Object.values(WorkflowBlockTypes),
+);
+
+export const scriptableWorkflowBlockTypes: Set<WorkflowBlockType> = new Set([
+  "action",
+  "extraction",
+  "file_download",
+  "goto_url",
+  "login",
+  "navigation",
+  "task",
+  "task_v2",
+  "validation",
+]);
+
+export function isTaskVariantBlock(item: {
+  block_type: WorkflowBlockType;
+}): boolean {
+  return scriptableWorkflowBlockTypes.has(item.block_type);
+}
+
+export function isNestedLoopWorkflowBlock(
+  block: WorkflowBlock,
+): block is ForLoopBlock | WhileLoopBlock {
+  return block.block_type === "for_loop" || block.block_type === "while_loop";
+}
+
+export type WorkflowBlockType =
+  (typeof WorkflowBlockTypes)[keyof typeof WorkflowBlockTypes];
+
+export const WorkflowEditorParameterTypes = {
+  Workflow: "workflow",
+  Credential: "credential",
+  Secret: "secret",
+  Context: "context",
+  CreditCardData: "creditCardData",
+  OnePassword: "onepassword",
+} as const;
+
+export type WorkflowEditorParameterType =
+  (typeof WorkflowEditorParameterTypes)[keyof typeof WorkflowEditorParameterTypes];
+
+export type WorkflowBlockBase = {
+  label: string;
+  block_type: WorkflowBlockType;
+  output_parameter: OutputParameter;
+  continue_on_failure: boolean;
+  next_loop_on_failure?: boolean;
+  model: WorkflowModel | null;
+  next_block_label?: string | null;
+  ignore_workflow_system_prompt?: boolean;
+};
+
+export const BranchCriteriaTypes = {
+  Jinja2Template: "jinja2_template",
+  Prompt: "prompt",
+} as const;
+
+export type BranchCriteriaType =
+  (typeof BranchCriteriaTypes)[keyof typeof BranchCriteriaTypes];
+
+export type BranchCriteria = {
+  criteria_type: BranchCriteriaType;
+  expression: string;
+  description: string | null;
+};
+
+export type BranchCondition = {
+  id: string;
+  criteria: BranchCriteria | null;
+  next_block_label: string | null;
+  description: string | null;
+  is_default: boolean;
+};
+
+export type ConditionalBlock = WorkflowBlockBase & {
+  block_type: "conditional";
+  branch_conditions: Array<BranchCondition>;
+};
+
+export type TaskBlock = WorkflowBlockBase & {
+  block_type: "task";
+  url: string | null;
+  title: string;
+  navigation_goal: string | null;
+  data_extraction_goal: string | null;
+  data_schema: Record<string, unknown> | string | null;
+  complete_criterion: string | null;
+  terminate_criterion: string | null;
+  error_code_mapping: Record<string, string> | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  parameters: Array<WorkflowParameter>;
+  complete_on_download?: boolean;
+  download_suffix?: string | null;
+  totp_verification_url?: string | null;
+  totp_identifier?: string | null;
+  disable_cache?: boolean;
+  include_action_history_in_verification: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+};
+
+export type Taskv2Block = WorkflowBlockBase & {
+  block_type: "task_v2";
+  prompt: string;
+  url: string | null;
+  totp_verification_url: string | null;
+  totp_identifier: string | null;
+  max_steps: number | null;
+  disable_cache: boolean;
+};
+
+export type ForLoopBlock = WorkflowBlockBase & {
+  block_type: "for_loop";
+  loop_over: WorkflowParameter;
+  loop_blocks: Array<WorkflowBlock>;
+  loop_variable_reference: string | null;
+  complete_if_empty: boolean;
+  data_schema?: Record<string, unknown> | string | null;
+};
+
+export type WhileLoopBlock = WorkflowBlockBase & {
+  block_type: "while_loop";
+  loop_blocks: Array<WorkflowBlock>;
+  condition: BranchCriteria;
+};
+
+export type CodeBlockStep = {
+  description?: string | null;
+  action_type: string;
+  line_start?: number | null;
+  line_end?: number | null;
+};
+
+export type CodeBlockDataSchema =
+  | Record<string, unknown>
+  | Array<unknown>
+  | string
+  | null;
+
+export type CodeBlock = WorkflowBlockBase & {
+  block_type: "code";
+  code: string;
+  parameters: Array<WorkflowParameter>;
+  error_code_mapping: Record<string, string> | null;
+  prompt?: string | null;
+  steps?: Array<CodeBlockStep> | null;
+  data_schema?: CodeBlockDataSchema;
+  user_owned_goal?: boolean | null;
+  goal_needs_regeneration?: boolean | null;
+  code_edited_by_hand?: boolean | null;
+};
+
+export type TextPromptBlock = WorkflowBlockBase & {
+  block_type: "text_prompt";
+  llm_key: string;
+  prompt: string;
+  parameters: Array<WorkflowParameter>;
+  json_schema: Record<string, unknown> | null;
+};
+
+export type DownloadToS3Block = WorkflowBlockBase & {
+  block_type: "download_to_s3";
+  url: string;
+};
+
+export type UploadToS3Block = WorkflowBlockBase & {
+  block_type: "upload_to_s3";
+  path: string;
+};
+
+export type FileUploadBlock = WorkflowBlockBase & {
+  block_type: "file_upload";
+  path: string;
+  prompt: string | null;
+  storage_type: "s3" | "azure" | "google_drive" | "sftp";
+  s3_bucket: string | null;
+  region_name: string | null;
+  endpoint_url: string | null;
+  aws_access_key_id: string | null;
+  aws_secret_access_key: string | null;
+  azure_storage_account_name: string | null;
+  azure_storage_account_key: string | null;
+  azure_blob_container_name: string | null;
+  google_credential_id: string | null;
+  google_drive_folder_id: string | null;
+  sftp_host: string | null;
+  sftp_port: number | null;
+  sftp_username: string | null;
+  sftp_password: string | null;
+  sftp_private_key: string | null;
+  sftp_private_key_passphrase: string | null;
+  sftp_remote_path: string | null;
+  sftp_host_key: string | null;
+};
+
+export type EmailBodyFormat = "text" | "html";
+export type EmailTransport = "smtp" | "gmail";
+
+export type SendEmailBlock = WorkflowBlockBase & {
+  block_type: "send_email";
+  smtp_host?: AWSSecretParameter;
+  smtp_port?: AWSSecretParameter;
+  smtp_username?: AWSSecretParameter;
+  smtp_password?: AWSSecretParameter;
+  custom_smtp_host?: string | null;
+  custom_smtp_port?: number | null;
+  custom_smtp_username?: string | null;
+  custom_smtp_password?: string | null;
+  sender: string;
+  recipients: Array<string>;
+  subject: string;
+  body: string;
+  body_format?: EmailBodyFormat;
+  file_attachments: Array<string>;
+  transport?: EmailTransport | null;
+  credential_id?: string | null;
+  cc?: Array<string>;
+  bcc?: Array<string>;
+};
+
+export type FileURLParserBlock = WorkflowBlockBase & {
+  block_type: "file_url_parser";
+  file_url: string;
+  file_type: "auto_detect" | "csv" | "excel" | "pdf" | "image" | "docx" | "zip";
+  json_schema: Record<string, unknown> | null;
+  worksheet: string | null;
+  force_ocr: boolean;
+};
+
+export type ValidationBlock = WorkflowBlockBase & {
+  block_type: "validation";
+  complete_criterion: string | null;
+  terminate_criterion: string | null;
+  error_code_mapping: Record<string, string> | null;
+  parameters: Array<WorkflowParameter>;
+  disable_cache?: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+};
+
+export type HumanInteractionBlock = WorkflowBlockBase & {
+  block_type: "human_interaction";
+
+  instructions: string;
+  positive_descriptor: string;
+  negative_descriptor: string;
+  timeout_seconds: number;
+
+  sender: string;
+  recipients: Array<string>;
+  subject: string;
+  body: string;
+  body_format?: EmailBodyFormat;
+};
+
+export type DataExportBlock = WorkflowBlockBase & {
+  block_type: "data_export";
+  data: string;
+  data_schema: Record<string, unknown>;
+  file_name: string | null;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type ActionBlock = WorkflowBlockBase & {
+  block_type: "action";
+  url: string | null;
+  title: string;
+  navigation_goal: string | null;
+  error_code_mapping: Record<string, string> | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  parameters: Array<WorkflowParameter>;
+  complete_on_download?: boolean;
+  download_suffix?: string | null;
+  totp_verification_url?: string | null;
+  totp_identifier?: string | null;
+  disable_cache?: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+};
+
+export type NavigationBlock = WorkflowBlockBase & {
+  block_type: "navigation";
+  url: string | null;
+  title: string;
+  navigation_goal: string | null;
+  error_code_mapping: Record<string, string> | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  parameters: Array<WorkflowParameter>;
+  complete_on_download?: boolean;
+  download_suffix?: string | null;
+  totp_verification_url?: string | null;
+  totp_identifier?: string | null;
+  disable_cache?: boolean;
+  complete_criterion: string | null;
+  terminate_criterion: string | null;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+  include_action_history_in_verification: boolean;
+};
+
+export type ExtractionBlock = WorkflowBlockBase & {
+  block_type: "extraction";
+  data_extraction_goal: string | null;
+  url: string | null;
+  title: string;
+  data_schema: Record<string, unknown> | string | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  parameters: Array<WorkflowParameter>;
+  disable_cache?: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+  export_enabled?: boolean;
+  export_data_schema?: Record<string, unknown> | null;
+  export_file_name?: string | null;
+  export_records?: string | null;
+};
+
+export type LoginBlock = WorkflowBlockBase & {
+  block_type: "login";
+  url: string | null;
+  title: string;
+  navigation_goal: string | null;
+  error_code_mapping: Record<string, string> | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  parameters: Array<WorkflowParameter>;
+  totp_verification_url?: string | null;
+  totp_identifier?: string | null;
+  disable_cache?: boolean;
+  complete_criterion: string | null;
+  terminate_criterion: string | null;
+  include_action_history_in_verification: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+};
+
+export type WaitBlock = WorkflowBlockBase & {
+  block_type: "wait";
+  wait_sec?: number;
+};
+
+export type TerminateBlock = WorkflowBlockBase & {
+  block_type: "terminate";
+  reason: string;
+  error_code?: string | null;
+};
+
+export type FileDownloadBlock = WorkflowBlockBase & {
+  block_type: "file_download";
+  url: string | null;
+  title: string;
+  navigation_goal: string | null;
+  error_code_mapping: Record<string, string> | null;
+  max_retries?: number;
+  max_steps_per_run?: number | null;
+  download_suffix?: string | null;
+  parameters: Array<WorkflowParameter>;
+  totp_verification_url?: string | null;
+  totp_identifier?: string | null;
+  disable_cache?: boolean;
+  engine: RunEngine | null;
+  engine_pinned?: boolean;
+  download_timeout: number | null; // seconds
+  download_target: "website" | "s3" | "azure" | "google_drive" | "sftp";
+  path: string;
+  prompt: string | null;
+  s3_bucket: string | null;
+  region_name: string | null;
+  endpoint_url: string | null;
+  aws_access_key_id: string | null;
+  aws_secret_access_key: string | null;
+  azure_storage_account_name: string | null;
+  azure_storage_account_key: string | null;
+  azure_blob_container_name: string | null;
+  google_credential_id: string | null;
+  google_drive_folder_id: string | null;
+  sftp_host: string | null;
+  sftp_port: number | null;
+  sftp_username: string | null;
+  sftp_password: string | null;
+  sftp_private_key: string | null;
+  sftp_private_key_passphrase: string | null;
+  sftp_remote_path: string | null;
+  sftp_host_key: string | null;
+  sftp_source_path: string | null;
+  continue_on_empty: boolean;
+};
+
+export type PDFParserBlock = WorkflowBlockBase & {
+  block_type: "pdf_parser";
+  file_url: string;
+  json_schema: Record<string, unknown> | null;
+};
+
+export type URLBlock = WorkflowBlockBase & {
+  block_type: "goto_url";
+  url: string;
+};
+
+export type WebSearchBlock = WorkflowBlockBase & {
+  block_type: "web_search";
+  query: string;
+  provider: "auto" | "google" | "exa";
+  num_results: number;
+  prompt: string | null;
+  error_code_mapping: Record<string, string> | null;
+  no_results_error_code: string | null;
+  no_match_error_code: string | null;
+  json_schema: Record<string, unknown> | null;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type HttpRequestBlock = WorkflowBlockBase & {
+  block_type: "http_request";
+  method: string;
+  url: string | null;
+  headers: Record<string, string> | null;
+  body: Record<string, unknown> | null;
+  files: Record<string, string> | null; // Dictionary mapping field names to file paths/URLs
+  timeout: number;
+  follow_redirects: boolean;
+  parameters: Array<WorkflowParameter>;
+  download_filename: string | null;
+  save_response_as_file: boolean;
+  secret_response_paths: Array<string> | null;
+};
+
+export type PrintPageBlock = WorkflowBlockBase & {
+  block_type: "print_page";
+  include_timestamp: boolean;
+  custom_filename: string | null;
+  format: string;
+  landscape: boolean;
+  print_background: boolean;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type WorkflowTriggerBlock = WorkflowBlockBase & {
+  block_type: "workflow_trigger";
+  workflow_permanent_id: string;
+  payload: Record<string, unknown> | null;
+  wait_for_completion: boolean;
+  browser_session_id: string | null;
+  use_parent_browser_session: boolean;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type EmailInboxBlock = WorkflowBlockBase & {
+  block_type: "email_inbox";
+  email_client: "gmail" | "outlook";
+  credential_id: string | null;
+  folder: string;
+  prompt: string;
+  sender: string | null;
+  subject: string | null;
+  newer_than_days: number | null;
+  max_results: number;
+  include_body: boolean;
+  download_attachments: boolean;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type GoogleSheetsReadBlock = WorkflowBlockBase & {
+  block_type: "google_sheets_read";
+  spreadsheet_url: string;
+  sheet_name: string | null;
+  range: string | null;
+  credential_id: string | null;
+  has_header_row: boolean;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type GoogleSheetsWriteBlock = WorkflowBlockBase & {
+  block_type: "google_sheets_write";
+  spreadsheet_url: string;
+  sheet_name: string | null;
+  range: string | null;
+  credential_id: string | null;
+  write_mode: "append" | "update";
+  values: string;
+  column_mapping: Record<string, string> | null;
+  create_sheet_if_missing?: boolean;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type PdfFillBlock = WorkflowBlockBase & {
+  block_type: "pdf_fill";
+  file_url: string;
+  prompt: string;
+  payload: Record<string, unknown> | Array<unknown> | string | null;
+  llm_key: string | null;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type SplitPdfBlock = WorkflowBlockBase & {
+  block_type: "split_pdf";
+  file_url: string;
+  prompt: string;
+  llm_key: string | null;
+  parameters: Array<WorkflowParameter>;
+};
+
+export type WorkflowRetryStatus =
+  | "completed"
+  | "failed"
+  | "terminated"
+  | "canceled"
+  | "timed_out";
+export type WorkflowRetryRule = {
+  status: WorkflowRetryStatus;
+  error_codes?: Array<string> | null;
+};
+export type WorkflowRetryWebhookMode = "final_only" | "every_attempt";
+export type WorkflowRetryPolicy = {
+  max_retries: number;
+  delay_seconds: number;
+  webhook_on_retry: WorkflowRetryWebhookMode;
+  retry_on: Array<WorkflowRetryRule>;
+};
+
+export type WorkflowDefinition = {
+  retry_policy?: WorkflowRetryPolicy | null;
+  version?: number | null;
+  parameters: Array<Parameter>;
+  blocks: Array<WorkflowBlock>;
+  finally_block_label?: string | null;
+  workflow_system_prompt?: string | null;
+  error_code_mapping?: Record<string, string> | null;
+};
+
+export type WorkflowApiResponse = {
+  workflow_id: string;
+  organization_id: string;
+  is_saved_task: boolean;
+  is_template: boolean;
+  title: string;
+  workflow_permanent_id: string;
+  version: number;
+  description: string | null;
+  workflow_definition: WorkflowDefinition;
+  proxy_location: ProxyLocation | null;
+  webhook_callback_url: string | null;
+  extra_http_headers: Record<string, string> | null;
+  cdp_connect_headers: Record<string, string> | null;
+  persist_browser_session: boolean;
+  reuse_browser_session: boolean;
+  pin_saved_session_ip: boolean;
+  browser_profile_id?: string | null;
+  browser_profile_key?: string | null;
+  model: WorkflowModel | null;
+  totp_verification_url: string | null;
+  totp_identifier: string | null;
+  max_screenshot_scrolls: number | null;
+  max_elapsed_time_minutes: number | null;
+  status: string | null;
+  created_at: string;
+  modified_at: string;
+  deleted_at: string | null;
+  run_with: string; // 'agent' or 'code'
+  browser_type?: string | null; // BrowserType value; null = system default
+  cache_key: string | null;
+  ai_fallback: boolean | null;
+  enable_self_healing: boolean | null;
+  adaptive_caching: boolean | null;
+  generate_script_on_terminal?: boolean;
+  code_version: number | null;
+  mask_secrets: boolean;
+  run_sequentially: boolean | null;
+  sequential_key: string | null;
+  folder_id: string | null;
+  import_error: string | null;
+  created_by?: string | null;
+  edited_by?: string | null;
+  original_created_by?: string | null;
+  original_created_at?: string | null;
+  copilot_authored?: boolean | null;
+  effective_default_engine?: RunEngine | null;
+};
+
+// Each save inserts a new version row, so created_at is the latest save; the list endpoint adds the first version's.
+export function workflowCreatedAt(workflow: WorkflowApiResponse): string {
+  return workflow.original_created_at ?? workflow.created_at;
+}
+
+export type WorkflowSettings = {
+  totpVerificationUrl: string | null;
+  totpIdentifier: string | null;
+  adaptiveCaching: boolean;
+  generateScriptOnTerminal: boolean;
+  retryPolicy: WorkflowRetryPolicy | null;
+  proxyLocation: ProxyLocation | null;
+  webhookCallbackUrl: string | null;
+  persistBrowserSession: boolean;
+  reuseBrowserSession: boolean;
+  pinSavedSessionIp: boolean;
+  browserProfileId: string | null;
+  browserProfileKey: string | null;
+  model: WorkflowModel | null;
+  maxScreenshotScrolls: number | null;
+  maxElapsedTimeMinutes: number | null;
+  extraHttpHeaders: string | null;
+  cdpConnectHeaders: string | null;
+  runWith: string; // 'agent' or 'code'
+  browserType?: string | null; // BrowserType value; null = system default
+  codeVersion: number | null;
+  scriptCacheKey: string | null;
+  aiFallback: boolean | null;
+  maskSecrets: boolean;
+  runSequentially: boolean;
+  sequentialKey: string | null;
+  finallyBlockLabel: string | null;
+  workflowSystemPrompt: string | null;
+  errorCodeMapping: Record<string, string> | null;
+};
+
+export type WorkflowModel = JsonObjectExtendable<{ model_name: string }>;
+
+export function isOutputParameter(
+  parameter: Parameter,
+): parameter is OutputParameter {
+  return parameter.parameter_type === "output";
+}
+
+export type ImprovePromptForWorkflowResponse = {
+  error: string | null;
+  improved: string;
+  original: string;
+};

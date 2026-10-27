@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>BulkPublish — New post</title>
+  </head>
+  <body>
+    <main class="composer" aria-busy="true">
+      <header class="composer__header">
+        <h1 class="composer__title">New post</h1>
+        <p class="composer__sub" id="sub">Loading your channels…</p>
+      </header>
+
+      <section class="field">
+        <span class="label">Channels</span>
+        <div class="chips" id="channels" role="group" aria-label="Channels"></div>
+        <p class="hint" id="channels-empty" hidden>
+          No connected channels yet — connect one in BulkPublish first.
+        </p>
+      </section>
+
+      <section class="field">
+        <label class="label" for="scheduled-at">
+          Schedule for <span class="label-hint">optional</span>
+        </label>
+        <div class="schedule">
+          <div class="dt is-empty" id="scheduled-wrap">
+            <input type="datetime-local" id="scheduled-at" class="input" aria-describedby="scheduled-ph" />
+            <span class="dt__ph" id="scheduled-ph">Pick a date and time</span>
+          </div>
+          <span class="tz" id="tz-label"></span>
+        </div>
+      </section>
+
+      <section class="field">
+        <label class="label" for="content">Content</label>
+        <textarea
+          id="content"
+          class="textarea"
+          rows="5"
+          placeholder="What do you want to share?"
+        ></textarea>
+        <div class="counter"><span id="count">0</span> characters</div>
+      </section>
+
+      <section class="field" id="media-field">
+        <span class="label">Media <span class="label-hint">pick or upload</span></span>
+        <div class="media-grid" id="media-grid" role="group" aria-label="Media"></div>
+        <input
+          type="file"
+          id="media-file"
+          accept="image/*,video/*"
+          multiple
+          hidden
+        />
+      </section>
+
+      <div class="banner banner--error" id="error" role="alert" hidden></div>
+      <div class="banner banner--success" id="success" role="status" hidden></div>
+
+      <footer class="actions">
+        <button class="btn btn--ghost" id="draft-btn" type="button" disabled>
+          Save draft
+        </button>
+        <button class="btn btn--secondary" id="schedule-btn" type="button" disabled>
+          Schedule
+        </button>
+        <button class="btn btn--primary" id="publish-btn" type="button" disabled>
+          Publish now
+        </button>
+      </footer>
+    </main>
+    <script type="module" src="./composer.ts"></script>
+  </body>
+</html>

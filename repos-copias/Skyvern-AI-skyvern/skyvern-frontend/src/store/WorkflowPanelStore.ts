@@ -1,0 +1,84 @@
+import { create } from "zustand";
+import { WorkflowVersion } from "@/routes/workflows/hooks/useWorkflowVersionsQuery";
+import { CopilotReviewStatus } from "@/routes/workflows/editor/panels/WorkflowComparisonPanel";
+
+export type BranchContext = {
+  conditionalNodeId: string;
+  conditionalLabel: string;
+  branchId: string;
+  mergeLabel: string | null;
+};
+
+type WorkflowPanelState = {
+  active: boolean;
+  content:
+    | "cacheKeyValues"
+    | "parameters"
+    | "nodeLibrary"
+    | "history"
+    | "comparison"
+    | "schedules"
+    | "triggers";
+  data?: {
+    previous?: string | null;
+    next?: string | null;
+    parent?: string;
+    connectingEdgeType?: string;
+    disableLoop?: boolean;
+    branchContext?: BranchContext;
+    // For comparison panel
+    version1?: WorkflowVersion;
+    version2?: WorkflowVersion;
+    showComparison?: boolean;
+    mode?: "history" | "copilot";
+    onCopilotReviewClose?: (
+      status: CopilotReviewStatus,
+    ) => void | Promise<void>;
+  };
+};
+
+type WorkflowPanelStore = {
+  workflowPanelState: WorkflowPanelState;
+  closeWorkflowPanel: () => void;
+  setWorkflowPanelState: (state: WorkflowPanelState) => void;
+  toggleWorkflowPanel: () => void;
+  selectedBlockId: string | null;
+  setSelectedBlockId: (id: string | null) => void;
+};
+
+const useWorkflowPanelStore = create<WorkflowPanelStore>((set, get) => {
+  return {
+    workflowPanelState: {
+      active: false,
+      content: "parameters",
+    },
+    setWorkflowPanelState: (workflowPanelState: WorkflowPanelState) => {
+      set({ workflowPanelState });
+    },
+    closeWorkflowPanel: () => {
+      // Must not clear selectedBlockId: addNode selects the new block, then the
+      // node-library panel closes; the selection has to survive that close.
+      set({
+        workflowPanelState: {
+          ...get().workflowPanelState,
+          active: false,
+        },
+      });
+    },
+    toggleWorkflowPanel: () => {
+      set({
+        workflowPanelState: {
+          ...get().workflowPanelState,
+          active: !get().workflowPanelState.active,
+        },
+      });
+    },
+    selectedBlockId: null,
+    setSelectedBlockId: (selectedBlockId: string | null) => {
+      // Single-select invariant: assigning replaces any prior id.
+      set({ selectedBlockId });
+    },
+  };
+});
+
+export { useWorkflowPanelStore };

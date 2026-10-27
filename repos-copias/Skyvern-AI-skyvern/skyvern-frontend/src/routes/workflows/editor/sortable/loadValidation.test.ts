@@ -1,0 +1,407 @@
+import { describe, expect, test } from "vitest";
+
+import type {
+  CodeBlock,
+  ConditionalBlock,
+  ForLoopBlock,
+  OutputParameter,
+  WorkflowBlock,
+} from "../../types/workflowTypes";
+import {
+  applySequentialDefaulting,
+  findChainRoot,
+  referencedLabels,
+  validateWorkflowBlocks,
+  WorkflowValidationError,
+} from "../workflowEditorUtils";
+
+function op(label: string): OutputParameter {
+  return {
+    parameter_type: "output",
+    key: `${label}_output`,
+    description: null,
+    output_parameter_id: `op-${label}`,
+    workflow_id: "wf-fixture",
+    created_at: "2026-05-12T00:00:00Z",
+    modified_at: "2026-05-12T00:00:00Z",
+    deleted_at: null,
+  };
+}
+
+function code(label: string, next: string | null): CodeBlock {
+  return {
+    label,
+    block_type: "code",
+    continue_on_failure: false,
+    model: null,
+    next_block_label: next,
+    output_parameter: op(label),
+    code: `# ${label}`,
+    parameters: [],
+    error_code_mapping: null,
+  };
+}
+
+describe("referencedLabels", () => {
+  test("collects next_block_label across the array", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", "B2"),
+      code("B2", "B3"),
+      code("B3", null),
+    ];
+    expect(referencedLabels(blocks)).toEqual(new Set(["B2", "B3"]));
+  });
+
+  test("includes branch_conditions[].next_block_label from conditionals", () => {
+    const cond: ConditionalBlock = {
+      label: "C1",
+      block_type: "conditional",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: "M",
+      output_parameter: op("C1"),
+      branch_conditions: [
+        {
+          id: "br-a",
+          description: "a",
+          next_block_label: "A1",
+          criteria: null,
+          is_default: false,
+        },
+        {
+          id: "br-b",
+          description: "b",
+          next_block_label: "B1",
+          criteria: null,
+          is_default: true,
+        },
+      ],
+    };
+    const blocks: Array<WorkflowBlock> = [
+      cond,
+      code("A1", "M"),
+      code("B1", "M"),
+      code("M", null),
+    ];
+    expect(referencedLabels(blocks)).toEqual(new Set(["M", "A1", "B1"]));
+  });
+
+  test("ignores null targets", () => {
+    expect(referencedLabels([code("B1", null)])).toEqual(new Set());
+  });
+});
+
+describe("findChainRoot", () => {
+  test("returns the single unreferenced block", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", "B2"),
+      code("B2", "B3"),
+      code("B3", null),
+    ];
+    expect(findChainRoot(blocks)?.label).toBe("B1");
+  });
+
+  test("order-invariant: same root regardless of array permutation", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B3", "B1"),
+      code("B1", "B2"),
+      code("B2", "B4"),
+      code("B4", null),
+    ];
+    const shuffled = [blocks[2]!, blocks[0]!, blocks[3]!, blocks[1]!];
+    expect(findChainRoot(blocks)?.label).toBe("B3");
+    expect(findChainRoot(shuffled)?.label).toBe("B3");
+  });
+
+  test("returns null when there are zero roots (cycle)", () => {
+    const blocks: Array<WorkflowBlock> = [code("B1", "B2"), code("B2", "B1")];
+    expect(findChainRoot(blocks)).toBeNull();
+  });
+
+  test("returns null when there are multiple roots (disconnected)", () => {
+    const blocks: Array<WorkflowBlock> = [code("B1", null), code("B2", null)];
+    expect(findChainRoot(blocks)).toBeNull();
+  });
+
+  test("returns null on empty input", () => {
+    expect(findChainRoot([])).toBeNull();
+  });
+});
+
+describe("applySequentialDefaulting", () => {
+  test("v1 chain with all null next_block_label gets sequential defaults", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", null),
+      code("B2", null),
+      code("B3", null),
+    ];
+    const result = applySequentialDefaulting(blocks);
+    expect(result.map((b) => [b.label, b.next_block_label])).toEqual([
+      ["B1", "B2"],
+      ["B2", "B3"],
+      ["B3", null],
+    ]);
+  });
+
+  test("v2 chain (all explicit) is unchanged", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", "B2"),
+      code("B2", "B3"),
+      code("B3", null),
+    ];
+    const result = applySequentialDefaulting(blocks);
+    expect(result.map((b) => [b.label, b.next_block_label])).toEqual([
+      ["B1", "B2"],
+      ["B2", "B3"],
+      ["B3", null],
+    ]);
+  });
+
+  test("does NOT default when any block at this level is conditional", () => {
+    const cond: ConditionalBlock = {
+      label: "C1",
+      block_type: "conditional",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: op("C1"),
+      branch_conditions: [
+        {
+          id: "br-a",
+          description: "a",
+          next_block_label: null,
+          criteria: null,
+          is_default: true,
+        },
+      ],
+    };
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", null),
+      cond,
+      code("B2", null),
+    ];
+    const result = applySequentialDefaulting(blocks);
+    expect(result.map((b) => b.next_block_label)).toEqual([null, null, null]);
+  });
+
+  test("recurses into loop_blocks at each nesting level", () => {
+    const inner: Array<WorkflowBlock> = [code("L1", null), code("L2", null)];
+    const loop: ForLoopBlock = {
+      label: "FOR",
+      block_type: "for_loop",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: op("FOR"),
+      loop_over: { key: "items" } as never,
+      loop_blocks: inner,
+      loop_variable_reference: null,
+      complete_if_empty: false,
+      data_schema: null,
+    };
+    const result = applySequentialDefaulting([loop, code("AFTER", null)]);
+    expect(result[0]!.next_block_label).toBe("AFTER");
+    expect(result[1]!.next_block_label).toBeNull();
+    const looped = result[0] as ForLoopBlock;
+    expect(looped.loop_blocks.map((b) => b.next_block_label)).toEqual([
+      "L2",
+      null,
+    ]);
+  });
+
+  test("idempotent — running twice produces the same result", () => {
+    const blocks: Array<WorkflowBlock> = [code("B1", null), code("B2", null)];
+    const once = applySequentialDefaulting(blocks);
+    const twice = applySequentialDefaulting(once);
+    expect(twice).toEqual(once);
+  });
+});
+
+describe("validateWorkflowBlocks", () => {
+  test("accepts a well-formed v2 chain", () => {
+    expect(() =>
+      validateWorkflowBlocks([code("B1", "B2"), code("B2", null)]),
+    ).not.toThrow();
+  });
+
+  test("rejects duplicate labels", () => {
+    expect(() =>
+      validateWorkflowBlocks([code("B1", "B1"), code("B1", null)]),
+    ).toThrow(WorkflowValidationError);
+    expect(() =>
+      validateWorkflowBlocks([code("B1", "B1"), code("B1", null)]),
+    ).toThrow(/Duplicate block label/);
+  });
+
+  test("allows an out-of-band finally block with no inbound edges", () => {
+    const blocks: Array<WorkflowBlock> = [
+      code("B1", "B2"),
+      code("B2", null),
+      code("F", null),
+    ];
+
+    expect(() => validateWorkflowBlocks(blocks, null, "F")).not.toThrow();
+    expect(() => validateWorkflowBlocks(blocks)).toThrow(
+      /Disconnected blocks detected: blocks \(B1, F\)/,
+    );
+  });
+
+  test("ignores an edge targeting the finally block", () => {
+    expect(() =>
+      validateWorkflowBlocks(
+        [code("start", "finally"), code("finally", null)],
+        null,
+        "finally",
+      ),
+    ).not.toThrow();
+  });
+
+  test("rejects duplicate labels when the duplicated label is the finally block", () => {
+    expect(() =>
+      validateWorkflowBlocks(
+        [code("start", null), code("finally", null), code("finally", null)],
+        null,
+        "finally",
+      ),
+    ).toThrow(/Duplicate block label/);
+  });
+
+  // Both halves of the getElements pipeline are needed: defaulting must not
+  // invent an edge into the finally block, and the validator must strip it.
+  test("an all-null chain around a non-last finally block stays valid", () => {
+    const blocks = applySequentialDefaulting(
+      [code("B1", null), code("F", null), code("B2", null)],
+      "F",
+    );
+
+    expect(blocks.map((b) => [b.label, b.next_block_label])).toEqual([
+      ["B1", "B2"],
+      ["F", null],
+      ["B2", null],
+    ]);
+    expect(() => validateWorkflowBlocks(blocks, null, "F")).not.toThrow();
+  });
+
+  test("rejects dangling next_block_label", () => {
+    expect(() =>
+      validateWorkflowBlocks([code("B1", "DOES_NOT_EXIST")]),
+    ).toThrow(/references unknown next_block_label/);
+  });
+
+  test("rejects zero roots (full cycle)", () => {
+    expect(() =>
+      validateWorkflowBlocks([code("B1", "B2"), code("B2", "B1")]),
+    ).toThrow(/Circular reference detected/);
+  });
+
+  test("rejects multiple roots (disconnected)", () => {
+    expect(() =>
+      validateWorkflowBlocks([code("B1", null), code("B2", null)]),
+    ).toThrow(/Disconnected blocks detected/);
+  });
+
+  test("rejects partial cycle (one root + cycle elsewhere)", () => {
+    expect(() =>
+      validateWorkflowBlocks([
+        code("B1", "B2"),
+        code("B2", "B3"),
+        code("B3", "B2"),
+      ]),
+    ).toThrow(/Circular reference|infinite cycle/);
+  });
+
+  test("recurses into loop_blocks and reports the failing nesting level", () => {
+    const loop = forLoop("FOR1", [code("L1", "L2"), code("L2", "L1")]);
+    expect(() => validateWorkflowBlocks([loop])).toThrow(
+      /Circular reference.+inside loop FOR1|inside loop FOR1.+cycle/,
+    );
+  });
+
+  test("still recurses into loop_blocks when the only block is the finally block", () => {
+    const loop = forLoop("FOR1", [code("L1", "L2"), code("L2", "L1")]);
+    expect(() => validateWorkflowBlocks([loop], null, "FOR1")).toThrow(
+      /inside loop FOR1/,
+    );
+  });
+});
+
+function conditional(
+  label: string,
+  next: string | null,
+  branchTargets: Array<string | null>,
+): ConditionalBlock {
+  return {
+    label,
+    block_type: "conditional",
+    continue_on_failure: false,
+    model: null,
+    next_block_label: next,
+    output_parameter: op(label),
+    branch_conditions: branchTargets.map((target, index) => ({
+      id: `br-${label}-${index}`,
+      description: null,
+      next_block_label: target,
+      criteria: null,
+      is_default: index === branchTargets.length - 1,
+    })),
+  };
+}
+
+function forLoop(
+  label: string,
+  loopBlocks: Array<WorkflowBlock>,
+): ForLoopBlock {
+  return {
+    label,
+    block_type: "for_loop",
+    continue_on_failure: false,
+    model: null,
+    next_block_label: null,
+    output_parameter: op(label),
+    loop_over: { key: "items" } as never,
+    loop_blocks: loopBlocks,
+    loop_variable_reference: null,
+    complete_if_empty: false,
+    data_schema: null,
+  };
+}
+
+// SKY-10988: MCP/API workflows stored as v1 that contain v2 graph constructs must not have their
+// routing rewritten by array-order defaulting when rendered in the editor/debugger.
+describe("applySequentialDefaulting (SKY-10988 conditional routing)", () => {
+  test("preserves explicit conditional branch + merge routing instead of array-ordering it", () => {
+    const result = applySequentialDefaulting([
+      conditional("choose", "merge", ["branch_a", "branch_b"]),
+      code("branch_a", "merge"),
+      code("branch_b", "merge"),
+      code("merge", null),
+    ]);
+
+    expect(result.map((b) => [b.label, b.next_block_label])).toEqual([
+      ["choose", "merge"],
+      ["branch_a", "merge"],
+      ["branch_b", "merge"],
+      ["merge", null],
+    ]);
+    expect(() => validateWorkflowBlocks(result)).not.toThrow();
+  });
+
+  test("connects a sequential top level while preserving a conditional nested in a loop", () => {
+    const loop = forLoop("loop", [
+      conditional("inner_choice", "inner_merge", ["leaf"]),
+      code("leaf", null),
+      code("inner_merge", null),
+    ]);
+
+    const result = applySequentialDefaulting([loop, code("after", null)]);
+
+    expect(result[0]!.next_block_label).toBe("after");
+    expect(result[1]!.next_block_label).toBeNull();
+    const loopBlocks = (result[0] as ForLoopBlock).loop_blocks;
+    expect(loopBlocks.map((b) => b.next_block_label)).toEqual([
+      "inner_merge",
+      null,
+      null,
+    ]);
+  });
+});

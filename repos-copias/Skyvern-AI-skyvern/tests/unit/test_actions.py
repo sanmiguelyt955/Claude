@@ -1,0 +1,1156 @@
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from pydantic import TypeAdapter, ValidationError
+from structlog.testing import capture_logs
+
+from skyvern.config import settings
+from skyvern.exceptions import UnsupportedActionType
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
+from skyvern.forge.sdk.db.models import ActionModel
+from skyvern.forge.sdk.db.repositories.workflow_parameters import WorkflowParametersRepository
+from skyvern.forge.sdk.db.utils import hydrate_action
+from skyvern.forge.sdk.schemas import sdk_actions
+from skyvern.forge.sdk.schemas.sdk_actions import InputTextAction as SdkInputTextAction
+from skyvern.forge.sdk.schemas.sdk_actions import SdkActionType
+from skyvern.forge.sdk.schemas.tasks import Task, TaskStatus
+from skyvern.schemas.steps import AgentStepOutput
+from skyvern.utils.action_redaction import (
+    REDACTED_OTP_IDENTIFIER,
+    REDACTED_OTP_SECRET,
+    REDACTED_OTP_URL,
+    REDACTED_OTP_VALUE,
+    SDK_INPUT_TEXT_ACTION_TYPE,
+    redact_action_for_log,
+)
+from skyvern.webeye.actions.action_types import ActionType
+from skyvern.webeye.actions.actions import (
+    Action,
+    ActionStatus,
+    ClickAction,
+    ClickContext,
+    ClosePageAction,
+    DragAction,
+    ExtractAction,
+    GotoUrlAction,
+    InputTextAction,
+    KeypressAction,
+    NewTabAction,
+    NullAction,
+    ReloadPageAction,
+    SelectOptionAction,
+    SwitchTabAction,
+    WebAction,
+)
+from skyvern.webeye.actions.models import DetailedAgentStepOutput
+from skyvern.webeye.actions.parse_actions import (
+    parse_action,
+    parse_actions,
+    parse_anthropic_actions,
+    parse_cua_actions,
+    parse_ui_tars_actions,
+)
+
+
+def _mock_scraped_page() -> MagicMock:
+    page = MagicMock()
+    page.id_to_element_hash = {}
+    page.id_to_element_dict = {}
+    return page
+
+
+@pytest.mark.asyncio
+async def test_parse_anthropic_actions_does_not_log_model_response_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = "private-anthropic-response-sentinel"
+    task = MagicMock(task_id="tsk_private", organization_id="org_private", workflow_run_id=None)
+    step = MagicMock(step_id="stp_private", order=0)
+    assistant_content = [
+        {"type": "thinking", "thinking": sentinel},
+        {"type": "thinking", "thinking": sentinel},
+        {
+            "type": "tool_use",
+            "name": "computer",
+            "id": "tool_private",
+            "input": {"action": "mouse_move", "private": sentinel},
+        },
+    ]
+    fallback = AsyncMock(return_value=[])
+    monkeypatch.setattr("skyvern.webeye.actions.parse_actions.generate_cua_fallback_actions", fallback)
+
+    with capture_logs() as events:
+        actions = await parse_anthropic_actions(task, step, assistant_content, None, None)
+
+    assert actions == []
+    assert sentinel not in repr(events)
+    assert fallback.await_count == 1
+
+
+def test_parse_actions_does_not_log_malformed_response_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = "private-malformed-action-sentinel"
+    context = MagicMock(totp_codes={})
+    monkeypatch.setattr("skyvern.webeye.actions.parse_actions.skyvern_context.ensure_context", lambda: context)
+    task = MagicMock(
+        task_id="tsk_private",
+        organization_id="org_private",
+        workflow_run_id=None,
+        data_extraction_goal=None,
+        extracted_information_schema=None,
+    )
+
+    with capture_logs() as events:
+        actions = parse_actions(
+            task,
+            "stp_private",
+            0,
+            _mock_scraped_page(),
+            [
+                {"action_type": "INPUT_TEXT", "id": "e1", "reasoning": sentinel},
+                {"action_type": "SWITCH_TAB", "tab_index": sentinel},
+                sentinel,
+            ],
+        )
+
+    assert len(actions) == 1
+    assert isinstance(actions[0], NullAction)
+    assert sentinel not in repr(events)
+    assert not any("exc_info" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_parse_cua_actions_does_not_log_malformed_response_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinel = "private-cua-action-sentinel"
+    task = MagicMock(task_id="tsk_private", organization_id="org_private", workflow_run_id=None)
+    step = MagicMock(step_id="stp_private", order=0)
+    response = MagicMock()
+    response.output = [MagicMock(type="computer_call", action=MagicMock(type=sentinel))]
+    response.model_dump.return_value = {"output": [{"type": "computer_call", "action": {"type": sentinel}}]}
+    fallback = AsyncMock(return_value=[])
+    monkeypatch.setattr("skyvern.webeye.actions.parse_actions.generate_cua_fallback_actions", fallback)
+
+    with capture_logs() as events:
+        actions = await parse_cua_actions(task, step, response)
+
+    assert actions == []
+    assert sentinel not in repr(events)
+    assert not any("exc_info" in event for event in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_content", "sentinel", "expected_event"),
+    [
+        ("Action: private_ui_tars_sentinel((", "private_ui_tars_sentinel", "Failed to parse action string"),
+        ("Action: private_ui_tars_sentinel()", "private_ui_tars_sentinel", "Unsupported UI-TARS action type"),
+        (
+            "Action: click(start_box='private-ui-tars-sentinel')",
+            "private-ui-tars-sentinel",
+            "Failed to parse UI-TARS coordinates",
+        ),
+    ],
+    ids=["malformed-action", "unsupported-action-type", "malformed-coordinates"],
+)
+async def test_parse_ui_tars_actions_does_not_log_malformed_response_content(
+    response_content: str,
+    sentinel: str,
+    expected_event: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = MagicMock(task_id="tsk_private", organization_id="org_private", workflow_run_id=None)
+    step = MagicMock(step_id="stp_private", order=0)
+    logger = MagicMock()
+    monkeypatch.setattr("skyvern.webeye.actions.parse_actions.LOG", logger)
+
+    actions = await parse_ui_tars_actions(task, step, response_content, {"width": 1280, "height": 720})
+
+    assert actions == []
+    assert expected_event in repr(logger.mock_calls)
+    assert sentinel not in repr(logger.mock_calls)
+    assert "exc_info" not in repr(logger.mock_calls)
+
+
+def test_sdk_input_text_action_type_constant_matches_sdk_enum() -> None:
+    assert SDK_INPUT_TEXT_ACTION_TYPE == SdkActionType.AI_INPUT_TEXT.value
+
+
+def test_sdk_action_timeout_defaults_are_environment_independent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "BROWSER_ACTION_TIMEOUT_MS", 4242)
+    action_types = (
+        sdk_actions.ClickAction,
+        sdk_actions.InputTextAction,
+        sdk_actions.SelectOptionAction,
+        sdk_actions.UploadFileAction,
+    )
+
+    assert [action_type().timeout for action_type in action_types] == [4242] * 4
+    assert [action_type.model_json_schema()["properties"]["timeout"]["default"] for action_type in action_types] == [
+        10000
+    ] * 4
+
+
+def test_action_parse__no_element_id() -> None:
+    action_no_element_id = {
+        "action_type": "click",
+    }
+    action = Action.model_validate(action_no_element_id)
+    assert action.action_type == "click"
+    assert action.element_id is None
+
+
+def test_action_parse__with_element_id() -> None:
+    action_no_element_id_str = {
+        "action_type": "click",
+        "element_id": "element_id",
+    }
+    action = Action.model_validate(action_no_element_id_str)
+    assert action.action_type == "click"
+    assert action.element_id == "element_id"
+
+    action_no_element_id_int = {
+        "action_type": "click",
+        "element_id": 1,
+    }
+    action = Action.model_validate(action_no_element_id_int)
+    assert action.action_type == "click"
+    assert action.element_id == "1"
+
+
+def test_drag_action_rejects_oversized_path_before_validating_points() -> None:
+    valid_path = [(index, index) for index in range(1_000)]
+    assert DragAction(path=valid_path).path == valid_path
+
+    with pytest.raises(ValidationError) as exc_info:
+        DragAction.model_validate({"path": [("not-an-int", "also-not-an-int")] * 100_000})
+
+    assert exc_info.value.error_count() == 1
+    assert [(error["loc"], error["type"]) for error in exc_info.value.errors(include_input=False)] == [
+        (("path",), "too_long")
+    ]
+
+
+def test_sdk_input_text_action_repr_redacts_otp_fields() -> None:
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    secret_identifier = "OTP_IDENTIFIER_SHOULD_NOT_APPEAR"
+    secret_url = "OTP_URL_SHOULD_NOT_APPEAR"
+
+    action = SdkInputTextAction(
+        selector="#otp-field",
+        value=secret_value,
+        intention="Enter one-time code",
+        totp_identifier=secret_identifier,
+        totp_url=secret_url,
+    )
+
+    rendered = repr(action)
+    rendered_str = str(action)
+    raw_payload = action.model_dump()
+    log_payload = redact_action_for_log(action)
+
+    assert secret_value not in rendered
+    assert secret_identifier not in rendered
+    assert secret_url not in rendered
+    assert secret_value not in rendered_str
+    assert secret_identifier not in rendered_str
+    assert secret_url not in rendered_str
+    assert raw_payload["value"] == secret_value
+    assert raw_payload["totp_identifier"] == secret_identifier
+    assert raw_payload["totp_url"] == secret_url
+    assert secret_value not in str(log_payload)
+    assert secret_identifier not in str(log_payload)
+    assert secret_url not in str(log_payload)
+    assert REDACTED_OTP_VALUE in rendered
+    assert REDACTED_OTP_VALUE in rendered_str
+    assert REDACTED_OTP_IDENTIFIER in rendered_str
+    assert REDACTED_OTP_URL in rendered_str
+    assert log_payload["value"] == REDACTED_OTP_VALUE
+    assert "#otp-field" in rendered
+    assert "Enter one-time code" in rendered
+
+
+def test_web_input_text_action_repr_redacts_otp_text() -> None:
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="otp-field",
+        text=secret_value,
+        intention="Enter verification code",
+        response=secret_value,
+        totp_code_required=True,
+    )
+
+    rendered = repr(action)
+    rendered_str = str(action)
+    raw_payload = action.model_dump()
+    log_payload = redact_action_for_log(action)
+
+    assert secret_value not in rendered
+    assert secret_value not in rendered_str
+    assert raw_payload["text"] == secret_value
+    assert raw_payload["response"] == secret_value
+    assert secret_value not in str(log_payload)
+    assert REDACTED_OTP_VALUE in rendered
+    assert REDACTED_OTP_VALUE in rendered_str
+    assert log_payload["text"] == REDACTED_OTP_VALUE
+    assert log_payload["response"] == REDACTED_OTP_VALUE
+    assert "otp-field" in rendered
+
+
+def test_web_input_text_action_repr_redacts_otp_text_marked_by_identifier() -> None:
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    secret_identifier = "OTP_IDENTIFIER_SHOULD_NOT_APPEAR"
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="otp-field",
+        text=secret_value,
+        intention="Enter code",
+        response=secret_value,
+        totp_identifier=secret_identifier,
+    )
+
+    rendered = repr(action)
+    rendered_str = str(action)
+    raw_payload = action.model_dump()
+    log_payload = redact_action_for_log(action)
+
+    assert secret_value not in rendered
+    assert secret_value not in rendered_str
+    assert secret_identifier not in rendered_str
+    assert raw_payload["text"] == secret_value
+    assert raw_payload["totp_identifier"] == secret_identifier
+    assert log_payload["text"] == REDACTED_OTP_VALUE
+    assert log_payload["response"] == REDACTED_OTP_VALUE
+    assert log_payload["totp_identifier"] == REDACTED_OTP_IDENTIFIER
+    assert secret_value not in str(log_payload)
+    assert secret_identifier not in str(log_payload)
+    assert REDACTED_OTP_VALUE in rendered_str
+
+
+def test_web_input_text_action_redacts_multi_field_reasoning_and_value() -> None:
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="box-0",
+        text="7",
+        reasoning="use the six digit value now",
+        intention="enter the code",
+        response="7",
+        totp_timing_info={
+            "is_totp_sequence": True,
+            "action_index": 0,
+            "box_element_ids": ["box-0", "box-1"],
+            "code_source": "external",
+        },
+    )
+
+    payload = redact_action_for_log(action)
+
+    assert payload["text"] == REDACTED_OTP_VALUE
+    assert payload["reasoning"] == "Entered a one-time code digit."
+    assert payload["intention"] == "*"
+    assert payload["response"] == "*"
+    assert "six digit" not in str(payload)
+
+
+def test_step_output_serialization_redacts_otp_input_action() -> None:
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="otp-field",
+        text=secret_value,
+        intention="Enter verification code",
+        response=secret_value,
+        totp_code_required=True,
+    )
+
+    payload = AgentStepOutput(actions_and_results=[(action, [])]).model_dump()
+
+    assert secret_value not in str(payload)
+    assert payload["actions_and_results"][0][0]["text"] == REDACTED_OTP_VALUE
+    assert payload["actions_and_results"][0][0]["response"] == REDACTED_OTP_VALUE
+
+
+def test_detailed_step_output_debug_repr_redacts_otp_input_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skyvern.config.settings.DEBUG_MODE", True)
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    secret_identifier = "OTP_IDENTIFIER_SHOULD_NOT_APPEAR"
+    secret_url = "OTP_URL_SHOULD_NOT_APPEAR"
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="otp-field",
+        text=secret_value,
+        intention="Enter verification code",
+        response=secret_value,
+        totp_identifier=secret_identifier,
+        totp_url=secret_url,
+    )
+
+    rendered = repr(
+        DetailedAgentStepOutput(
+            scraped_page=None,
+            extract_action_prompt=None,
+            llm_response=None,
+            actions=[action],
+            action_results=None,
+            actions_and_results=[(action, [])],
+        )
+    )
+
+    assert secret_value not in rendered
+    assert secret_identifier not in rendered
+    assert secret_url not in rendered
+    assert REDACTED_OTP_VALUE in rendered
+    assert REDACTED_OTP_IDENTIFIER in rendered
+    assert REDACTED_OTP_URL in rendered
+
+
+def test_action_log_payload_redacts_otp_text_response_and_timing_secret() -> None:
+    secret_value = "OTP_SECRET_VALUE_SHOULD_NOT_APPEAR"
+    timing_secret = "OTP_TIMING_SECRET_SHOULD_NOT_APPEAR"
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="otp-field",
+        text=secret_value,
+        intention="Enter passcode",
+        response=secret_value,
+        totp_timing_info={"is_totp_sequence": True, "totp_secret": timing_secret, "action_index": 0},
+    )
+
+    payload = redact_action_for_log(action)
+
+    assert payload["text"] == REDACTED_OTP_VALUE
+    assert payload["response"] == "*"
+    assert payload["totp_timing_info"]["totp_secret"] == REDACTED_OTP_SECRET
+    assert secret_value not in str(payload)
+    assert timing_secret not in str(payload)
+    assert payload["element_id"] == "otp-field"
+    assert payload["action_type"] == ActionType.INPUT_TEXT
+
+
+def test_action_log_payload_keeps_non_otp_input_debuggable() -> None:
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        element_id="account-field",
+        text="SAFE_ACCOUNT_REFERENCE",
+        intention="Enter account reference",
+        response="SAFE_ACCOUNT_REFERENCE",
+    )
+
+    payload = redact_action_for_log(action)
+
+    assert payload["text"] == "SAFE_ACCOUNT_REFERENCE"
+    assert payload["response"] == "SAFE_ACCOUNT_REFERENCE"
+    assert payload["element_id"] == "account-field"
+    assert payload["intention"] == "Enter account reference"
+
+
+@pytest.mark.asyncio
+async def test_create_action_persists_the_typed_otp_code_on_the_response_column() -> None:
+    otp_code = "OTP_CODE_THE_CUSTOMER_MUST_SEE"
+    started_at = datetime(2026, 7, 30, 12, 0, 0)
+    finished_at = datetime(2026, 7, 30, 12, 0, 1)
+    captured_models = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def add(self, model) -> None:
+            captured_models.append(model)
+
+        async def commit(self) -> None:
+            pass
+
+        async def refresh(self, model) -> None:
+            pass
+
+    repo = WorkflowParametersRepository(lambda: FakeSession())
+    action = InputTextAction(
+        action_type=ActionType.INPUT_TEXT,
+        organization_id="o_test",
+        workflow_run_id="wr_test",
+        task_id="tsk_test",
+        step_id="stp_test",
+        step_order=0,
+        action_order=0,
+        element_id="otp-field",
+        text=otp_code,
+        intention="Enter verification code",
+        response=otp_code,
+        totp_code_required=True,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+    await repo.create_action(action)
+
+    persisted_model = captured_models[0]
+    assert persisted_model.response == otp_code
+    assert persisted_model.action_json["text"] == otp_code
+    assert persisted_model.action_json["response"] == otp_code
+    assert persisted_model.started_at == started_at
+    assert persisted_model.finished_at == finished_at
+
+    hydrated_action = hydrate_action(persisted_model)
+    assert isinstance(hydrated_action, InputTextAction)
+    assert hydrated_action.text == otp_code
+    assert hydrated_action.response == otp_code
+    assert hydrated_action.model_dump(mode="json")["started_at"] == "2026-07-30T12:00:00"
+    assert hydrated_action.model_dump(mode="json")["finished_at"] == "2026-07-30T12:00:01"
+
+
+def test_hydration_prefers_model_timestamps_over_action_json_snapshot() -> None:
+    """action_json carries a serialized snapshot whose timestamps can lag the model columns
+    (e.g. after the batch upsert refreshed them); the model columns must win."""
+    model = ActionModel(
+        action_id="a_ts_fence",
+        action_type=ActionType.CLICK,
+        status=ActionStatus.completed,
+        organization_id="o_1",
+        task_id="tsk_1",
+        step_id="stp_1",
+        step_order=0,
+        action_order=0,
+        started_at=datetime(2026, 7, 30, 12, 0, 0),
+        finished_at=datetime(2026, 7, 30, 12, 0, 5),
+        created_at=datetime(2026, 7, 30, 11, 59, 0),
+        modified_at=datetime(2026, 7, 30, 12, 0, 5),
+        action_json={
+            "action_type": "click",
+            "started_at": "2026-07-30T00:00:00",
+            "finished_at": "2026-07-30T00:00:01",
+            "created_at": "2026-07-29T00:00:00",
+            "modified_at": "2026-07-30T00:00:01",
+        },
+    )
+
+    hydrated = hydrate_action(model)
+
+    assert hydrated.started_at == datetime(2026, 7, 30, 12, 0, 0)
+    assert hydrated.finished_at == datetime(2026, 7, 30, 12, 0, 5)
+    assert hydrated.created_at == datetime(2026, 7, 30, 11, 59, 0)
+
+
+def test_malformed_action_fallback_keeps_execution_timestamps() -> None:
+    """A row whose action_json fails base-Action validation hydrates through the minimal
+    fallback; the execution timestamps must survive that path too."""
+    model = ActionModel(
+        action_id="a_fallback",
+        action_type=ActionType.CLICK,
+        status=ActionStatus.completed,
+        organization_id="o_1",
+        task_id="tsk_1",
+        step_id="stp_1",
+        step_order=0,
+        action_order=0,
+        started_at=datetime(2026, 7, 30, 12, 0, 0),
+        finished_at=datetime(2026, 7, 30, 12, 0, 5),
+        created_at=datetime(2026, 7, 30, 11, 59, 0),
+        modified_at=datetime(2026, 7, 30, 12, 0, 5),
+        action_json={"action_type": "click", "confidence_float": "not-a-float"},
+    )
+
+    hydrated = hydrate_action(model)
+
+    assert hydrated.started_at == datetime(2026, 7, 30, 12, 0, 0)
+    assert hydrated.finished_at == datetime(2026, 7, 30, 12, 0, 5)
+
+
+def test_action_api_response_serializes_execution_timestamps() -> None:
+    action = Action(
+        action_type=ActionType.CLICK,
+        started_at=datetime(2026, 7, 30, 12, 0, 0),
+        finished_at=datetime(2026, 7, 30, 12, 0, 1),
+    )
+
+    payload = TypeAdapter(list[Action]).dump_python([action], mode="json")
+
+    assert payload[0]["started_at"] == "2026-07-30T12:00:00"
+    assert payload[0]["finished_at"] == "2026-07-30T12:00:01"
+
+
+def test_web_action_parse__no_element_id() -> None:
+    action_no_element_id = {
+        "action_type": "click",
+    }
+    with pytest.raises(ValidationError):
+        WebAction.model_validate(action_no_element_id)
+
+
+def test_web_action_parse__with_element_id() -> None:
+    action_no_element_id_str = {
+        "action_type": "click",
+        "element_id": "element_id",
+    }
+    action = WebAction.model_validate(action_no_element_id_str)
+    assert action.action_type == "click"
+    assert action.element_id == "element_id"
+
+    action_no_element_id_int = {
+        "action_type": "click",
+        "element_id": 1,
+    }
+    action = WebAction.model_validate(action_no_element_id_int)
+    assert action.action_type == "click"
+    assert action.element_id == "1"
+
+
+@pytest.mark.parametrize("key", ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"])
+def test_parse_keypress_valid_keys(key: str) -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "key": key, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.keys == [key]
+    assert action.element_id is None
+    assert action.skyvern_element_hash is None
+    assert action.skyvern_element_data is None
+
+
+def test_parse_keypress_invalid_key_returns_null_action() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "key": "Delete", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_close_page_with_tab_index() -> None:
+    action = parse_action(
+        action={"action_type": "CLOSE_PAGE", "tab_index": 3, "reasoning": "drop the extra tab"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClosePageAction)
+    assert action.tab_index == 3
+
+
+def test_parse_close_page_without_tab_index_defaults_to_current() -> None:
+    action = parse_action(
+        action={"action_type": "CLOSE_PAGE", "reasoning": "close current"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClosePageAction)
+    assert action.tab_index is None
+
+
+def test_parse_close_page_non_integer_tab_index_falls_back_to_current() -> None:
+    action = parse_action(
+        action={"action_type": "CLOSE_PAGE", "tab_index": "not-a-number", "reasoning": "bad index"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClosePageAction)
+    assert action.tab_index is None
+
+
+def test_parse_keypress_backward_compat_press_enter() -> None:
+    action = parse_action(
+        action={"action_type": "PRESS_ENTER", "key": "Enter", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.keys == ["Enter"]
+
+
+def test_parse_keypress_keys_list() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "keys": ["Enter"], "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.keys == ["Enter"]
+
+
+def test_parse_keypress_no_key_defaults_to_enter() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.keys == ["Enter"]
+
+
+def test_parse_keypress_repeat_field() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "key": "ArrowDown", "repeat": 3, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.keys == ["ArrowDown"]
+    assert action.repeat == 3
+
+
+def test_parse_keypress_repeat_defaults_to_one() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "key": "Enter", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.repeat == 1
+
+
+def test_parse_keypress_repeat_clamped_to_minimum_one() -> None:
+    action = parse_action(
+        action={"action_type": "KEYPRESS", "key": "Enter", "repeat": 0, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, KeypressAction)
+    assert action.repeat == 1
+
+
+def test_parse_click_double_click_true() -> None:
+    action = parse_action(
+        action={"action_type": "CLICK", "id": "1", "reasoning": "test", "double_click": True},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.repeat == 2
+
+
+def test_parse_click_double_click_false() -> None:
+    action = parse_action(
+        action={"action_type": "CLICK", "id": "1", "reasoning": "test", "double_click": False},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.repeat == 1
+
+
+def test_parse_click_no_double_click_field() -> None:
+    action = parse_action(
+        action={"action_type": "CLICK", "id": "1", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.repeat == 1
+
+
+@pytest.mark.parametrize("download_value", [None, False, True])
+def test_parse_select_option_download_field(download_value: bool | None) -> None:
+    """SELECT_OPTION must parse successfully even when LLM returns download: null (SKY-10453)."""
+    action = parse_action(
+        action={
+            "action_type": "SELECT_OPTION",
+            "id": "1",
+            "reasoning": "test",
+            "download": download_value,
+            "option": {"label": "Yes", "index": 1, "value": "Yes"},
+        },
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, SelectOptionAction)
+    expected = download_value if download_value is not None else False
+    assert action.download is expected
+
+
+def test_parse_unknown_action_type_raises_unsupported_action_type() -> None:
+    with pytest.raises(UnsupportedActionType):
+        parse_action(
+            action={"action_type": "INPUT", "id": "1", "reasoning": "test"},
+            scraped_page=_mock_scraped_page(),
+        )
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        {"action_type": "SELECT_OPTION", "id": "1", "reasoning": "test"},
+        {"action_type": "SELECT_OPTION", "id": "1", "reasoning": "test", "option": "Yes"},
+    ],
+    ids=["option_missing", "option_is_a_string"],
+)
+def test_parse_select_option_malformed_option_raises_value_error(action: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        parse_action(action=action, scraped_page=_mock_scraped_page())
+
+
+def test_parse_select_option_download_missing() -> None:
+    """SELECT_OPTION with no download key should default to False."""
+    action = parse_action(
+        action={
+            "action_type": "SELECT_OPTION",
+            "id": "1",
+            "reasoning": "test",
+            "option": {"label": "No", "index": 2, "value": "No"},
+        },
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, SelectOptionAction)
+    assert action.download is False
+
+
+@pytest.mark.parametrize(
+    "raw_action",
+    [
+        {"action_type": "INPUT_TEXT", "id": "1"},
+        {"action_type": "PASTE_TEXT", "id": "1"},
+        {"action_type": "UPLOAD_FILE", "id": "1"},
+        {"action_type": "DOWNLOAD_FILE"},
+        {"action_type": "SELECT_OPTION", "id": "1"},
+        {"action_type": "CHECKBOX", "id": "1"},
+    ],
+)
+def test_parse_actions_treats_missing_required_fields_as_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_action: dict[str, object],
+) -> None:
+    context = MagicMock()
+    context.totp_codes = {}
+    monkeypatch.setattr(
+        "skyvern.webeye.actions.parse_actions.skyvern_context.ensure_context",
+        lambda: context,
+    )
+    task = MagicMock()
+    task.task_id = "tsk_test"
+    task.organization_id = "org_test"
+    task.workflow_run_id = "wr_test"
+    task.data_extraction_goal = None
+    task.extracted_information_schema = None
+
+    with capture_logs() as logs:
+        actions = parse_actions(
+            task=task,
+            step_id="stp_test",
+            step_order=1,
+            scraped_page=_mock_scraped_page(),
+            json_response=[raw_action],
+        )
+
+    assert actions == []
+    assert [log["event"] for log in logs] == ["Invalid action"]
+    assert logs[0]["log_level"] == "warning"
+
+
+@pytest.mark.parametrize("download_value", [None, False, True])
+def test_parse_click_download_field(download_value: bool | None) -> None:
+    """CLICK must parse successfully even when LLM returns download: null (SKY-10453)."""
+    action = parse_action(
+        action={
+            "action_type": "CLICK",
+            "id": "1",
+            "reasoning": "test",
+            "download": download_value,
+        },
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    expected = download_value if download_value is not None else False
+    assert action.download is expected
+
+
+@pytest.mark.parametrize("action_type", ["EXTRACT_INFORMATION", "EXTRACT", "extract_information"])
+def test_parse_extract_information_with_extraction_goal(action_type: str) -> None:
+    schema = {"type": "object", "properties": {"price": {"type": "string"}}}
+    action = parse_action(
+        action={"action_type": action_type, "id": None, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+        data_extraction_goal="extract the price",
+        extracted_information_schema=schema,
+    )
+    assert isinstance(action, ExtractAction)
+    assert action.data_extraction_goal == "extract the price"
+    assert action.data_extraction_schema == schema
+    assert action.element_id is None
+    assert action.skyvern_element_hash is None
+    assert action.skyvern_element_data is None
+
+
+def test_parse_extract_information_clears_hallucinated_element_id() -> None:
+    action = parse_action(
+        action={"action_type": "EXTRACT_INFORMATION", "id": "42", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+        data_extraction_goal="extract the price",
+    )
+    assert isinstance(action, ExtractAction)
+    assert action.element_id is None
+
+
+def test_parse_extract_information_without_extraction_goal_returns_null_action() -> None:
+    action = parse_action(
+        action={"action_type": "EXTRACT_INFORMATION", "id": None, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_goto_url_valid_url() -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": None, "url": "https://example.com/a", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, GotoUrlAction)
+    assert action.url == "https://example.com/a"
+    assert action.element_id is None
+    assert action.skyvern_element_hash is None
+    assert action.skyvern_element_data is None
+    assert action.is_magic_link is False
+
+
+def test_parse_goto_url_prepends_https_scheme() -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": None, "url": "example.com/a", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, GotoUrlAction)
+    assert action.url == "https://example.com/a"
+
+
+def test_parse_goto_url_clears_hallucinated_element_id() -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": "7", "url": "https://example.com", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, GotoUrlAction)
+    assert action.element_id is None
+
+
+@pytest.mark.parametrize("url", [None, "", "ftp://example.com", "not a url"])
+def test_parse_goto_url_invalid_or_missing_url_returns_null_action(url: str | None) -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": None, "url": url, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_goto_url_without_url_key_returns_null_action() -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": None, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8000/admin",
+        "http://127.0.0.1/latest",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.5/internal",
+    ],
+)
+def test_parse_goto_url_blocked_host_returns_null_action(url: str) -> None:
+    action = parse_action(
+        action={"action_type": "GOTO_URL", "id": None, "url": url, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+@pytest.mark.parametrize("action_type", ["GOTO_URL", "NEW_TAB"])
+def test_parse_navigation_does_not_resolve_dns(monkeypatch: pytest.MonkeyPatch, action_type: str) -> None:
+    resolver = MagicMock(side_effect=AssertionError("action parsing must not resolve DNS"))
+    monkeypatch.setattr(
+        "skyvern.utils.url_validators.socket.getaddrinfo",
+        resolver,
+    )
+
+    action = parse_action(
+        action={"action_type": action_type, "url": "https://navigation.example.test", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+
+    assert isinstance(action, GotoUrlAction if action_type == "GOTO_URL" else NewTabAction)
+    resolver.assert_not_called()
+
+
+def test_parse_reload_page() -> None:
+    action = parse_action(
+        action={"action_type": "RELOAD_PAGE", "id": None, "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ReloadPageAction)
+    assert action.element_id is None
+
+
+def test_parse_new_tab_action_with_url() -> None:
+    action = parse_action(
+        action={"action_type": "NEW_TAB", "url": "https://example.test/page", "reasoning": "open a separate tab"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NewTabAction)
+    assert action.url == "https://example.test/page"
+    assert action.element_id is None
+
+
+def test_parse_new_tab_action_prepends_scheme() -> None:
+    action = parse_action(
+        action={"action_type": "NEW_TAB", "url": "example.test/page", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NewTabAction)
+    assert action.url == "https://example.test/page"
+
+
+def test_parse_new_tab_action_missing_url_returns_null() -> None:
+    action = parse_action(
+        action={"action_type": "NEW_TAB", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_new_tab_action_blocked_host_returns_null() -> None:
+    action = parse_action(
+        action={"action_type": "NEW_TAB", "url": "http://localhost:8000/admin", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_switch_tab_action_valid_index() -> None:
+    action = parse_action(
+        action={"action_type": "SWITCH_TAB", "tab_index": 1, "reasoning": "go back to first tab"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, SwitchTabAction)
+    assert action.tab_index == 1
+    assert action.element_id is None
+
+
+def test_parse_switch_tab_action_coerces_string_index() -> None:
+    action = parse_action(
+        action={"action_type": "SWITCH_TAB", "tab_index": "2", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, SwitchTabAction)
+    assert action.tab_index == 2
+
+
+def test_parse_switch_tab_action_missing_index_returns_null() -> None:
+    action = parse_action(
+        action={"action_type": "SWITCH_TAB", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_switch_tab_action_non_integer_index_returns_null() -> None:
+    action = parse_action(
+        action={"action_type": "SWITCH_TAB", "tab_index": "not-a-number", "reasoning": "test"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, NullAction)
+
+
+def test_parse_action_input_text_missing_text_never_types_the_prose_user_detail_answer() -> None:
+    # user_detail_answer is prose ("The user's full name is X"), not the bare literal value the
+    # field expects — falling back to it would enter the whole sentence into the form field.
+    prose_answer = "The user's full name is gHVRNk LZlM."
+    action = {
+        "action_type": "INPUT_TEXT",
+        "id": "AAAX",
+        "reasoning": "The 'Full name' field is a required text input.",
+        "user_detail_query": "What is the user's full name?",
+        "user_detail_answer": prose_answer,
+        "confidence_float": 1,
+    }
+    try:
+        result = parse_action(action=action, scraped_page=_mock_scraped_page())
+    except (KeyError, ValidationError):
+        # Both rejections keep the prose out of the field: KeyError from the historical
+        # action["text"] lookup, ValidationError since #15554 passes action.get("text")=None
+        # into the non-optional model field.
+        return
+    assert not (isinstance(result, InputTextAction) and result.text == prose_answer)
+
+
+def test_parse_actions_skips_non_object_entries_and_keeps_real_actions() -> None:
+    # A planner refusal repaired into the actions array arrives as prose fragments. They must
+    # be dropped without crashing, and the real action dicts alongside them must still parse.
+    now = datetime.now()
+    task = Task(
+        task_id="tsk_parse",
+        organization_id="o_test",
+        status=TaskStatus.running,
+        created_at=now,
+        modified_at=now,
+        url="https://example.com",
+    )
+    payload = [
+        "I cannot provide an action. The `actions` array will be empty.",
+        {"action_type": "CLICK", "id": "e1", "reasoning": "click the button"},
+        ["nested", "junk"],
+        None,
+    ]
+
+    with skyvern_context.scoped(SkyvernContext()):
+        actions = parse_actions(task, "stp_parse", 0, _mock_scraped_page(), payload)
+
+    assert [type(action) for action in actions] == [ClickAction]
+    assert actions[0].element_id == "e1"
+
+
+def test_tab_actions_registered_for_db_hydration() -> None:
+    from skyvern.forge.sdk.db.utils import ACTION_TYPE_TO_CLASS
+    from skyvern.webeye.actions.action_types import ActionType
+
+    assert ACTION_TYPE_TO_CLASS[ActionType.NEW_TAB] is NewTabAction
+    assert ACTION_TYPE_TO_CLASS[ActionType.SWITCH_TAB] is SwitchTabAction
+
+
+# ---------------------------------------------------------------------------
+# ClickContext.desired_state — level-triggered toggle intent (SKY-13916)
+# ---------------------------------------------------------------------------
+
+_CLICK_PROMPT_DIR = Path(__file__).parent.parent.parent / "skyvern" / "forge" / "prompts" / "skyvern"
+
+
+def test_click_context_desired_state_defaults_to_none() -> None:
+    assert ClickContext().desired_state is None
+    assert ClickContext(single_option_click=True).desired_state is None
+
+
+@pytest.mark.parametrize("desired_state", [True, False, None])
+def test_click_action_parse_roundtrips_desired_state(desired_state: bool | None) -> None:
+    action = parse_action(
+        action={
+            "action_type": "CLICK",
+            "element_id": "e1",
+            "reasoning": "toggle the control",
+            "click_context": {"single_option_click": False, "desired_state": desired_state},
+        },
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.click_context is not None
+    assert action.click_context.desired_state is desired_state
+
+
+def test_click_action_parse_legacy_without_click_context_is_none() -> None:
+    action = parse_action(
+        action={"action_type": "CLICK", "element_id": "e1", "reasoning": "click the button"},
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.click_context is None
+
+
+def test_click_action_parse_legacy_click_context_without_desired_state_is_none() -> None:
+    action = parse_action(
+        action={
+            "action_type": "CLICK",
+            "element_id": "e1",
+            "reasoning": "click the option",
+            "click_context": {"single_option_click": True},
+        },
+        scraped_page=_mock_scraped_page(),
+    )
+    assert isinstance(action, ClickAction)
+    assert action.click_context is not None
+    assert action.click_context.desired_state is None
+
+
+@pytest.mark.parametrize(
+    "template",
+    ["extract-action.j2", "extract-action-static.j2", "single-click-action.j2"],
+)
+def test_desired_state_documented_in_click_prompts(template: str) -> None:
+    # The planner prompts and the cached single-click re-derivation prompt must offer
+    # desired_state so the deterministic setup guard can read level-triggered toggle intent.
+    assert "desired_state" in (_CLICK_PROMPT_DIR / template).read_text()

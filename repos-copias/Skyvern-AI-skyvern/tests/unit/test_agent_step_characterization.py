@@ -1,0 +1,660 @@
+from __future__ import annotations
+
+import asyncio
+import base64
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from skyvern.exceptions import FailedToReloadPage, NoTOTPVerificationCodeFound, ScrapingFailedBlankPage
+from skyvern.forge import app
+from skyvern.forge.agent import ForgeAgent, StepPromptResult
+from skyvern.forge.sdk.api.llm.exceptions import LLMResponseMissingActionsError
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
+from skyvern.forge.sdk.models import Step, StepStatus
+from skyvern.forge.sdk.schemas.organizations import Organization
+from skyvern.forge.sdk.schemas.tasks import Task
+from skyvern.forge.sdk.workflow.models.block import BaseTaskBlock, FileDownloadBlock
+from skyvern.schemas.steps import AgentStepOutput
+from skyvern.webeye.actions.action_types import ActionType
+from skyvern.webeye.actions.actions import (
+    Action,
+    ClickAction,
+    CompleteAction,
+    DownloadFileAction,
+    ExtractAction,
+    TerminateAction,
+    WaitAction,
+)
+from skyvern.webeye.actions.models import DetailedAgentStepOutput
+from skyvern.webeye.actions.responses import ActionFailure, ActionResult, ActionSuccess
+from skyvern.webeye.scraper.scraped_page import ScrapedPage
+from tests.unit.helpers import make_browser_state, make_organization, make_step, make_task
+from tests.unit.scoped_asyncio import ScopedAsyncio
+
+
+def _click(element_id: str = "node-1") -> ClickAction:
+    return ClickAction(
+        element_id=element_id,
+        organization_id="org-123",
+        workflow_run_id="workflow-1",
+        task_id="task-123",
+        step_id="step-char",
+        step_order=0,
+        action_order=0,
+    )
+
+
+@dataclass
+class AgentStepRig:
+    agent: ForgeAgent
+    organization: Organization
+    task: Task
+    step: Step
+    browser_state: MagicMock
+    scraped_page: ScrapedPage
+    context: SkyvernContext
+    llm_handler: AsyncMock
+    action_handler: AsyncMock
+    update_statuses: list[StepStatus | None] = field(default_factory=list)
+
+    async def run(self, task_block: BaseTaskBlock | None = None) -> tuple[Step, DetailedAgentStepOutput]:
+        skyvern_context.set(self.context)
+        try:
+            return await self.agent.agent_step(
+                task=self.task,
+                step=self.step,
+                browser_state=self.browser_state,
+                organization=self.organization,
+                task_block=task_block,
+            )
+        finally:
+            skyvern_context.reset()
+
+
+def make_agent_step_rig(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    parsed_actions: list[Action] | None = None,
+    action_handler: AsyncMock | None = None,
+    injected_actions: list[Action] | None = None,
+    task_overrides: dict[str, Any] | None = None,
+    disable_user_goal_check: bool = True,
+) -> AgentStepRig:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    overrides: dict[str, Any] = {"navigation_goal": "Reach confirmation page", "workflow_run_id": "workflow-1"}
+    overrides.update(task_overrides or {})
+    task = make_task(now, organization, **overrides)
+    step = make_step(now, task, step_id="step-char", status=StepStatus.created, order=0, output=None)
+
+    browser_state, _, page = make_browser_state()
+    browser_state.must_get_working_page = AsyncMock(return_value=page)
+    browser_state.get_working_page = AsyncMock(return_value=page)
+    browser_state.reload_page = AsyncMock()
+
+    async def _dummy_cleanup(*_args, **_kwargs) -> list[dict]:
+        return []
+
+    scraped_page = ScrapedPage(
+        elements=[],
+        element_tree=[],
+        element_tree_trimmed=[],
+        _browser_state=browser_state,
+        _clean_up_func=_dummy_cleanup,
+        _scrape_exclude=None,
+    )
+    scraped_page.screenshots = [b"image"]
+
+    agent.build_and_record_step_prompt = AsyncMock(
+        return_value=StepPromptResult(
+            scraped_page=scraped_page,
+            extract_action_prompt="prompt",
+            use_caching=False,
+            prompt_name="extract-actions",
+            without_page_information=False,
+        )
+    )
+    json_response: dict[str, object] = {"actions": [{"action_type": "CLICK", "element_id": "node-1"}]}
+    agent.handle_potential_OTP_actions = AsyncMock(return_value=(json_response, []))
+
+    actions = parsed_actions if parsed_actions is not None else [_click()]
+    monkeypatch.setattr("skyvern.forge.agent.parse_actions", lambda *_, **__: actions)
+
+    if action_handler is None:
+        action_handler = AsyncMock(return_value=[ActionSuccess()])
+    monkeypatch.setattr("skyvern.forge.agent.ActionHandler.handle_action", action_handler)
+    agent.record_artifacts_after_action = AsyncMock()
+    agent.check_user_goal_complete = AsyncMock()
+
+    llm_handler = AsyncMock(return_value=json_response)
+    monkeypatch.setattr(
+        "skyvern.forge.agent.LLMAPIHandlerFactory.get_override_llm_api_handler",
+        lambda *_args, **_kwargs: llm_handler,
+    )
+    monkeypatch.setattr(
+        "skyvern.forge.agent.app.AGENT_FUNCTION.prepare_step_execution",
+        AsyncMock(return_value=injected_actions),
+    )
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.post_action_execution", AsyncMock())
+    monkeypatch.setattr("skyvern.forge.agent.asyncio", ScopedAsyncio(sleep=AsyncMock(return_value=None)))
+    monkeypatch.setattr("skyvern.forge.agent.random.uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr("skyvern.forge.agent.app.DATABASE.workflow_params.create_action", AsyncMock())
+    # Wait-time optimization is a cloud experiment (OSS/killswitch-off returns None).
+    # Pin that here so the rig never routes into the half-mocked experiment provider,
+    # which would cache a malformed WaitConfig in a module-global keyed by task_id and
+    # leak "coroutine never awaited" warnings / cross-test state.
+    monkeypatch.setattr("skyvern.forge.agent.get_or_create_wait_config", AsyncMock(return_value=None))
+
+    async def _flag(flag_name: str, *_args, **_kwargs) -> bool:
+        if flag_name == "DISABLE_USER_GOAL_CHECK":
+            return disable_user_goal_check
+        return False
+
+    monkeypatch.setattr(
+        "skyvern.forge.agent.app.EXPERIMENTATION_PROVIDER.is_feature_enabled_cached",
+        AsyncMock(side_effect=_flag),
+    )
+
+    update_statuses: list[StepStatus | None] = []
+
+    async def fake_update_step(
+        step: Step,
+        status: StepStatus | None = None,
+        output=None,
+        is_last: bool | None = None,
+        retry_index: int | None = None,
+        **_kwargs,
+    ) -> Step:
+        update_statuses.append(status)
+        if status is not None:
+            step.status = status
+        if output is not None:
+            step.output = output
+        return step
+
+    agent.update_step = AsyncMock(side_effect=fake_update_step)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    return AgentStepRig(
+        agent=agent,
+        organization=organization,
+        task=task,
+        step=step,
+        browser_state=browser_state,
+        scraped_page=scraped_page,
+        context=context,
+        llm_handler=llm_handler,
+        action_handler=action_handler,
+        update_statuses=update_statuses,
+    )
+
+
+@pytest.mark.asyncio
+async def test_injected_actions_from_prepare_step_execution_skip_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    injected = _click()
+    rig = make_agent_step_rig(monkeypatch, injected_actions=[injected])
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert rig.llm_handler.await_count == 0
+    assert rig.action_handler.await_count == 1
+    assert rig.action_handler.await_args.kwargs["action"] is injected
+    assert output.actions == [injected]
+
+
+@pytest.mark.asyncio
+async def test_agent_step_wires_file_download_false_click_eligibility(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[_click()])
+
+    await rig.run(task_block=FileDownloadBlock.model_construct(label="test", complete_on_download=False))
+
+    assert rig.action_handler.await_args.kwargs["file_download_false_click_eligible"] is True
+
+
+@pytest.mark.asyncio
+async def test_no_generated_actions_marks_step_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[])
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert rig.action_handler.await_count == 0
+    assert output.actions == []
+
+
+@pytest.mark.asyncio
+async def test_credited_dead_blank_recovery_persists_completed_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full path: a dead-blank scrape whose credited grace returns [] must NOT persist the step as
+    failed at the zero-action seam. execute_step's single complete-on-download seam owns the finalize
+    and task completion, so agent_step returns a completed step (no failed terminal step/metrics)."""
+    rig = make_agent_step_rig(monkeypatch)
+    rig.agent.build_and_record_step_prompt = AsyncMock(side_effect=ScrapingFailedBlankPage())
+    rig.agent._empty_page_recovery_plan = AsyncMock(return_value=[])  # credited complete-on-download
+
+    step, output = await rig.run(task_block=FileDownloadBlock.model_construct(label="dl", complete_on_download=True))
+
+    assert step.status == StepStatus.completed
+    assert StepStatus.failed not in rig.update_statuses
+    assert rig.action_handler.await_count == 0
+    assert output.actions == []
+
+
+@pytest.mark.asyncio
+async def test_totp_polling_timeout_produces_terminate_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = make_agent_step_rig(monkeypatch, task_overrides={"totp_identifier": "user@example.com"})
+    rig.agent.handle_potential_OTP_actions = AsyncMock(side_effect=NoTOTPVerificationCodeFound(task_id="task-123"))
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert output.actions is not None
+    assert output.actions[0].action_type == ActionType.TERMINATE
+    assert "totp_identifier=user@example.com" in output.actions[0].reasoning
+
+
+@pytest.mark.asyncio
+async def test_pdf_viewer_embed_generates_download_action(monkeypatch: pytest.MonkeyPatch) -> None:
+    pdf_bytes = b"%PDF-1.4 characterization"
+    pdf_src = "data:application/pdf;base64," + base64.b64encode(pdf_bytes).decode()
+    rig = make_agent_step_rig(monkeypatch)
+    monkeypatch.setattr(ScrapedPage, "check_pdf_viewer_embed", lambda self: pdf_src)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert output.actions is not None
+    action = output.actions[0]
+    assert isinstance(action, DownloadFileAction)
+    assert action.byte == pdf_bytes
+    assert action.download is True
+    assert len(rig.context.downloaded_pdf_sources) == 1
+
+
+@pytest.mark.asyncio
+async def test_wait_actions_skipped_when_batched_with_other_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    wait = WaitAction(seconds=3)
+    click = _click()
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[wait, click])
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert rig.action_handler.await_count == 1
+    assert output.actions_and_results is not None
+    assert [action for action, _ in output.actions_and_results] == [click]
+
+
+@pytest.mark.asyncio
+async def test_failed_action_marks_step_failed_and_skips_remaining(monkeypatch: pytest.MonkeyPatch) -> None:
+    first, second = _click("node-1"), _click("node-2")
+    # The stop-the-batch decision is driven by the RESULT's stop_execution_on_failure
+    # (default True), not by the action. Set it explicitly to pin the flag-driven path.
+    handler = AsyncMock(return_value=[ActionFailure(Exception("element vanished"), stop_execution_on_failure=True)])
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[first, second], action_handler=handler)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert handler.await_count == 1
+    # get_clean_detailed_output strips the (second, []) placeholder: only executed actions survive.
+    assert output.actions_and_results is not None
+    assert len(output.actions_and_results) == 1
+    assert output.actions_and_results[0][0] is first
+    assert output.actions_and_results[0][1][0].success is False
+
+
+@pytest.mark.asyncio
+async def test_failed_action_with_continue_flag_executes_remaining(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Mirror of the skip case: a failure result that opts out of stopping the batch
+    # (stop_execution_on_failure=False) lets the loop run every action.
+    first, second = _click("node-1"), _click("node-2")
+    handler = AsyncMock(return_value=[ActionFailure(Exception("transient"), stop_execution_on_failure=False)])
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[first, second], action_handler=handler)
+
+    step, output = await rig.run()
+
+    # A tolerated failure (stop_execution_on_failure=False) does not fail the step —
+    # every action runs and the step still completes.
+    assert step.status == StepStatus.completed
+    assert handler.await_count == 2
+    assert output.actions_and_results is not None
+    assert [action for action, _ in output.actions_and_results] == [first, second]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("skip", "expected_calls"), [(True, 1), (False, 2)])
+async def test_failed_action_skip_remaining_controls_duplicate_element_retry(
+    monkeypatch: pytest.MonkeyPatch, skip: bool, expected_calls: int
+) -> None:
+    first, duplicate = _click("node-1"), _click("node-1")
+    failure = ActionFailure(Exception("unverified click"))
+    failure.skip_remaining_actions = skip
+    action_handler = AsyncMock(return_value=[failure])
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[first, duplicate], action_handler=action_handler)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert action_handler.await_count == expected_calls
+    assert output.actions_and_results is not None
+    assert [action for action, _ in output.actions_and_results] == ([first] if skip else [first, duplicate])
+
+
+@pytest.mark.asyncio
+async def test_freetext_mismatch_failure_stops_duplicate_element_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression (SKY-13631 review): a free-text mismatch failure from the heal seam must terminally stop the
+    # batch even when a queued Submit targets the SAME element id (the duplicate-element-id branch). The heal
+    # builds its failures through _freetext_mismatch_failure, which sets skip_remaining_actions=True, so the
+    # loop marks the step failed and returns instead of continuing into the duplicate Submit.
+    from skyvern.exceptions import FreeTextInputMismatch
+    from skyvern.webeye.actions.handler import _freetext_mismatch_failure
+
+    input_action, submit = _click("node-1"), _click("node-1")  # same element id -> duplicate linked node
+    failure = _freetext_mismatch_failure(FreeTextInputMismatch(element_id="node-1", intended_length=30))
+    handler = AsyncMock(return_value=[failure])
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[input_action, submit], action_handler=handler)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert handler.await_count == 1  # the duplicate Submit was NOT dispatched
+    assert output.actions_and_results is not None
+    assert [action for action, _ in output.actions_and_results] == [input_action]
+
+
+@pytest.mark.asyncio
+async def test_skip_remaining_actions_stops_batch_but_step_completes(monkeypatch: pytest.MonkeyPatch) -> None:
+    first, second = _click("node-1"), _click("node-2")
+    handler = AsyncMock(return_value=[ActionResult(success=True, skip_remaining_actions=True)])
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[first, second], action_handler=handler)
+
+    step, _output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert handler.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_working_page_signal_reloads_and_skips_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = make_agent_step_rig(monkeypatch)
+    rig.context.refresh_working_page = True
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    rig.browser_state.reload_page.assert_awaited_once()
+    assert rig.action_handler.await_count == 0
+    assert output.actions_and_results is not None
+    assert output.actions_and_results[0][0].action_type == ActionType.RELOAD_PAGE
+    assert rig.context.refresh_working_page is False
+
+
+@pytest.mark.asyncio
+async def test_reload_action_window_encloses_the_reload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """started_at is captured BEFORE the reload, so the recorded window encloses it instead of
+    collapsing to a zero-duration stamp taken after the reload already finished."""
+    rig = make_agent_step_rig(monkeypatch)
+    rig.context.refresh_working_page = True
+    during_reload: list[datetime] = []
+
+    async def observed_reload() -> None:
+        await asyncio.sleep(0.01)
+        during_reload.append(datetime.now(UTC).replace(tzinfo=None))
+
+    rig.browser_state.reload_page = AsyncMock(side_effect=observed_reload)
+
+    _step, output = await rig.run()
+
+    assert during_reload, "reload side effect never ran; the test is not exercising the reload path"
+    assert output.actions_and_results is not None
+    reload_action = output.actions_and_results[0][0]
+    assert reload_action.started_at is not None and reload_action.finished_at is not None
+    assert reload_action.started_at <= during_reload[0] <= reload_action.finished_at
+
+
+@pytest.mark.asyncio
+async def test_unexpected_exception_returns_failed_step_instead_of_raising(monkeypatch: pytest.MonkeyPatch) -> None:
+    handler = AsyncMock(side_effect=RuntimeError("browser exploded"))
+    rig = make_agent_step_rig(monkeypatch, action_handler=handler)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert output.step_exception == "RuntimeError"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raised", "expected_log_method"),
+    [
+        (FailedToReloadPage("https://example.test", "Page.reload: Timeout 60000ms exceeded."), "warning"),
+        (LLMResponseMissingActionsError(["page_info"]), "warning"),
+        (RuntimeError("browser exploded"), "exception"),
+    ],
+)
+async def test_expected_step_failures_log_at_warning_and_other_exceptions_at_error(
+    monkeypatch: pytest.MonkeyPatch, raised: Exception, expected_log_method: str
+) -> None:
+    log = MagicMock()
+    monkeypatch.setattr("skyvern.forge.agent.LOG", log)
+    rig = make_agent_step_rig(monkeypatch, action_handler=AsyncMock(side_effect=raised))
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.failed
+    assert output.step_exception == type(raised).__name__
+    leveled = [call[0] for call in log.method_calls if call[0] in ("warning", "error", "exception")]
+    assert leveled == [expected_log_method]
+
+
+@pytest.mark.asyncio
+async def test_successful_complete_action_with_extraction_goal_appends_extract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    complete = CompleteAction(reasoning="goal reached")
+    rig = make_agent_step_rig(monkeypatch, parsed_actions=[complete])
+    monkeypatch.setattr("skyvern.forge.agent.app.DATABASE.tasks.get_task", AsyncMock(return_value=rig.task))
+    extract = ExtractAction(
+        reasoning="collect",
+        data_extraction_goal=rig.task.data_extraction_goal,
+        data_extraction_schema=None,
+    )
+    rig.agent.create_extract_action = AsyncMock(return_value=extract)
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    rig.agent.create_extract_action.assert_awaited_once()
+    assert rig.action_handler.await_count == 2
+    assert output.actions_and_results is not None
+    assert output.actions_and_results[-1][0] is extract
+
+
+@pytest.mark.asyncio
+async def test_parallel_verification_marks_speculative_original_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = make_agent_step_rig(monkeypatch, disable_user_goal_check=False)
+
+    step, _output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert step.speculative_original_status == StepStatus.completed
+
+
+# SKY-15xxx: TaskStatus.terminated requires a non-empty failure_reason (Task.validate_update).
+# get_failure_reason_for_task is the only source of that reason for a terminated task; either
+# empty path below used to return None, which handle_completed_step then handed straight to
+# update_task, tripping the invariant and crashing the step as an "unexpected exception".
+def _prime_blank_recovery(rig: AgentStepRig, *, survivors: list[str] | None = None, dead_url: str = ":") -> MagicMock:
+    """Make the step-body scrape raise a dead-blank error and shape the browser so recovery can
+    inspect a dead working page plus any survivors. Returns the dead working page mock."""
+    from skyvern.exceptions import ScrapingFailedBlankPage
+
+    dead_page = MagicMock()
+    dead_page.url = dead_url
+    dead_page.main_frame.child_frames = []
+    dead_page.is_closed.return_value = False
+    rig.browser_state.get_working_page = AsyncMock(return_value=dead_page)
+
+    pages = [dead_page]
+    for url in survivors or []:
+        survivor = MagicMock()
+        survivor.url = url
+        survivor.is_closed.return_value = False
+        pages.append(survivor)
+    rig.browser_state.list_valid_pages = AsyncMock(return_value=pages)
+
+    rig.agent.build_and_record_step_prompt = AsyncMock(side_effect=ScrapingFailedBlankPage())
+    return dead_page
+
+
+@pytest.mark.asyncio
+async def test_dead_blank_working_page_recovers_by_injecting_internal_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A ":" working page with one http survivor: the step's plan is exactly one internal-recovery
+    # ClosePageAction, synthesized with no action-plan LLM call, and the step completes.
+    rig = make_agent_step_rig(monkeypatch)
+    _prime_blank_recovery(rig, survivors=["https://survivor.test/app"])
+
+    step, output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert rig.llm_handler.await_count == 0
+    assert output.actions is not None
+    assert len(output.actions) == 1
+    close = output.actions[0]
+    assert close.action_type == ActionType.CLOSE_PAGE
+    assert close.is_internal_recovery is True
+    assert rig.action_handler.await_args.kwargs["action"] is close
+    assert rig.context.empty_page_recovery_step_id == step.step_id
+    assert rig.context.empty_page_recovery_attempts[rig.task.task_id] == 1
+
+
+@pytest.mark.asyncio
+async def test_dead_blank_without_http_survivor_reraises_to_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skyvern.exceptions import ScrapingFailedBlankPage
+
+    # No usable survivor -> ineligible -> the original blank exception propagates to the terminal
+    # handler, and nothing (no LLM, no action) is executed.
+    rig = make_agent_step_rig(monkeypatch)
+    _prime_blank_recovery(rig, survivors=[])
+
+    with pytest.raises(ScrapingFailedBlankPage):
+        await rig.run()
+    assert rig.llm_handler.await_count == 0
+    assert rig.action_handler.await_count == 0
+    assert rig.task.task_id not in rig.context.empty_page_recovery_attempts
+
+
+@pytest.mark.asyncio
+async def test_dead_blank_recovery_cap_reraises_after_three_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skyvern.exceptions import ScrapingFailedBlankPage
+
+    rig = make_agent_step_rig(monkeypatch)
+    _prime_blank_recovery(rig, survivors=["https://survivor.test/app"])
+    rig.context.empty_page_recovery_attempts[rig.task.task_id] = 3
+
+    with pytest.raises(ScrapingFailedBlankPage):
+        await rig.run()
+    # The cap was already consumed; a 4th detection declines rather than injecting again.
+    assert rig.action_handler.await_count == 0
+    assert rig.context.empty_page_recovery_attempts[rig.task.task_id] == 3
+
+
+@pytest.mark.asyncio
+async def test_speculative_plan_consumption_resets_recovery_attempt_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skyvern.forge.agent import SpeculativePlan
+
+    # A step that consumes a successfully-scraped speculative plan (parallel-verification path) is a
+    # successful scrape too, so it must reset the per-task recovery counter — otherwise the
+    # "consecutive" cap silently becomes cumulative across non-adjacent blank incidents.
+    rig = make_agent_step_rig(monkeypatch)
+    rig.agent._persist_scrape_artifacts = AsyncMock()
+    rig.context.empty_page_recovery_attempts[rig.task.task_id] = 2
+    rig.context.speculative_plans[rig.step.step_id] = SpeculativePlan(
+        scraped_page=rig.scraped_page,
+        extract_action_prompt="prompt",
+        use_caching=False,
+        llm_json_response={"actions": [{"action_type": "CLICK", "element_id": "node-1"}]},
+    )
+
+    step, _output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert rig.task.task_id not in rig.context.empty_page_recovery_attempts
+
+
+@pytest.mark.asyncio
+async def test_non_blank_scrape_failure_is_not_recovered(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skyvern.exceptions import ScrapingFailed
+
+    # A generic scrape failure (not a dead blank) must propagate untouched: recovery only ever adds a
+    # path for the blank signature, never intercepts other terminal scrape errors.
+    rig = make_agent_step_rig(monkeypatch)
+    rig.agent.build_and_record_step_prompt = AsyncMock(side_effect=ScrapingFailed())
+
+    with pytest.raises(ScrapingFailed):
+        await rig.run()
+    assert rig.action_handler.await_count == 0
+    assert rig.task.task_id not in rig.context.empty_page_recovery_attempts
+
+
+@pytest.mark.asyncio
+async def test_successful_scrape_resets_recovery_attempt_counter(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A normal (non-blank) step-body scrape clears a prior task's recovery counter so the next dead
+    # blank starts from a fresh budget.
+    rig = make_agent_step_rig(monkeypatch)
+    rig.context.empty_page_recovery_attempts[rig.task.task_id] = 2
+
+    step, _output = await rig.run()
+
+    assert step.status == StepStatus.completed
+    assert rig.task.task_id not in rig.context.empty_page_recovery_attempts
+
+
+@pytest.mark.asyncio
+async def test_get_failure_reason_for_task_falls_back_when_terminate_reasoning_is_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    terminate = TerminateAction(reasoning=None, organization_id=organization.organization_id, task_id=task.task_id)
+    output = AgentStepOutput(actions_and_results=[(terminate, [])])
+    step = make_step(now, task, step_id="step-0", status=StepStatus.completed, order=0, output=output)
+    monkeypatch.setattr(app.DATABASE.tasks, "get_task_steps", AsyncMock(return_value=[step]))
+
+    reason = await ForgeAgent().get_failure_reason_for_task(task)
+
+    assert reason
+
+
+@pytest.mark.asyncio
+async def test_get_failure_reason_for_task_falls_back_when_no_terminate_action_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    step = make_step(now, task, step_id="step-0", status=StepStatus.completed, order=0, output=None)
+    monkeypatch.setattr(app.DATABASE.tasks, "get_task_steps", AsyncMock(return_value=[step]))
+
+    reason = await ForgeAgent().get_failure_reason_for_task(task)
+
+    assert reason

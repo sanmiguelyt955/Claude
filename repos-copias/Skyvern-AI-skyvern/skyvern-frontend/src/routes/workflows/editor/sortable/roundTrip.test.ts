@@ -1,0 +1,891 @@
+import type { Edge } from "@xyflow/react";
+import { describe, expect, test } from "vitest";
+import { parse, stringify } from "yaml";
+
+import { ProxyLocation } from "@/api/types";
+import {
+  applySettingsPatch,
+  buildWorkflowSaveRequest,
+  buildWorkflowYamlDocument,
+} from "../workflowYamlDocument";
+import { yamlCommitInputs } from "../workflowVersionFromSaveData";
+
+import type { AppNode } from "../nodes";
+import {
+  getElements,
+  convert,
+  getWorkflowBlocks,
+  getWorkflowSettings,
+} from "../workflowEditorUtils";
+import {
+  type AWSSecretParameter,
+  type CodeBlock,
+  type EmailInboxBlock,
+  type OutputParameter,
+  type SendEmailBlock,
+  type WorkflowBlock,
+  type WorkflowApiResponse,
+  type WorkflowParameter,
+  type WorkflowSettings,
+} from "../../types/workflowTypes";
+import type {
+  CodeBlockYAML,
+  WorkflowCreateYAMLRequest,
+} from "../../types/workflowYamlTypes";
+
+import { rewireBlockDropInScope } from "./rewire";
+import { TOP_LEVEL_SCOPE } from "./scope";
+
+describe("send email SMTP round trip", () => {
+  test.each([
+    { kind: "placeholders", placeholder: true },
+    { kind: "declared secrets", placeholder: false },
+  ])("clearing a custom host handles $kind", ({ placeholder }) => {
+    const smtpParameter = (name: string): AWSSecretParameter => ({
+      parameter_type: "aws_secret",
+      key: placeholder ? name : `existing_${name}`,
+      description: null,
+      aws_key: placeholder ? "UNUSED_CUSTOM_SMTP_PLACEHOLDER" : name,
+      aws_secret_parameter_id: `secret_${name}`,
+      workflow_id: "wf-fixture",
+      created_at: "2026-04-20T00:00:00Z",
+      modified_at: "2026-04-20T00:00:00Z",
+      deleted_at: null,
+    });
+    const block: SendEmailBlock = {
+      block_type: "send_email",
+      label: "send_email",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: makeOutputParameter("send_email"),
+      sender: "sender@example.com",
+      recipients: ["recipient@example.com"],
+      subject: "Workflow complete",
+      body: "<p>Workflow complete</p>",
+      body_format: "html",
+      file_attachments: [],
+      custom_smtp_host: "smtp.example.com",
+      custom_smtp_port: 587,
+      smtp_host: smtpParameter("smtp_host"),
+      smtp_port: smtpParameter("smtp_port"),
+      smtp_username: smtpParameter("smtp_username"),
+      smtp_password: smtpParameter("smtp_password"),
+    };
+
+    const { nodes, edges } = getElements([block], DEFAULT_SETTINGS, true);
+    const emailNode = nodes.find((node) => node.type === "sendEmail");
+    if (!emailNode || emailNode.type !== "sendEmail") {
+      throw new Error("Send Email node was not loaded");
+    }
+    emailNode.data.customSmtpHost = "";
+
+    const [savedFromEditor] = getWorkflowBlocks(nodes, edges);
+    const [savedFromDefinition] = convert({
+      workflow_definition: {
+        version: 2,
+        parameters: [],
+        blocks: [{ ...block, custom_smtp_host: "" }],
+      },
+    } as unknown as WorkflowApiResponse).workflow_definition.blocks;
+    for (const saved of [savedFromEditor, savedFromDefinition]) {
+      expect(saved).toMatchObject({
+        block_type: "send_email",
+        custom_smtp_host: "",
+        custom_smtp_port: 587,
+        body_format: "html",
+        smtp_host_secret_parameter_key: placeholder
+          ? undefined
+          : "existing_smtp_host",
+        smtp_port_secret_parameter_key: placeholder
+          ? undefined
+          : "existing_smtp_port",
+        smtp_username_secret_parameter_key: placeholder
+          ? undefined
+          : "existing_smtp_username",
+        smtp_password_secret_parameter_key: placeholder
+          ? undefined
+          : "existing_smtp_password",
+      });
+    }
+  });
+});
+
+describe("send email Gmail round trip", () => {
+  test("the editor and the definition save the same Gmail fields and keep a template with commas as one entry", () => {
+    const placeholder = (name: string): AWSSecretParameter => ({
+      parameter_type: "aws_secret",
+      key: `gmail-unused-${name}`,
+      description: null,
+      aws_key: "UNUSED_CUSTOM_SMTP_PLACEHOLDER",
+      aws_secret_parameter_id: `placeholder_${name}`,
+      workflow_id: "",
+      created_at: "2026-04-20T00:00:00Z",
+      modified_at: "2026-04-20T00:00:00Z",
+      deleted_at: null,
+    });
+    const entries = [
+      "{{ addresses | join(',') }}",
+      "{% for address in [primary, backup] %}{{ address }};{% endfor %}",
+      "second@example.com",
+    ];
+    const gmailFields = {
+      block_type: "send_email" as const,
+      transport: "gmail" as const,
+      credential_id: "goac_send",
+      sender: "",
+      recipients: entries,
+      cc: entries,
+      bcc: ["bcc@example.com"],
+      subject: "Report {{ current_value }}",
+      body: "<p>Done</p>",
+      body_format: "html" as const,
+      file_attachments: ["{{ reports | join(',') }}"],
+    };
+    const block: SendEmailBlock = {
+      ...gmailFields,
+      label: "send_email",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: makeOutputParameter("send_email"),
+      smtp_host: placeholder("smtp_host"),
+      smtp_port: placeholder("smtp_port"),
+      smtp_username: placeholder("smtp_username"),
+      smtp_password: placeholder("smtp_password"),
+    };
+
+    const { nodes, edges } = getElements([block], DEFAULT_SETTINGS, true);
+    const [savedFromEditor] = getWorkflowBlocks(nodes, edges);
+    const [savedFromDefinition] = convert({
+      workflow_definition: { version: 2, parameters: [], blocks: [block] },
+    } as unknown as WorkflowApiResponse).workflow_definition.blocks;
+
+    for (const saved of [savedFromEditor, savedFromDefinition]) {
+      expect(saved).toMatchObject(gmailFields);
+    }
+  });
+});
+
+/**
+ * M1 round-trip regression: mirrors the full reorder → save → reload path
+ * that ships in FlowRenderer. The goal is to catch regressions anywhere
+ * along the chain — SortableContext ordering, edge rewire, getWorkflowBlocks
+ * serialization, or getElements edge reconstruction — without standing up
+ * the full React/react-flow renderer.
+ *
+ * Pipeline under test (see AC on SKY-9056):
+ *   SortableContext → edge rewire (rewire.ts) → constructSaveData
+ *   (FlowRenderer.tsx:536) → YAML via getWorkflowBlocks
+ *   (workflowEditorUtils.ts:2806) → reload → edge reconstruction
+ *   via getElements (workflowEditorUtils.ts:1523).
+ *
+ * We also assert the invariants enforced by backend `_build_loop_graph`
+ * (skyvern/forge/sdk/workflow/models/block.py:1834) so the produced shape
+ * cannot drift into something the backend rejects: unique labels, every
+ * `next_block_label` resolves, exactly one root, no cycles.
+ */
+
+const DEFAULT_SETTINGS: WorkflowSettings = {
+  proxyLocation: ProxyLocation.Residential,
+  webhookCallbackUrl: null,
+  totpVerificationUrl: null,
+  totpIdentifier: null,
+  adaptiveCaching: false,
+  generateScriptOnTerminal: false,
+  persistBrowserSession: false,
+  reuseBrowserSession: false,
+  pinSavedSessionIp: false,
+  browserProfileId: null,
+  browserProfileKey: null,
+  model: null,
+  maxScreenshotScrolls: null,
+  maxElapsedTimeMinutes: null,
+  extraHttpHeaders: null,
+  cdpConnectHeaders: null,
+  runWith: "code",
+  codeVersion: 2,
+  scriptCacheKey: null,
+  aiFallback: true,
+  maskSecrets: false,
+  runSequentially: false,
+  sequentialKey: null,
+  finallyBlockLabel: null,
+  workflowSystemPrompt: null,
+  errorCodeMapping: null,
+  retryPolicy: null,
+};
+
+function makeOutputParameter(label: string): OutputParameter {
+  return {
+    parameter_type: "output",
+    key: `${label}_output`,
+    description: null,
+    output_parameter_id: `op-${label}`,
+    workflow_id: "wf-fixture",
+    created_at: "2026-04-20T00:00:00Z",
+    modified_at: "2026-04-20T00:00:00Z",
+    deleted_at: null,
+  };
+}
+
+function makeWorkflowParameter(key: string): WorkflowParameter {
+  return {
+    parameter_type: "workflow",
+    key,
+    description: null,
+    workflow_id: "wf-fixture",
+    workflow_parameter_id: `wp-${key}`,
+    workflow_parameter_type: "string",
+    default_value: "",
+    created_at: "2026-04-20T00:00:00Z",
+    modified_at: "2026-04-20T00:00:00Z",
+    deleted_at: null,
+  };
+}
+
+function makeCodeBlock(
+  label: string,
+  nextBlockLabel: string | null,
+): CodeBlock {
+  return {
+    label,
+    block_type: "code",
+    continue_on_failure: false,
+    model: null,
+    next_block_label: nextBlockLabel,
+    output_parameter: makeOutputParameter(label),
+    code: `# ${label}`,
+    parameters: [],
+    error_code_mapping: null,
+  };
+}
+
+function makeEmailInboxBlock(
+  label: string,
+  parameters: Array<WorkflowParameter>,
+): EmailInboxBlock {
+  return {
+    label,
+    block_type: "email_inbox",
+    continue_on_failure: false,
+    model: null,
+    next_block_label: null,
+    output_parameter: makeOutputParameter(label),
+    email_client: "outlook",
+    credential_id: "{{ microsoft_credential_id }}",
+    folder: "Inbox",
+    prompt: "",
+    sender: null,
+    subject: null,
+    newer_than_days: null,
+    max_results: 25,
+    include_body: true,
+    download_attachments: false,
+    parameters,
+  };
+}
+
+/** Flat 5-block fixture: B1 → B2 → B3 → B4 → B5. */
+function buildFiveBlockFixture(): Array<WorkflowBlock> {
+  return [
+    makeCodeBlock("B1", "B2"),
+    makeCodeBlock("B2", "B3"),
+    makeCodeBlock("B3", "B4"),
+    makeCodeBlock("B4", "B5"),
+    makeCodeBlock("B5", null),
+  ];
+}
+
+function findNodeIdByLabel(nodes: Array<AppNode>, label: string): string {
+  const match = nodes.find(
+    (node) =>
+      node.type !== "start" &&
+      node.type !== "nodeAdder" &&
+      "data" in node &&
+      node.data &&
+      typeof node.data === "object" &&
+      "label" in node.data &&
+      (node.data as { label?: unknown }).label === label,
+  );
+  if (!match) {
+    throw new Error(`fixture missing node for label ${label}`);
+  }
+  return match.id;
+}
+
+function chainFromSavedBlocks(
+  blocks: Array<{ label: string; next_block_label?: string | null }>,
+): Array<string> {
+  if (blocks.length === 0) return [];
+  const byLabel = new Map<string, (typeof blocks)[number]>();
+  for (const block of blocks) byLabel.set(block.label, block);
+
+  // Root: a block with no incoming next_block_label from any other block.
+  const referenced = new Set<string>();
+  for (const block of blocks) {
+    if (block.next_block_label) referenced.add(block.next_block_label);
+  }
+  const roots = blocks
+    .map((b) => b.label)
+    .filter((label) => !referenced.has(label));
+  if (roots.length !== 1) {
+    throw new Error(
+      `expected exactly one root block, found ${roots.length}: ${roots.join(", ")}`,
+    );
+  }
+
+  const chain: Array<string> = [];
+  const visited = new Set<string>();
+  let cursor: string | null = roots[0] ?? null;
+  while (cursor !== null) {
+    if (visited.has(cursor)) {
+      throw new Error(`cycle detected at ${cursor}`);
+    }
+    visited.add(cursor);
+    chain.push(cursor);
+    const block = byLabel.get(cursor);
+    cursor = block?.next_block_label ?? null;
+  }
+  return chain;
+}
+
+/**
+ * Mirror of `_build_loop_graph`'s safety checks on the frontend side so we
+ * can assert the saved YAML is shaped in a way the backend will accept.
+ * Duplicates, dangling targets, missing root, and cycles all throw — and
+ * each throw reproduces the backend's exact failure mode for that YAML.
+ */
+function assertBackendBuildLoopGraphAccepts(
+  blocks: Array<{ label: string; next_block_label?: string | null }>,
+): void {
+  const labels = new Set<string>();
+  for (const block of blocks) {
+    if (labels.has(block.label)) {
+      throw new Error(`duplicate block label: ${block.label}`);
+    }
+    labels.add(block.label);
+  }
+  for (const block of blocks) {
+    const next = block.next_block_label;
+    if (next && !labels.has(next)) {
+      throw new Error(
+        `block ${block.label} references unknown next_block_label ${next}`,
+      );
+    }
+  }
+  // `chainFromSavedBlocks` enforces the single-root and acyclic invariants.
+  const chain = chainFromSavedBlocks(blocks);
+  if (chain.length !== blocks.length) {
+    throw new Error(
+      `chain walk covered ${chain.length} of ${blocks.length} blocks — disconnected graph`,
+    );
+  }
+}
+
+function codeYamlToWorkflowBlock(yaml: CodeBlockYAML): CodeBlock {
+  // getElements expects WorkflowBlock shapes. The YAML form omits the
+  // output_parameter (that lives on the workflow record) and carries
+  // parameter_keys instead of full parameters. The reload simulation below
+  // re-hydrates exactly the fields getElements reads.
+  return {
+    label: yaml.label,
+    block_type: "code",
+    continue_on_failure: yaml.continue_on_failure ?? false,
+    next_loop_on_failure: yaml.next_loop_on_failure,
+    model: null,
+    next_block_label: yaml.next_block_label ?? null,
+    output_parameter: makeOutputParameter(yaml.label),
+    code: yaml.code,
+    parameters: [],
+    error_code_mapping: yaml.error_code_mapping,
+  };
+}
+
+function reloadFromSavedYaml(
+  saved: Array<{ label: string; block_type: string }>,
+): { nodes: Array<AppNode>; edges: Array<Edge> } {
+  const blocks = saved.map((block) => {
+    if (block.block_type !== "code") {
+      throw new Error(`fixture only uses code blocks, got ${block.block_type}`);
+    }
+    return codeYamlToWorkflowBlock(block as CodeBlockYAML);
+  });
+  return getElements(blocks, DEFAULT_SETTINGS, true);
+}
+
+describe("round-trip reorder → save → reload (M1 top-level)", () => {
+  test("email inbox preserves parameter keys across load and save", () => {
+    const credentialParameter = makeWorkflowParameter(
+      "microsoft_credential_id",
+    );
+    const initialBlocks: Array<WorkflowBlock> = [
+      makeEmailInboxBlock("Read Inbox", [credentialParameter]),
+    ];
+
+    const { nodes, edges } = getElements(initialBlocks, DEFAULT_SETTINGS, true);
+
+    const emailNode = nodes.find((node) => node.type === "emailInbox");
+    expect(emailNode?.data).toMatchObject({
+      parameterKeys: ["microsoft_credential_id"],
+      downloadAttachments: false,
+    });
+
+    const saved = getWorkflowBlocks(nodes, edges);
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      block_type: "email_inbox",
+      parameter_keys: ["microsoft_credential_id"],
+      download_attachments: false,
+    });
+  });
+
+  test("code manifest preserves opaque keys through API, node, save, YAML, and reload", () => {
+    const codeBlock = makeCodeBlock("Guard Output", null);
+    codeBlock.error_code_mapping = {
+      lowercase_missing_output: "when output is absent",
+      "opaque.code-v1": "when the opaque condition occurs",
+    };
+
+    const { nodes, edges } = getElements([codeBlock], DEFAULT_SETTINGS, true);
+    const codeNode = nodes.find((candidate) => candidate.type === "codeBlock");
+    expect(codeNode?.data).toMatchObject({
+      errorCodeMapping: JSON.stringify(codeBlock.error_code_mapping, null, 2),
+    });
+
+    const saved = getWorkflowBlocks(nodes, edges);
+    expect(saved[0]).toMatchObject({
+      error_code_mapping: codeBlock.error_code_mapping,
+    });
+    expect(saved[0]).not.toHaveProperty("error_code");
+
+    const exported = convert({
+      workflow_definition: { version: 2, parameters: [], blocks: [codeBlock] },
+    } as unknown as WorkflowApiResponse).workflow_definition.blocks[0];
+    expect(exported).toMatchObject({
+      error_code_mapping: codeBlock.error_code_mapping,
+    });
+    expect(exported).not.toHaveProperty("error_code");
+
+    const reloaded = reloadFromSavedYaml(saved);
+    expect(getWorkflowBlocks(reloaded.nodes, reloaded.edges)[0]).toMatchObject({
+      error_code_mapping: codeBlock.error_code_mapping,
+    });
+  });
+
+  test("code manifest normalizes absent API fields to the disabled null state", () => {
+    const codeBlock = makeCodeBlock("No Manifest", null);
+    delete (codeBlock as Partial<CodeBlock>).error_code_mapping;
+
+    const { nodes, edges } = getElements([codeBlock], DEFAULT_SETTINGS, true);
+    const codeNode = nodes.find((candidate) => candidate.type === "codeBlock");
+    expect(codeNode?.data).toMatchObject({ errorCodeMapping: "null" });
+    expect(codeNode?.data).not.toHaveProperty("errorCode");
+    expect(getWorkflowBlocks(nodes, edges)[0]).toMatchObject({
+      error_code_mapping: null,
+    });
+  });
+
+  test("nested loop code manifest survives save and reload", () => {
+    const nestedCode = makeCodeBlock("Nested Guard", null);
+    nestedCode.parameters = [makeWorkflowParameter("items")];
+    nestedCode.error_code_mapping = {
+      nested_lowercase: "when the nested condition occurs",
+    };
+    const loop = {
+      label: "FOR1",
+      block_type: "for_loop",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: makeOutputParameter("FOR1"),
+      loop_over: { key: "items" },
+      loop_blocks: [nestedCode],
+      loop_variable_reference: null,
+      complete_if_empty: false,
+      data_schema: null,
+    } as unknown as WorkflowBlock;
+
+    const first = getElements([loop], DEFAULT_SETTINGS, true);
+    const firstSaved = getWorkflowBlocks(first.nodes, first.edges)[0] as {
+      loop_blocks: Array<CodeBlockYAML>;
+    };
+    expect(firstSaved.loop_blocks[0]?.error_code_mapping).toEqual(
+      nestedCode.error_code_mapping,
+    );
+    expect(firstSaved.loop_blocks[0]).not.toHaveProperty("error_code");
+
+    const input = {
+      workflow: {
+        status: "published",
+        is_saved_task: false,
+      } as WorkflowApiResponse,
+      settings: DEFAULT_SETTINGS,
+      title: "Loop workflow",
+      description: null,
+      blocks: getWorkflowBlocks(first.nodes, first.edges),
+      parameters: [],
+      definitionVersion: 2,
+    };
+    const yaml = stringify(buildWorkflowYamlDocument(input));
+    const committed = yamlCommitInputs<
+      WorkflowCreateYAMLRequest["workflow_definition"]
+    >(parse(yaml), yaml);
+    const saved = parse(
+      stringify(
+        buildWorkflowSaveRequest({
+          ...input,
+          blocks: committed.definition.blocks,
+          parameters: committed.definition.parameters,
+          settings: applySettingsPatch(input.settings, committed.settingsPatch),
+          workflowDefinitionVersion: 2,
+        }),
+      ),
+    );
+    expect(saved.workflow_definition.blocks).toEqual(input.blocks);
+    expect(
+      saved.workflow_definition.blocks[0].loop_blocks[0].parameter_keys,
+    ).toEqual(["items"]);
+  });
+
+  test("drag B3 above B1 persists as B3 → B1 → B2 → B4 → B5 chain", () => {
+    // 1. Load the workflow: YAML-like blocks → nodes + edges via getElements.
+    const initialBlocks = buildFiveBlockFixture();
+    const { nodes, edges } = getElements(initialBlocks, DEFAULT_SETTINGS, true);
+
+    const initialSaved = getWorkflowBlocks(nodes, edges);
+    expect(initialSaved.map((b) => b.label)).toEqual([
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+    ]);
+    expect(chainFromSavedBlocks(initialSaved)).toEqual([
+      "B1",
+      "B2",
+      "B3",
+      "B4",
+      "B5",
+    ]);
+
+    const b1Id = findNodeIdByLabel(nodes, "B1");
+    const b3Id = findNodeIdByLabel(nodes, "B3");
+
+    // 2. Simulate drag: drop B3 onto B1's slot (moves B3 above B1).
+    const rewire = rewireBlockDropInScope({
+      nodes,
+      edges,
+      scope: TOP_LEVEL_SCOPE,
+      activeId: b3Id,
+      overId: b1Id,
+    });
+    expect(rewire).not.toBeNull();
+
+    // 3. Save: feed the rewired edges back through getWorkflowBlocks.
+    const savedAfterDrop = getWorkflowBlocks(nodes, rewire!.edges);
+    expect(savedAfterDrop.map((b) => b.label)).toEqual([
+      "B3",
+      "B1",
+      "B2",
+      "B4",
+      "B5",
+    ]);
+
+    // 4. Chain order is the invariant we ship — the backend walks
+    //    next_block_label to execute blocks, so this is ground truth.
+    expect(chainFromSavedBlocks(savedAfterDrop)).toEqual([
+      "B3",
+      "B1",
+      "B2",
+      "B4",
+      "B5",
+    ]);
+
+    // 5. Backend `_build_loop_graph` invariants hold on the saved YAML.
+    expect(() =>
+      assertBackendBuildLoopGraphAccepts(savedAfterDrop),
+    ).not.toThrow();
+
+    // 6. Reload: feed the saved YAML back through getElements, save again,
+    //    and assert the chain is stable. Catches edge-reconstruction bugs
+    //    where the reloaded graph drifts from its persisted form.
+    const { nodes: reloadedNodes, edges: reloadedEdges } =
+      reloadFromSavedYaml(savedAfterDrop);
+    const savedAfterReload = getWorkflowBlocks(reloadedNodes, reloadedEdges);
+    expect(chainFromSavedBlocks(savedAfterReload)).toEqual([
+      "B3",
+      "B1",
+      "B2",
+      "B4",
+      "B5",
+    ]);
+    expect(() =>
+      assertBackendBuildLoopGraphAccepts(savedAfterReload),
+    ).not.toThrow();
+  });
+
+  test("after drag + reload the workflow start edge targets the chain root, not blocks[0]", () => {
+    // Repro for the screenshot in D0AJR0MCVJ9 thread 1778566586.727119:
+    // drag B3 above B1, save, reload. The previous bug emitted blocks[] in
+    // node-array order ([B1,B2,B3,B4,B5]) so getElements connected the
+    // workflow start to blocks[0] = B1 while B3 (the real chain root) hung
+    // as a floating block with a single B3 -> B1 edge.
+    const initialBlocks = buildFiveBlockFixture();
+    const { nodes, edges } = getElements(initialBlocks, DEFAULT_SETTINGS, true);
+
+    const b1Id = findNodeIdByLabel(nodes, "B1");
+    const b3Id = findNodeIdByLabel(nodes, "B3");
+
+    const rewire = rewireBlockDropInScope({
+      nodes,
+      edges,
+      scope: TOP_LEVEL_SCOPE,
+      activeId: b3Id,
+      overId: b1Id,
+    });
+    expect(rewire).not.toBeNull();
+
+    const savedAfterDrop = getWorkflowBlocks(nodes, rewire!.edges);
+    // Lock array order: the chain root must be first so the loader's
+    // blocks[0] read at workflowEditorUtils.ts:1863 picks it up.
+    expect(savedAfterDrop[0]!.label).toBe("B3");
+
+    const { nodes: reloadedNodes, edges: reloadedEdges } =
+      reloadFromSavedYaml(savedAfterDrop);
+    const startNode = reloadedNodes.find(
+      (n) => n.type === "start" && !n.parentId,
+    );
+    expect(startNode).toBeDefined();
+
+    const edgesFromStart = reloadedEdges.filter(
+      (e) => e.source === startNode!.id,
+    );
+    expect(edgesFromStart).toHaveLength(1);
+
+    const reloadedB3 = findNodeIdByLabel(reloadedNodes, "B3");
+    expect(edgesFromStart[0]!.target).toBe(reloadedB3);
+
+    // B3 must have exactly one inbound chain edge - if blocks[0] were stale
+    // and the loader emitted both start -> B1 and B3 -> B1, B3 itself would
+    // have zero inbound edges (the floating orphan case).
+    const inboundToB3 = reloadedEdges.filter((e) => e.target === reloadedB3);
+    expect(inboundToB3).toHaveLength(1);
+    expect(inboundToB3[0]!.source).toBe(startNode!.id);
+  });
+
+  test("save is a no-op fixed point for an already-saved workflow", () => {
+    // Sanity: without a drop, the round-trip shouldn't mutate the chain.
+    // If this ever fails, either getElements or getWorkflowBlocks has
+    // drifted — no drop should be required to surface that.
+    const initialBlocks = buildFiveBlockFixture();
+    const { nodes, edges } = getElements(initialBlocks, DEFAULT_SETTINGS, true);
+
+    const savedOnce = getWorkflowBlocks(nodes, edges);
+    const { nodes: reloadedNodes, edges: reloadedEdges } =
+      reloadFromSavedYaml(savedOnce);
+    const savedTwice = getWorkflowBlocks(reloadedNodes, reloadedEdges);
+
+    expect(chainFromSavedBlocks(savedTwice)).toEqual(
+      chainFromSavedBlocks(savedOnce),
+    );
+  });
+
+  test("load is order-invariant: stale array still resolves the chain root via adjacency", () => {
+    // Simulates an upstream writer (paste, AI import, server-side sort) that
+    // produced a valid (B, E) chain B3 -> B1 -> B2 -> B4 -> B5 but persisted
+    // blocks[] in unsorted order [B1,B2,B3,B4,B5]. Approach B's loader must
+    // still pick B3 as the root.
+    const blocks: Array<WorkflowBlock> = [
+      makeCodeBlock("B1", "B2"),
+      makeCodeBlock("B2", "B4"),
+      makeCodeBlock("B3", "B1"),
+      makeCodeBlock("B4", "B5"),
+      makeCodeBlock("B5", null),
+    ];
+
+    const { nodes, edges } = getElements(blocks, DEFAULT_SETTINGS, true);
+
+    const startNode = nodes.find((n) => n.type === "start" && !n.parentId);
+    expect(startNode).toBeDefined();
+
+    const edgesFromStart = edges.filter((e) => e.source === startNode!.id);
+    expect(edgesFromStart).toHaveLength(1);
+
+    const b3Id = findNodeIdByLabel(nodes, "B3");
+    expect(edgesFromStart[0]!.target).toBe(b3Id);
+
+    const inboundToB3 = edges.filter((e) => e.target === b3Id);
+    expect(inboundToB3).toHaveLength(1);
+    expect(inboundToB3[0]!.source).toBe(startNode!.id);
+  });
+
+  test("loop loader chains by next_block_label, not loop_blocks[] index", () => {
+    // Loop with chain L3 -> L1 -> L2 but persisted array [L1, L2, L3].
+    // Approach C's loader must walk the chain.
+    const l1 = makeCodeBlock("L1", "L2");
+    const l2 = makeCodeBlock("L2", null);
+    const l3 = makeCodeBlock("L3", "L1");
+    const loop: WorkflowBlock = {
+      label: "FOR1",
+      block_type: "for_loop",
+      continue_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: makeOutputParameter("FOR1"),
+      loop_over: { key: "items" } as never,
+      loop_blocks: [l1, l2, l3],
+      loop_variable_reference: null,
+      complete_if_empty: false,
+      data_schema: null,
+    } as never;
+
+    const { nodes, edges } = getElements([loop], DEFAULT_SETTINGS, true);
+
+    const loopId = findNodeIdByLabel(nodes, "FOR1");
+    const loopStart = nodes.find(
+      (n) => n.type === "start" && n.parentId === loopId,
+    );
+    expect(loopStart).toBeDefined();
+
+    const fromLoopStart = edges.filter((e) => e.source === loopStart!.id);
+    expect(fromLoopStart).toHaveLength(1);
+
+    const l3Id = findNodeIdByLabel(nodes, "L3");
+    expect(fromLoopStart[0]!.target).toBe(l3Id);
+
+    const l1Id = findNodeIdByLabel(nodes, "L1");
+    const l2Id = findNodeIdByLabel(nodes, "L2");
+    expect(edges.find((e) => e.source === l3Id)?.target).toBe(l1Id);
+    expect(edges.find((e) => e.source === l1Id)?.target).toBe(l2Id);
+    const loopAdder = nodes.find(
+      (n) => n.type === "nodeAdder" && n.parentId === loopId,
+    );
+    expect(loopAdder).toBeDefined();
+    expect(edges.find((e) => e.source === l2Id)?.target).toBe(loopAdder!.id);
+  });
+
+  test("strict load (editable=true) surfaces WorkflowValidationError as validationError on malformed input", () => {
+    const malformed: Array<WorkflowBlock> = [
+      makeCodeBlock("B1", "DOES_NOT_EXIST"),
+    ];
+    const { validationError } = getElements(malformed, DEFAULT_SETTINGS, true);
+    expect(validationError).not.toBeNull();
+    expect(validationError!.message).toMatch(
+      /references unknown next_block_label/,
+    );
+  });
+
+  test("permissive load (editable=false) returns null validationError on malformed input", () => {
+    const malformed: Array<WorkflowBlock> = [
+      makeCodeBlock("B1", "DOES_NOT_EXIST"),
+    ];
+    const { validationError } = getElements(malformed, DEFAULT_SETTINGS, false);
+    expect(validationError).toBeNull();
+  });
+
+  // error_code_mapping is not editable in YAML, but it must still ride on the
+  // start node so it's preserved (not cleared) across a load -> save round-trip.
+  test("workflow-level error_code_mapping rides on the start node so it survives a save", () => {
+    const settings: WorkflowSettings = {
+      ...DEFAULT_SETTINGS,
+      errorCodeMapping: { OUT_OF_STOCK: "item unavailable" },
+    };
+    const { nodes } = getElements(buildFiveBlockFixture(), settings, true);
+    const startNode = nodes.find((node) => node.type === "start");
+    expect(
+      (startNode?.data as { errorCodeMapping?: unknown } | undefined)
+        ?.errorCodeMapping,
+    ).toEqual({ OUT_OF_STOCK: "item unavailable" });
+  });
+
+  // The full recovery leg the save path relies on: workflow-level settings ride
+  // load -> start node -> getWorkflowSettings with zero field loss, so a YAML
+  // commit (which reattaches settings from this readback) cannot drop them.
+  test("workflow-level settings survive the getElements -> getWorkflowSettings round-trip", () => {
+    const settings: WorkflowSettings = {
+      ...DEFAULT_SETTINGS,
+      errorCodeMapping: { OUT_OF_STOCK: "item unavailable" },
+      reuseBrowserSession: true,
+      finallyBlockLabel: "B5",
+      maskSecrets: true,
+      workflowSystemPrompt: "always double-check totals",
+    };
+    const { nodes } = getElements(buildFiveBlockFixture(), settings, true);
+    const recovered = getWorkflowSettings(nodes);
+    expect(recovered.errorCodeMapping).toEqual({
+      OUT_OF_STOCK: "item unavailable",
+    });
+    expect(recovered.reuseBrowserSession).toBe(true);
+    expect(recovered.finallyBlockLabel).toBe("B5");
+    expect(recovered.maskSecrets).toBe(true);
+    expect(recovered.workflowSystemPrompt).toBe("always double-check totals");
+  });
+});
+
+describe("login block configuration round trip", () => {
+  test("preserves Include Action History through load and save", () => {
+    const loginBlock = {
+      label: "login",
+      block_type: "login",
+      continue_on_failure: false,
+      next_loop_on_failure: false,
+      model: null,
+      next_block_label: null,
+      output_parameter: makeOutputParameter("login"),
+      url: "https://example.test/login",
+      title: "Login",
+      navigation_goal: "Log in",
+      error_code_mapping: null,
+      max_retries: 0,
+      max_steps_per_run: null,
+      parameters: [],
+      totp_verification_url: null,
+      totp_identifier: null,
+      disable_cache: false,
+      complete_criterion: null,
+      terminate_criterion: null,
+      engine: null,
+      include_action_history_in_verification: true,
+    } as unknown as WorkflowBlock;
+
+    const { nodes, edges } = getElements([loginBlock], DEFAULT_SETTINGS, true);
+    const loginNode = nodes.find((node) => node.type === "login");
+
+    expect(loginNode).toBeDefined();
+    expect(
+      (
+        loginNode!.data as unknown as {
+          includeActionHistoryInVerification?: boolean;
+        }
+      ).includeActionHistoryInVerification,
+    ).toBe(true);
+
+    const saved = getWorkflowBlocks(nodes, edges);
+    expect(
+      (
+        saved[0] as unknown as {
+          include_action_history_in_verification?: boolean;
+        }
+      ).include_action_history_in_verification,
+    ).toBe(true);
+  });
+});
+
+test("workflow export includes error mapping, CDP headers, and TOTP identifier", () => {
+  const workflow = {
+    cdp_connect_headers: { "X-Test": "value" },
+    totp_identifier: "identifier",
+    workflow_definition: {
+      version: 2,
+      parameters: [],
+      blocks: [],
+      error_code_mapping: { RETRY: "Retry the request" },
+    },
+  } as unknown as WorkflowApiResponse;
+  expect(convert(workflow)).toMatchObject({
+    cdp_connect_headers: { "X-Test": "value" },
+    totp_identifier: "identifier",
+    workflow_definition: { error_code_mapping: { RETRY: "Retry the request" } },
+  });
+});

@@ -1,0 +1,150 @@
+import { getClient } from "@/api/AxiosClient";
+import {
+  Action,
+  ActionApiResponse,
+  ActionsApiResponse,
+  ActionTypes,
+  StepApiResponse,
+  TaskApiResponse,
+} from "@/api/types";
+import { isActionSuccess } from "@/routes/workflows/components/actionStatus";
+import {
+  getActionInputValue,
+  getActionSummary,
+} from "@/routes/workflows/workflowBlockUtils";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { statusIsNotFinalized } from "../../types";
+
+function getActionInput(action: ActionApiResponse) {
+  let input = "";
+  if (action.action_type === ActionTypes.InputText && action.text) {
+    input = action.text;
+  } else if (action.action_type === ActionTypes.Click) {
+    input = "Click";
+  } else if (action.action_type === ActionTypes.Hover) {
+    input = "Hover";
+  } else if (action.action_type === ActionTypes.SelectOption && action.option) {
+    input = action.option.label;
+  }
+  return input;
+}
+
+type Props = {
+  id?: string;
+};
+
+function isOld(task: TaskApiResponse) {
+  return new Date(task.created_at) < new Date(2024, 9, 21);
+}
+
+function useActions({ id }: Props): {
+  data: Array<Action | null>;
+  isLoading: boolean;
+} {
+  const credentialGetter = useCredentialGetter();
+
+  const { data: task, isLoading: taskIsLoading } = useQuery<TaskApiResponse>({
+    queryKey: ["task", id],
+    queryFn: async () => {
+      const client = await getClient(credentialGetter);
+      return client.get(`/tasks/${id}`).then((response) => response.data);
+    },
+    refetchInterval: (query) => {
+      if (!query.state.data) {
+        return false;
+      }
+      if (statusIsNotFinalized(query.state.data)) {
+        return 5000;
+      }
+      return false;
+    },
+    placeholderData: keepPreviousData,
+  });
+
+  const taskIsNotFinalized = task && statusIsNotFinalized(task);
+
+  const { data: taskActions, isLoading: taskActionsIsLoading } = useQuery<
+    Array<ActionsApiResponse>
+  >({
+    // The task's status is part of the answer: the poll is cancelled the instant the task query
+    // ticks to a terminal status, and the reader stays mounted through that, so without the status
+    // in the key the final actions the task wrote as it finished are never re-read.
+    queryKey: ["tasks", id, "actions", task?.status],
+    queryFn: async () => {
+      const client = await getClient(credentialGetter);
+      return client
+        .get(`/tasks/${id}/actions`)
+        .then((response) => response.data);
+    },
+    refetchInterval: taskIsNotFinalized ? 5000 : false,
+    placeholderData: keepPreviousData,
+    enabled: Boolean(task && !isOld(task)),
+  });
+
+  const { data: steps, isLoading: stepsIsLoading } = useQuery<
+    Array<StepApiResponse>
+  >({
+    queryKey: ["task", id, "steps", task?.status],
+    queryFn: async () => {
+      const client = await getClient(credentialGetter);
+      return client.get(`/tasks/${id}/steps`).then((response) => response.data);
+    },
+    enabled: Boolean(task && isOld(task)),
+    refetchOnWindowFocus: taskIsNotFinalized,
+    refetchInterval: taskIsNotFinalized ? 5000 : false,
+    placeholderData: keepPreviousData,
+  });
+
+  const actions =
+    task && isOld(task)
+      ? steps
+          ?.map((step) => {
+            const actionsAndResults = step.output?.actions_and_results ?? [];
+
+            const actions = actionsAndResults.map((actionAndResult, index) => {
+              const action = actionAndResult[0];
+              const actionResult = actionAndResult[1];
+              if (actionResult.length === 0) {
+                return null;
+              }
+              return {
+                summary: getActionSummary(action),
+                confidence: action.confidence_float,
+                input: getActionInput(action),
+                type: action.action_type,
+                // wait reports ActionFailure but completing it is expected; terminate
+                // reports ActionSuccess but means the agent gave up — a failure.
+                success:
+                  action.action_type !== ActionTypes.terminate &&
+                  (action.action_type === ActionTypes.wait ||
+                    (actionResult?.[0]?.success ?? false)),
+                stepId: step.step_id,
+                index,
+                created_by: action.created_by,
+              };
+            });
+            return actions;
+          })
+          .flat()
+      : taskActions?.map((action, index) => {
+          return {
+            summary: getActionSummary(action),
+            confidence: action.confidence_float ?? undefined,
+            input: getActionInputValue(action) ?? "",
+            type: action.action_type,
+            success: isActionSuccess(action),
+            stepId: action.step_id ?? "",
+            index: index,
+            created_by: action.created_by,
+            screenshotArtifactId: action.screenshot_artifact_id ?? undefined,
+          };
+        });
+
+  return {
+    data: actions ?? [],
+    isLoading: taskIsLoading || taskActionsIsLoading || stepsIsLoading,
+  };
+}
+
+export { useActions };

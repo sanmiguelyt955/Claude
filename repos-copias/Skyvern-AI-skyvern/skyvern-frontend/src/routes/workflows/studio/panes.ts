@@ -1,0 +1,278 @@
+export type StudioPaneId = "copilot" | "editor" | "browser" | "overview";
+
+export const SYSTEM_RUN_FOCUS_PARAM = "wrs";
+
+export const STUDIO_PANE_IDS: readonly StudioPaneId[] = [
+  "copilot",
+  "editor",
+  "browser",
+  "overview",
+];
+
+export const STUDIO_PANES_PARAM = "panes";
+
+// Accepted forever on parse so pre-rename ?panes= links keep working; the
+// canonical id ("overview") is what serializes back out.
+const STUDIO_PANE_ID_ALIASES: Record<string, StudioPaneId> = {
+  run: "overview",
+  timeline: "overview",
+};
+
+export const CREATE_STUDIO_PANES: readonly StudioPaneId[] = [
+  "copilot",
+  "browser",
+];
+export const DEFAULT_STUDIO_PANES: readonly StudioPaneId[] = [
+  "copilot",
+  "editor",
+];
+
+// The run surfaces: cold-entry run-class views open exactly these, and in-app
+// run starts (full run or block ▶) append them to whatever is already open —
+// appends never rearrange or close panes. Order is text left, screen right.
+export const RUN_APPEND_PANES: readonly StudioPaneId[] = [
+  "overview",
+  "browser",
+];
+
+// Panes that mutate the workflow (Copilot builds, Editor saves), as opposed to
+// the ones that only watch a run. The top bar keys its authoring controls off
+// this, and it is also what a deleted agent blocks.
+export const WORKFLOW_AUTHORING_PANES: readonly StudioPaneId[] = [
+  "copilot",
+  "editor",
+];
+
+export function isAuthoringLayout(panes: readonly StudioPaneId[]): boolean {
+  return panes.some((id) => WORKFLOW_AUTHORING_PANES.includes(id));
+}
+
+export function panesWithoutDeletedBlocked(
+  panes: readonly StudioPaneId[],
+): StudioPaneId[] {
+  return panes.filter((id) => !WORKFLOW_AUTHORING_PANES.includes(id));
+}
+
+// Copilot / Editor / Overview share one narrow floor; the browser viewport
+// keeps a little more room. The stage clamps shared links and nudges on
+// over-tight opens against these numbers (fitPanesToWidth below), and divider
+// resizes clamp against them too.
+export const STUDIO_PANE_MIN_WIDTH: Record<StudioPaneId, number> = {
+  copilot: 260,
+  editor: 260,
+  browser: 300,
+  overview: 260,
+};
+
+// Stage chrome for the fit math; must match the stage p-3 and the divider
+// width (the resize dividers are the inter-pane gap) in StudioShell.tsx.
+export const STUDIO_STAGE_PADDING_PX = 24;
+export const STUDIO_STAGE_GAP_PX = 12;
+
+function isStudioPaneId(value: string): value is StudioPaneId {
+  return (STUDIO_PANE_IDS as readonly string[]).includes(value);
+}
+
+export function panesListEqual(
+  a: readonly StudioPaneId[],
+  b: readonly StudioPaneId[],
+): boolean {
+  return a.length === b.length && a.every((id, index) => id === b[index]);
+}
+
+export function panesFitWidth(
+  panes: readonly StudioPaneId[],
+  stageWidth: number,
+): boolean {
+  if (panes.length === 0) {
+    return true;
+  }
+  const total =
+    panes.reduce((sum, id) => sum + STUDIO_PANE_MIN_WIDTH[id], 0) +
+    STUDIO_STAGE_PADDING_PX +
+    STUDIO_STAGE_GAP_PX * (panes.length - 1);
+  return total <= stageWidth;
+}
+
+// Degrade an over-wide open list to its longest leading prefix that fits at
+// min-widths; the first pane always survives so a link never lands on nothing.
+export function fitPanesToWidth(
+  panes: readonly StudioPaneId[],
+  stageWidth: number,
+): StudioPaneId[] {
+  const kept: StudioPaneId[] = [];
+  for (const id of panes) {
+    if (!panesFitWidth([...kept, id], stageWidth)) {
+      break;
+    }
+    kept.push(id);
+  }
+  if (kept.length === 0 && panes.length > 0) {
+    kept.push(panes[0]!);
+  }
+  return kept;
+}
+
+// Ordered open-pane list from an explicit ?panes= value; unknown entries and
+// duplicates are dropped. null means the param was absent (callers fall back to
+// the deep-link mapping); an empty value is an explicit "no panes open".
+export function parsePanesParam(raw: string | null): StudioPaneId[] | null {
+  if (raw === null) {
+    return null;
+  }
+  const result: StudioPaneId[] = [];
+  for (const token of raw.split(",")) {
+    const name = token.trim();
+    const id = STUDIO_PANE_ID_ALIASES[name] ?? name;
+    if (isStudioPaneId(id) && !result.includes(id)) {
+      result.push(id);
+    }
+  }
+  return result;
+}
+
+export function panesFromDeepLink(
+  params: {
+    runId: string | null;
+    active: string | null;
+    blockLabel: string | null;
+    systemFocus?: boolean;
+  },
+  defaultPanes: readonly StudioPaneId[] = DEFAULT_STUDIO_PANES,
+): StudioPaneId[] {
+  return (params.runId || params.active) && !params.systemFocus
+    ? [...RUN_APPEND_PANES]
+    : [...defaultPanes];
+}
+
+export function resolveOpenPanes(
+  search: string,
+  defaultPanes: readonly StudioPaneId[] = DEFAULT_STUDIO_PANES,
+): StudioPaneId[] {
+  const params = new URLSearchParams(search);
+  const explicit = parsePanesParam(params.get(STUDIO_PANES_PARAM));
+  let panes =
+    explicit ??
+    panesFromDeepLink(
+      {
+        runId: params.get("wr"),
+        active: params.get("active"),
+        blockLabel: params.get("bl"),
+        systemFocus: params.has(SYSTEM_RUN_FOCUS_PARAM),
+      },
+      defaultPanes,
+    );
+  const view = params.get("view");
+  const requiredPane = view === "recording" ? "browser" : "overview";
+  const hasContentView =
+    view !== null &&
+    ["recording", "timeline", "outputs", "inputs", "code"].includes(view);
+  if (params.get("embed") === "true") {
+    if (hasContentView) return [requiredPane];
+    panes =
+      explicit?.length &&
+      explicit.every((id) => id === "browser" || id === "overview")
+        ? explicit
+        : [requiredPane];
+  }
+  if (hasContentView) {
+    panes = [requiredPane, ...panes.filter((id) => id !== requiredPane)];
+  }
+  return panes;
+}
+
+// Every pane opened during this visit, in layout order, with each closed pane
+// kept just before the open pane that followed it when it closed.
+export function rememberPaneSlots(
+  slots: readonly StudioPaneId[],
+  panes: readonly StudioPaneId[],
+): StudioPaneId[] {
+  const anchored = new Map<StudioPaneId, StudioPaneId[]>();
+  const trailing: StudioPaneId[] = [];
+  slots.forEach((id, index) => {
+    if (panes.includes(id)) return;
+    const anchor = slots.slice(index + 1).find((next) => panes.includes(next));
+    if (anchor === undefined) {
+      trailing.push(id);
+    } else {
+      anchored.set(anchor, [...(anchored.get(anchor) ?? []), id]);
+    }
+  });
+  return [
+    ...panes.flatMap((id) => [...(anchored.get(id) ?? []), id]),
+    ...trailing,
+  ];
+}
+
+// Close panes splice; open panes return to their remembered slot, or append
+// when this visit has no slot for them. List order is the layout order.
+export function togglePane(
+  panes: readonly StudioPaneId[],
+  id: StudioPaneId,
+  slots: readonly StudioPaneId[] = [],
+): StudioPaneId[] {
+  return panes.includes(id)
+    ? panes.filter((p) => p !== id)
+    : withPaneOpen(panes, id, slots);
+}
+
+export function withPaneOpen(
+  panes: readonly StudioPaneId[],
+  id: StudioPaneId,
+  slots: readonly StudioPaneId[] = [],
+): StudioPaneId[] {
+  if (panes.includes(id)) return [...panes];
+  const slot = slots.indexOf(id);
+  const before =
+    slot === -1
+      ? undefined
+      : slots.slice(slot + 1).find((next) => panes.includes(next));
+  if (before === undefined) return [...panes, id];
+  const index = panes.indexOf(before);
+  return [...panes.slice(0, index), id, ...panes.slice(index)];
+}
+
+export function withPanesOpen(
+  panes: readonly StudioPaneId[],
+  ids: readonly StudioPaneId[],
+): StudioPaneId[] {
+  return ids.reduce<StudioPaneId[]>(
+    (acc, id) => withPaneOpen(acc, id),
+    [...panes],
+  );
+}
+
+export function withPaneClosed(
+  panes: readonly StudioPaneId[],
+  id: StudioPaneId,
+): StudioPaneId[] {
+  return panes.filter((p) => p !== id);
+}
+// Commas are legal unencoded in query values and parse back identically; keep
+// ?panes=copilot,browser readable no matter which writer serialized last.
+export function toReadableSearch(params: URLSearchParams): string {
+  const raw = params.toString().replace(/%2C/g, ",");
+  return raw ? `?${raw}` : "";
+}
+
+// The pane layout keys the focused run off ?wr=; the short /runs/{wr} URL carries
+// it in the path instead, so pane RESOLUTION runs against a search that reflects
+// that run. This is never written back — the address bar stays paramless.
+export function searchWithRunReference(
+  search: string,
+  runId: string | undefined,
+): string {
+  if (!runId) {
+    return search;
+  }
+  const params = new URLSearchParams(search);
+  if (params.has("wr")) {
+    return search;
+  }
+  params.set("wr", runId);
+  // This run came from outside the query, so it is the user's, not a copilot
+  // focus. Any marker left in the search belongs to a run that is gone —
+  // keeping it would pin a genuine run view to the edit class.
+  params.delete(SYSTEM_RUN_FOCUS_PARAM);
+  return toReadableSearch(params);
+}

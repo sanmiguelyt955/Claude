@@ -1,0 +1,1110 @@
+"""
+Posts resource for the BulkPublish SDK.
+
+Provides methods to create, read, update, delete, publish, and manage
+social-media posts through the BulkPublish API.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence
+
+if TYPE_CHECKING:
+    from .client import _BaseClient
+
+from .types import BulkOperationResult, Post, PostList, PostMetrics, QueueSlot
+
+
+class PostsResource:
+    """Operations on social-media posts.
+
+    Access via ``client.posts``:
+
+    Example::
+
+        bp = BulkPublish("bp_key")
+        posts = bp.posts.list(status="published", limit=5)
+    """
+
+    def __init__(self, client: _BaseClient) -> None:
+        self._client = client
+
+    # -- List -----------------------------------------------------------------
+
+    def list(
+        self,
+        *,
+        status: Optional[str] = None,
+        search: Optional[str] = None,
+        page: Optional[int] = None,
+        limit: Optional[int] = None,
+        channel_id: Optional[str] = None,
+        label_id: Optional[str] = None,
+        label_ids: Optional[List[str]] = None,
+        label_mode: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        approval_status: Optional[str] = None,
+        order: Optional[str] = None,
+    ) -> PostList:
+        """List posts with optional filtering and pagination.
+
+        Ordered by the timestamp that applies to each post: ``published_at`` if
+        it is live, else ``scheduled_at`` if it is due, else ``created_at``. A
+        post drafted weeks before it publishes sorts by when it went live, not
+        when it was written.
+
+        Newest-first by default. Pass ``order="asc"`` for earliest-first, which
+        is what you want to read what is coming NEXT — combined with ``limit``,
+        the default returns the posts scheduled FURTHEST out, not the soonest.
+
+        Args:
+            status: Filter by status (``"draft"``, ``"scheduled"``,
+                ``"published"``, ``"failed"``).
+            search: Full-text search across post content.
+            page: Page number (1-based).
+            limit: Results per page (default 20, max 100).
+            channel_id: Filter to a specific channel.
+            label_id: Filter by a single label ID.
+            label_ids: Filter by multiple label IDs.
+            label_mode: How to combine label_ids — ``"any"`` or ``"all"``.
+            from_date: ISO-8601 start date filter.
+            to_date: ISO-8601 end date filter.
+            sort_by: Deprecated and ignored. The sort field is not selectable;
+                posts always order by the timestamp described above. Sending it
+                changed nothing, and the server never read it.
+            sort_order: Deprecated alias for ``order``. Previously sent as
+                ``sortOrder``, which the server does not read, so it silently
+                did nothing; it is now forwarded as ``order``.
+            approval_status: Filter by team approval state — one of ``"none"``,
+                ``"pending"``, ``"approved"``, ``"rejected"`` (e.g.
+                ``"pending"`` for the approval queue).
+            order: ``"desc"`` (default, newest first) or ``"asc"`` (earliest
+                first).
+
+        Returns:
+            A dict with ``posts``, ``total``, ``page``, ``limit``, and
+            ``totalPages`` keys.
+
+        Example::
+
+            # Fetch the 10 scheduled posts that go out NEXT
+            result = bp.posts.list(status="scheduled", limit=10, order="asc")
+            for post in result["posts"]:
+                print(post["content"][:80], post["scheduledAt"])
+
+            # Search posts containing "launch"
+            result = bp.posts.list(search="launch")
+        """
+        params: Dict[str, Any] = {}
+        if status is not None:
+            params["status"] = status
+        if search is not None:
+            params["search"] = search
+        if page is not None:
+            params["page"] = page
+        if limit is not None:
+            params["limit"] = limit
+        if channel_id is not None:
+            params["channelId"] = channel_id
+        if label_id is not None:
+            params["labelId"] = label_id
+        if label_ids is not None:
+            params["labelIds"] = ",".join(label_ids)
+        if label_mode is not None:
+            params["labelMode"] = label_mode
+        if from_date is not None:
+            params["from"] = from_date
+        if to_date is not None:
+            params["to"] = to_date
+        # `sort_by` is dropped, not forwarded: there has never been a server
+        # parameter behind it. `sort_order` becomes `order`, the parameter that
+        # does exist — as `sortOrder` it was silently discarded, so anyone who
+        # asked for ascending order got newest-first anyway.
+        if order is None and sort_order is not None:
+            order = sort_order
+        if order is not None:
+            params["order"] = order
+        if approval_status is not None:
+            params["approvalStatus"] = approval_status
+        return self._client._request("GET", "/api/posts", params=params)
+
+    # -- Get ------------------------------------------------------------------
+
+    def get(self, post_id: str) -> Post:
+        """Get a single post by ID.
+
+        Args:
+            post_id: The post's unique identifier.
+
+        Returns:
+            The full post object.
+
+        Raises:
+            NotFoundError: If the post does not exist.
+
+        Example::
+
+            post = bp.posts.get("post_abc123")
+            print(post["content"], post["status"])
+        """
+        return self._client._request("GET", f"/api/posts/{post_id}")
+
+    # -- Create ---------------------------------------------------------------
+
+    def create(
+        self,
+        *,
+        content: str,
+        channels: List[Dict[str, str]],
+        status: str = "draft",
+        scheduled_at: Optional[str] = None,
+        timezone: Optional[str] = None,
+        media_files: Optional[List[str]] = None,
+        label_ids: Optional[List[str]] = None,
+        post_format: Optional[str] = None,
+        platform_specific: Optional[Dict[str, Any]] = None,
+        platform_content: Optional[Dict[str, str]] = None,
+        delete_media_after_publish: Optional[bool] = None,
+        thread_parts: Optional[List[Dict[str, Any]]] = None,
+        post_type_overrides: Optional[Dict[str, str]] = None,
+        request_approval: Optional[bool] = None,
+        publish_when_approved: Optional[bool] = None,
+        link_tracking_override: Optional[bool] = None,
+    ) -> Post:
+        """Create a new post.
+
+        Args:
+            content: The text content of the post.
+            channels: Target channels, each a dict with ``channelId`` and
+                ``platform`` keys.
+            status: Initial status — ``"draft"`` or ``"scheduled"``.
+            scheduled_at: ISO-8601 datetime for scheduled publishing.
+            timezone: IANA timezone (e.g. ``"America/New_York"``).
+            media_files: List of media file IDs to attach.
+            label_ids: Label IDs to tag the post with.
+            post_format: Format hint (e.g. ``"thread"``, ``"carousel"``).
+            platform_specific: Per-platform settings. Required fields by platform:
+
+                - **youtube**: ``{"title": "..."}`` (required, 1-100 chars).
+                  Optional: ``privacyStatus``, ``categoryId``, ``tags``, ``playlistId``, ``thumbnailUrl``, ``madeForKids``.
+                  Also, for post types ``video`` and ``short`` (sent to YouTube only when set):
+                  ``containsSyntheticMedia`` (discloses realistic altered or synthetic content),
+                  ``notifySubscribers`` (only an explicit ``False`` changes anything), ``license``
+                  (``"youtube"``/``"creativeCommon"``), ``embeddable`` and ``publicStatsViewable``
+                  (``False`` restricts), ``defaultLanguage`` and ``defaultAudioLanguage`` (language
+                  codes such as ``"en"``, ``"pt-BR"``), ``recordingDate`` (``YYYY-MM-DD`` or an
+                  ISO 8601 date-time)
+                - **pinterest**: ``{"title": "..."}`` (required, 1-100 chars).
+                  Optional: ``boardId``, ``description``, ``link``, ``dominantColor``,
+                  ``coverImageUrl`` (video pins; when omitted the server falls back to an
+                  attached image, then the video's auto-extracted poster frame),
+                  ``boardSectionId`` (numeric section of the chosen board, for ``pin``,
+                  ``video_pin`` and ``carousel``; list sections with
+                  ``GET /api/channels/{id}/options?boardId=<boardId>``; ignored when no board was
+                  chosen), ``coverKeyFrameTime`` (``video_pin`` only: whole seconds, 0 or more, used
+                  as the cover frame; ``coverImageUrl`` wins when both are sent)
+                - **instagram**: Optional: ``collaborators``, ``shareToStory``, ``trialReel``,
+                  ``graduationStrategy`` (``"manual"``/``"auto"``), ``thumbnailTimestamp``,
+                  ``coverUrl``, ``userTags``, ``shareToFeed``, ``locationId``. ``collaborators`` is a comma-separated list of usernames (no
+                  leading @) tagged as co-authors; it applies to post types ``feed_photo``,
+                  ``feed_video``, ``reel`` and ``carousel`` -- on a carousel the co-authors go
+                  on the carousel itself, not on its individual items -- and is ignored on
+                  ``story``, which has no co-author concept.
+                  ``trialReel`` applies only to the ``reel`` post type and is
+                  ignored on ``feed_video``, even though both publish through the same reel
+                  container; ``graduationStrategy`` is ignored unless ``trialReel`` is true.
+                  ``thumbnailTimestamp`` and ``coverUrl`` both set the still shown before a
+                  video or Reel plays (post types ``feed_video`` and ``reel``); ``coverUrl``
+                  wins when both are sent, because Instagram rejects a request carrying both.
+                  ``userTags`` is a list of ``{"username", "x", "y", "mediaIndex"}`` (up to 20 per photo
+                  or video; ``x``/``y`` are 0 to 1 from the top left, given together; ``mediaIndex`` counts
+                  from 0 in attachment order, default 0). On a photo, and each photo of a carousel, a tag
+                  needs ``x`` and ``y`` or it is left out; on a Reel or video post people are tagged by
+                  username only. Carousel videos and Stories carry no tags. ``shareToFeed`` (Reels only):
+                  ``False`` shows the Reel only in the Reels tab, ``True`` also in the main feed.
+                  ``locationId`` (digits) is the numeric ID of a Facebook Page that has a location
+                  (photos, videos, Reels, carousels; not Stories).
+                - **facebook**: Optional: ``shareToStory``, ``thumbnailUrl``, ``textFormatPresetId``.
+                  ``textFormatPresetId`` (digits, a Facebook background ID) shows a short text post on a
+                  coloured background; used only on a Page feed post with no photo, video or link card
+                  and at most 130 characters, otherwise left out, and dropped (published as plain text)
+                  if Facebook refuses it. ``thumbnailUrl`` is
+                  the cover for a video or Reel; Facebook only accepts one once the video exists, so
+                  it is applied after the video publishes and lands a moment after the post. A cover
+                  that cannot be fetched, or that Facebook rejects, leaves the video published with
+                  Facebook's own chosen frame rather than failing the post.
+                - **tiktok**: Optional: ``privacyLevel`` (SELF_ONLY|PUBLIC|FRIENDS), ``disableDuet``, ``disableStitch``, ``autoAddMusic`` (photo posts), ``sendToDrafts``,
+                  ``photoCoverIndex``. ``sendToDrafts=True`` sends a ``video`` or ``photo_slideshow``
+                  post to the creator's TikTok drafts instead of publishing it: ``privacyLevel`` is then
+                  not required and the direct-post settings are ignored; a video draft carries no
+                  caption, a photo draft does. Once delivered the destination is ``published`` with no
+                  ``platformUrl``; if the creator posts it within about a week, ``platformPostId``
+                  becomes the video id, ``platformUrl`` is filled in and analytics are collected. ``photoCoverIndex`` (whole number
+                  0 to 34, default 0) picks the cover image of a ``photo_slideshow``.
+                - **x**: Optional: ``replySettings`` (single post and first post of a thread), ``poll``
+                  (``{"options": 2-4 strings of 1-25 chars, "durationMinutes": 5-10080}``; not with media
+                  or ``quoteId``), ``quoteId`` (numeric ID or x.com status URL; not with ``poll``),
+                  ``communityId`` (numeric ID or ``https://x.com/i/communities/<id>``; the account must be
+                  a member), ``shareWithFollowers`` (default ``False``; with ``communityId``). On a thread,
+                  ``poll``, ``quoteId`` and ``communityId`` apply to the first post only; none applies to a repost
+                - **bluesky**: Optional: ``replyAllow`` (list: omitted or empty = everyone, else
+                  ``["nobody"]`` or any mix of ``"mention"``, ``"following"``, ``"follower"``),
+                  ``allowQuotes`` (default ``True``), ``quoteId`` (bsky.app link or at:// URI), ``langs``
+                  (up to 3 language codes), ``contentLabel`` (``"sexual"``/``"nudity"``/``"porn"``/
+                  ``"graphic-media"``). ``replyAllow``, ``allowQuotes`` and ``quoteId`` apply to the first
+                  post of a thread; ``langs`` and ``contentLabel`` to every part
+                - **linkedin**: Optional: ``title``, ``description``, ``url`` (required for article type),
+                  ``documentTitle`` (``document`` posts; defaults to the file's name), ``poll``
+                  (``{"question": up to 140 chars, "options": 2-4 strings of up to 30 chars, "duration":
+                  "ONE_DAY"|"THREE_DAYS"|"SEVEN_DAYS"|"FOURTEEN_DAYS"}``, default ``THREE_DAYS``;
+                  required for ``poll`` posts), ``reshareId`` (LinkedIn post link or
+                  ``urn:li:share:``/``urn:li:ugcPost:`` ID; required for ``reshare`` posts; activity links
+                  are rejected), ``thumbnailUrl`` (public image URL up to 10MB, cover for a ``post`` with a
+                  video; skipped if it cannot be fetched), ``visibility`` (``"PUBLIC"``/``"CONNECTIONS"``/
+                  ``"LOGGED_IN"``, default ``PUBLIC``; ``CONNECTIONS`` on a Page is published as ``PUBLIC``),
+                  ``disableReshare`` (default ``False``). A ``document`` post needs exactly one PDF, Word
+                  or PowerPoint file in ``media_files``; documents can be published only to LinkedIn
+                - **gmb**: Optional: ``ctaType``, ``ctaUrl``, ``eventTitle``, ``startDate``, ``endDate``
+                - **mastodon**: Optional: ``visibility``, ``spoilerText``, ``language``, ``poll``
+                  (``{"options": 2-4 strings of 1-50 chars, "expiresIn": 300-2629746 seconds, "multiple",
+                  "hideTotals"}``; not with media), ``sensitive`` (hides attached media), ``quoteId`` (URL
+                  or status ID on your own server; needs a server running Mastodon 4.5 or later).
+                  ``poll`` and ``quoteId`` apply to the first post of a thread
+                - **threads**: Optional: ``replyControl`` (``"everyone"``/``"accounts_you_follow"``/
+                  ``"mentioned_only"``/``"parent_post_author_only"``/``"followers_only"``; default
+                  ``everyone``; the post itself and first part of a thread), ``pollOptions`` (2-4 strings
+                  of 1-25 chars; text-only posts), ``linkAttachment`` (public http(s) URL shown as the
+                  preview card on a text post; Threads refuses more than 5 links in total), plus
+                  ``topicTag``, ``locationId``, ``quotePostId``
+                - **discord**: Optional: ``silent``, ``buttons`` (up to 5 ``{label, url}``), ``startThread``,
+                  ``threadName``, ``embed`` (``{title, color}``), ``poll`` (``{question, answers: 2-10,
+                  durationHours, multiselect}``), ``pin``, ``tags`` (up to 5 forum tag IDs); polls and pins
+                  need the Send Polls and Pin Messages permissions. ``{"channelId": "..."}`` (required) — the target Discord *text
+                  channel* snowflake inside the connected server, which is not the BulkPublish
+                  channel id. Publishing uses a global bot token, so failures are permission
+                  problems rather than a reconnect issue.
+                - **telegram**: Optional: ``silent``, ``protectContent``, ``pin``, ``threadId`` (forum topic,
+                  digits), ``buttons`` (up to 3 ``{label, url}``), ``spoiler``, ``disablePreview``,
+                  ``poll`` (``{question, options: 2-12, anonymous, multipleAnswers, quiz,
+                  correctOption}``; ``correctOption`` is the 0-based answer and required when ``quiz`` is
+                  true; ``multipleAnswers`` cannot be combined with ``quiz``). The destination chat is
+                  fixed at connect time.
+                - **tumblr**: Optional: ``state`` (``"published"``/``"queue"``/``"draft"``/``"private"``; ``draft`` and
+                  ``private`` override scheduling), ``slug`` (up to 200 chars), ``reblogInteraction``
+                  (``"everyone"``/``"noone"``), ``reblogUrl`` (a Tumblr post link: publishes a reblog with
+                  your text as the comment), ``blogName`` (defaults to the blog the channel was
+                  connected as), ``title``, ``tags`` (list of strings, no leading ``#``),
+                  ``link``, ``sourceUrl``
+                - **snapchat**: Optional: ``title`` (Saved Story title, max 45 chars —
+                  defaults to the caption's first line, truncated), ``locale`` (Spotlight
+                  locale, default ``"en_US"``), ``saveToProfile`` (Spotlight only, default
+                  ``True``; ``False`` sends skip_save_to_profile). Every Snapchat post
+                  requires exactly ONE image or video (vertical; jpg/png or mp4/mov,
+                  max 1GB; story video 5–60s). The caption is NOT sent for plain stories — it is used
+                  only as the Spotlight description (max 160 chars, truncated) and as the
+                  Saved Story title fallback. Spotlight is video-only (6–60s). A video
+                  outside its range is rejected with a 400 ``VALIDATION_ERROR`` when the
+                  post is scheduled or published (drafts may be saved with it). First
+                  comments are not supported on Snapchat.
+
+                ``discord``, ``telegram``, ``tumblr`` and ``snapchat`` nest their options under the
+                **BulkPublish channel id**, because each connected account commonly targets a
+                different Discord channel / blog. A flat object is also accepted
+                and applies to every channel of that platform on the post::
+
+                    {"discord": {"12": {"channelId": "1090123456789012345"}}}
+
+            platform_content: Per-platform content overrides for different char limits
+                (bluesky: 300, pinterest/threads/mastodon: 500, etc.).
+            delete_media_after_publish: Remove attached media after publishing,
+                once every channel has published, freeing the storage it counted
+                against. The media records remain, flagged as having their
+                originals deleted.
+            thread_parts: Parts of a thread post (min 2 required). Every part is
+                measured against the character limit of every platform the post
+                targets, not only the first one: an over-long part is rejected
+                with 400 VALIDATION_ERROR naming the part number, the platform
+                and its limit. URLs count as 23 characters on X and Mastodon,
+                their real length elsewhere.
+            post_type_overrides: Per-platform post type. Valid types:
+
+                - facebook: ``post``, ``reel``, ``story``
+                - instagram: ``feed_photo``, ``feed_video``, ``reel``, ``story``, ``carousel``
+                - youtube: ``video``, ``short`` (video file required)
+                - tiktok: ``video``, ``photo_slideshow``
+                - linkedin: ``post``, ``multi_image``, ``pdf_carousel``, ``article``, ``document``
+                  (one PDF, Word or PowerPoint file; title from ``documentTitle``), ``poll`` (from
+                  ``poll``; needs text, no media), ``reshare`` (from ``reshareId``; text optional, no media)
+                - pinterest: ``pin``, ``video_pin``, ``carousel``
+                - threads: ``text``, ``image``, ``video``, ``carousel``
+                - gmb: ``standard``, ``event``, ``offer``
+                - snapchat: ``story`` (default), ``saved_story``, ``spotlight`` (video only)
+                - mastodon, discord, telegram, tumblr: ``post``
+
+                Video length is checked per type when the post is scheduled or
+                published; a video outside the range is rejected with a 400
+                ``VALIDATION_ERROR``: instagram ``reel``/``feed_video`` 3s–15min,
+                ``story`` 3–60s; facebook ``reel`` 3–90s, ``story`` 3–60s; threads
+                ``video``/``carousel`` up to 5min; linkedin 3s–30min; pinterest
+                ``video_pin`` at least 4s; snapchat ``story`` 5–60s,
+                ``spotlight`` 6–60s (``saved_story`` is not checked).
+
+            request_approval: Set ``True`` to hold a scheduled post for team
+                approval (``approvalStatus`` becomes ``"pending"``; default
+                ``False``). Forced on server-side for roles without
+                post:publish (contributors), regardless of this flag.
+
+            publish_when_approved: Set ``True`` on a post that waits for
+                approval when it should go out as soon as it is approved,
+                even if that is after its scheduled time (the "publish now"
+                of someone who needs approval: schedule it for now with
+                ``request_approval`` or a contributor role, and send this).
+                An approval arriving more than 15 minutes late then publishes
+                immediately; with ``False`` (the default) it is approved but
+                returned to draft for a new time. An approver can override
+                either way with ``when_late`` on :meth:`approve`. Stored only
+                when the post ends up ``"pending"``; otherwise saved as
+                ``False``. On :meth:`update`, an explicit value wins; omitted,
+                it is kept unless a different ``scheduled_at`` clears it.
+
+            link_tracking_override: Per-post override for link tracking
+                (bulkpubli.sh). ``True`` forces links in this post to be
+                shortened and their clicks counted, ``False`` forces them to
+                publish as written, and ``None`` (the default) inherits the
+                organization's Link Tracking setting. Shortening happens at
+                publish time, per channel, so two accounts on the same platform
+                get distinct codes; it is skipped for a channel when the
+                rewrite would push the post past that platform's character
+                limit (a short URL is 28 characters and can be longer than the
+                link it replaces).
+
+        Returns:
+            The newly created post object.
+
+        Raises:
+            ValidationError: If required fields are missing or invalid.
+
+        Important:
+            - **YouTube and TikTok require video files.** Do not include them for image-only posts.
+            - **Instagram defaults to feed_photo.** Set ``post_type_overrides`` for video content.
+            - **Pinterest requires a title** in ``platform_specific``.
+
+        Example::
+
+            # Simple draft post
+            post = bp.posts.create(
+                content="Hello world!",
+                channels=[{"channelId": "1", "platform": "facebook"}],
+            )
+
+            # Video to YouTube + image to Instagram
+            video = bp.media.upload("./video.mp4")
+            post = bp.posts.create(
+                content="Check this out!",
+                channels=[
+                    {"channelId": "1", "platform": "youtube"},
+                    {"channelId": "2", "platform": "instagram"},
+                ],
+                media_files=[video["file"]["id"]],
+                post_type_overrides={"instagram": "reel"},
+                platform_specific={"youtube": {"title": "My Video Title"}},
+            )
+        
+        Reposts: any of x, threads, bluesky, mastodon accept
+        ``post_type_overrides[platform] = "repost"`` with
+        ``platform_specific[platform]["repostId"]`` = the post URL or ID (Threads
+        needs the numeric ID); the post's own text and media are ignored.
+        """
+        body: Dict[str, Any] = {
+            "content": content,
+            "channels": channels,
+            "status": status,
+        }
+        if scheduled_at is not None:
+            body["scheduledAt"] = scheduled_at
+        if timezone is not None:
+            body["timezone"] = timezone
+        if media_files is not None:
+            body["mediaFiles"] = media_files
+        if label_ids is not None:
+            body["labels"] = label_ids
+        if post_format is not None:
+            body["postFormat"] = post_format
+        if platform_specific is not None:
+            body["platformSpecific"] = platform_specific
+        if platform_content is not None:
+            body["platformContent"] = platform_content
+        if delete_media_after_publish is not None:
+            body["deleteMediaAfterPublish"] = delete_media_after_publish
+        if thread_parts is not None:
+            body["threadParts"] = thread_parts
+        if post_type_overrides is not None:
+            body["postTypeOverrides"] = post_type_overrides
+        if request_approval is not None:
+            body["requestApproval"] = request_approval
+        if publish_when_approved is not None:
+            body["publishWhenApproved"] = publish_when_approved
+        if link_tracking_override is not None:
+            body["linkTrackingOverride"] = link_tracking_override
+        return self._client._request("POST", "/api/posts", json=body)
+
+    # -- Update ---------------------------------------------------------------
+
+    def update(self, post_id: str, **fields: Any) -> Post:
+        """Update an existing post.
+
+        Pass any combination of the fields accepted by :meth:`create` as
+        keyword arguments.  Only the fields you provide will be changed.
+
+        Args:
+            post_id: The post's unique identifier.
+            **fields: Fields to update.  Use snake_case names — they are
+                converted to camelCase automatically (e.g.
+                ``scheduled_at`` becomes ``scheduledAt``).  Pass
+                ``status="draft"`` or ``status="scheduled"`` to move the post
+                between those states — ``"scheduled"`` requires a future
+                ``scheduled_at`` (in this call or already stored) and at least
+                one channel; ``"draft"`` unschedules it.  Any other status
+                value is rejected.  Omit ``status`` to leave it unchanged (a
+                failed post still auto-resets to draft on edit; a partial post
+                stays partial).  Scheduling a partial post re-queues only its
+                failed channels.  To publish immediately, use :meth:`publish`
+                instead.
+
+                Pass ``if_unmodified_since`` (the post's ``updatedAt`` exactly
+                as your last read returned it) to have the update refused with
+                409 CONFLICT when a teammate changed the post in the meantime,
+                instead of overwriting their version.  Omit it for the previous
+                last-write-wins behaviour.
+
+        Note:
+            Fields passed as ``None`` are dropped, not sent as JSON ``null``.
+            So a nullable field cannot be *cleared* through this method —
+            ``update(post_id, link_tracking_override=None)`` leaves the
+            existing override in place rather than reverting the post to the
+            organization default. Pass an explicit ``True``/``False``, or use
+            the REST endpoint directly to send ``null``.
+
+        Returns:
+            The updated post object.
+
+        Raises:
+            NotFoundError: If the post does not exist.
+
+        Example::
+
+            bp.posts.update("post_abc123", content="Updated text!", status="scheduled",
+                            scheduled_at="2026-04-15T10:00:00Z")
+        """
+        body = _snake_to_camel_dict(fields)
+        return self._client._request("PUT", f"/api/posts/{post_id}", json=body)
+
+    # -- Delete ---------------------------------------------------------------
+
+    def delete(self, post_id: str) -> Dict[str, Any]:
+        """Delete a post.
+
+        Args:
+            post_id: The post's unique identifier.
+
+        Returns:
+            Confirmation dict (typically ``{"success": true}``).
+
+        Raises:
+            NotFoundError: If the post does not exist.
+
+        Example::
+
+            bp.posts.delete("post_abc123")
+        """
+        return self._client._request("DELETE", f"/api/posts/{post_id}")
+
+    # -- Publish now ----------------------------------------------------------
+
+    def publish(self, post_id: str) -> Post:
+        """Publish a post immediately (bypassing its schedule).
+
+        Requires a role with post:publish — contributors get a 403 with code
+        ``APPROVAL_REQUIRED`` and must submit the post for approval instead
+        (create/update with ``request_approval``, then a teammate approves).
+        Publishing a pending/rejected post as an approver implicitly approves
+        it.
+
+        Args:
+            post_id: The post's unique identifier.
+
+        Returns:
+            The post object with updated status.
+
+        Example::
+
+            post = bp.posts.create(content="Going live!", channels=[...])
+            bp.posts.publish(post["id"])
+        """
+        return self._client._request("POST", f"/api/posts/{post_id}/publish")
+
+    # -- Retry ----------------------------------------------------------------
+
+    def retry(self, post_id: str, *, republish: bool = False) -> Post:
+        """Retry publishing a failed post.
+
+        Platforms in status ``unconfirmed`` (the publish request may have
+        reached the platform but its response was lost — the post may already
+        be live) are NOT retried unless ``republish=True``; without it, a post
+        with unconfirmed platforms and no failed ones fails with a 400 and
+        code ``UNCONFIRMED_REQUIRES_REPUBLISH``. Check the account before
+        passing ``republish=True`` — retrying an unconfirmed platform can
+        duplicate the post.
+
+        Args:
+            post_id: The post's unique identifier (must have ``"failed"`` status).
+            republish: Explicit opt-in to also retry ``unconfirmed``
+                platforms. Defaults to ``False``. Can duplicate the post —
+                only pass after confirming the post is not live.
+
+        Returns:
+            The post object, now re-queued for publishing.
+
+        Example::
+
+            failed = bp.posts.list(status="failed")
+            for post in failed["posts"]:
+                bp.posts.retry(post["id"])
+
+            # After confirming on the platform that the post is NOT live:
+            bp.posts.retry(post_id, republish=True)
+        """
+        body = {"republish": True} if republish else None
+        return self._client._request("POST", f"/api/posts/{post_id}/retry", json=body)
+
+    # -- Approval -------------------------------------------------------------
+
+    def approve(
+        self,
+        post_id: str,
+        when_late: Optional[str] = None,
+        *,
+        if_unmodified_since: Optional[str] = None,
+    ) -> Post:
+        """Approve a pending post.
+
+        Requires a role with post:approve (owner, admin, approver). Releases a
+        post with ``approvalStatus`` ``"pending"``: it publishes at its
+        scheduled time, or immediately if that time passed less than 15
+        minutes ago. If the scheduled time passed more than 15 minutes ago,
+        ``when_late`` decides: ``"publish"`` publishes it immediately
+        (``status`` ``"publishing"``); ``"hold"`` approves it but returns it
+        with ``status`` ``"draft"`` (``approvalStatus`` ``"approved"``,
+        ``scheduledAt`` unchanged) and the author is notified to choose a new
+        time. Omitted, it follows the post's ``publishWhenApproved``: true
+        means ``"publish"``, false means ``"hold"``. The author is notified
+        in-app either way.
+
+        Args:
+            post_id: The post's unique identifier.
+            when_late: Optional ``"publish"`` or ``"hold"``; only matters when
+                the scheduled time passed more than 15 minutes ago. Sent as
+                ``whenLate``. Any other value is rejected by the server (400).
+            if_unmodified_since: Optional. The post's ``updatedAt`` as you
+                reviewed it, sent as ``ifUnmodifiedSince``. The approval only
+                lands on that version; if the post changed since, nothing is
+                written and you get 409. Approving sets
+                ``publishWhenApproved`` to false.
+
+        Returns:
+            The approved post object. A ``status`` of ``"draft"`` means it was
+            approved too late to publish and needs a new time.
+
+        Raises:
+            ValidationError: If the post is not awaiting approval,
+                ``when_late`` is not ``"publish"``/``"hold"``, or
+                ``if_unmodified_since`` is not a timestamp (400).
+            PermissionError: If the role lacks post:approve (403).
+            NotFoundError: If the post does not exist (404).
+            ConflictError: If the post changed since you loaded it (checked
+                when ``if_unmodified_since`` is sent) or is no longer awaiting
+                approval (409). Reload it and review again.
+
+        Example::
+
+            queue = bp.posts.list(approval_status="pending")
+            for post in queue["posts"]:
+                bp.posts.approve(post["id"])
+
+            # Approve a late post and publish it now instead of sending it back
+            bp.posts.approve(post_id, when_late="publish")
+        """
+        body: Dict[str, Any] = {}
+        if when_late is not None:
+            body["whenLate"] = when_late
+        if if_unmodified_since is not None:
+            body["ifUnmodifiedSince"] = if_unmodified_since
+        return self._client._request("POST", f"/api/posts/{post_id}/approve", json=body or None)
+
+    def reject(
+        self,
+        post_id: str,
+        *,
+        reason: Optional[str] = None,
+        if_unmodified_since: Optional[str] = None,
+    ) -> Post:
+        """Reject a pending post.
+
+        Requires a role with post:approve. The post returns to draft with
+        ``approvalStatus`` ``"rejected"`` and the optional reason; the author
+        is notified and can edit + reschedule to resubmit for approval.
+
+        Args:
+            post_id: The post's unique identifier.
+            reason: Optional reason, max 2000 chars. Shown to the author
+                (in-app notification + on the post).
+            if_unmodified_since: Optional. The post's ``updatedAt`` as you
+                reviewed it, sent as ``ifUnmodifiedSince``; 409 if the post
+                changed since. Rejecting sets ``publishWhenApproved`` to
+                false.
+
+        Returns:
+            The rejected post object.
+
+        Raises:
+            ValidationError: If the post is not awaiting approval, or
+                ``if_unmodified_since`` is not a timestamp (400).
+            PermissionError: If the role lacks post:approve (403).
+            NotFoundError: If the post does not exist (404).
+            ConflictError: If the post changed since you loaded it (checked
+                when ``if_unmodified_since`` is sent) or is no longer awaiting
+                approval (409). Reload it and review again.
+
+        Example::
+
+            bp.posts.reject("42", reason="Please tone down the CTA.")
+        """
+        body: Dict[str, Any] = {}
+        if reason is not None:
+            body["reason"] = reason
+        if if_unmodified_since is not None:
+            body["ifUnmodifiedSince"] = if_unmodified_since
+        return self._client._request("POST", f"/api/posts/{post_id}/reject", json=body)
+
+    # -- Metrics --------------------------------------------------------------
+
+    def metrics(self, post_id: str) -> PostMetrics:
+        """Get engagement metrics for a published post.
+
+        Args:
+            post_id: The post's unique identifier.
+
+        Returns:
+            Metrics dict with likes, comments, shares, impressions, etc.
+
+        Example::
+
+            metrics = bp.posts.metrics("post_abc123")
+            print(f"Likes: {metrics['likes']}, Impressions: {metrics['impressions']}")
+        """
+        return self._client._request("GET", f"/api/posts/{post_id}/metrics")
+
+    # -- Story ----------------------------------------------------------------
+
+    def publish_as_story(
+        self, post_id: str, *, platform: Literal["facebook", "instagram"]
+    ) -> Post:
+        """Publish a post as a story (Instagram/Facebook stories).
+
+        Args:
+            post_id: The post's unique identifier.
+            platform: Which platform to publish the story on — ``"facebook"``
+                or ``"instagram"``. Required by the API; the post must have
+                media and a published platform entry for this platform.
+
+        Returns:
+            The updated post object.
+
+        Example::
+
+            bp.posts.publish_as_story("post_abc123", platform="instagram")
+        """
+        return self._client._request(
+            "POST", f"/api/posts/{post_id}/story", json={"platform": platform}
+        )
+
+    # -- Bulk operations ------------------------------------------------------
+
+    def bulk(
+        self,
+        *,
+        action: str,
+        post_ids: List[str],
+        scheduled_at: Optional[str] = None,
+    ) -> BulkOperationResult:
+        """Perform a bulk operation on multiple posts.
+
+        Args:
+            action: One of ``"delete"``, ``"retry"``, or ``"reschedule"``.
+            post_ids: List of post IDs to operate on.
+            scheduled_at: Required when ``action`` is ``"reschedule"`` — the
+                new ISO-8601 datetime.
+
+        Returns:
+            Result dict with ``success`` and ``failed`` counts.
+
+        Example::
+
+            # Retry all failed posts
+            failed = bp.posts.list(status="failed", limit=100)
+            ids = [p["id"] for p in failed["posts"]]
+            result = bp.posts.bulk(action="retry", post_ids=ids)
+            print(f"Retried {result['success']}, failed {result['failed']}")
+
+            # Reschedule posts
+            bp.posts.bulk(
+                action="reschedule",
+                post_ids=["post_1", "post_2"],
+                scheduled_at="2026-05-01T12:00:00Z",
+            )
+        """
+        body: Dict[str, Any] = {"action": action, "postIds": post_ids}
+        if scheduled_at is not None:
+            body["scheduledAt"] = scheduled_at
+        return self._client._request("POST", "/api/posts/bulk", json=body)
+
+    # -- Review link ----------------------------------------------------------
+
+    def share(self, post_id: str, *, regenerate: bool = False) -> Dict[str, Any]:
+        """Create (or return) the post's read-only review link.
+
+        Anyone with the URL can open it without signing in. ``regenerate=True``
+        mints a new token and kills the old link.
+
+        Returns:
+            ``{"shareToken", "url", "created"}``.
+        """
+        return self._client._request("POST", f"/api/posts/{post_id}/share", json={"regenerate": regenerate})
+
+    def unshare(self, post_id: str) -> Dict[str, Any]:
+        """Revoke the post's review link (idempotent)."""
+        return self._client._request("DELETE", f"/api/posts/{post_id}/share")
+
+    # -- Comments -------------------------------------------------------------
+
+    def engagement(
+        self,
+        post_id: str,
+        *,
+        comments_limit: Optional[int] = None,
+        reactions_limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Who commented on and reacted to a published post, per channel.
+
+        Each platform entry's ``postPlatformId`` and a comment's ``id`` are what
+        :meth:`reply_to_comment` and :meth:`moderate_comment` take.
+
+        Returns:
+            ``{"postId", "platforms": [...]}``.
+        """
+        params: Dict[str, Any] = {}
+        if comments_limit is not None:
+            params["commentsLimit"] = comments_limit
+        if reactions_limit is not None:
+            params["reactionsLimit"] = reactions_limit
+        return self._client._request("GET", f"/api/posts/{post_id}/engagement", params=params)
+
+    def reply_to_comment(
+        self,
+        post_id: str,
+        *,
+        post_platform_id: int,
+        comment_id: str,
+        text: str,
+        root_comment_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Post a public reply to a comment, immediately, as the channel the
+        post was published to. It cannot be taken back from here.
+
+        Raises ``PermissionError`` (403 ``FEATURE_DISABLED``, feature
+        ``comments_inbox``) until comment replies are available to the
+        account, and ``ConflictError`` (409) when the channel must be
+        reconnected or the post is not published there. OAuth tokens need
+        ``inbox:write`` (or ``full``); ``posts:write`` does not cover it.
+
+        Args:
+            post_id: The post id.
+            post_platform_id: From the post's engagement entry for that channel.
+            comment_id: The comment's ``id``.
+            text: Up to 2,000 characters.
+            root_comment_id: When replying to a reply, the thread's top-level
+                comment (Instagram, YouTube).
+
+        Returns:
+            ``{"success", "replyId", "accountName"}``.
+        """
+        body: Dict[str, Any] = {"postPlatformId": post_platform_id, "commentId": comment_id, "text": text}
+        if root_comment_id is not None:
+            body["rootCommentId"] = root_comment_id
+        return self._client._request("POST", f"/api/posts/{post_id}/comments/reply", json=body)
+
+    def moderate_comment(
+        self,
+        post_id: str,
+        *,
+        post_platform_id: int,
+        comment_id: str,
+        action: str,
+    ) -> Dict[str, Any]:
+        """Like, unlike, hide, unhide or delete a comment on the platform.
+
+        ``"delete"`` is permanent and needs a role that can publish. Which
+        actions a channel supports is in ``commentActions`` on its engagement
+        entry (Threads: ``hide``/``unhide``; Facebook: ``hide``/``unhide``/``delete``).
+        A comment hidden on Threads or Facebook comes back with ``hidden: true``.
+
+        Returns:
+            ``{"success", "action"}``.
+        """
+        body = {"postPlatformId": post_platform_id, "commentId": comment_id, "action": action}
+        return self._client._request("POST", f"/api/posts/{post_id}/comments/moderate", json=body)
+
+    # -- Queue slot -----------------------------------------------------------
+
+    def queue_slot(
+        self,
+        *,
+        timezone: Optional[str] = None,
+        position: Optional[str] = None,
+        exclude_post_id: Optional[int] = None,
+    ) -> QueueSlot:
+        """Get the organization's next optimal publishing time slot.
+
+        Args:
+            timezone: IANA timezone for the slot calculation (defaults to UTC).
+            position: ``"next"`` (default) for the next free slot, ``"end"`` for
+                the slot after the last pending scheduled post (the bottom of
+                the queue).
+            exclude_post_id: Leave this post's own slot out of the booked set
+                when the answer is for rescheduling it.
+
+        Returns:
+            Dict with ``suggestedTime`` and ``timezone``.
+
+        Example::
+
+            slot = bp.posts.queue_slot(timezone="America/New_York")
+            print(f"Best time to post: {slot['suggestedTime']}")
+        """
+        params: Dict[str, Any] = {}
+        if timezone is not None:
+            params["timezone"] = timezone
+        if position is not None:
+            params["position"] = position
+        if exclude_post_id is not None:
+            params["excludePostId"] = exclude_post_id
+        return self._client._request("GET", "/api/posts/queue-slot", params=params)
+
+
+class AsyncPostsResource:
+    """Async version of :class:`PostsResource`.
+
+    Every method is an ``async`` coroutine with the same signature and
+    behaviour as its synchronous counterpart.
+
+    Example::
+
+        async with AsyncBulkPublish("bp_key") as bp:
+            posts = await bp.posts.list(status="published")
+    """
+
+    def __init__(self, client: _BaseClient) -> None:
+        self._client = client
+
+    async def list(self, **kwargs: Any) -> PostList:
+        """List posts — see :meth:`PostsResource.list` for full docs."""
+        params = _build_list_params(kwargs)
+        return await self._client._request("GET", "/api/posts", params=params)
+
+    async def get(self, post_id: str) -> Post:
+        """Get a post — see :meth:`PostsResource.get` for full docs."""
+        return await self._client._request("GET", f"/api/posts/{post_id}")
+
+    async def create(self, **kwargs: Any) -> Post:
+        """Create a post — see :meth:`PostsResource.create` for full docs."""
+        body = _build_create_body(kwargs)
+        return await self._client._request("POST", "/api/posts", json=body)
+
+    async def update(self, post_id: str, **fields: Any) -> Post:
+        """Update a post — see :meth:`PostsResource.update` for full docs."""
+        body = _snake_to_camel_dict(fields)
+        return await self._client._request("PUT", f"/api/posts/{post_id}", json=body)
+
+    async def delete(self, post_id: str) -> Dict[str, Any]:
+        """Delete a post — see :meth:`PostsResource.delete` for full docs."""
+        return await self._client._request("DELETE", f"/api/posts/{post_id}")
+
+    async def publish(self, post_id: str) -> Post:
+        """Publish a post now — see :meth:`PostsResource.publish`."""
+        return await self._client._request("POST", f"/api/posts/{post_id}/publish")
+
+    async def retry(self, post_id: str, *, republish: bool = False) -> Post:
+        """Retry a failed post — see :meth:`PostsResource.retry`."""
+        body = {"republish": True} if republish else None
+        return await self._client._request("POST", f"/api/posts/{post_id}/retry", json=body)
+
+    async def approve(
+        self,
+        post_id: str,
+        when_late: Optional[str] = None,
+        *,
+        if_unmodified_since: Optional[str] = None,
+    ) -> Post:
+        """Approve a pending post — see :meth:`PostsResource.approve`."""
+        body: Dict[str, Any] = {}
+        if when_late is not None:
+            body["whenLate"] = when_late
+        if if_unmodified_since is not None:
+            body["ifUnmodifiedSince"] = if_unmodified_since
+        return await self._client._request("POST", f"/api/posts/{post_id}/approve", json=body or None)
+
+    async def reject(
+        self,
+        post_id: str,
+        *,
+        reason: Optional[str] = None,
+        if_unmodified_since: Optional[str] = None,
+    ) -> Post:
+        """Reject a pending post — see :meth:`PostsResource.reject`."""
+        body: Dict[str, Any] = {}
+        if reason is not None:
+            body["reason"] = reason
+        if if_unmodified_since is not None:
+            body["ifUnmodifiedSince"] = if_unmodified_since
+        return await self._client._request("POST", f"/api/posts/{post_id}/reject", json=body)
+
+    async def metrics(self, post_id: str) -> PostMetrics:
+        """Get post metrics — see :meth:`PostsResource.metrics`."""
+        return await self._client._request("GET", f"/api/posts/{post_id}/metrics")
+
+    async def publish_as_story(
+        self, post_id: str, *, platform: Literal["facebook", "instagram"]
+    ) -> Post:
+        """Publish as story — see :meth:`PostsResource.publish_as_story`."""
+        return await self._client._request(
+            "POST", f"/api/posts/{post_id}/story", json={"platform": platform}
+        )
+
+    async def bulk(self, *, action: str, post_ids: List[str], scheduled_at: Optional[str] = None) -> BulkOperationResult:
+        """Bulk operation — see :meth:`PostsResource.bulk`."""
+        body: Dict[str, Any] = {"action": action, "postIds": post_ids}
+        if scheduled_at is not None:
+            body["scheduledAt"] = scheduled_at
+        return await self._client._request("POST", "/api/posts/bulk", json=body)
+
+    async def share(self, post_id: str, *, regenerate: bool = False) -> Dict[str, Any]:
+        """Review link — see :meth:`PostsResource.share`."""
+        return await self._client._request("POST", f"/api/posts/{post_id}/share", json={"regenerate": regenerate})
+
+    async def unshare(self, post_id: str) -> Dict[str, Any]:
+        """Revoke review link — see :meth:`PostsResource.unshare`."""
+        return await self._client._request("DELETE", f"/api/posts/{post_id}/share")
+
+    async def engagement(self, post_id: str, *, comments_limit: Optional[int] = None, reactions_limit: Optional[int] = None) -> Dict[str, Any]:
+        """Engagement — see :meth:`PostsResource.engagement`."""
+        params: Dict[str, Any] = {}
+        if comments_limit is not None:
+            params["commentsLimit"] = comments_limit
+        if reactions_limit is not None:
+            params["reactionsLimit"] = reactions_limit
+        return await self._client._request("GET", f"/api/posts/{post_id}/engagement", params=params)
+
+    async def reply_to_comment(self, post_id: str, *, post_platform_id: int, comment_id: str, text: str, root_comment_id: Optional[str] = None) -> Dict[str, Any]:
+        """Reply to a comment — see :meth:`PostsResource.reply_to_comment`."""
+        body: Dict[str, Any] = {"postPlatformId": post_platform_id, "commentId": comment_id, "text": text}
+        if root_comment_id is not None:
+            body["rootCommentId"] = root_comment_id
+        return await self._client._request("POST", f"/api/posts/{post_id}/comments/reply", json=body)
+
+    async def moderate_comment(self, post_id: str, *, post_platform_id: int, comment_id: str, action: str) -> Dict[str, Any]:
+        """Moderate a comment — see :meth:`PostsResource.moderate_comment`."""
+        body = {"postPlatformId": post_platform_id, "commentId": comment_id, "action": action}
+        return await self._client._request("POST", f"/api/posts/{post_id}/comments/moderate", json=body)
+
+    async def queue_slot(self, *, timezone: Optional[str] = None, position: Optional[str] = None, exclude_post_id: Optional[int] = None) -> QueueSlot:
+        """Queue slot — see :meth:`PostsResource.queue_slot`."""
+        params: Dict[str, Any] = {}
+        if timezone is not None:
+            params["timezone"] = timezone
+        if position is not None:
+            params["position"] = position
+        if exclude_post_id is not None:
+            params["excludePostId"] = exclude_post_id
+        return await self._client._request("GET", "/api/posts/queue-slot", params=params)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_SNAKE_TO_CAMEL = {
+    "scheduled_at": "scheduledAt",
+    "media_files": "mediaFiles",
+    "label_ids": "labels",
+    "post_format": "postFormat",
+    "platform_specific": "platformSpecific",
+    "platform_content": "platformContent",
+    "delete_media_after_publish": "deleteMediaAfterPublish",
+    "thread_parts": "threadParts",
+    "post_type_overrides": "postTypeOverrides",
+    "channel_id": "channelId",
+    "label_id": "labelId",
+    "label_mode": "labelMode",
+    "from_date": "from",
+    "to_date": "to",
+    "sort_order": "order",
+    "post_ids": "postIds",
+    "request_approval": "requestApproval",
+    "publish_when_approved": "publishWhenApproved",
+    "approval_status": "approvalStatus",
+    "link_tracking_override": "linkTrackingOverride",
+}
+
+
+def _snake_to_camel_dict(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a dict with snake_case keys to camelCase using the known mapping."""
+    return {_SNAKE_TO_CAMEL.get(k, k): v for k, v in d.items() if v is not None}
+
+
+# Query-string spellings that differ from the request-BODY spelling of the same
+# concept. `_SNAKE_TO_CAMEL` is shared with the create/update body builders,
+# where `label_ids` really is `labels` — but the filter on GET /api/posts is
+# `labelIds`, and sending `labels` there filtered nothing at all, silently. The
+# sync `list()` always spelled it correctly; only the async client went through
+# this helper, so async callers lost their label filter with no error.
+_LIST_PARAM_OVERRIDES: Dict[str, str] = {
+    "label_ids": "labelIds",
+}
+
+# Accepted for backwards compatibility and then dropped: there is no server
+# parameter behind `sort_by`, and never was. The synchronous `list()` drops it
+# too — without this the async client would put a junk `sort_by=` on the wire
+# and the two clients would disagree about what they send.
+_LIST_PARAMS_DROPPED = frozenset({"sort_by"})
+
+
+def _build_list_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Build query params dict from list() kwargs."""
+    params: Dict[str, Any] = {}
+    for k, v in kwargs.items():
+        if v is None or k in _LIST_PARAMS_DROPPED:
+            continue
+        camel = _LIST_PARAM_OVERRIDES.get(k) or _SNAKE_TO_CAMEL.get(k, k)
+        if k == "label_ids" and isinstance(v, list):
+            params[camel] = ",".join(v)
+        else:
+            params[camel] = v
+    return params
+
+
+def _build_create_body(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Build JSON body from create() kwargs."""
+    return _snake_to_camel_dict(kwargs)

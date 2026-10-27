@@ -1,0 +1,118 @@
+import { getClient } from "@/api/AxiosClient";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+import { useQuery } from "@tanstack/react-query";
+import { useLocation, useParams } from "react-router-dom";
+import { RunWorkflowForm } from "./RunWorkflowForm";
+import { WorkflowApiResponse } from "./types/workflowTypes";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ProxyLocation } from "@/api/types";
+import { getInitialValues, resolveInitialBrowserType } from "./utils";
+import { isMaskedHeaders } from "@/util/secretHeaders";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+
+function WorkflowRunParameters() {
+  const credentialGetter = useCredentialGetter();
+  const { workflowPermanentId } = useParams();
+  const location = useLocation();
+  const browserMemoryEnabled = useFeatureFlag("browser_memory_v1");
+
+  const { data: workflow, isFetching } = useQuery<WorkflowApiResponse>({
+    queryKey: ["workflow", workflowPermanentId],
+    queryFn: async () => {
+      const client = await getClient(credentialGetter);
+      return client
+        .get(`/workflows/${workflowPermanentId}`)
+        .then((response) => response.data);
+    },
+    enabled: !!workflowPermanentId,
+    refetchOnWindowFocus: false,
+  });
+
+  const workflowParameters = workflow?.workflow_definition.parameters.filter(
+    (parameter) => parameter.parameter_type === "workflow",
+  );
+
+  const proxyLocation = location.state
+    ? (location.state.proxyLocation as ProxyLocation)
+    : null;
+
+  const maxScreenshotScrolls = location.state?.maxScreenshotScrolls ?? null;
+
+  const webhookCallbackUrl = location.state
+    ? (location.state.webhookCallbackUrl as string)
+    : null;
+
+  const extraHttpHeaders = location.state
+    ? (location.state.extraHttpHeaders as Record<string, string>)
+    : null;
+
+  const browserProfileId =
+    (location.state?.browserProfileId as string | null | undefined) ?? null;
+
+  const cdpConnectHeaders = location.state
+    ? (location.state.cdpConnectHeaders as Record<string, string>)
+    : null;
+
+  const storedCdpConnectHeaders = isMaskedHeaders(workflow?.cdp_connect_headers)
+    ? null
+    : (workflow?.cdp_connect_headers ?? null);
+
+  const runWith = (location.state?.runWith as string) ?? undefined;
+
+  const initialValues = getInitialValues(location, workflowParameters ?? []);
+
+  if (isFetching) {
+    return (
+      <div className="space-y-8">
+        <header className="space-y-5">
+          <h1 className="text-3xl">Inputs</h1>
+          <h2 className="text-lg text-muted-foreground">
+            Fill the placeholder values that you have linked throughout your
+            agent.
+          </h2>
+        </header>
+        <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (!workflow || !workflowParameters || !initialValues) {
+    return <div>Agent not found</div>;
+  }
+
+  return (
+    <RunWorkflowForm
+      initialValues={initialValues}
+      workflowParameters={workflowParameters}
+      initialSettings={{
+        proxyLocation:
+          proxyLocation ?? workflow.proxy_location ?? ProxyLocation.Residential,
+        webhookCallbackUrl:
+          webhookCallbackUrl ?? workflow.webhook_callback_url ?? "",
+        reuseBrowserSession: workflow.reuse_browser_session ?? false,
+        maxScreenshotScrolls:
+          maxScreenshotScrolls ?? workflow.max_screenshot_scrolls ?? null,
+        extraHttpHeaders:
+          extraHttpHeaders ?? workflow.extra_http_headers ?? null,
+        // Under browser memory the run form's control is a one-run override that
+        // rests on Auto (the workflow's own profile is resolved server-side), so
+        // only carry an explicit per-run/rerun override — not the inherited default.
+        browserProfileId: browserMemoryEnabled
+          ? browserProfileId
+          : (browserProfileId ?? workflow.browser_profile_id ?? null),
+        cdpConnectHeaders: cdpConnectHeaders ?? storedCdpConnectHeaders,
+        cdpAddress: null,
+        runWith,
+        // A rerun/retry carries the executed run's effective browser_type in location state. A
+        // non-null value preselects what actually ran; a null OR absent value inherits the workflow's
+        // current browser_type (a run-level null means "inherit the workflow setting").
+        browserType: resolveInitialBrowserType(
+          location.state,
+          workflow.browser_type,
+        ),
+      }}
+    />
+  );
+}
+
+export { WorkflowRunParameters };

@@ -1,0 +1,1119 @@
+import asyncio
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from skyvern.forge.agent import ForgeAgent, SpeculativePlan, StepPromptResult
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
+from skyvern.forge.sdk.models import Step, StepStatus
+from skyvern.forge.sdk.schemas.tasks import TaskStatus
+from skyvern.schemas.runs import RunEngine
+from skyvern.schemas.steps import AgentStepOutput
+from skyvern.utils import stall_watch
+from skyvern.webeye.actions.actions import ClickAction, CompleteAction, ExtractAction
+from skyvern.webeye.actions.responses import ActionSuccess
+from skyvern.webeye.scraper.scraped_page import ScrapedPage
+from tests.unit.helpers import (
+    make_browser_state,
+    make_organization,
+    make_step,
+    make_task,
+    setup_parallel_verification_mocks,
+)
+from tests.unit.scoped_asyncio import ScopedAsyncio
+
+
+@pytest.mark.asyncio
+async def test_parallel_verification_triggers_data_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+
+    organization = make_organization(now)
+    task = make_task(now, organization)
+
+    step_output = AgentStepOutput(action_results=[], actions_and_results=[])
+    step = make_step(
+        now,
+        task,
+        step_id="step-123",
+        status=StepStatus.completed,
+        order=0,
+        output=step_output,
+    )
+    next_step = make_step(
+        now,
+        task,
+        step_id="step-next",
+        status=StepStatus.created,
+        order=1,
+        output=None,
+    )
+
+    complete_action = CompleteAction(reasoning="done", verified=True)
+    extract_action = ExtractAction(
+        reasoning="extract final data",
+        data_extraction_goal=task.data_extraction_goal,
+        data_extraction_schema=task.extracted_information_schema,
+    )
+    extract_action.organization_id = task.organization_id
+    extract_action.workflow_run_id = task.workflow_run_id
+    extract_action.task_id = task.task_id
+    extract_action.step_id = step.step_id
+    extract_action.step_order = step.order
+    extract_action.action_order = 1
+    monkeypatch.setattr(agent, "create_extract_action", AsyncMock(return_value=extract_action))
+
+    extraction_payload = {"quote": "42%"}
+    mocks = setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=next_step,
+        complete_action=complete_action,
+        handle_action_responses=[
+            [ActionSuccess()],
+            [ActionSuccess(data=extraction_payload)],
+        ],
+        extract_action=extract_action,
+    )
+
+    browser_state, scraped_page, page = make_browser_state()
+
+    completed, last_step, next_created_step = await agent._handle_completed_step_with_parallel_verification(
+        organization=organization,
+        task=task,
+        step=step,
+        page=page,
+        browser_state=browser_state,
+        scraped_page=scraped_page,
+        engine=RunEngine.skyvern_v1,
+    )
+
+    assert completed is True
+    assert last_step == step
+    assert next_created_step is None
+
+    assert mocks.handle_action.await_count == 2
+
+    extracted_information = mocks.update_task.await_args.kwargs["extracted_information"]
+    assert extracted_information == extraction_payload
+
+
+@pytest.mark.asyncio
+async def test_parallel_verification_skips_extraction_without_navigation_goal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization, navigation_goal=None)
+
+    step_output = AgentStepOutput(action_results=[], actions_and_results=[])
+    step = make_step(
+        now,
+        task,
+        step_id="step-123",
+        status=StepStatus.completed,
+        order=0,
+        output=step_output,
+    )
+
+    setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=step,
+        complete_action=CompleteAction(reasoning="done", verified=True),
+        handle_action_responses=[[ActionSuccess()]],
+    )
+
+    run_data_extraction_mock = AsyncMock()
+    monkeypatch.setattr(agent, "_run_data_extraction_after_complete_action", run_data_extraction_mock)
+
+    browser_state, scraped_page, page = make_browser_state()
+
+    await agent._handle_completed_step_with_parallel_verification(
+        organization=organization,
+        task=task,
+        step=step,
+        page=page,
+        browser_state=browser_state,
+        scraped_page=scraped_page,
+        engine=RunEngine.skyvern_v1,
+    )
+
+    run_data_extraction_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_speculate_next_step_plan_skips_in_script_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_speculate_next_step_plan returns None without doing any LLM work
+    when ctx.script_mode is True."""
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    current_step = make_step(now, task, step_id="step-cur", status=StepStatus.completed, order=0, output=None)
+    next_step = make_step(now, task, step_id="step-next", status=StepStatus.created, order=1, output=None)
+
+    build_prompt_mock = AsyncMock()
+    monkeypatch.setattr(agent, "build_and_record_step_prompt", build_prompt_mock)
+
+    browser_state, _scraped_page, _page = make_browser_state()
+    browser_state.get_working_page = AsyncMock(return_value=None)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    context.script_mode = True
+    with skyvern_context.scoped(context):
+        plan = await agent._speculate_next_step_plan(
+            organization=organization,
+            task=task,
+            current_step=current_step,
+            next_step=next_step,
+            browser_state=browser_state,
+            engine=RunEngine.skyvern_v1,
+        )
+
+    assert plan is None
+    # No prompt build — we exited before speculative work.
+    build_prompt_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_speculate_next_step_plan_proceeds_when_not_in_script_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ctx.script_mode, speculation proceeds past the gate and builds a plan."""
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    current_step = make_step(now, task, step_id="step-cur", status=StepStatus.completed, order=0, output=None)
+    next_step = make_step(now, task, step_id="step-next", status=StepStatus.created, order=1, output=None)
+
+    browser_state, scraped_page, page = make_browser_state()
+    browser_state.get_working_page = AsyncMock(return_value=page)
+    scraped_page.check_pdf_viewer_embed = MagicMock(return_value=False)
+    scraped_page.screenshots = [b"img"]
+
+    build_prompt_mock = AsyncMock(
+        return_value=StepPromptResult(
+            scraped_page=scraped_page,
+            extract_action_prompt="prompt",
+            use_caching=False,
+            prompt_name="extract-actions",
+            without_page_information=False,
+        )
+    )
+    monkeypatch.setattr(agent, "build_and_record_step_prompt", build_prompt_mock)
+    monkeypatch.setattr(agent, "register_async_operations", AsyncMock())
+
+    llm_handler_mock = AsyncMock(return_value={"actions": []})
+    monkeypatch.setattr(
+        "skyvern.forge.agent.LLMAPIHandlerFactory.get_override_llm_api_handler",
+        lambda *_args, **_kwargs: llm_handler_mock,
+    )
+    monkeypatch.setattr(agent.async_operation_pool, "run_operation", MagicMock())
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    # script_mode defaults to False
+    with skyvern_context.scoped(context):
+        plan = await agent._speculate_next_step_plan(
+            organization=organization,
+            task=task,
+            current_step=current_step,
+            next_step=next_step,
+            browser_state=browser_state,
+            engine=RunEngine.skyvern_v1,
+        )
+
+    assert plan is not None
+    build_prompt_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_speculative_in_script_mode_complete_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: with ctx.script_mode=True and complete_action=CompleteAction,
+    _handle_completed_step_with_parallel_verification must take the discard branch
+    without ever calling build_and_record_step_prompt (the first real LLM-tied
+    side effect inside _speculate_next_step_plan)."""
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    # No data_extraction_goal — keeps the test focused on the gate and avoids the
+    # post-complete extraction path (extraction_cache, etc.) which isn't relevant here.
+    task = make_task(now, organization, data_extraction_goal=None)
+
+    step = make_step(
+        now,
+        task,
+        step_id="step-orc-c",
+        status=StepStatus.completed,
+        order=0,
+        output=AgentStepOutput(action_results=[], actions_and_results=[]),
+    )
+    next_step = make_step(now, task, step_id="step-next-orc-c", status=StepStatus.created, order=1, output=None)
+
+    complete_action = CompleteAction(reasoning="done", verified=True)
+    mocks = setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=next_step,
+        complete_action=complete_action,
+        handle_action_responses=[[ActionSuccess()]],
+    )
+    # Restore the real _speculate_next_step_plan so the in-function gate runs.
+    monkeypatch.setattr(agent, "_speculate_next_step_plan", ForgeAgent._speculate_next_step_plan.__get__(agent))
+    # Mock build_and_record_step_prompt so we can assert the gate fired before LLM work began.
+    build_prompt_mock = AsyncMock()
+    monkeypatch.setattr(agent, "build_and_record_step_prompt", build_prompt_mock)
+
+    browser_state, scraped_page, page = make_browser_state()
+    browser_state.must_get_working_page = AsyncMock(return_value=page)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    context.script_mode = True
+    with skyvern_context.scoped(context):
+        completed, _last_step, returned_next_step = await agent._handle_completed_step_with_parallel_verification(
+            organization=organization,
+            task=task,
+            step=step,
+            page=page,
+            browser_state=browser_state,
+            scraped_page=scraped_page,
+            engine=RunEngine.skyvern_v1,
+        )
+
+    # Verification ran:
+    mocks.check_user_goal_complete.assert_awaited_once()
+    # Speculative LLM side-effect never happened (the gate inside _speculate_next_step_plan fired):
+    build_prompt_mock.assert_not_called()
+    # complete-action branch: task marked completed, returns (True, last_step, None):
+    assert completed is True
+    assert returned_next_step is None
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_skips_speculative_in_script_mode_not_achieved_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: with ctx.script_mode=True and complete_action=None,
+    _handle_completed_step_with_parallel_verification must take the
+    sequential-continuation branch without ever calling build_and_record_step_prompt."""
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization)
+
+    step = make_step(
+        now,
+        task,
+        step_id="step-orc-na",
+        status=StepStatus.completed,
+        order=0,
+        output=AgentStepOutput(action_results=[], actions_and_results=[]),
+    )
+    next_step = make_step(now, task, step_id="step-next-orc-na", status=StepStatus.created, order=1, output=None)
+
+    mocks = setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=next_step,
+        complete_action=None,
+        handle_action_responses=[],
+    )
+    # Restore the real _speculate_next_step_plan so the gate inside it runs.
+    monkeypatch.setattr(agent, "_speculate_next_step_plan", ForgeAgent._speculate_next_step_plan.__get__(agent))
+    # Mock build_and_record_step_prompt so we can assert it was never called.
+    build_prompt_mock = AsyncMock()
+    monkeypatch.setattr(agent, "build_and_record_step_prompt", build_prompt_mock)
+    monkeypatch.setattr(
+        "skyvern.forge.agent.ForgeAgent._check_workflow_run_step_budget",
+        AsyncMock(return_value=None),
+    )
+
+    browser_state, scraped_page, page = make_browser_state()
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    context.script_mode = True
+    with skyvern_context.scoped(context):
+        completed, _last_step, returned_next_step = await agent._handle_completed_step_with_parallel_verification(
+            organization=organization,
+            task=task,
+            step=step,
+            page=page,
+            browser_state=browser_state,
+            scraped_page=scraped_page,
+            engine=RunEngine.skyvern_v1,
+        )
+
+    mocks.check_user_goal_complete.assert_awaited_once()
+    build_prompt_mock.assert_not_called()
+    # Sequential-continuation branch returns (None, None, next_step):
+    assert completed is None
+    assert returned_next_step == next_step
+
+
+def _never_finishes(
+    running: list[asyncio.Task], entered: asyncio.Event | None = None, *, holds_cancellation: bool = False
+) -> Any:
+    async def call(*_args: Any, **_kwargs: Any) -> None:
+        running.append(asyncio.current_task())
+        if entered is not None:
+            entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if not holds_cancellation:
+                raise
+            await asyncio.Event().wait()
+
+    return call
+
+
+def _setup_hung_parallel_phase(
+    monkeypatch: pytest.MonkeyPatch, *, verification: Any, speculation: Any
+) -> tuple[ForgeAgent, dict[str, Any], Step]:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    step = make_step(
+        now,
+        task,
+        step_id="step-hung",
+        status=StepStatus.completed,
+        order=0,
+        output=AgentStepOutput(action_results=[], actions_and_results=[]),
+    )
+    next_step = make_step(now, task, step_id="step-after-hung", status=StepStatus.created, order=1, output=None)
+    setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=next_step,
+        complete_action=None,
+        handle_action_responses=[],
+    )
+    if verification is not None:
+        monkeypatch.setattr(agent, "check_user_goal_complete", verification)
+    monkeypatch.setattr(agent, "_speculate_next_step_plan", speculation)
+    monkeypatch.setattr(
+        "skyvern.forge.agent.ForgeAgent._check_workflow_run_step_budget",
+        AsyncMock(return_value=None),
+    )
+    browser_state, scraped_page, page = make_browser_state()
+    kwargs = dict(
+        organization=organization,
+        task=task,
+        step=step,
+        page=page,
+        browser_state=browser_state,
+        scraped_page=scraped_page,
+        engine=RunEngine.skyvern_v1,
+    )
+    return agent, kwargs, next_step
+
+
+@pytest.mark.asyncio
+async def test_verification_and_speculation_that_never_finish_do_not_hold_the_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("skyvern.forge.agent.PARALLEL_VERIFICATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(stall_watch, "ABANDONED_TASK_RECANCEL_SECONDS", 0.05)
+    running: list[asyncio.Task] = []
+    agent, kwargs, next_step = _setup_hung_parallel_phase(
+        monkeypatch,
+        verification=_never_finishes(running, holds_cancellation=True),
+        speculation=_never_finishes(running, holds_cancellation=True),
+    )
+
+    handled = asyncio.ensure_future(agent._handle_completed_step_with_parallel_verification(**kwargs))
+    done, _ = await asyncio.wait({handled}, timeout=5)
+
+    assert handled in done
+    completed, _last_step, returned_next_step = handled.result()
+    # Unverified, so the next step runs sequentially with a fresh scrape.
+    assert completed is None
+    assert returned_next_step == next_step
+    assert len(running) == 2
+    await asyncio.wait(running, timeout=5)
+    assert all(child.cancelled() for child in running)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", ["exhausted", "preflight_failed"])
+async def test_a_cancelled_speculative_plan_that_holds_its_cancellation_does_not_hold_the_step(
+    budget: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("skyvern.forge.agent.PARALLEL_VERIFICATION_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(stall_watch, "ABANDONED_TASK_RECANCEL_SECONDS", 0.05)
+    running: list[asyncio.Task] = []
+    agent, kwargs, _next_step = _setup_hung_parallel_phase(
+        monkeypatch, verification=None, speculation=_never_finishes(running, holds_cancellation=True)
+    )
+    monkeypatch.setattr(
+        "skyvern.forge.agent.ForgeAgent._check_workflow_run_step_budget",
+        AsyncMock(return_value=(5, 5)) if budget == "exhausted" else AsyncMock(side_effect=RuntimeError("down")),
+    )
+    monkeypatch.setattr(agent, "_terminate_for_workflow_run_step_budget", AsyncMock(return_value=kwargs["step"]))
+
+    handled = asyncio.ensure_future(agent._handle_completed_step_with_parallel_verification(**kwargs))
+    done, _ = await asyncio.wait({handled}, timeout=5)
+
+    assert handled in done
+    if budget == "exhausted":
+        assert handled.result() == (False, kwargs["step"], None)
+    else:
+        with pytest.raises(RuntimeError):
+            handled.result()
+    assert len(running) == 1
+    await asyncio.wait(running, timeout=5)
+    assert running[0].cancelled()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("waiting_on", ["verification", "speculation"])
+async def test_cancelling_the_step_during_the_parallel_phase_cancels_the_step_and_its_children(
+    waiting_on: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    verifying, speculating, budget_checked = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    running: list[asyncio.Task] = []
+    agent, kwargs, _next_step = _setup_hung_parallel_phase(
+        monkeypatch,
+        verification=_never_finishes(running, verifying) if waiting_on == "verification" else None,
+        speculation=_never_finishes(running, speculating),
+    )
+    monkeypatch.setattr(
+        "skyvern.forge.agent.ForgeAgent._check_workflow_run_step_budget",
+        AsyncMock(side_effect=lambda *_args, **_kwargs: budget_checked.set()),
+    )
+    handled = asyncio.ensure_future(agent._handle_completed_step_with_parallel_verification(**kwargs))
+    await asyncio.wait_for(speculating.wait(), timeout=5)
+    await asyncio.wait_for((verifying if waiting_on == "verification" else budget_checked).wait(), timeout=5)
+    await asyncio.wait({handled}, timeout=0.05)
+
+    handled.cancel()
+    await asyncio.wait({handled, *running}, timeout=5)
+
+    assert handled.cancelled()
+    assert running and all(child.cancelled() for child in running)
+
+
+@pytest.mark.asyncio
+async def test_speculate_next_step_plan_skips_for_cua_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CUA engine bypass short-circuits before the script_mode gate, even when
+    script_mode is explicitly False (i.e. the nominal non-script_mode agent path)."""
+    from skyvern.schemas.runs import CUA_ENGINES
+
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    current_step = make_step(now, task, step_id="step-cur", status=StepStatus.completed, order=0, output=None)
+    next_step = make_step(now, task, step_id="step-next", status=StepStatus.created, order=1, output=None)
+
+    build_prompt_mock = AsyncMock()
+    monkeypatch.setattr(agent, "build_and_record_step_prompt", build_prompt_mock)
+
+    browser_state, _scraped_page, _page = make_browser_state()
+    browser_state.get_working_page = AsyncMock(return_value=None)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    # script_mode False — proves the CUA early-return runs first, regardless of the script_mode gate.
+    cua_engine = next(iter(CUA_ENGINES))
+    with skyvern_context.scoped(context):
+        plan = await agent._speculate_next_step_plan(
+            organization=organization,
+            task=task,
+            current_step=current_step,
+            next_step=next_step,
+            browser_state=browser_state,
+            engine=cua_engine,
+        )
+
+    assert plan is None
+    build_prompt_mock.assert_not_called()
+
+
+def test_task_validate_update_requires_extracted_information() -> None:
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        data_extraction_goal="Need data",
+    )
+
+    with pytest.raises(ValueError):
+        task.validate_update(TaskStatus.completed, extracted_information=None)
+
+
+@pytest.mark.asyncio
+async def test_agent_step_skips_user_goal_check_when_feature_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization, navigation_goal="Reach confirmation page", workflow_run_id="workflow-1")
+    step = make_step(
+        now,
+        task,
+        step_id="step-disable",
+        status=StepStatus.created,
+        order=0,
+        output=None,
+    )
+
+    browser_state, _, page = make_browser_state()
+    browser_state.must_get_working_page = AsyncMock(return_value=page)
+    browser_state.get_working_page = AsyncMock(return_value=page)
+
+    async def _dummy_cleanup(*_args, **_kwargs) -> list[dict]:
+        return []
+
+    scraped_page = ScrapedPage(
+        elements=[],
+        element_tree=[],
+        element_tree_trimmed=[],
+        _browser_state=browser_state,
+        _clean_up_func=_dummy_cleanup,
+        _scrape_exclude=None,
+    )
+    scraped_page.screenshots = [b"image"]
+
+    agent.build_and_record_step_prompt = AsyncMock(
+        return_value=StepPromptResult(
+            scraped_page=scraped_page,
+            extract_action_prompt="prompt",
+            use_caching=False,
+            prompt_name="extract-actions",
+            without_page_information=False,
+        )
+    )
+    json_response: dict[str, object] = {"actions": [{"action_type": "CLICK", "element_id": "node-1"}]}
+    agent.handle_potential_OTP_actions = AsyncMock(return_value=(json_response, []))
+
+    click_action = ClickAction(
+        element_id="node-1",
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        task_id=task.task_id,
+        step_id=step.step_id,
+        step_order=step.order,
+        action_order=0,
+    )
+    monkeypatch.setattr("skyvern.forge.agent.parse_actions", lambda *_, **__: [click_action])
+
+    action_handler_mock = AsyncMock(return_value=[ActionSuccess()])
+    monkeypatch.setattr("skyvern.forge.agent.ActionHandler.handle_action", action_handler_mock)
+    agent.record_artifacts_after_action = AsyncMock()
+    agent.check_user_goal_complete = AsyncMock()
+
+    llm_handler_mock = AsyncMock(return_value=json_response)
+    monkeypatch.setattr(
+        "skyvern.forge.agent.LLMAPIHandlerFactory.get_override_llm_api_handler",
+        lambda *_args, **_kwargs: llm_handler_mock,
+    )
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.prepare_step_execution", AsyncMock(return_value=None))
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.post_action_execution", AsyncMock())
+    monkeypatch.setattr("skyvern.forge.agent.asyncio", ScopedAsyncio(sleep=AsyncMock(return_value=None)))
+    monkeypatch.setattr("skyvern.forge.agent.random.uniform", lambda *_args, **_kwargs: 0)
+
+    async def fake_update_step(
+        step: Step,
+        status: StepStatus | None = None,
+        output=None,
+        is_last: bool | None = None,
+        retry_index: int | None = None,
+        **_kwargs,
+    ) -> Step:
+        if status is not None:
+            step.status = status
+        if output is not None:
+            step.output = output
+        if is_last is not None:
+            step.is_last = is_last
+        if retry_index is not None:
+            step.retry_index = retry_index
+        return step
+
+    agent.update_step = AsyncMock(side_effect=fake_update_step)
+
+    async def feature_flag_side_effect(flag_name: str, *_args, **_kwargs) -> bool:
+        if flag_name == "DISABLE_USER_GOAL_CHECK":
+            return True
+        return False
+
+    monkeypatch.setattr(
+        "skyvern.forge.agent.app.EXPERIMENTATION_PROVIDER.is_feature_enabled_cached",
+        AsyncMock(side_effect=feature_flag_side_effect),
+    )
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    skyvern_context.set(context)
+    try:
+        completed_step, detailed_output = await agent.agent_step(
+            task=task,
+            step=step,
+            browser_state=browser_state,
+            organization=organization,
+        )
+    finally:
+        skyvern_context.reset()
+
+    assert completed_step.status == StepStatus.completed
+    assert detailed_output.actions_and_results is not None
+    assert action_handler_mock.await_count == 1
+    agent.record_artifacts_after_action.assert_awaited()
+    agent.check_user_goal_complete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_agent_step_persists_artifacts_when_using_speculative_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization, navigation_goal=None)
+    step = make_step(
+        now,
+        task,
+        step_id="step-speculative",
+        status=StepStatus.created,
+        order=0,
+        output=None,
+    )
+
+    browser_state, _, page = make_browser_state()
+    browser_state.must_get_working_page = AsyncMock(return_value=page)
+    browser_state.get_working_page = AsyncMock(return_value=page)
+
+    async def _dummy_cleanup(*_args, **_kwargs) -> list[dict]:
+        return []
+
+    scraped_page = ScrapedPage(
+        elements=[],
+        element_tree=[{"tagName": "div", "children": []}],
+        element_tree_trimmed=[{"tagName": "div", "children": []}],
+        _browser_state=browser_state,
+        _clean_up_func=_dummy_cleanup,
+        _scrape_exclude=None,
+    )
+    scraped_page.html = "<html></html>"
+    scraped_page.id_to_css_dict = {"node-1": "#node"}
+    scraped_page.id_to_frame_dict = {"node-1": "frame-1"}
+    scraped_page.screenshots = [b"image"]
+
+    speculative_plan = SpeculativePlan(
+        scraped_page=scraped_page,
+        extract_action_prompt="unused",
+        use_caching=False,
+        llm_json_response=None,
+        llm_metadata=None,
+        prompt_name="extract-actions",
+    )
+
+    extract_action = ExtractAction(
+        reasoning="collect data",
+        data_extraction_goal=task.data_extraction_goal,
+        data_extraction_schema=task.extracted_information_schema,
+    )
+    extract_action.organization_id = task.organization_id
+    extract_action.workflow_run_id = task.workflow_run_id
+    extract_action.task_id = task.task_id
+    extract_action.step_id = step.step_id
+    extract_action.step_order = step.order
+    extract_action.action_order = 0
+
+    agent.create_extract_action = AsyncMock(return_value=extract_action)
+    agent.record_artifacts_after_action = AsyncMock()
+    agent._persist_scrape_artifacts = AsyncMock()
+
+    action_handler_mock = AsyncMock(return_value=[ActionSuccess()])
+    monkeypatch.setattr("skyvern.forge.agent.ActionHandler.handle_action", action_handler_mock)
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.prepare_step_execution", AsyncMock(return_value=None))
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.post_action_execution", AsyncMock())
+    monkeypatch.setattr("skyvern.forge.agent.asyncio", ScopedAsyncio(sleep=AsyncMock(return_value=None)))
+    monkeypatch.setattr("skyvern.forge.agent.random.uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr("skyvern.forge.agent.app.DATABASE.workflow_params.create_action", AsyncMock())
+    monkeypatch.setattr(
+        "skyvern.forge.agent.app.EXPERIMENTATION_PROVIDER.is_feature_enabled_cached",
+        AsyncMock(return_value=False),
+    )
+
+    async def fake_update_step(
+        step: Step,
+        status: StepStatus | None = None,
+        output=None,
+        is_last: bool | None = None,
+        retry_index: int | None = None,
+        **_kwargs,
+    ) -> Step:
+        if status is not None:
+            step.status = status
+        if output is not None:
+            step.output = output
+        if is_last is not None:
+            step.is_last = is_last
+        if retry_index is not None:
+            step.retry_index = retry_index
+        return step
+
+    agent.update_step = AsyncMock(side_effect=fake_update_step)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    context.speculative_plans[step.step_id] = speculative_plan
+    skyvern_context.set(context)
+    try:
+        completed_step, detailed_output = await agent.agent_step(
+            task=task,
+            step=step,
+            browser_state=browser_state,
+            organization=organization,
+        )
+    finally:
+        skyvern_context.reset()
+
+    assert completed_step.status == StepStatus.completed
+    assert detailed_output.actions is not None
+    agent._persist_scrape_artifacts.assert_awaited_once()
+
+
+def _make_scrape_test_fixtures(now, monkeypatch):
+    """Shared setup for _persist_scrape_artifacts tests."""
+    organization = make_organization(now)
+    task = make_task(now, organization)
+    step = make_step(
+        now,
+        task,
+        step_id="step-artifacts",
+        status=StepStatus.created,
+        order=0,
+        output=None,
+    )
+    browser_state, _, _ = make_browser_state()
+
+    async def _dummy_cleanup(*_args, **_kwargs) -> list[dict]:
+        return []
+
+    scraped_page = ScrapedPage(
+        elements=[],
+        element_tree=[{"tagName": "div"}],
+        element_tree_trimmed=[{"tagName": "div"}],
+        _browser_state=browser_state,
+        _clean_up_func=_dummy_cleanup,
+        _scrape_exclude=None,
+    )
+    scraped_page.html = "<html></html>"
+    scraped_page.id_to_css_dict = {"node-1": "#node"}
+    scraped_page.id_to_frame_dict = {"node-1": "frame-1"}
+    scraped_page.element_tree = [{"tagName": "div"}]
+    scraped_page.element_tree_trimmed = [{"tagName": "div"}]
+
+    economy_tree_mock = MagicMock(return_value="<economy>")
+    full_tree_mock = MagicMock(return_value="<full>")
+    monkeypatch.setattr(ScrapedPage, "build_economy_elements_tree", lambda self, *a, **kw: economy_tree_mock())
+    monkeypatch.setattr(ScrapedPage, "build_element_tree", lambda self, *a, **kw: full_tree_mock())
+
+    return task, step, scraped_page, economy_tree_mock, full_tree_mock
+
+
+@pytest.mark.asyncio
+async def test_persist_scrape_artifacts_uses_archive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All six scrape fields are collected in one archive call."""
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    task, step, scraped_page, economy_tree_mock, full_tree_mock = _make_scrape_test_fixtures(now, monkeypatch)
+
+    accumulate_mock = MagicMock()
+    monkeypatch.setattr("skyvern.forge.agent.app.ARTIFACT_MANAGER.accumulate_scrape_to_archive", accumulate_mock)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+
+    await agent._persist_scrape_artifacts(task=task, step=step, scraped_page=scraped_page, context=context)
+
+    accumulate_mock.assert_called_once()
+    call_kwargs = accumulate_mock.call_args.kwargs
+    assert call_kwargs["html"] == b"<html></html>"
+    assert "node-1" in call_kwargs["id_css_map"].decode()
+    assert "node-1" in call_kwargs["id_frame_map"].decode()
+    assert call_kwargs["element_tree_in_prompt"] == b"<full>"
+    full_tree_mock.assert_called_once()
+    economy_tree_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_speculative_plan_null_response_does_not_unbind_without_page_information(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation task + speculative plan where llm_json_response is None must
+    not raise UnboundLocalError for without_page_information. The speculative
+    plan does not carry a router result, so the default is page-aware."""
+    from skyvern.forge.sdk.db.enums import TaskType
+
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        task_type=TaskType.validation,
+        navigation_goal=None,
+        complete_criterion="extracted_amount equals invoice_amount",
+    )
+    step = make_step(now, task, step_id="step-spec-fallback", status=StepStatus.created, order=0, output=None)
+
+    browser_state, _, page = make_browser_state()
+    browser_state.must_get_working_page = AsyncMock(return_value=page)
+    browser_state.get_working_page = AsyncMock(return_value=page)
+
+    async def _dummy_cleanup(*_args, **_kwargs) -> list[dict]:
+        return []
+
+    scraped_page = ScrapedPage(
+        elements=[],
+        element_tree=[{"tagName": "div", "children": []}],
+        element_tree_trimmed=[{"tagName": "div", "children": []}],
+        _browser_state=browser_state,
+        _clean_up_func=_dummy_cleanup,
+        _scrape_exclude=None,
+    )
+    scraped_page.html = "<html></html>"
+    scraped_page.screenshots = [b"image"]
+
+    speculative_plan = SpeculativePlan(
+        scraped_page=scraped_page,
+        extract_action_prompt="unused",
+        use_caching=False,
+        llm_json_response=None,
+        llm_metadata=None,
+        prompt_name="extract-actions",
+    )
+
+    llm_handler_mock = AsyncMock(
+        return_value={"actions": [{"action_type": "COMPLETE", "reasoning": "done", "confidence_float": 1.0}]}
+    )
+    monkeypatch.setattr(
+        "skyvern.forge.agent.LLMAPIHandlerFactory.get_override_llm_api_handler",
+        lambda *_args, **_kwargs: llm_handler_mock,
+    )
+    monkeypatch.setattr("skyvern.forge.agent.ActionHandler.handle_action", AsyncMock(return_value=[ActionSuccess()]))
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.prepare_step_execution", AsyncMock(return_value=None))
+    monkeypatch.setattr("skyvern.forge.agent.app.AGENT_FUNCTION.post_action_execution", AsyncMock())
+    monkeypatch.setattr("skyvern.forge.agent.asyncio", ScopedAsyncio(sleep=AsyncMock(return_value=None)))
+    monkeypatch.setattr("skyvern.forge.agent.random.uniform", lambda *_args, **_kwargs: 0)
+    monkeypatch.setattr("skyvern.forge.agent.app.DATABASE.workflow_params.create_action", AsyncMock())
+    monkeypatch.setattr(
+        "skyvern.forge.agent.app.EXPERIMENTATION_PROVIDER.is_feature_enabled_cached",
+        AsyncMock(return_value=False),
+    )
+    agent.record_artifacts_after_action = AsyncMock()
+    agent._persist_scrape_artifacts = AsyncMock()
+    extract_action = ExtractAction(
+        reasoning="collect",
+        data_extraction_goal=task.data_extraction_goal,
+        data_extraction_schema=task.extracted_information_schema,
+    )
+    extract_action.organization_id = task.organization_id
+    extract_action.workflow_run_id = task.workflow_run_id
+    extract_action.task_id = task.task_id
+    extract_action.step_id = step.step_id
+    extract_action.step_order = step.order
+    extract_action.action_order = 0
+    agent.create_extract_action = AsyncMock(return_value=extract_action)
+
+    async def fake_update_step(
+        step: Step,
+        status: StepStatus | None = None,
+        output=None,
+        is_last: bool | None = None,
+        retry_index: int | None = None,
+        **_kwargs,
+    ) -> Step:
+        if status is not None:
+            step.status = status
+        if output is not None:
+            step.output = output
+        if is_last is not None:
+            step.is_last = is_last
+        if retry_index is not None:
+            step.retry_index = retry_index
+        return step
+
+    agent.update_step = AsyncMock(side_effect=fake_update_step)
+
+    context = SkyvernContext(
+        task_id=task.task_id,
+        step_id=None,
+        organization_id=task.organization_id,
+        workflow_run_id=task.workflow_run_id,
+        tz_info=ZoneInfo("UTC"),
+    )
+    context.speculative_plans[step.step_id] = speculative_plan
+    skyvern_context.set(context)
+    try:
+        await agent.agent_step(
+            task=task,
+            step=step,
+            browser_state=browser_state,
+            organization=organization,
+        )
+    finally:
+        skyvern_context.reset()
+
+    # If we reach here without UnboundLocalError, the regression is fixed.
+    # Validation tasks with speculative plans re-scrape; the key invariant
+    # is that agent_step completes (pass or fail) without raising
+    # UnboundLocalError for without_page_information.
+    assert step.status in (StepStatus.completed, StepStatus.failed)
+
+
+@pytest.mark.asyncio
+async def test_discarded_speculative_plan_cost_write_survives_task_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The speculative extract-actions call is billed even when its plan is thrown away, so
+    the write that attributes its cost has to reach the DB. It is started in the background
+    (the completion path must not wait on an LLM call it no longer needs) and drained in
+    clean_up_task, which is the choke point every terminal path funnels through. Before the
+    drain existed the task was orphaned: nothing held a reference and nothing awaited it, so
+    the write was dropped at teardown.
+    """
+    agent = ForgeAgent()
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization, navigation_goal=None, workflow_run_id="wr-1")
+
+    step = make_step(
+        now,
+        task,
+        step_id="step-123",
+        status=StepStatus.completed,
+        order=0,
+        output=AgentStepOutput(action_results=[], actions_and_results=[]),
+    )
+    next_step = make_step(now, task, step_id="step-next", status=StepStatus.created, order=1, output=None)
+
+    setup_parallel_verification_mocks(
+        agent,
+        step=step,
+        task=task,
+        monkeypatch=monkeypatch,
+        next_step=next_step,
+        complete_action=CompleteAction(reasoning="done", verified=True),
+        handle_action_responses=[[ActionSuccess()]],
+    )
+
+    # Stands in for the speculative LLM call still being in flight when the completion path
+    # returns. call_later rather than sleep: the module-local sleep stand-in is scoped.
+    speculative_call_finished = asyncio.Event()
+    asyncio.get_running_loop().call_later(0.2, speculative_call_finished.set)
+    persisted_steps: list[str] = []
+
+    async def slow_persist(discarded_step: Step, speculative_task: Any, *, cancel_step: bool = False) -> None:
+        await speculative_call_finished.wait()
+        persisted_steps.append(discarded_step.step_id)
+
+    monkeypatch.setattr(agent, "_persist_speculative_metadata_for_discarded_plan", slow_persist)
+
+    context = SkyvernContext(organization_id=organization.organization_id, task_id=task.task_id)
+    skyvern_context.set(context)
+    try:
+        browser_state, scraped_page, page = make_browser_state()
+        completed, _, _ = await agent._handle_completed_step_with_parallel_verification(
+            organization=organization,
+            task=task,
+            step=step,
+            page=page,
+            browser_state=browser_state,
+            scraped_page=scraped_page,
+            engine=RunEngine.skyvern_v1,
+        )
+
+        assert completed is True
+        # The completion path returned without waiting on the still-running speculative call.
+        assert persisted_steps == []
+
+        with (
+            patch("skyvern.forge.agent.analytics.capture"),
+            patch.object(agent, "_finalize_downloaded_files_for_task", AsyncMock(return_value=[])),
+            patch("skyvern.forge.agent.app") as mock_app,
+        ):
+            mock_app.DATABASE.tasks.get_task = AsyncMock(return_value=task)
+            mock_app.STORAGE.save_downloaded_files = AsyncMock()
+            await agent.clean_up_task(
+                task,
+                last_step=step,
+                need_final_screenshot=False,
+                need_call_webhook=False,
+                close_browser_on_completion=False,
+            )
+
+        assert persisted_steps == [next_step.step_id]
+        assert context.pending_speculative_persist_tasks == []
+    finally:
+        skyvern_context.reset()

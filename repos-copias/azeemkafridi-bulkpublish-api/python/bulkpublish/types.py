@@ -1,0 +1,871 @@
+"""
+Type definitions for the BulkPublish SDK.
+
+All types are plain ``TypedDict`` subclasses — no Pydantic or other heavy
+dependency required.  They exist purely for editor autocompletion, static
+analysis, and documentation; at runtime every API response is a regular
+``dict``.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+
+# Python 3.8 compat: TypedDict lives in typing_extensions before 3.11
+try:
+    from typing import TypedDict, NotRequired  # type: ignore[attr-defined]
+except ImportError:
+    from typing_extensions import TypedDict, NotRequired  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Posts
+# ---------------------------------------------------------------------------
+
+
+class ChannelTarget(TypedDict, total=False):
+    """Channel reference used when creating/updating a post.
+
+    ``platform`` is optional — the server always resolves the platform from
+    the channel record and ignores a supplied value on create.
+    """
+
+    channelId: int
+    platform: str
+
+
+class PostPlatform(TypedDict, total=False):
+    """Per-platform entry included in a post's ``postPlatforms``.
+
+    ``status`` is one of ``pending``, ``publishing``, ``published``,
+    ``processing``, ``failed``, or ``unconfirmed``.
+
+    ``unconfirmed`` is terminal: the publish request may have reached the
+    platform but its response was lost — the post may already be live. It is
+    never auto-retried; check the account, then call ``posts.retry`` with
+    ``republish=True`` if the post is not live (this can duplicate the post).
+    """
+
+    id: int
+    channelId: int
+    platform: str
+    status: str
+    platformPostId: Optional[str]
+    platformUrl: Optional[str]
+    errorMessage: Optional[str]
+    retryCount: int
+
+
+# Backwards-compat alias for the old (incorrect) name.
+PlatformResult = PostPlatform
+
+
+class Post(TypedDict, total=False):
+    """A social-media post object.
+
+    ``status`` is one of ``draft``, ``scheduled``, ``publishing``,
+    ``published``, ``processing``, ``failed``, or ``partial``.
+    ``deleteMediaAfterPublish`` defaults to ``False`` — media is kept and
+    reclaimed by the server's 3-month retention sweep. Set ``True`` and the
+    original is removed once every channel has published, freeing the storage
+    it counted against; the media record remains with ``isOriginalDeleted``
+    set and its original ``sizeBytes`` still reported.
+
+    ``approvalStatus`` is the team approval state, orthogonal to ``status``:
+    one of ``none`` (default), ``pending``, ``approved``, ``rejected``.
+    ``pending`` and ``rejected`` posts do not publish, even when scheduled
+    and overdue; approving releases them. An overdue post publishes
+    immediately on approval if its time passed less than 15 minutes ago;
+    later than that it publishes immediately only when ``publishWhenApproved``
+    is true or the approver sends ``whenLate`` ``"publish"``, and is otherwise
+    approved but returned to ``draft`` for a new time.
+    ``approvedBy``/``approvedAt`` are set when
+    approved; ``rejectionReason`` when rejected. ``publishWhenApproved`` is
+    true when the author asked for the post to go out as soon as it is
+    approved, even after its scheduled time; only ever true while
+    ``approvalStatus`` is ``pending`` (approving or rejecting clears it, and
+    a post entering review again starts from false).
+
+    ``linkTrackingOverride`` is the per-post override for link tracking
+    (bulkpubli.sh): ``True`` forces links in this post to be shortened and
+    their clicks counted, ``False`` forces them to publish as written, and
+    ``None`` (the default) inherits the organization's Link Tracking setting.
+    Short links are part of the Pro and Business plans: on Free, links always
+    publish as written and ``True`` has no effect.
+    """
+
+    id: int
+    content: str
+    status: str
+    scheduledAt: Optional[str]
+    publishedAt: Optional[str]
+    timezone: str
+    postFormat: str
+    postTypeOverrides: Dict[str, Any]
+    platformSpecific: Dict[str, Any]
+    platformContent: Dict[str, str]
+    platformThreadParts: Dict[str, Any]
+    deleteMediaAfterPublish: bool
+    threadParts: Optional[List[Dict[str, Any]]]
+    # Media referenced by threadParts[].mediaFileIds, resolved and de-duplicated
+    # across parts. Separate from mediaFiles, which is the media on the post
+    # itself: a thread post can carry both.
+    threadMediaFiles: List["MediaFile"]
+    autoPlugEnabled: bool
+    autoPlugText: Optional[str]
+    autoPlugThreshold: int
+    autoPlugFired: bool
+    autoRepostEnabled: bool
+    autoRepostThreshold: int
+    autoRepostFired: bool
+    linkTrackingOverride: Optional[bool]
+    approvalStatus: str
+    userId: str
+    approvedBy: Optional[str]
+    approvedAt: Optional[str]
+    rejectionReason: Optional[str]
+    publishWhenApproved: bool
+    recurringScheduleId: Optional[int]
+    mediaFiles: List["MediaFile"]
+    postPlatforms: List[PostPlatform]
+    labels: List["Label"]
+    createdAt: str
+    updatedAt: str
+    author: Optional["TeamActor"]
+    approver: Optional["TeamActor"]
+    assignee: Optional["TeamActor"]
+    assignedUserId: Optional[str]
+    assignedAt: Optional[str]
+    rejectedBy: Optional[str]
+
+
+class TeamActor(TypedDict, total=False):
+    """A teammate, as posts and other records identify one.
+
+    ``name`` falls back to ``"Teammate"`` for an account with none.
+    """
+
+    id: str
+    name: str
+    image: Optional[str]
+
+
+class PostList(TypedDict, total=False):
+    """Paginated list of posts returned by ``posts.list()``."""
+
+    posts: List[Post]
+    total: int
+    page: int
+    limit: int
+    totalPages: int
+
+
+class PostMetrics(TypedDict, total=False):
+    """Engagement metrics for a single post."""
+
+    likes: int
+    comments: int
+    shares: int
+    impressions: int
+    reach: int
+    clicks: int
+    saves: int
+    engagementRate: float
+
+
+class QueueSlot(TypedDict, total=False):
+    """Next optimal publishing slot."""
+
+    suggestedTime: str
+    timezone: str
+
+
+class BulkOperationResult(TypedDict, total=False):
+    """Result of a bulk post operation."""
+
+    success: int
+    failed: int
+    errors: List[Dict[str, Any]]
+
+
+# ---------------------------------------------------------------------------
+# Channels
+# ---------------------------------------------------------------------------
+
+
+class MemberCapabilities(TypedDict):
+    """What the member whose key made the request may do in the organization.
+
+    Returned in the ``GET /api/channels`` envelope alongside ``channels``, so a
+    client does not have to re-derive permissions from a role string.
+    """
+
+    canCreatePosts: bool
+    canPublishPosts: bool
+    canApprovePosts: bool
+
+
+class Channel(TypedDict, total=False):
+    """A connected social-media channel.
+
+    ``tokenStatus`` is one of ``valid``, ``expiring_soon``, or ``expired``.
+    """
+
+    id: int
+    platform: str
+    accountType: Optional[str]  # e.g. "personal" / "organization" (LinkedIn); None where a platform has one kind
+    accountName: str
+    accountId: str
+    profileImage: Optional[str]
+    isActive: bool
+    #: ``True`` once a live request proved the stored token dead; publishing
+    #: fails until the account is reconnected.
+    needsReconnect: bool
+    #: Whether the token renews on its own; ``False`` means reconnect when
+    #: ``tokenStatus`` reaches ``expired``.
+    autoRenews: bool
+    tokenStatus: str
+    tokenExpiresAt: Optional[str]
+    createdAt: str
+    updatedAt: str
+    # Availability of THIS channel: the platform flag narrowed by any variant
+    # matching its ``accountType``. A channel can be perfectly healthy while it
+    # is switched off server-side, in which case its scheduled posts are held
+    # (not failed) until it is re-enabled. LinkedIn company pages
+    # (``accountType`` "organization") are gated separately from personal
+    # profiles, so two LinkedIn channels in one response can differ here.
+    platformAvailable: bool
+    platformState: str  # "on" | "connect_off" | "off"
+    platformMessage: Optional[str]
+
+
+class PlatformAvailability(TypedDict, total=False):
+    """Availability of one social platform.
+
+    ``state`` is one of:
+
+    * ``on`` — fully available.
+    * ``connect_off`` — new channels cannot be connected, but channels already
+      connected keep publishing (used while a platform app review is pending).
+    * ``off`` — kill switch: posts targeting the platform are **held**, not
+      failed, and publish automatically once it is re-enabled.
+
+    ``reason`` is one of ``enabled``, ``flag_connect_off``, ``flag_off``, or
+    ``unconfigured`` (the server has no OAuth app credentials for it yet).
+
+    Disabled platforms are always included in responses with ``enabled`` False —
+    never omitted — so callers can tell "switched off right now" apart from
+    "not supported".
+    """
+
+    platform: str
+    displayName: str
+    color: Optional[str]
+    enabled: bool
+    state: str
+    reason: str
+    canConnect: bool
+    canPublish: bool
+    message: Optional[str]
+    envVar: str  # only returned to organization owners/admins
+    # Sub-platforms gated independently of their parent, keyed by the channel
+    # ``accountType`` they cover. Present only for platforms that have one —
+    # today ``linkedin.organization`` (company pages), which run on a separate
+    # LinkedIn app reviewed separately from personal profiles. A variant is
+    # never more permissive than its parent. When a variant blocks a write, the
+    # 403 ``PLATFORM_DISABLED`` error carries an ``accountType`` naming it.
+    variants: Dict[str, "PlatformVariantAvailability"]
+
+
+class PlatformVariantAvailability(TypedDict, total=False):
+    """Availability of one sub-platform variant (e.g. LinkedIn company pages).
+
+    ``state``/``reason`` carry the same meanings as on
+    :class:`PlatformAvailability`, resolved for this variant alone.
+    """
+
+    label: str
+    enabled: bool
+    state: str
+    reason: str
+    canConnect: bool
+    canPublish: bool
+    message: Optional[str]
+    envVar: str  # only returned to organization owners/admins
+
+
+class ChannelHealth(TypedDict, total=False):
+    """Health status for a connected channel."""
+
+    healthy: bool
+    lastChecked: str
+    error: str
+
+
+# ---------------------------------------------------------------------------
+# Media
+# ---------------------------------------------------------------------------
+
+
+class MediaFile(TypedDict, total=False):
+    """An uploaded media file.
+
+    ``width``/``height``/``duration``/``thumbnailUrl``/``previewUrl``/
+    ``largeUrl`` can be ``None`` (e.g. before async processing finishes). For a
+    document (PDF, Word, PowerPoint) the dimensions and all three derivative URLs
+    are always ``None``.
+
+    The three derivative URLs are webp renditions — ``thumbnailUrl`` a 160x160
+    square crop, ``previewUrl`` 400px wide for grids, ``largeUrl`` 1200px wide
+    for lightboxes and large preview panes. For videos they are generated from
+    an extracted poster frame. ``largeUrl`` is ``None`` on media uploaded
+    before that derivative existed, until the backfill runs.
+    """
+
+    id: int
+    fileName: str
+    mimeType: str
+    sizeBytes: int
+    originalUrl: str
+    thumbnailUrl: Optional[str]
+    previewUrl: Optional[str]
+    largeUrl: Optional[str]
+    width: Optional[int]
+    height: Optional[int]
+    duration: Optional[float]
+    labels: List["Label"]
+    createdAt: str
+
+
+class MediaUploadResponse(TypedDict, total=False):
+    """Response from a media upload."""
+
+    file: MediaFile
+
+
+class MediaList(TypedDict, total=False):
+    """Paginated list of media files.
+
+    ``total`` counts every file matching the filters across all pages.
+    """
+
+    files: List[MediaFile]
+    total: int
+    page: int
+    limit: int
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+class AnalyticsSummary(TypedDict, total=False):
+    """High-level analytics summary."""
+
+    totalPosts: int
+    totalImpressions: int
+    totalEngagements: int
+    totalClicks: int
+    avgEngagementRate: float
+    topPost: Optional[Post]
+
+
+class EngagementDataPoint(TypedDict, total=False):
+    """A single data point in an engagement time series."""
+
+    date: str
+    impressions: int
+    engagements: int
+    clicks: int
+    likes: int
+    comments: int
+    shares: int
+
+
+class AccountMetrics(TypedDict, total=False):
+    """Account-level metrics for a channel."""
+
+    followers: int
+    following: int
+    totalPosts: int
+    #: Always ``None`` — no platform handler computes an account-level rate, so
+    #: the server returns null rather than a 0 that would look measured. Use the
+    #: per-post ``engagementRate`` from ``analytics.engagement()`` instead.
+    engagementRate: Optional[float]
+
+
+# ---------------------------------------------------------------------------
+# Labels
+# ---------------------------------------------------------------------------
+
+
+class PostTemplate(TypedDict, total=False):
+    """Saved post text to start a new post from.
+
+    ``kind`` is ``caption`` or ``first_comment``; names are unique per kind.
+    """
+
+    id: int
+    name: str
+    content: str
+    kind: str
+    createdAt: str
+    updatedAt: str
+
+
+class ReviewLink(TypedDict, total=False):
+    """A client review link covering a batch of posts at once.
+
+    ``postCount`` is only present when listing. ``url`` is the public
+    review page: https://app.bulkpublish.com/p/schedule/<shareToken>.
+    """
+
+    id: int
+    name: Optional[str]
+    shareToken: str
+    createdAt: str
+    postCount: int
+    url: str
+
+
+class ClientConnectLink(TypedDict, total=False):
+    """A one-time link for a client to connect their own platform account.
+
+    ``status`` is ``pending`` | ``used`` | ``revoked`` | ``expired``. The raw
+    connect URL is returned once, alongside this object, on create — it
+    cannot be recovered afterward, so there is no ``url`` field here.
+    """
+
+    id: int
+    name: str
+    status: str
+    expiresAt: str
+    usedAt: Optional[str]
+    connectedChannelId: Optional[int]
+    connectedPlatform: Optional[str]
+    createdAt: str
+
+
+class CalendarNote(TypedDict, total=False):
+    """Free text pinned to a calendar day (``date`` is YYYY-MM-DD, ``color`` a hex colour)."""
+
+    id: int
+    date: str
+    body: str
+    color: str
+    createdAt: str
+    updatedAt: str
+
+
+class RepostOptions(TypedDict, total=False):
+    """``platformSpecific.<platform>`` for post type ``repost`` on x, threads, bluesky, mastodon."""
+
+    repostId: str
+
+
+class HashtagGroup(TypedDict, total=False):
+    """A saved set of hashtags. ``hashtags`` are normalised with a leading ``#``."""
+
+    id: int
+    name: str
+    hashtags: List[str]
+    createdAt: str
+    updatedAt: str
+
+
+class Label(TypedDict, total=False):
+    """A label (tag) for organizing posts and media.
+
+    ``type`` is ``post`` or ``media``. ``color`` defaults to ``#6366f1``.
+    """
+
+    id: int
+    name: str
+    color: str
+    type: str
+    createdAt: str
+    updatedAt: str
+
+
+# ---------------------------------------------------------------------------
+# Schedules
+# ---------------------------------------------------------------------------
+
+
+class Schedule(TypedDict, total=False):
+    """A recurring publishing schedule.
+
+    ``frequency`` is one of ``daily``, ``weekly``, ``biweekly``, ``monthly``.
+    ``timeOfDay`` is 24h ``"HH:MM"``. ``dayOfWeek`` (0=Sunday..6=Saturday)
+    applies to weekly/biweekly; ``dayOfMonth`` (1-31) to monthly.
+    ``nextRunAt`` is always computed by the server. When ``requireApproval``
+    is True every occurrence this schedule generates lands with
+    ``approvalStatus: "pending"`` and does not publish until an approver
+    releases it via ``POST /api/posts/{id}/approve``. It is forced True for
+    roles that cannot publish, on create and on every update.
+    """
+
+    id: int
+    name: str
+    channelIds: List[int]
+    frequency: str
+    dayOfWeek: Optional[int]
+    dayOfMonth: Optional[int]
+    timeOfDay: str
+    timezone: str
+    isActive: bool
+    contentTemplate: str
+    mediaFileIds: List[int]
+    postTypeOverrides: Dict[str, Any]
+    platformSpecific: Dict[str, Any]
+    postFormat: str
+    threadParts: Optional[List[Dict[str, Any]]]
+    nextRunAt: Optional[str]
+    requireApproval: bool
+    createdAt: str
+    updatedAt: str
+
+
+# ---------------------------------------------------------------------------
+# API Keys
+# ---------------------------------------------------------------------------
+
+
+class ApiKey(TypedDict, total=False):
+    """An API key."""
+
+    id: str
+    name: str
+    prefix: str
+    lastUsedAt: Optional[str]
+    expiresAt: Optional[str]
+    createdAt: str
+
+
+class ApiKeyPerKeyUsage(TypedDict, total=False):
+    """Today's request count for one API key."""
+
+    id: int
+    name: str
+    #: Requests made with this key so far today (UTC).
+    today: int
+    lastUsedAt: Optional[str]
+    expiresAt: Optional[str]
+
+
+class ApiKeyUsage(TypedDict, total=False):
+    """Current API usage against the plan's daily request limit.
+
+    Mirrors ``GET /api/api-keys/usage``. ``today`` is the organization-wide
+    total across every key and pairs with ``limit``
+    (``limits["apiRequestsPerDay"]``); ``perKey`` breaks the same day down by
+    key. ``-1`` in ``limit`` means unlimited.
+    """
+
+    #: Organization-wide requests made today (UTC), across all keys.
+    today: int
+    #: The plan's daily request limit; ``-1`` = unlimited.
+    limit: int
+    plan: str
+    perKey: List[ApiKeyPerKeyUsage]
+
+
+class ApiKeyUsageHistoryEntry(TypedDict, total=False):
+    """A single day's usage record."""
+
+    date: str
+    count: int
+
+
+# ---------------------------------------------------------------------------
+# Quotas
+# ---------------------------------------------------------------------------
+
+
+class QuotaUsage(TypedDict, total=False):
+    """Response of ``GET /api/quotas/usage``.
+
+    ``usage`` counters pair with ``limits`` keys: ``usage["postsToday"]`` vs
+    ``limits["postsPerDay"]``, ``usage["scheduledToday"]`` vs
+    ``limits["scheduledPerDay"]``, ``usage["pendingScheduled"]`` vs
+    ``limits["maxPendingScheduled"]``.
+    """
+
+    organizationId: int
+    #: ``"free"`` | ``"ltd"`` | ``"pro"`` | ``"business"`` (``"ltd"`` is the Lifetime plan, granted by an AppSumo license)
+    plan: str
+    #: The plan's configured limits (``-1`` = unlimited, ``0`` = disabled):
+    #: ``channels``, ``channelsPerPlatform``, ``postsPerDay``, ``postsPerMonth``,
+    #: ``maxPendingScheduled``, ``scheduledPerDay``, ``mediaStorageMB``,
+    #: ``apiKeys``, ``apiRequestsPerDay``, ``recurringSchedules``,
+    #: ``maxLabels``, ``maxOrgMembers``, ``excludedPlatforms``,
+    #: ``xMonthlyBudgetDcents``, ``aiMonthlyRuns``, ``rssFeeds``,
+    #: ``rssAutoPublish``, ``rssPollIntervalMinutes``.
+    limits: Dict[str, Any]
+    #: ``{"status": str | None, "currentPeriodEnd": str | None,
+    #: "cancelAtPeriodEnd": bool}``
+    subscription: Dict[str, Any]
+    #: Current usage counters: ``channels``, ``postsToday`` (posts *created*
+    #: today), ``postsThisMonth``, ``pendingScheduled``, ``scheduledToday``
+    #: (posts scheduled FOR today, excluding drafts/failed), ``apiKeys``,
+    #: ``recurringSchedules``, ``mediaStorageMB``, ``labels``,
+    #: ``orgMembers``, ``xApiSpendDcents``, ``xCreditDcents``, ``aiRunsUsed``,
+    #: ``aiRunsLimit``, ``aiCreditDcents``, ``subscriptionRefundCount``.
+    usage: Dict[str, Any]
+    #: Purchased extra channel slots (the $2.99/month add-on, available on every plan — a
+    #: seat-based subscription; unused slots are auto-canceled before renewal).
+    #: ``{"active": int, "slots": [{"id": int, "expiresAt": str, "autoRenews": bool}],
+    #: "baseChannelLimit": int, "effectiveChannelLimit": int}`` — each active slot
+    #: raises the effective total channel limit by one and allows one channel above
+    #: the per-platform cap (shared across platforms). Each entry in ``slots``
+    #: carries ``autoRenews`` — whether it renews with the subscription or lapses
+    #: at ``expiresAt``.
+    channelSlots: Dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+
+
+class Notification(TypedDict, total=False):
+    """Something the app recorded for you: a publish, a failure, an expiry.
+
+    ``type`` is the event kind, e.g. ``post_published`` or ``post_failed``, and
+    ``data`` carries whatever that kind attaches.
+    """
+
+    id: int
+    userId: str
+    organizationId: Optional[int]
+    #: Name of the organization it belongs to, when it has one.
+    organizationName: Optional[str]
+    type: str
+    title: str
+    message: str
+    data: Optional[Dict[str, Any]]
+    isRead: bool
+    createdAt: str
+
+
+class NotificationList(TypedDict, total=False):
+    """A page of notifications.
+
+    ``unreadTotal`` counts unread across the whole account rather than this
+    page, and is unaffected by ``unreadOnly``, so the number means the same
+    thing however the list was filtered.
+    """
+
+    notifications: List[Notification]
+    unreadTotal: int
+    pagination: Dict[str, int]
+
+
+class NotificationPreferences(TypedDict, total=False):
+    """Notification preference settings.
+
+    Email categories are **opt-in** (default ``False``) so no email is ever sent
+    that the user did not ask for; in-app categories cost nothing and default to
+    ``True``.
+    """
+
+    id: int
+    userId: str
+    emailOnFailure: bool
+    emailOnTokenExpiry: bool
+    emailOnChannelSlots: bool
+    inAppPublished: bool
+    inAppFailed: bool
+    inAppScheduleReminder: bool
+    inAppTokenExpiry: bool
+    inAppInbox: bool
+    inAppAssignments: bool
+    inAppApprovals: bool
+    inAppMentions: bool
+    #: A teammate left a note on a post you wrote or are assigned to. Default True.
+    inAppNotes: bool
+    emailOnApprovalRequest: bool
+
+
+# ---------------------------------------------------------------------------
+# Organizations
+# ---------------------------------------------------------------------------
+
+
+class Organization(TypedDict, total=False):
+    """An organization the authenticated user belongs to.
+
+    ``role`` is the caller's own role in this organization — one of ``owner``,
+    ``admin``, ``approver``, ``contributor`` or ``viewer``.
+    """
+
+    id: int
+    name: str
+    slug: str
+    #: Plan tier: ``free``, ``pro`` or ``business``.
+    plan: str
+    ownerId: str
+    role: str
+    createdAt: str
+
+
+# ---------------------------------------------------------------------------
+# Link Preview
+# ---------------------------------------------------------------------------
+
+
+class LinkPreview(TypedDict, total=False):
+    """Open Graph preview data for a URL."""
+
+    title: str
+    description: str
+    image: str
+    url: str
+    siteName: str
+    #: Hostname with a leading ``www.`` stripped, e.g. ``example.com``.
+    domain: str
+
+
+# ---------------------------------------------------------------------------
+# Activity
+# ---------------------------------------------------------------------------
+
+
+class ActivityEntry(TypedDict, total=False):
+    """An activity log entry."""
+
+    id: str
+    action: str
+    resourceType: str
+    resourceId: str
+    details: Dict[str, Any]
+    createdAt: str
+
+
+# ---------------------------------------------------------------------------
+# Channel Sets
+# ---------------------------------------------------------------------------
+
+
+class ChannelSet(TypedDict, total=False):
+    """A saved channel grouping for one-click multi-channel targeting."""
+
+    id: int
+    userId: str
+    organizationId: int
+    name: str
+    channelIds: List[int]
+    createdAt: str
+    updatedAt: str
+
+
+# ---------------------------------------------------------------------------
+# RSS Autopost
+# ---------------------------------------------------------------------------
+
+
+class RssMappingChannelOverride(TypedDict, total=False):
+    """Per-channel text override inside an RSS field mapping.
+
+    Text-only — ``mediaField`` cannot be overridden per channel, and channels
+    on the same platform share one rendered text (written to the post's
+    per-platform content, like composer overrides).
+    """
+
+    template: str
+    hashtags: str
+    stripHtml: bool
+    truncate: str
+
+
+class RssFieldMapping(TypedDict, total=False):
+    """How an RSS/Atom item becomes post content.
+
+    ``template`` (default ``"{title}\n\n{link}"``, max 2000 chars) supports
+    the tokens ``{title} {link} {description} {content} {author} {categories}
+    {feedName}`` plus any extra leaf field on the feed item as ``{fieldName}``
+    (lowercased localName); a line whose tokens all render empty is dropped.
+    ``mediaField`` selects the item enclosure to import and attach: ``"none"``
+    (default), ``"image"``, ``"video"``, or ``"auto"`` (video, else image) —
+    the file is re-hosted to your media library. ``articleImage`` decides what
+    happens when the item has no usable enclosure: ``"when_needed"`` (default)
+    takes a picture from the article the item links to, but only when a channel
+    on the feed is on a platform that cannot publish without an image;
+    ``"always"`` takes one whenever the item has none; ``"never"`` leaves those
+    items without media. Candidates are the article's share image, then a
+    picture embedded in the item, then the largest pictures on the page; the
+    first that imports cleanly and measures at least 200x200 wins, at most four
+    are tried. It is post-level like ``mediaField``, so the picture reaches
+    every channel of the feed. Channels whose platform requires media are
+    skipped only when this finds nothing too, and always for the video-only
+    platforms (TikTok, YouTube). ``stripHtml`` (default True) strips
+    HTML from item text. ``truncate`` handles text over the platform char
+    limit: ``"smart"`` (default, word-boundary trim keeping a trailing link),
+    ``"hard"`` (cut at the limit), or ``"skip"`` (drop that channel).
+    ``hashtags`` (max 500 chars) is appended after the template.
+    ``channelOverrides`` maps channel id strings to per-channel overrides.
+    """
+
+    template: str
+    mediaField: str
+    articleImage: str
+    stripHtml: bool
+    truncate: str
+    hashtags: str
+    channelOverrides: Dict[str, RssMappingChannelOverride]
+
+
+class RssFeed(TypedDict, total=False):
+    """An RSS/Atom feed polled every 15 minutes; new items become posts.
+
+    ``mode`` is ``"draft"`` (new items become draft posts for review) or
+    ``"publish"`` (auto-published). ``fieldMapping`` controls item → post
+    rendering; ``None`` means the built-in default mapping. When
+    ``requireApproval`` is True, items auto-published from this feed land with
+    ``approvalStatus: "pending"`` and wait for approval — only meaningful when
+    ``mode`` is ``"publish"``. It is forced True for roles that cannot publish,
+    on create and on every update.
+    """
+
+    id: int
+    userId: str
+    organizationId: int
+    name: str
+    feedUrl: str
+    channelIds: List[int]
+    mode: str
+    fieldMapping: Optional[RssFieldMapping]
+    enabled: bool
+    requireApproval: bool
+    lastCheckedAt: Optional[str]
+    lastError: Optional[str]
+    createdAt: str
+    updatedAt: str
+
+
+# ---------------------------------------------------------------------------
+# Media multipart upload
+# ---------------------------------------------------------------------------
+
+
+class MultipartUpload(TypedDict, total=False):
+    """Handle for a chunked (multipart) upload in progress.
+
+    ``partSize`` is fixed at 10485760 bytes (10MB); ``partUrls`` holds one
+    presigned PUT URL per part, in order; ``expiresIn`` is the URL lifetime
+    in seconds (3600).
+    """
+
+    r2Key: str
+    uploadId: str
+    partSize: int
+    partUrls: List[str]
+    expiresIn: int
+
+
+class MultipartPart(TypedDict):
+    """One uploaded part: its 1-based number and the ETag from its PUT response."""
+
+    partNumber: int
+    etag: str

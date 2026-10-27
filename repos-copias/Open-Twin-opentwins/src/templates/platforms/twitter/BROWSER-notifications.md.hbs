@@ -1,0 +1,46 @@
+# BROWSER-notifications.md - Mentions, Reply Verification & Follow
+
+## § 2 — Extract Mentions
+
+Returns only `url` (for grep dedup) and `handle` (for reply context). Filters out our own tweets.
+🚨 `count: 0` is a valid result — it means no mentions exist. Do NOT retry or probe the DOM. Accept it and move on.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); const mentions = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); return { count: mentions.length, items: mentions.slice(0, 15).map(article => { const user = article.querySelector('[data-testid=\"User-Name\"]'); const link = article.querySelector('a[href*=\"/status/\"]'); return { url: link ? 'https://x.com' + link.getAttribute('href') : '', handle: user ? (user.innerText.split(String.fromCharCode(10)).find(l => l.startsWith('@')) || '') : '' }; }).filter(m => m.url && m.handle !== '@{{handle_slug}}') }; }"}
+ENDJSON
+```
+
+## § 2b — Combined Thread Context + Like (on tweet page)
+
+After navigating to a mention tweet, extract thread context AND like in ONE evaluate. Includes embedded 2s wait:
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); const articles = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const statusId = window.__data.tweetUrl.split('/status/')[1] || ''; const target = articles.find(a => { const link = a.querySelector('a[href*=\"/status/\"]'); return link && link.getAttribute('href')?.includes(statusId); }); if (!target) return { error: 'tweet not found', count: articles.length }; const text = (target.querySelector('[data-testid=\"tweetText\"]') || {}).innerText || ''; let liked = false; const likeBtn = target.querySelector('[data-testid=\"like\"]'); if (likeBtn) { likeBtn.click(); liked = true; } else if (target.querySelector('[data-testid=\"unlike\"]')) { liked = true; } const targetIdx = articles.indexOf(target); const alreadyReplied = articles.slice(targetIdx + 1).some(a => { const handle = (a.querySelector('[data-testid=\"User-Name\"]') || {}).innerText?.split(String.fromCharCode(10)).find(l => l.startsWith('@')); return handle === '@{{handle_slug}}'; }); var ourReplyCount = articles.filter(a => { var h = (a.querySelector('[data-testid=\"User-Name\"]') || {}).innerText?.split(String.fromCharCode(10)).find(l => l.startsWith('@')); return h === '@{{handle_slug}}'; }).length; return { text, liked, alreadyReplied, ourReplyCount, tooDeep: ourReplyCount >= 3 }; }", "data": {"tweetUrl": "https://x.com/user/status/123"}}
+ENDJSON
+```
+
+If `alreadyReplied` → track and skip. Otherwise proceed with clipboard paste reply (BROWSER-core.md § 1).
+
+## § 6 — Reply Verification (MANDATORY — never skip)
+
+🚨 ALWAYS verify after EVERY reply. Skipping leads to phantom replies tracked but never posted.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1500)); const articles = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const statusId = window.__data.tweetUrl.split('/status/')[1] || ''; let targetIdx = -1; articles.forEach((article, idx) => { const link = article.querySelector('a[href*=\"/status/\"]'); if (link && link.getAttribute('href')?.includes(statusId)) targetIdx = idx; }); const hasOurReply = articles.slice(targetIdx + 1).some(article => { const handle = (article.querySelector('[data-testid=\"User-Name\"]') || {}).innerText?.split(String.fromCharCode(10)).find(l => l.startsWith('@')); return handle === '@{{handle_slug}}'; }); return { success: hasOurReply }; }", "data": {"tweetUrl": "https://x.com/user/status/123"}}
+ENDJSON
+```
+
+## § 11 — Follow User (from tweet page — no navigation needed)
+
+🚨 **MANDATORY after every promo and strategic reply.** Every engagement = follow. Button on tweet page: `[data-testid$="-follow"]` → after click: `[data-testid$="-unfollow"]`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { const btns = Array.from(document.querySelectorAll('[data-testid$=\"-follow\"]')); if (!btns.length) return { alreadyFollowing: true }; const topBtn = btns.reduce((best, b) => b.getBoundingClientRect().y < best.getBoundingClientRect().y ? b : best); topBtn.click(); return { followed: true }; }"}
+ENDJSON
+```
+
+If `alreadyFollowing`: skip silently. If error: skip follow, don't block engagement.

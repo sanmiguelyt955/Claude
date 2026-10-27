@@ -1,0 +1,255 @@
+"""Cover the OSS ``AgentFunction.get_google_*_credentials`` paths.
+
+These methods used to be no-ops; SKY-9463 wired them through the OSS
+``google_oauth_service``. The tests below pin down the success and the
+failure-modes (missing encryption, missing credential, refresh failure)
+so a regression doesn't silently break Sheets blocks in OSS.
+"""
+
+import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from skyvern.forge.agent_functions import AgentFunction
+from skyvern.forge.sdk.services import google_oauth_service
+
+
+@pytest.mark.asyncio
+async def test_get_google_sheets_credentials_returns_token_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = google_oauth_service.GoogleCredentialSecrets(refresh_token="rt", scopes=[])
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        AsyncMock(return_value=secrets),
+    )
+    monkeypatch.setattr(
+        google_oauth_service,
+        "access_token_from_secrets",
+        AsyncMock(return_value="ya29.access-token"),
+    )
+
+    result = await AgentFunction().get_google_sheets_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result == "ya29.access-token"
+
+
+@pytest.mark.asyncio
+async def test_get_google_sheets_credentials_returns_none_when_encryption_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing ENABLE_ENCRYPTION must surface as None so callers route to reconnect."""
+
+    async def raise_encryption_not_configured(*_args, **_kwargs):
+        raise google_oauth_service.EncryptionNotConfiguredError("disabled")
+
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        raise_encryption_not_configured,
+    )
+
+    result = await AgentFunction().get_google_sheets_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_google_sheets_credentials_returns_none_when_credential_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def raise_missing(*_args, **_kwargs):
+        raise ValueError("No active Google OAuth credential found: goac_missing")
+
+    monkeypatch.setattr(google_oauth_service, "load_credential_secrets", raise_missing)
+
+    result = await AgentFunction().get_google_sheets_credentials(
+        organization_id="org_1",
+        credential_id="goac_missing",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_google_sheets_credentials_returns_none_on_refresh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = google_oauth_service.GoogleCredentialSecrets(refresh_token="rt", scopes=[])
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        AsyncMock(return_value=secrets),
+    )
+
+    async def raise_refresh_failure(*_args, **_kwargs):
+        raise google_oauth_service.MissingAccessTokenError("Google token refresh failed")
+
+    monkeypatch.setattr(google_oauth_service, "access_token_from_secrets", raise_refresh_failure)
+
+    result = await AgentFunction().get_google_sheets_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_google_sheets_credentials_marks_expired_on_dead_refresh_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected refresh token flips the credential to needs-reconnect so the UI reflects it."""
+    credential_version = datetime.datetime(2026, 4, 20)
+    secrets = google_oauth_service.GoogleCredentialSecrets(
+        refresh_token="rt",
+        scopes=[],
+        credential_version=credential_version,
+    )
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        AsyncMock(return_value=secrets),
+    )
+
+    async def raise_expired(*_args, **_kwargs):
+        raise google_oauth_service.ExpiredRefreshTokenError("Google rejected the refresh token")
+
+    monkeypatch.setattr(google_oauth_service, "access_token_from_secrets", raise_expired)
+    mark_mock = AsyncMock()
+    monkeypatch.setattr(google_oauth_service, "mark_credential_expired", mark_mock)
+
+    result = await AgentFunction().get_google_sheets_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None
+    mark_mock.assert_awaited_once_with("org_1", "goac_1", expected_version=credential_version)
+
+
+@pytest.mark.asyncio
+async def test_get_google_workspace_credentials_marks_expired_on_dead_refresh_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = google_oauth_service.GoogleCredentialSecrets(refresh_token="rt", scopes=[])
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        AsyncMock(return_value=secrets),
+    )
+
+    async def raise_expired(*_args, **_kwargs):
+        raise google_oauth_service.ExpiredRefreshTokenError("Google rejected the refresh token")
+
+    monkeypatch.setattr(google_oauth_service, "credentials_from_secrets", raise_expired)
+    mark_mock = AsyncMock()
+    monkeypatch.setattr(google_oauth_service, "mark_credential_expired", mark_mock)
+
+    result = await AgentFunction().get_google_workspace_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None
+    mark_mock.assert_awaited_once_with("org_1", "goac_1", expected_version=None)
+
+
+@pytest.mark.asyncio
+async def test_get_google_workspace_credentials_returns_credentials_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = google_oauth_service.GoogleCredentialSecrets(refresh_token="rt", scopes=[])
+    fake_credentials = SimpleNamespace(token="ya29.access-token")
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        AsyncMock(return_value=secrets),
+    )
+    monkeypatch.setattr(
+        google_oauth_service,
+        "credentials_from_secrets",
+        AsyncMock(return_value=fake_credentials),
+    )
+
+    result = await AgentFunction().get_google_workspace_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is fake_credentials
+
+
+@pytest.mark.asyncio
+async def test_get_google_workspace_credentials_returns_none_when_encryption_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def raise_encryption_not_configured(*_args, **_kwargs):
+        raise google_oauth_service.EncryptionNotConfiguredError("disabled")
+
+    monkeypatch.setattr(
+        google_oauth_service,
+        "load_credential_secrets",
+        raise_encryption_not_configured,
+    )
+
+    result = await AgentFunction().get_google_workspace_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_google_workspace_credentials_resolves_a_connection_name_to_its_credential_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive/Docs/Gmail blocks carry the connection's display name, same as Sheets blocks
+    did before SKY-15024's fix; the workspace path must resolve it too or a fully connected
+    account fails with the same "no valid access token" message a bad id would produce."""
+    connection = SimpleNamespace(
+        id="goac_9",
+        credential_name="Ada's Docs",
+        email_address=None,
+        state=google_oauth_service.STATE_ACTIVE,
+    )
+    monkeypatch.setattr(
+        google_oauth_service,
+        "get_visible_credentials_for_org",
+        AsyncMock(return_value=[connection]),
+    )
+    secrets = google_oauth_service.GoogleCredentialSecrets(refresh_token="rt", scopes=[])
+    fake_credentials = SimpleNamespace(token="ya29.access-token")
+    load_secrets = AsyncMock(return_value=secrets)
+    monkeypatch.setattr(google_oauth_service, "load_credential_secrets", load_secrets)
+    monkeypatch.setattr(
+        google_oauth_service,
+        "credentials_from_secrets",
+        AsyncMock(return_value=fake_credentials),
+    )
+
+    result = await AgentFunction().get_google_workspace_credentials(
+        organization_id="org_1",
+        credential_id="Ada's Docs",
+    )
+
+    assert result is fake_credentials
+    load_secrets.assert_awaited_once_with(organization_id="org_1", credential_id="goac_9")
+
+
+@pytest.mark.asyncio
+async def test_get_google_workspace_credentials_returns_none_on_unexpected_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def raise_unexpected(*_args, **_kwargs):
+        raise RuntimeError("network blew up")
+
+    monkeypatch.setattr(google_oauth_service, "load_credential_secrets", raise_unexpected)
+
+    result = await AgentFunction().get_google_workspace_credentials(
+        organization_id="org_1",
+        credential_id="goac_1",
+    )
+    assert result is None

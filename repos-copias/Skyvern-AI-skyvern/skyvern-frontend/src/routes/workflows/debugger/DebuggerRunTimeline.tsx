@@ -1,0 +1,166 @@
+import { useMemo } from "react";
+
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  getRunAttempt,
+  runIsExecuting,
+} from "@/routes/workflows/workflowRun/runRetryState";
+import { filterTimelineToAttempt } from "@/routes/workflows/workflowRun/workflowTimelineUtils";
+import { cn } from "@/util/utils";
+import { useWorkflowRunQuery } from "../hooks/useWorkflowRunQuery";
+import { useWorkflowRunWithWorkflowQuery } from "../hooks/useWorkflowRunWithWorkflowQuery";
+import { useWorkflowRunTimelineQuery } from "../hooks/useWorkflowRunTimelineQuery";
+import { buildCodeStepsByLabel } from "../workflowBlockUtils";
+import {
+  countActionsInTimeline,
+  isBlockItem,
+  isObserverThought,
+  isThoughtItem,
+  ObserverThought,
+  WorkflowRunBlock,
+} from "../types/workflowRunTypes";
+import { ThoughtCard } from "@/routes/workflows/workflowRun/ThoughtCard";
+import {
+  ActionItem,
+  WorkflowRunOverviewActiveElement,
+} from "@/routes/workflows/workflowRun/WorkflowRunOverview";
+import { WorkflowRunTimelineBlockItem } from "@/routes/workflows/workflowRun/WorkflowRunTimelineBlockItem";
+
+type Props = {
+  activeItem: WorkflowRunOverviewActiveElement;
+  onObserverThoughtCardSelected: (item: ObserverThought) => void;
+  onActionItemSelected: (item: ActionItem) => void;
+  onBlockItemSelected: (item: WorkflowRunBlock) => void;
+};
+
+function DebuggerRunTimeline({
+  activeItem,
+  onObserverThoughtCardSelected,
+  onActionItemSelected,
+  onBlockItemSelected,
+}: Props) {
+  const {
+    data: workflowRun,
+    isLoading: workflowRunIsLoading,
+    isPlaceholderData: runIsWithheld,
+  } = useWorkflowRunQuery();
+
+  const { data: workflowRunTimeline, isLoading: workflowRunTimelineIsLoading } =
+    useWorkflowRunTimelineQuery();
+
+  const { data: workflowRunWithWorkflow } = useWorkflowRunWithWorkflowQuery();
+  const codeStepsByLabel = useMemo(
+    () =>
+      buildCodeStepsByLabel(
+        workflowRunWithWorkflow?.workflow?.workflow_definition?.blocks ?? [],
+      ),
+    [workflowRunWithWorkflow],
+  );
+
+  if (workflowRunIsLoading || workflowRunTimelineIsLoading || runIsWithheld) {
+    return <Skeleton className="h-full w-full" />;
+  }
+
+  if (!workflowRun || !workflowRunTimeline) {
+    return null;
+  }
+
+  const attemptIsExecuting = runIsExecuting(workflowRun);
+  const currentAttemptTimeline = filterTimelineToAttempt(
+    workflowRunTimeline,
+    workflowRun.attempts ?? [],
+    getRunAttempt(workflowRun),
+  );
+
+  const numberOfActions = countActionsInTimeline(currentAttemptTimeline);
+
+  const firstActionOrThoughtIsPending =
+    attemptIsExecuting && currentAttemptTimeline.length === 0;
+
+  return (
+    <div
+      className={cn("w-full min-w-0 space-y-4 rounded p-4", {
+        "animate-pulse": firstActionOrThoughtIsPending,
+      })}
+    >
+      <div className="grid w-full grid-cols-3 gap-2">
+        <div className="flex items-center justify-center rounded bg-slate-elevation3 px-4 py-3 text-xs">
+          Actions: {numberOfActions}
+        </div>
+        <div className="flex items-center justify-center rounded bg-slate-elevation3 px-4 py-3 text-xs">
+          Steps: {workflowRun.total_steps ?? 0}
+        </div>
+        <div
+          className="flex items-center justify-center rounded bg-slate-elevation3 px-4 py-3 text-xs"
+          title="Credits consumed by this run (live + cached)"
+        >
+          Credits:{" "}
+          {(
+            (workflowRun.credits_used ?? 0) +
+            (workflowRun.cached_credits_used ?? 0)
+          ).toLocaleString()}
+        </div>
+      </div>
+      <ScrollArea>
+        <ScrollAreaViewport className="h-full w-full">
+          <div className="w-full space-y-4">
+            {!attemptIsExecuting && currentAttemptTimeline.length === 0 && (
+              <div>Workflow timeline is empty</div>
+            )}
+            {attemptIsExecuting && currentAttemptTimeline.length === 0 && (
+              <div className="flex h-full w-full items-center justify-center">
+                Formulating actions...
+              </div>
+            )}
+            {currentAttemptTimeline.map((timelineItem, i) => {
+              if (isBlockItem(timelineItem)) {
+                return (
+                  <div
+                    className={cn({
+                      "animate-pulse": attemptIsExecuting && i === 0,
+                    })}
+                    key={timelineItem.block.workflow_run_block_id}
+                  >
+                    <WorkflowRunTimelineBlockItem
+                      subItems={timelineItem.children}
+                      activeItem={activeItem}
+                      block={timelineItem.block}
+                      codeStepsByLabel={codeStepsByLabel}
+                      onActionClick={onActionItemSelected}
+                      onBlockItemClick={onBlockItemSelected}
+                      onThoughtClick={onObserverThoughtCardSelected}
+                      renderThoughts
+                    />
+                  </div>
+                );
+              }
+              if (isThoughtItem(timelineItem)) {
+                return (
+                  <div
+                    className={cn({
+                      "animate-pulse": attemptIsExecuting && i === 0,
+                    })}
+                    key={timelineItem.thought.thought_id}
+                  >
+                    <ThoughtCard
+                      active={
+                        isObserverThought(activeItem) &&
+                        activeItem.thought_id ===
+                          timelineItem.thought.thought_id
+                      }
+                      onClick={onObserverThoughtCardSelected}
+                      thought={timelineItem.thought}
+                    />
+                  </div>
+                );
+              }
+            })}
+          </div>
+        </ScrollAreaViewport>
+      </ScrollArea>
+    </div>
+  );
+}
+
+export { DebuggerRunTimeline };

@@ -1,0 +1,1294 @@
+---
+title: "Changelog"
+description: "New features, improvements, and fixes in Skyvern"
+mode: custom
+keywords:
+  - changelog
+  - release notes
+  - new features
+  - improvements
+  - bug fixes
+---
+
+<div className="cl-page">
+  <div className="cl-sidebar">
+    <p className="cl-sidebar-title">TIMELINE</p>
+    <a href="#week-sep-28-2026" className="cl-sidebar-link">Week of Sep 28, 2026</a>
+    <a href="#week-sep-21-2026" className="cl-sidebar-link">Week of Sep 21, 2026</a>
+    <a href="#week-sep-14-2026" className="cl-sidebar-link">Week of Sep 14, 2026</a>
+    <a href="#week-sep-7-2026" className="cl-sidebar-link">Week of Sep 7, 2026</a>
+    <a href="#week-aug-31-2026" className="cl-sidebar-link">Week of Aug 31, 2026</a>
+    <a href="#week-aug-24-2026" className="cl-sidebar-link">Week of Aug 24, 2026</a>
+    <a href="#week-aug-17-2026" className="cl-sidebar-link">Week of Aug 17, 2026</a>
+    <a href="#week-aug-10-2026" className="cl-sidebar-link">Week of Aug 10, 2026</a>
+    <a href="#week-aug-3-2026" className="cl-sidebar-link">Week of Aug 3, 2026</a>
+    <a href="#week-jul-27-2026" className="cl-sidebar-link">Week of Jul 27, 2026</a>
+    <a href="#week-jul-20-2026" className="cl-sidebar-link">Week of Jul 20, 2026</a>
+    <a href="#week-jul-13-2026" className="cl-sidebar-link">Week of Jul 13, 2026</a>
+    <a href="#week-jul-6-2026" className="cl-sidebar-link">Week of Jul 6, 2026</a>
+    <a href="#week-jun-30-2026" className="cl-sidebar-link">Week of Jun 30, 2026</a>
+    <a href="#week-jun-22-2026" className="cl-sidebar-link">Week of Jun 22, 2026</a>
+    <a href="#week-jun-15-2026" className="cl-sidebar-link">Week of Jun 15, 2026</a>
+    <a href="#week-jun-8-2026" className="cl-sidebar-link">Week of Jun 8, 2026</a>
+    <a href="#week-jun-1-2026" className="cl-sidebar-link">Week of Jun 1, 2026</a>
+    <a href="#week-may-25-2026" className="cl-sidebar-link">Week of May 25, 2026</a>
+    <a href="#week-may-18-2026" className="cl-sidebar-link">Week of May 18, 2026</a>
+    <a href="#week-may-11-2026" className="cl-sidebar-link">Week of May 11, 2026</a>
+    <a href="#week-may-4-2026" className="cl-sidebar-link">Week of May 4, 2026</a>
+    <a href="#week-apr-27-2026" className="cl-sidebar-link">Week of Apr 27, 2026</a>
+    <a href="#week-apr-20-2026" className="cl-sidebar-link">Week of Apr 20, 2026</a>
+    <a href="#week-apr-13-2026" className="cl-sidebar-link">Week of Apr 13, 2026</a>
+    <a href="#week-feb-23-2026" className="cl-sidebar-link">Week of Feb 23, 2026</a>
+    <a href="#week-feb-16-2026" className="cl-sidebar-link">Week of Feb 16, 2026</a>
+    <a href="#week-feb-9-2026" className="cl-sidebar-link">Week of Feb 9, 2026</a>
+    <a href="#week-feb-2-2026" className="cl-sidebar-link">Week of Feb 2, 2026</a>
+    <a href="#week-jan-26-2026" className="cl-sidebar-link">Week of Jan 26, 2026</a>
+    <a href="#week-jan-19-2026" className="cl-sidebar-link">Week of Jan 19, 2026</a>
+    <a href="#week-jan-5-2026" className="cl-sidebar-link">Week of Jan 5, 2026</a>
+  </div>
+
+  <div className="cl-content">
+    <h1 className="cl-title">Changelog</h1>
+    <p className="cl-subtitle">New features, improvements, and fixes in Skyvern</p>
+
+<a id="week-sep-28-2026"></a>
+<Update label="Week of September 28, 2026" description="Copilot file downloads, live browser clipboard paste, Discover redesign, reliability fixes">
+
+## New features
+
+- **Downloadable Copilot-Generated Files** — Secure CodeBlocks and Copilot can now publish generated XLSX, PDF, CSV, and ZIP files as run downloads and chat download buttons. ([#8693](https://github.com/Skyvern-AI/skyvern/pull/8693))
+- **Clipboard Paste in Live Browser Control** — You can now paste your clipboard while in control of a live browser, from one control bar shared by CDP and VNC sessions. ([#8699](https://github.com/Skyvern-AI/skyvern/pull/8699))
+- **Redesigned Discover Home** — The Discover page's prompt, examples, and templates have been redesigned.
+- **Guided Full-Page Welcome for New Sign-Ups** — New accounts now land on a full-page walkthrough covering goals, expected volume, and role, replacing the old setup modal.
+- **Guided Template Walkthrough** — Using a home page template now copies it, opens Copilot with a numbered summary of what it does, and shows an inputs card for the credentials and values it needs. ([#8730](https://github.com/Skyvern-AI/skyvern/pull/8730))
+- **Copilot-Extendable Browser Sessions** — Ask Copilot to extend its own signed-in browser session instead of only being able to do it through the API, up to the existing 6-hour cap.
+- **Terminate Block Error Codes** — The Terminate block can now carry a custom error code, so retry rules and webhook consumers can match on it instead of parsing the free-text reason.
+- **Google Cloud Marketplace Purchases** — Orders purchased through Google Cloud Marketplace now provision, change plan, suspend, reactivate, and cancel automatically.
+- **First-Run Product Tour** — New users now get a guided walkthrough of the Copilot and Browser panes on their first run, replayable anytime from Settings.
+- **Copilot-Saved Browser Profiles** — Ask Copilot to save a closed signed-in browser session, or a run, as a reusable named browser profile.
+- **Activation Credits** — New users now earn activation credits for onboarding steps, shown in a credits meter on the welcome page and Home checklist.
+
+## Improvements
+
+- **Google Sheets Range Support** — Copilot now resolves a Sheets tab from a URL's `gid` at save time and shows the Range in append mode. ([#8696](https://github.com/Skyvern-AI/skyvern/pull/8696))
+- **Clearer Personal Account Naming** — A personal account is now named after its Skyvern organization in the org menu and settings sidebar.
+- **Recording Controls** — The Copilot recording sticky bar is now labeled and includes a stop control.
+- **Redesigned Prompt Box Settings** — Advanced prompt box settings now live in a gear popover.
+- **Clearer Credential Refresh** — The saved-login refresh link now explains what it does.
+- **Clearer Copilot Change Review** — Copilot now shows its proposed changes on one annotated canvas, with plans and credential receipts shown where they happened in the turn.
+- **File Input URLs for Copilot** — Copilot now knows a file input can accept a user-supplied URL, not just an upload.
+- **Pinned Copilot Questions** — Pending Copilot questions now dock above the composer instead of scrolling out of view.
+- **Flexible Copilot Answers** — Copilot questions can now be answered in your own words instead of only the offered choices. ([#8713](https://github.com/Skyvern-AI/skyvern/pull/8713))
+- **Chronological Copilot Activity Log** — Copilot's activity log now reads in the order things happened, with redesigned answered-question cards. ([#8718](https://github.com/Skyvern-AI/skyvern/pull/8718))
+- **More Resilient Workflow Studio** — Workflow Studio now contains pane crashes instead of taking down the editor.
+- **Skyvern 3.0 Recommended** — The Skyvern 3.0 engine badge is now labeled "Recommended" instead of "Beta".
+- **Code Block Goal Editing** — Editing a code block's Goal now keeps your text and offers to update the block to match. ([#8711](https://github.com/Skyvern-AI/skyvern/pull/8711))
+- **Faster Web Search** — Copilot and code blocks now search the web through a dedicated search API instead of a browser tab. ([#8708](https://github.com/Skyvern-AI/skyvern/pull/8708))
+- **Clearer Billing Errors** — Skyvern now shows the reason when a billing plan change fails.
+- **Faster Credential Failures** — A login block now fails fast with a clear reason when it isn't bound to any of the workflow's credentials, instead of opening a browser first.
+- **Copilot Test Results as Cards** — Each block Copilot tests now shows as one card with its status, code change, and failing line.
+- **Copilot Run History by Status** — Copilot can now list a workflow's recent runs filtered by status, such as failed or terminated, instead of only seeing the most recent run.
+- **Longer Task Runs on Long Forms** — Task runs now get more time to finish long forms that are still making visible progress, instead of stopping once the token budget runs out.
+- **Unsubscribe from Skyvern Emails** — You can now unsubscribe from categories of email Skyvern sends, like the analytics digest, with a one-click link.
+- **Default Engine Option in Workflow Editor** — The block engine picker now has a "Default" option separate from Skyvern 1.0 and 2.0, which are now labeled Legacy. ([#8735](https://github.com/Skyvern-AI/skyvern/pull/8735))
+- **Docked Copilot Sign-In Requests** — Copilot's sign-in and Google account requests now dock above the chat input instead of scrolling out of view with the transcript.
+- **More Reliable Copilot Repairs on SSL Errors** — Copilot no longer gives up early on ambiguous SSL connection errors during automatic repairs; it now attempts a fix. ([#8731](https://github.com/Skyvern-AI/skyvern/pull/8731))
+- **Upstream Output Reuse in Copilot Repair Tests** — Testing a repaired block that reads an earlier block's output no longer fails with a template error; the test now reuses that output automatically. ([#8737](https://github.com/Skyvern-AI/skyvern/pull/8737))
+- **Faster Copilot Repair Tests** — Copilot now reuses outputs from already-completed steps when testing a fix, instead of rerunning them.
+- **Settings Header Alignment** — The Settings page header now aligns with the navigation rail instead of sitting in its own row above it.
+- **Clearer Run Start Time** — The Timeline now labels a run's start time as "Created" instead of a timestamp that could be mistaken for when the run finished.
+- **More Reliable Date Field Filling** — Task runs now tab out of certain hard-to-click date fields before reading their value back, fixing cases where a filled field was incorrectly reported as empty.
+- **Guided Credential Example on Home** — The "Log into an HR portal" example on the Home page now walks new users step by step through connecting and using a demo login.
+- **Copilot Names Agents from the Home Prompt Box** — Agents created from the Home page prompt box now get a short, Copilot-generated name instead of keeping the full prompt as their title.
+- **Smarter Partial Date-of-Birth Handling** — When a task only provides a birth year, Skyvern now enters `01/01/<year>` instead of terminating, and never invents an address or phone number. ([#8747](https://github.com/Skyvern-AI/skyvern/pull/8747))
+- **More Reliable Dropdown and Combobox Selection** — Improved how Skyvern verifies that a dropdown list was read completely and that a selection was actually committed, reducing false "not found" and "didn't select" errors.
+- **Behavior-Based Onboarding Emails** — Onboarding emails now adapt to what a new user has actually done, and free accounts are notified when they run out of credits.
+- **Visible Conditional Block Errors** — The run view now shows when a conditional block's condition couldn't be evaluated and which branch was taken, instead of showing nothing.
+- **Enter to Send on the Home Prompt Box** — Press Enter to send a prompt and Shift+Enter for a new line, matching Workflow Copilot's chat input. ([#8741](https://github.com/Skyvern-AI/skyvern/pull/8741))
+- **File Upload on the Classic Home Prompt Box** — Added the "+" upload menu to the original Home page prompt layout, so you can attach files there too.
+- **More Accurate Code Block AI Fallback** — The AI fallback for code blocks now sees the exact values the failed code was typing, instead of guessing from placeholder text.
+- **Goal Update Prompts on Manual Code Edits** — Hand-editing a code block's code now offers to update its Goal to match, or keep your own wording.
+- **Skyvern 3.0 Listed First** — The block engine dropdown now lists Skyvern 3.0 (Recommended) above the legacy 1.0 engine.
+- **Low-Credit Warning Email** — Free accounts now get a one-time email when their free credits run low, instead of finding out only after they run out.
+- **Simplified Onboarding Emails** — Added a Day-1 email introducing Copilot, simplified the Welcome email to two steps, and stopped sending "no successful run yet" nudges to team accounts.
+- **Welcome Questionnaire for New Sign-Ups** — New sign-ups now land directly on the welcome questionnaire instead of briefly landing on Home first.
+- **Clearer Insurance Quote Example** — The Home page's insurance quote example now reads as plain text instead of a JSON blob.
+- **Clearer Extraction Results** — Skyvern 3.0 extraction-only blocks now always report exactly what's on the page, marking any missing field as null. ([#8771](https://github.com/Skyvern-AI/skyvern/pull/8771))
+- **Instant Welcome Email** — New signups now get the Welcome email right after their first app load, instead of waiting up to an hour.
+- **Clearer Copilot Loop Debugging** — Workflow Copilot now shows which input a for_loop block actually used, with recorded row counts, making a failed loop easier to debug.
+- **Readable Copilot Browser-Code Steps** — Copilot's browser-code tool calls now list the steps the code performed, like "Opened a page → clicked next → read ×10," instead of just "Ran browser code."
+- **Clearer Blocked Code-Block Errors** — Copilot now explains which value caused a blocked code block and how earlier outputs reach code, instead of a generic error.
+- **Visible Page-Load Failures in Code Blocks** — A CodeBlock wait-timeout error now shows the page load failure that caused it, instead of just the timeout.
+- **More Complete Copilot Repairs** — Copilot's automatic repairs now see icon-only controls, like expanders and chevrons, even when their selector isn't unique on the page.
+- **Starter-Prompt Onboarding Email** — New signups now get an email with three starter prompts — collecting website data, downloading invoices, and filling out a form — to help them get going.
+- **Readable Copilot Tables** — Copilot replies now render Markdown tables, headings, quotes, and dividers properly instead of as unstyled text.
+- **Search Runs by More Identifiers** — Run History and run search can now find runs by browser profile ID, browser session ID, credential ID, or webhook callback URL, not just run ID or inputs.
+
+## Bug fixes
+
+- Fixed the extension bridge processing page events out of order relative to earlier responses. ([#8694](https://github.com/Skyvern-AI/skyvern/pull/8694))
+- Fixed bot-challenge pages being reported as "no challenge" instead of correctly detected. ([#8695](https://github.com/Skyvern-AI/skyvern/pull/8695))
+- Fixed credential approvals being lost for credentials used past the recording evidence size cap.
+- Fixed run errors losing their mapped error code when the task also had an OTP timeout.
+- Fixed Copilot forgetting an accepted state across page reloads.
+- Fixed a closed Workflow Studio pane reopening at the wrong edge instead of where it was.
+- Fixed Copilot comparing proposals against a stale staged draft instead of the current canvas.
+- Fixed edits being lost when rejecting a Copilot proposal that only renamed the workflow or never reached the canvas.
+- Fixed Gemini rejecting the MCP tool list due to a missing schema on an output parameter.
+- Fixed the extension relay stopping when an event callback raised an error.
+- Fixed run failure messages leading with an outer error instead of the actual cause.
+- Fixed false "Copilot is locked" toasts when expanding chat steps or switching editor views.
+- Fixed runs failing at max retries instead of terminating with the correct mapped error code.
+- Fixed plan upgrades not rolling back correctly if an in-progress ACH payment failed.
+- Fixed the self-hosted Discover page crashing on sign-in hooks.
+- Fixed literal "N/A" and "NULL" text being dropped when parsing Excel files.
+- Fixed PDF generation failing permanently after a page-renderer crash; it now retries on a replacement tab.
+- Fixed clicks on natively disabled controls taking up to 15 seconds to fail; they now fail in 2 seconds.
+- Fixed the AI fallback for code blocks recovering at the wrong address for a wrapped or indented `goto`.
+- Fixed concurrent Copilot test runs overwriting each other's workflow version.
+- Fixed read-only and disabled fields reporting a successful fill or clear instead of being refused.
+- Fixed agents with no blocks being runnable.
+- Fixed the Recording and Screenshots pills showing on finished runs that have neither.
+- Fixed the onboarding questionnaire not reappearing after a page refresh. ([#8706](https://github.com/Skyvern-AI/skyvern/pull/8706))
+- Fixed a recording refinement draft being presented as a validated workflow before it was. ([#8712](https://github.com/Skyvern-AI/skyvern/pull/8712))
+- Fixed Skyvern 3.0 refusing a re-ask conversion whenever a settled page's layout shifted at all, instead of only when the underlying document changed.
+- Fixed Copilot's Review view landing on a pending-proposal card with no available actions. ([#8714](https://github.com/Skyvern-AI/skyvern/pull/8714))
+- Fixed the Copilot review-gate buttons wrapping in a narrow pane and its Test end-to-end action not being locked like Reject. ([#8715](https://github.com/Skyvern-AI/skyvern/pull/8715))
+- Fixed Skyvern 3.0 mishandling a covering layer over the target field and mis-scoring an action block whose one action succeeded but whose follow-up was refused by the step cap. ([#8722](https://github.com/Skyvern-AI/skyvern/pull/8722))
+- Fixed one-shot downloads not recovering correctly after a server error.
+- Fixed the organizations page showing a blank state instead of a full-page retry option when it failed to load.
+- Fixed Workflow Studio showing replay pills before there was anything to replay.
+- Fixed a Cloudflare Turnstile checkbox being reported as solved after it silently reset, instead of being re-clicked.
+- Fixed browser pages hanging for other users sharing a browser session after one person disconnected mid-interaction. ([#8736](https://github.com/Skyvern-AI/skyvern/pull/8736))
+- Fixed Copilot failing before sending any request when using certain GPT-6 models.
+- Fixed task runs refusing to click a checkbox that sits on top of its own styled replacement, reporting it as not rendered. ([#8734](https://github.com/Skyvern-AI/skyvern/pull/8734))
+- Fixed task runs losing track of a page after a click opened a new tab, causing the run to stall. ([#8733](https://github.com/Skyvern-AI/skyvern/pull/8733))
+- Fixed a dark-mode flash of a white screen on sign-in, refresh, and other full page loads.
+- Fixed a shared browser session hanging for other users when closing one client's connection failed to cleanly detach.
+- Fixed the Settings organization profile panel showing excess empty space below its content.
+- Fixed Copilot's action explanations sometimes appearing next to the wrong action.
+- Fixed a run's error details sometimes appearing twice due to a duplicate termination error record.
+- Fixed a toolbar flicker on first load of the Home page prompt box.
+- Fixed Copilot being unable to read large pages after signing in with a saved login, and it now tells you when a page is too large to show. ([#8742](https://github.com/Skyvern-AI/skyvern/pull/8742))
+- Fixed data extraction failing partway through on pages with many rows due to hitting a browser handle limit.
+- Fixed cached workflow runs executing every branch of a conditional block inside a loop instead of only the correct one.
+- Fixed Copilot failing with a generic connection error after an Anthropic Bedrock request was denied, instead of falling back correctly.
+- Fixed automatic error recovery sometimes following outdated step instructions instead of the block's actual goal, which could cause it to submit incorrect information.
+- Fixed Copilot showing a misleading "worker unavailable" message when a test run failed to prepare.
+- Fixed the code block AI fallback running during Copilot build tests and editor block runs, hiding real code regressions; run details now show which block it rescued and why the code failed.
+- Fixed a Terminate block's custom error code or reason being able to leak a referenced secret's value.
+- Fixed task runs occasionally being marked failed or terminated right after a successful form submission.
+- Fixed Skyvern 3.0 refusing to finish a task when the page had a live countdown, clock, or rotating headline.
+- Fixed Skyvern 3.0 losing its view of the page entirely on sites that define their own `toJSON`, instead of reading the page correctly. ([#8770](https://github.com/Skyvern-AI/skyvern/pull/8770))
+- Fixed Skyvern 3.0 occasionally picking the wrong row from a long dropdown or menu due to a shifted or guessed row number. ([#8767](https://github.com/Skyvern-AI/skyvern/pull/8767))
+- Fixed a single-action step sometimes being marked complete before its action actually took effect, which could carry the run onto the wrong next page.
+- Fixed Skyvern 3.0 missing icon-only close buttons on overlays and incorrectly reporting that no controls were found. ([#8766](https://github.com/Skyvern-AI/skyvern/pull/8766))
+- Fixed Copilot's automatic repair discarding the notice that a full-screen overlay, like a consent banner, was blocking the page.
+- Fixed Skyvern 3.0 on slow-loading pages misjudging whether the page had actually finished loading.
+- Fixed Skyvern 3.0 incorrectly reporting a search-and-select field as empty when a single result committed automatically.
+- Fixed Skyvern 3.0 clicking the wrong control when its screen-reader label differed from its visible text.
+- Fixed Copilot failing before sending any request on certain Anthropic and Bedrock models.
+
+</Update>
+
+<a id="week-sep-21-2026"></a>
+<Update label="Week of September 21, 2026" description="Terminate blocks, SMS 2FA, new schedule types, Copilot CAPTCHA support, reliability fixes">
+
+## New features
+
+- **Terminate Block** — A new workflow block lets a run end early with a custom reason, instead of running through remaining blocks.
+- **Copilot-Managed Schedules** — Copilot can now create and manage the open workflow's recurring schedules directly from chat.
+- **SMS Two-Factor Authentication** — Credentials now support SMS-based two-factor authentication with managed phone numbers.
+- **Elapsed-Interval Schedules** — Workflow schedules can now run on a fixed interval measured from an anchor time, instead of only fixed calendar times. ([#8660](https://github.com/Skyvern-AI/skyvern/pull/8660))
+- **One-Time Scheduled Runs** — Workflow schedules can now be set to run once at a specific date and time. ([#8680](https://github.com/Skyvern-AI/skyvern/pull/8680))
+- **Copilot File Upload to Pages** — Copilot can now upload a file you attach in chat directly into a page's file picker. ([#8691](https://github.com/Skyvern-AI/skyvern/pull/8691))
+
+## Improvements
+
+- **Full YAML Workflow Editing** — The workflow editor's YAML view now exposes and accepts every workflow setting.
+- **Declared Code Block Return Schema** — Code blocks can now declare a return schema for Copilot, and AI-fallback output is recorded as the block's output.
+- **Optional Extension User Scripts** — Browser control no longer requires the User Scripts permission to be enabled.
+- **Copilot Repair Test Accuracy** — Copilot repair test runs now reuse the original failed run's inputs.
+- **Clearer Billing Navigation** — The sidebar "Add credits" button is now labeled "Upgrade plan" / "Plan & usage".
+- **Organization Terminology** — Settings, the org menu, and analytics banners now say "Organization" instead of "Workspace". ([#8697](https://github.com/Skyvern-AI/skyvern/pull/8697))
+- **Agent Creator Visibility** — The agents list now shows each agent's original creator.
+- **Agent Creation Date** — The agents list now shows each agent's first-version creation date.
+- **Local File Reads in Blocks** — Blocks can now read a local-storage upload referenced by a `file://` URI.
+- **Copilot Page-Challenge Recovery** — Copilot can now solve a page challenge or start a fresh browser when scouting a page.
+- **Clearer Copilot Run Results** — Copilot now reports how it picked a run for results and lists newer finished runs.
+- **Browser Profile Preview** — The workflow editor now shows a read-only preview of the browser profile a run would load.
+- **CAPTCHA Support in Code Blocks and Copilot** — Code blocks and Copilot browser-code cells can now solve image-text CAPTCHAs directly.
+- **More Resilient Browser Recordings** — Record Browser no longer rejects a recording outright; it now emits repair steps for actions it can't replay.
+- **Recording Visibility in Copilot Chat** — Browser recordings now show as a live chapter inside the Copilot chat.
+- **Save Credential on Enter** — Pressing Enter in the password field now saves the credential.
+- **Chat During Recording** — You can now talk to Copilot while a browser recording is capturing.
+- **Credential and Session Ownership** — Credentials and browser sessions now show who created them. ([#8654](https://github.com/Skyvern-AI/skyvern/pull/8654))
+- **Cached Script Retention** — Data-retention cleanup no longer removes cached scripts, keeping optimized runs fast.
+- **Customer Instructions Take Priority** — Under a new run setting, Skyvern 3.0 now lets your workflow instructions override its general behavior rules, and no longer lets page content override customer-provided values.
+- **Layout-Resilient Cached Code** — Saved code blocks can now target metric cards with a label-anchored selector, so they survive page layout changes.
+- **Cleaner Run Timelines** — Run timelines now show an action's result only when one was actually recorded.
+- **Plain-Language Failure Labels** — Run failures now show plain-language labels instead of raw internal category names.
+- **More Reliable CAPTCHA Solving** — Skyvern now remembers which CAPTCHA type a given site rejects, improving solve reliability on protected pages. ([#8657](https://github.com/Skyvern-AI/skyvern/pull/8657))
+- **Clearer Browser Block Validation** — The first browser block's URL is now required and validated before the block runs.
+- **Queued Message Indicator** — A queued Copilot message now shows as a strip on the message box. ([#8659](https://github.com/Skyvern-AI/skyvern/pull/8659))
+- **Quieter Browser Pane** — The browser pane header is now less cluttered, with an overflow menu, run-only replay tabs, and clearer browser status. ([#8668](https://github.com/Skyvern-AI/skyvern/pull/8668))
+- **Fewer Extension Permissions** — The Skyvern Agent browser extension no longer requests the User Scripts or unused host permissions.
+- **Search Block Improvements** — The Search block now uses standard error messages, and a Data Schema can be used without a Prompt. ([#8679](https://github.com/Skyvern-AI/skyvern/pull/8679))
+- **Copilot Test Accuracy** — Copilot build tests now start from the saved browser profile.
+- **Copilot CAPTCHA Reading** — Copilot can now read image-text CAPTCHAs while scouting a page and in saved code blocks. ([#8683](https://github.com/Skyvern-AI/skyvern/pull/8683))
+- **Run Attribution** — The Runs page now shows who started each workflow run. ([#8677](https://github.com/Skyvern-AI/skyvern/pull/8677))
+- **Clearer Copilot Status** — Copilot now shows when it's working or waiting on you above the message box, and the Stop button matches Send.
+
+## Bug fixes
+
+- Fixed the workflow editor losing your exact state after a rejected Copilot proposal; saves are now transactional.
+- Fixed one-time-code entry: Skyvern now retries once with a fresh code when a site rejects a multi-box code, and types full verification codes into one-character boxes reliably. ([#8717](https://github.com/Skyvern-AI/skyvern/pull/8717))
+- Fixed the Copilot credential card staying open after picking a saved login on a new chat.
+- Fixed intermittent loss of live-browser control by re-sending take-control on VNC reconnect and opening the live-view socket only after VNC connects.
+- Fixed a sent Copilot prompt occasionally staying stuck in the queue.
+- Fixed several Skyvern 3.0 typing issues: appended text is now reported and placed correctly, and an offered autocomplete row is committed when none exactly matches the typed value.
+- Fixed clicks into embedded frames failing when the frame hadn't finished rendering.
+- Fixed the Copilot activity log losing a finished step's title when new work started right after.
+- Fixed Skyvern 3.0 hiding a read of a different browser tab as if it were a repeated read.
+- Fixed Skyvern 3.0 accepting task completion on a blank page or without checking the result against the stated goal.
+- Fixed Copilot sending a canned message instead of a real reply when a tool call produced an empty model response.
+- Fixed credentials chosen during a browser recording not carrying into its refinement turn.
+- Fixed Skyvern 3.0 hiding or mislabeling clickable rows, menu options, and buttons combined with clickable containers during page observation. ([#8716](https://github.com/Skyvern-AI/skyvern/pull/8716))
+- Fixed Skyvern 3.0 not generating a real code for a credential's TOTP placeholder, unlike the previous engine.
+- Fixed dropdown search fields that only filter on Enter, so Skyvern 3.0 can search and filter windowed dropdowns correctly.
+- Fixed proxy tunnel and SOCKS failures being mislabeled as navigation failures.
+- Patched a security vulnerability in TLS certificate hostname validation used by outbound requests.
+- Fixed extension-bridge tabs and page reads breaking when a page changed its URL.
+- Fixed code blocks failing as busy under load instead of waiting for a free runner slot.
+- Fixed Copilot forgetting answers to its own questions after a few more tool calls.
+- Fixed Skyvern 3.0 writing dates into the wrong segment of a segmented date field.
+- Fixed Copilot's turn not finishing recovery correctly when a stream loss occurred but the turn ended normally.
+- Fixed the Search block returning results outside the requested site filter or missing results with no cached content.
+- Fixed Copilot showing a false "unsaved changes" warning on retry.
+- Fixed Reject retries in Copilot chat leaking across chats instead of staying scoped to the chat they came from.
+- Fixed the browser extension grouping tabs together in popup windows.
+- Fixed data extraction nulling out fields the goal asked to produce, instead of only nulling fields not present on the page.
+- Fixed Skyvern 3.0 skipping later toggle clicks in a batch after an earlier one failed.
+- Fixed code block page requests bypassing the run's configured browser proxy.
+- Fixed Skyvern 3.0 refusing to re-enter a login username the page had overwritten, while keeping the existing cap on password re-entry.
+- Fixed action steps being charged for calls Skyvern 3.0 refused before acting on the page. ([#8688](https://github.com/Skyvern-AI/skyvern/pull/8688))
+- Fixed Copilot's first workflow submissions failing on malformed syntax; they're now built from structured objects.
+- Fixed a terminated Skyvern 3.0 block not getting a retry when the site skipped a screen its criterion expected. ([#8687](https://github.com/Skyvern-AI/skyvern/pull/8687))
+- Fixed Copilot losing rows past the 50,000-row cut when paging a long run's results. ([#8684](https://github.com/Skyvern-AI/skyvern/pull/8684))
+
+</Update>
+
+<a id="week-sep-14-2026"></a>
+<Update label="Week of September 14, 2026" description="Workflow API updates preserve omitted settings">
+
+## Improvements
+
+- **Workflow API settings** — PUT updates keep stored values when you omit `extra_http_headers`, `cdp_connect_headers`, `totp_identifier`, `totp_verification_url`, `webhook_callback_url`, or `proxy_location`. Explicit `null` clears these settings. A supplied value replaces the stored value.
+- **Header updates** — An empty mapping (`{}`) clears headers. A `***` entry in `cdp_connect_headers` keeps the stored value for that key. Values in public `extra_http_headers` updates, including `***`, are literal. **Compatibility change:** `cdp_connect_headers: null` now clears headers. Omit the field to keep them.
+- **Copilot settings** — Copilot inherits omitted workflow settings and resolves stored values at Accept. Model-facing workflow documents retain root `extra_http_headers` and `cdp_connect_headers` header names, with every value replaced by `***`. They omit empty header maps, TOTP identifiers, TOTP verification URLs, webhook URLs, and non-geo proxy mappings entirely. Valid geo targets, including city, subdivision, and `isISP`, remain visible. Block settings retain their existing document behavior.
+- **URL diagnostics** — URL validation errors identify the field and failure class without returning the URL or host. Run-request callback errors identify the callback field. Copilot removes TOTP values from runtime diagnostics sent to the model. Customer runtime diagnostics remain available.
+
+
+</Update>
+
+<a id="week-sep-7-2026"></a>
+<Update label="Week of September 7, 2026" description="Copilot context, workflow navigation, credential status, reliable form automation, run visibility">
+
+## Improvements
+
+- **Credential Source Status** — Credential settings now show the credential source and keep service account tokens out of the interface.
+- **Copilot Run Context** — Copilot now receives challenge details, recovery options, every result row, and clearer browser error context for better workflow repair.
+- **Protected Form Submissions** — Supported job application forms now wait for challenge completion before the submit continues, reducing duplicate submissions.
+- **Clearer Run Timeline Statuses** — Run timelines now show verified clicks as completed and provide labels for every status glyph.
+- **Wider Past Runs Range** — The agent page now shows the last 365 days by default, so older runs appear without extra filter changes.
+- **Agent List Search Persists** — Agent list searches now survive back navigation, reloads, and shared links.
+- **Sidebar Links Stay Visible** — Resource links now appear on every page with a sidebar, so you can reach help without leaving the page.
+
+## Bug fixes
+
+- Fixed dropdown selections failing when the selected label differed from the option text.
+
+</Update>
+
+<a id="week-aug-31-2026"></a>
+<Update label="Week of August 31, 2026" description="Copilot questions, web search, workflow exports, browser recording, integrations, and reliability">
+
+## New features
+
+- **Interactive Questions in Copilot** — Copilot can now ask questions with choices or text fields and resume after you answer. ([#8447](https://github.com/Skyvern-AI/skyvern/pull/8447))
+- **Web Search for Copilot and Code Blocks** — Copilot and code blocks can now search the web directly, so workflows can collect results without scraping search pages. ([#8464](https://github.com/Skyvern-AI/skyvern/pull/8464))
+- **Schema-Directed Parquet Exports** — Workflows can now export extracted data to typed Parquet files from a standalone or extraction block. ([#8368](https://github.com/Skyvern-AI/skyvern/pull/8368), [#8397](https://github.com/Skyvern-AI/skyvern/pull/8397))
+- **Login Blocks from Browser Recordings** — Browser recordings now create login blocks from saved credentials and retain native select choices.
+- **In-Chat Credential Requests** — Copilot can now ask for missing credentials in chat and continue after you provide or skip them. ([#8420](https://github.com/Skyvern-AI/skyvern/pull/8420))
+- **Google Sheets Connections in Chat** — Copilot can now connect Google Sheets accounts in chat and resolve unambiguous saved connection names. ([#8412](https://github.com/Skyvern-AI/skyvern/pull/8412))
+
+## Improvements
+
+- **Embedded-Page Support** — Copilot and secure CodeBlocks now keep selected frame data current across navigation, popups, and detached frames. ([#8341](https://github.com/Skyvern-AI/skyvern/pull/8341), [#8361](https://github.com/Skyvern-AI/skyvern/pull/8361))
+- **Clearer Copilot Failure Diagnosis** — Fix with Copilot now sends run details directly; repairs preserve drafts, outputs, page values, selectors, and safety details. ([#8343](https://github.com/Skyvern-AI/skyvern/pull/8343), [#8350](https://github.com/Skyvern-AI/skyvern/pull/8350), [#8413](https://github.com/Skyvern-AI/skyvern/pull/8413))
+- **More Reliable Browser Recovery** — Browser sessions now recover from slow liveness checks, crashed tabs, and stalled screenshot captures. ([#8401](https://github.com/Skyvern-AI/skyvern/pull/8401), [#8463](https://github.com/Skyvern-AI/skyvern/pull/8463))
+
+## Bug fixes
+
+- Fixed checkout handling for retries, plan changes, and enterprise accounts.
+- Fixed duplicate downloads, missing download artifacts, and stranded download popups. ([#8344](https://github.com/Skyvern-AI/skyvern/pull/8344), [#8358](https://github.com/Skyvern-AI/skyvern/pull/8358))
+- Fixed Sheets appends that shifted neighboring values into another row.
+
+</Update>
+
+<a id="week-aug-24-2026"></a>
+<Update label="Week of August 24, 2026" description="Guided onboarding, credential support, analytics, live sessions, Copilot, API reliability">
+
+## New features
+
+- **Guided Onboarding for New Users** — Eligible new users in enabled organizations get a guided onboarding flow with a working example, progress, and tailored next steps.
+- **Flexible Credential Setup** — Credential workflows now support passwordless entries, 1Password login items, custom one-time-code fields, saved OTP bindings, and separate rotating browser state. ([#8317](https://github.com/Skyvern-AI/skyvern/pull/8317))
+- **Save Credentials from Record Browser** — Record Browser drafts now redact secrets and let users save the matching credential type. ([#8307](https://github.com/Skyvern-AI/skyvern/pull/8307), [#8323](https://github.com/Skyvern-AI/skyvern/pull/8323))
+- **Failure-Focused Analytics** — For organizations with analytics enabled, analytics reports now show failures, selected statuses, action totals, and relevant credit metrics. ([#8304](https://github.com/Skyvern-AI/skyvern/pull/8304))
+
+## Improvements
+
+- **Public API and MCP Reliability** — API and MCP clients now get discoverable metadata, rate-limit guidance, retry responses, and clearer validation errors. ([#8283](https://github.com/Skyvern-AI/skyvern/pull/8283))
+- **Faster Live Browser Sessions** — Live browser sessions now announce loading status, detect dead connections, and recover from temporary stalls. Vendor CDP live views send mouse moves at native rates.
+- **Copilot Repair Evidence** — Copilot now keeps browser evidence, records code failures, and waits for progressing runs before reporting repair results. ([#8325](https://github.com/Skyvern-AI/skyvern/pull/8325))
+- **Copilot Activity and Responses** — Copilot now shows activity, formatted responses, and terminal results in one readable view.
+- **Google Connected Accounts** — Google workflow blocks and Copilot now accept a connected account's name or email.
+- **Workflow Inputs at the Start** — Workflow editors now show declared inputs beside the starting block.
+
+## Bug fixes
+
+- Fixed workflow runs failing to commit downloads, custom selections, dates, and typeahead values. ([#8328](https://github.com/Skyvern-AI/skyvern/pull/8328))
+- Fixed run views and workflow editors showing blank pages, wrong live states, hidden outputs, false unsaved-change warnings, or unavailable runs.
+
+</Update>
+
+<a id="week-aug-17-2026"></a>
+<Update label="Week of August 17, 2026" description="MCP access, Copilot authoring, authentication, file handling, and browser reliability">
+
+## New features
+
+- **MCP Access and Run History** — Hosted MCP clients can now renew access, complete OAuth callbacks, and include child runs in workflow history.
+- **Human-Approval Steps in Copilot** — Copilot can now add a human-interaction step and report paused runs as pauses.
+
+## Improvements
+
+- **Faster Copilot Block Testing** — Copilot can now edit one block and rerun it from the browser state that produced the recorded page.
+- **Grounded Copilot Page Evidence** — Copilot now uses page evidence from the run browser, including screenshots, links, overlays, and hidden authentication options, to guide repairs. ([#8239](https://github.com/Skyvern-AI/skyvern/pull/8239))
+- **Clearer Copilot Reviews and Failures** — Copilot now shows accurate review state and preserves useful failure details for faster repairs.
+- **More Reliable Sign-In and OTP Handling** — Sign-in flows now wait for forms, verify fields, submit fresh codes, recover connected accounts, and report delivery problems clearly.
+- **Reliable Workflow Files** — Workflow files now stay linked to their run, handle download interstitials, and report aborted transfers or unsupported formats clearly.
+- **More Accurate Form Interactions** — Form interactions now verify live controls, clear retry fields, match values accurately, prevent false submission reports, and avoid wrong selectors.
+- **Past Runs Filters Persist** — Past Runs search and status filters now stay in the URL, so back navigation and reload restore the same list.
+
+## Bug fixes
+
+- Fixed lost browser recordings, dark live views, and raw errors after browser or MCP connections close.
+- Fixed invalid browser session and workflow inputs returning misleading responses or leaving runs without terminal states.
+- Fixed billing flows that could start duplicate checkouts or direct exhausted-credit users to unavailable recovery options.
+
+</Update>
+
+<a id="week-aug-10-2026"></a>
+<Update label="Week of August 10, 2026" description="focused MCP tools, Copilot workflows, browser reliability, flexible integrations">
+
+## New features
+
+- **Focused MCP Connections** — MCP now offers focused tool sets for local and hosted connections and clear expired-session guidance.
+- **Structured MCP Output and Page Reading** — The `lean` and `all` MCP tool sets gain an optional final-output validation tool. An opt-in reader tool reads large pages in bounded chunks.
+- **Custom SMTP Delivery** — Send Email blocks can send messages through a customer’s SMTP server.
+- **Full-Page Live Control** — Persistent live-browser sessions now keep the full page reachable during takeover.
+
+## Improvements
+
+- **Copilot Email Verification** — Copilot now uses saved credentials or connected inboxes for email verification. ([#8200](https://github.com/Skyvern-AI/skyvern/pull/8200))
+- **Reliable Download Workflows** — Download flows accept locators, recover files, expose the helper early, and confirm registered files.
+- **Copilot Workflow Editing** — Copilot preserves browser context, adds blocks incrementally, retains existing edits, and suggests text-based selectors. ([#8205](https://github.com/Skyvern-AI/skyvern/pull/8205), [#8206](https://github.com/Skyvern-AI/skyvern/pull/8206))
+- **Copilot Test Run Guidance** — Copilot now limits credential approvals and follows test runs with page and challenge evidence. ([#8210](https://github.com/Skyvern-AI/skyvern/pull/8210), [#8204](https://github.com/Skyvern-AI/skyvern/pull/8204), [#8214](https://github.com/Skyvern-AI/skyvern/pull/8214))
+- **Workflow Studio Preview: Clearer Activity** — The opt-in Studio preview retains pane choices, shows terminal browser states, and makes Copilot progress easier to follow.
+- **Simpler Workflow Integrations** — Google integrations need fewer permissions and use native blocks; workflow setup supports optional credentials, parser choices, and root Drive files. ([#8202](https://github.com/Skyvern-AI/skyvern/pull/8202))
+
+## Bug fixes
+
+- Fixed incorrect toggles, lost outputs, unclear run errors, stale browser actions, credential or dropdown failures, and repeated Copilot requests.
+
+</Update>
+
+<a id="week-aug-3-2026"></a>
+<Update label="Week of August 3, 2026" description="credential controls, MCP browser access, code blocks, downloads, Copilot reliability">
+
+## New features
+
+- **Credential Run Controls** — You can serialize runs sharing a credential while fresh profiles omit old login files and saved profiles retain recent sign-ins. ([#7995](https://github.com/Skyvern-AI/skyvern/pull/7995), [#8001](https://github.com/Skyvern-AI/skyvern/pull/8001), [#8097](https://github.com/Skyvern-AI/skyvern/pull/8097))
+- **MCP Local Browser Access** — MCP can now control an existing local browser, and its bridge starts serving requests promptly. ([#8070](https://github.com/Skyvern-AI/skyvern/pull/8070), [#8175](https://github.com/Skyvern-AI/skyvern/pull/8175))
+- **External Browser Live View** — You can view and navigate externally hosted browser sessions, and use keyboard editing in live view. ([#8101](https://github.com/Skyvern-AI/skyvern/pull/8101), [#8114](https://github.com/Skyvern-AI/skyvern/pull/8114), [#8143](https://github.com/Skyvern-AI/skyvern/pull/8143))
+- **Modern Code Blocks** — Code blocks use the editor shape, open shared-session tabs, recover transient startup timeouts, and emit typed errors for downstream routing. ([#8006](https://github.com/Skyvern-AI/skyvern/pull/8006), [#8022](https://github.com/Skyvern-AI/skyvern/pull/8022), [#8033](https://github.com/Skyvern-AI/skyvern/pull/8033), [#8034](https://github.com/Skyvern-AI/skyvern/pull/8034), [#8055](https://github.com/Skyvern-AI/skyvern/pull/8055), [#8163](https://github.com/Skyvern-AI/skyvern/pull/8163))
+- **Bulk Agent Export** — Bulk exports now download as one ZIP with a separate file for each agent. ([#8105](https://github.com/Skyvern-AI/skyvern/pull/8105))
+
+## Improvements
+
+- **Deterministic Custom-Select Inputs** — Typed entries now use exact matching when possible, reducing model fallback and incorrect success reports. ([#7996](https://github.com/Skyvern-AI/skyvern/pull/7996))
+- **Copilot Credential Assistance** — Copilot now finds credential IDs, lets you choose credentials, shows automatic selections, and starts from a credential's saved login page. ([#8026](https://github.com/Skyvern-AI/skyvern/pull/8026), [#8013](https://github.com/Skyvern-AI/skyvern/pull/8013), [#8065](https://github.com/Skyvern-AI/skyvern/pull/8065), [#8064](https://github.com/Skyvern-AI/skyvern/pull/8064), [#8061](https://github.com/Skyvern-AI/skyvern/pull/8061), [#8094](https://github.com/Skyvern-AI/skyvern/pull/8094), [#8099](https://github.com/Skyvern-AI/skyvern/pull/8099))
+- **Reliable Email Verification Retrieval** — Email OTP and sign-in-link lookup now preserves exact values, reads externalized message parts, and respects the expected code type. ([#8028](https://github.com/Skyvern-AI/skyvern/pull/8028), [#8062](https://github.com/Skyvern-AI/skyvern/pull/8062), [#8091](https://github.com/Skyvern-AI/skyvern/pull/8091))
+- **Reliable Browser Session Artifacts** — Downloads now complete more reliably, and recordings remain available after browser-session teardown. ([#8007](https://github.com/Skyvern-AI/skyvern/pull/8007), [#8021](https://github.com/Skyvern-AI/skyvern/pull/8021), [#8019](https://github.com/Skyvern-AI/skyvern/pull/8019), [#8115](https://github.com/Skyvern-AI/skyvern/pull/8115), [#8125](https://github.com/Skyvern-AI/skyvern/pull/8125), [#8167](https://github.com/Skyvern-AI/skyvern/pull/8167))
+- **Copilot Workflow Editing** — Copilot now preserves workflow code and data, shows plain-language run steps, supports longer repairs, and returns successful results. ([#8058](https://github.com/Skyvern-AI/skyvern/pull/8058), [#8104](https://github.com/Skyvern-AI/skyvern/pull/8104), [#8106](https://github.com/Skyvern-AI/skyvern/pull/8106), [#8142](https://github.com/Skyvern-AI/skyvern/pull/8142), [#8122](https://github.com/Skyvern-AI/skyvern/pull/8122), [#8166](https://github.com/Skyvern-AI/skyvern/pull/8166))
+
+## Bug fixes
+
+- Fixed Copilot turns stopping valid actions, resending queued prompts, or showing empty expansion controls. ([#8025](https://github.com/Skyvern-AI/skyvern/pull/8025), [#8060](https://github.com/Skyvern-AI/skyvern/pull/8060), [#8089](https://github.com/Skyvern-AI/skyvern/pull/8089), [#8137](https://github.com/Skyvern-AI/skyvern/pull/8137))
+- Fixed browser sessions failing after stale connections, leaving released occupancy behind, or reporting false navigation, closure, expiry, or final-status errors. ([#7997](https://github.com/Skyvern-AI/skyvern/pull/7997), [#8043](https://github.com/Skyvern-AI/skyvern/pull/8043), [#8164](https://github.com/Skyvern-AI/skyvern/pull/8164))
+
+</Update>
+
+<a id="week-jul-27-2026"></a>
+<Update label="Week of July 27, 2026" description="OTP recovery, browser sessions, Copilot, billing, and workflow reliability">
+
+## New features
+
+- **Expanded OTP Recovery** — OTP handling now preserves raw content, detects code types, reads connected email accounts, and supports magic links in credential view. ([#7849](https://github.com/Skyvern-AI/skyvern/pull/7849), [#7859](https://github.com/Skyvern-AI/skyvern/pull/7859), [#7866](https://github.com/Skyvern-AI/skyvern/pull/7866), [#7886](https://github.com/Skyvern-AI/skyvern/pull/7886), [#7901](https://github.com/Skyvern-AI/skyvern/pull/7901), [#7908](https://github.com/Skyvern-AI/skyvern/pull/7908))
+- **Weekly Analytics Email Digest** — Eligible organizations with the digest enabled receive a weekly email summary with recent activity, credit use, and lowest-success workflows.
+- **Scoped Browser Session Access** — Browser sessions can start at a requested URL. In supported regions, enabled first-party sessions use scoped router addresses for live browser viewing. ([#7915](https://github.com/Skyvern-AI/skyvern/pull/7915))
+
+## Improvements
+
+- **Job Application Form Handling** — Supported job application forms now handle rich fields, rejected values, and live credential pages, with optional visual secret masking. ([#7771](https://github.com/Skyvern-AI/skyvern/pull/7771), [#7773](https://github.com/Skyvern-AI/skyvern/pull/7773), [#7777](https://github.com/Skyvern-AI/skyvern/pull/7777), [#7955](https://github.com/Skyvern-AI/skyvern/pull/7955), [#7966](https://github.com/Skyvern-AI/skyvern/pull/7966), [#7967](https://github.com/Skyvern-AI/skyvern/pull/7967))
+- **Shorter Browser Session Lifetime** — Browser sessions now have a maximum lifetime of 4 hours instead of 24. Longer timeouts are clamped, and Enterprise accounts can request longer sessions. Recordings, downloads, and live-stream paste are more reliable. ([#7772](https://github.com/Skyvern-AI/skyvern/pull/7772), [#7774](https://github.com/Skyvern-AI/skyvern/pull/7774), [#7804](https://github.com/Skyvern-AI/skyvern/pull/7804), [#7838](https://github.com/Skyvern-AI/skyvern/pull/7838), [#7883](https://github.com/Skyvern-AI/skyvern/pull/7883), [#7902](https://github.com/Skyvern-AI/skyvern/pull/7902), [#7916](https://github.com/Skyvern-AI/skyvern/pull/7916), [#7929](https://github.com/Skyvern-AI/skyvern/pull/7929), [#7930](https://github.com/Skyvern-AI/skyvern/pull/7930), [#7944](https://github.com/Skyvern-AI/skyvern/pull/7944), [#7979](https://github.com/Skyvern-AI/skyvern/pull/7979))
+- **Copilot Authoring Reliability** — Copilot verifies outputs, preserves drafts, uses connected accounts, acts on pages, reports activity and failures, and keeps repairing through stalls. ([#7779](https://github.com/Skyvern-AI/skyvern/pull/7779), [#7791](https://github.com/Skyvern-AI/skyvern/pull/7791), [#7792](https://github.com/Skyvern-AI/skyvern/pull/7792), [#7794](https://github.com/Skyvern-AI/skyvern/pull/7794), [#7796](https://github.com/Skyvern-AI/skyvern/pull/7796), [#7802](https://github.com/Skyvern-AI/skyvern/pull/7802), [#7806](https://github.com/Skyvern-AI/skyvern/pull/7806), [#7845](https://github.com/Skyvern-AI/skyvern/pull/7845), [#7869](https://github.com/Skyvern-AI/skyvern/pull/7869), [#7871](https://github.com/Skyvern-AI/skyvern/pull/7871), [#7873](https://github.com/Skyvern-AI/skyvern/pull/7873), [#7878](https://github.com/Skyvern-AI/skyvern/pull/7878), [#7885](https://github.com/Skyvern-AI/skyvern/pull/7885), [#7911](https://github.com/Skyvern-AI/skyvern/pull/7911), [#7913](https://github.com/Skyvern-AI/skyvern/pull/7913), [#7914](https://github.com/Skyvern-AI/skyvern/pull/7914), [#7934](https://github.com/Skyvern-AI/skyvern/pull/7934), [#7972](https://github.com/Skyvern-AI/skyvern/pull/7972))
+- **Safer MCP and Browser Requests** — MCP tools now handle arguments and page waits more reliably while browser and webhook requests validate destinations and headers. ([#7765](https://github.com/Skyvern-AI/skyvern/pull/7765), [#7782](https://github.com/Skyvern-AI/skyvern/pull/7782), [#7932](https://github.com/Skyvern-AI/skyvern/pull/7932), [#7941](https://github.com/Skyvern-AI/skyvern/pull/7941), [#7962](https://github.com/Skyvern-AI/skyvern/pull/7962), [#7976](https://github.com/Skyvern-AI/skyvern/pull/7976), [#7982](https://github.com/Skyvern-AI/skyvern/pull/7982))
+- **Clearer Billing Usage** — The billing page now shows OTP usage.
+- **Google Sheets Workflow Fields** — Spreadsheet and sheet pickers now show compact destinations and support template expressions for dynamic targets. ([#7840](https://github.com/Skyvern-AI/skyvern/pull/7840), [#7875](https://github.com/Skyvern-AI/skyvern/pull/7875))
+- **Larger File Workflows** — File workflows accept larger storage uploads, return ZIP file lists, and process up to 1,000 loop iterations. ([#7793](https://github.com/Skyvern-AI/skyvern/pull/7793), [#7899](https://github.com/Skyvern-AI/skyvern/pull/7899), [#7907](https://github.com/Skyvern-AI/skyvern/pull/7907))
+
+## Bug fixes
+
+- Fixed CAPTCHA actions showing false completion, missing checkbox frames, or losing settings during cached replay. ([#7787](https://github.com/Skyvern-AI/skyvern/pull/7787))
+- Fixed workflow runs reusing stale outputs or losing status, webhook delivery, browser pages, timeline data, code-block execution, or run-pane access. ([#7775](https://github.com/Skyvern-AI/skyvern/pull/7775), [#7809](https://github.com/Skyvern-AI/skyvern/pull/7809), [#7827](https://github.com/Skyvern-AI/skyvern/pull/7827), [#7841](https://github.com/Skyvern-AI/skyvern/pull/7841), [#7842](https://github.com/Skyvern-AI/skyvern/pull/7842), [#7864](https://github.com/Skyvern-AI/skyvern/pull/7864), [#7890](https://github.com/Skyvern-AI/skyvern/pull/7890), [#7903](https://github.com/Skyvern-AI/skyvern/pull/7903), [#7953](https://github.com/Skyvern-AI/skyvern/pull/7953), [#7960](https://github.com/Skyvern-AI/skyvern/pull/7960), [#7978](https://github.com/Skyvern-AI/skyvern/pull/7978))
+
+</Update>
+
+<a id="week-jul-20-2026"></a>
+<Update label="Week of July 20, 2026" description="Copilot workflows, MCP visibility, Studio navigation, browser reliability, workflow fixes">
+
+## New features
+
+- **Password-Free Login and CAPTCHA Handling** — Copilot can use email sign-in codes or links and solve CAPTCHA challenges during login exploration. ([#7727](https://github.com/Skyvern-AI/skyvern/pull/7727), [#7755](https://github.com/Skyvern-AI/skyvern/pull/7755), [#7756](https://github.com/Skyvern-AI/skyvern/pull/7756), [#7761](https://github.com/Skyvern-AI/skyvern/pull/7761))
+- **Live Action Progress During Test Runs** — Code-block test runs stream recorded browser actions while they run. The Copilot preview shows these actions live for enabled organizations. ([#7608](https://github.com/Skyvern-AI/skyvern/pull/7608), [#7609](https://github.com/Skyvern-AI/skyvern/pull/7609), [#7610](https://github.com/Skyvern-AI/skyvern/pull/7610))
+- **MCP Setup and Session Visibility** — MCP now offers in-app setup, live timelines, clear argument errors, code-only guidance, and profile cleanup. ([#7587](https://github.com/Skyvern-AI/skyvern/pull/7587), [#7574](https://github.com/Skyvern-AI/skyvern/pull/7574), [#7619](https://github.com/Skyvern-AI/skyvern/pull/7619), [#7693](https://github.com/Skyvern-AI/skyvern/pull/7693), [#7577](https://github.com/Skyvern-AI/skyvern/pull/7577), [#7580](https://github.com/Skyvern-AI/skyvern/pull/7580))
+- **Workflow Studio Preview: Run Navigation** — The opt-in Studio preview makes past runs easier to find with linked titles, shorter URLs, clear details, and branch navigation. ([#7602](https://github.com/Skyvern-AI/skyvern/pull/7602), [#7604](https://github.com/Skyvern-AI/skyvern/pull/7604), [#7607](https://github.com/Skyvern-AI/skyvern/pull/7607), [#7642](https://github.com/Skyvern-AI/skyvern/pull/7642), [#7643](https://github.com/Skyvern-AI/skyvern/pull/7643), [#7644](https://github.com/Skyvern-AI/skyvern/pull/7644), [#7646](https://github.com/Skyvern-AI/skyvern/pull/7646), [#7667](https://github.com/Skyvern-AI/skyvern/pull/7667), [#7758](https://github.com/Skyvern-AI/skyvern/pull/7758))
+- **Agent Filter for Run History** — Run History now filters runs by agent while keeping server-side search and pagination. ([#7618](https://github.com/Skyvern-AI/skyvern/pull/7618))
+- **Claude Opus 5 Model** — Claude Opus 5 is now available as a selectable model for agent runs for Enterprise accounts on Skyvern Cloud. ([#7741](https://github.com/Skyvern-AI/skyvern/pull/7741))
+- **Paused Status in the Public API** — The public run status now includes paused runs, so status reads and webhooks work during verification waits. ([#7576](https://github.com/Skyvern-AI/skyvern/pull/7576))
+
+## Improvements
+
+- **More Reliable Copilot Workflow Authoring** — Copilot now completes more requests, repairs missing workflow steps, handles credentials safely, and reports outcomes honestly. ([#7563](https://github.com/Skyvern-AI/skyvern/pull/7563), [#7565](https://github.com/Skyvern-AI/skyvern/pull/7565), [#7567](https://github.com/Skyvern-AI/skyvern/pull/7567), [#7613](https://github.com/Skyvern-AI/skyvern/pull/7613), [#7628](https://github.com/Skyvern-AI/skyvern/pull/7628), [#7629](https://github.com/Skyvern-AI/skyvern/pull/7629), [#7630](https://github.com/Skyvern-AI/skyvern/pull/7630), [#7632](https://github.com/Skyvern-AI/skyvern/pull/7632), [#7648](https://github.com/Skyvern-AI/skyvern/pull/7648), [#7649](https://github.com/Skyvern-AI/skyvern/pull/7649), [#7656](https://github.com/Skyvern-AI/skyvern/pull/7656), [#7658](https://github.com/Skyvern-AI/skyvern/pull/7658), [#7673](https://github.com/Skyvern-AI/skyvern/pull/7673), [#7686](https://github.com/Skyvern-AI/skyvern/pull/7686), [#7688](https://github.com/Skyvern-AI/skyvern/pull/7688), [#7689](https://github.com/Skyvern-AI/skyvern/pull/7689), [#7695](https://github.com/Skyvern-AI/skyvern/pull/7695), [#7699](https://github.com/Skyvern-AI/skyvern/pull/7699), [#7701](https://github.com/Skyvern-AI/skyvern/pull/7701), [#7703](https://github.com/Skyvern-AI/skyvern/pull/7703), [#7711](https://github.com/Skyvern-AI/skyvern/pull/7711), [#7713](https://github.com/Skyvern-AI/skyvern/pull/7713), [#7714](https://github.com/Skyvern-AI/skyvern/pull/7714), [#7715](https://github.com/Skyvern-AI/skyvern/pull/7715), [#7716](https://github.com/Skyvern-AI/skyvern/pull/7716), [#7719](https://github.com/Skyvern-AI/skyvern/pull/7719), [#7734](https://github.com/Skyvern-AI/skyvern/pull/7734))
+- **Job Application Form Reliability** — Supported job application forms now handle more field widgets, recover rewritten inputs, and confirm successful submissions. ([#7570](https://github.com/Skyvern-AI/skyvern/pull/7570), [#7585](https://github.com/Skyvern-AI/skyvern/pull/7585))
+- **More Reliable Remote Browser Startup** — Remote browser startup now retries transient connections, reports rate limits clearly, uses fallback browsers, and supports custom proxies.
+- **CodeBlock Authoring and Output Improvements** — CodeBlock workflows now show outputs and safe errors, support page evaluation, wire inputs, carry MCP metadata, and make JSON searchable. ([#7578](https://github.com/Skyvern-AI/skyvern/pull/7578), [#7586](https://github.com/Skyvern-AI/skyvern/pull/7586), [#7670](https://github.com/Skyvern-AI/skyvern/pull/7670), [#7697](https://github.com/Skyvern-AI/skyvern/pull/7697), [#7730](https://github.com/Skyvern-AI/skyvern/pull/7730), [#7733](https://github.com/Skyvern-AI/skyvern/pull/7733), [#7754](https://github.com/Skyvern-AI/skyvern/pull/7754))
+
+## Bug fixes
+
+- Fixed template URLs, selection failures, missing downloads, invalid limits, missing invoice feedback, analytics charts for enabled organizations, and interactions in the Studio preview. ([#7569](https://github.com/Skyvern-AI/skyvern/pull/7569), [#7575](https://github.com/Skyvern-AI/skyvern/pull/7575), [#7598](https://github.com/Skyvern-AI/skyvern/pull/7598), [#7599](https://github.com/Skyvern-AI/skyvern/pull/7599), [#7601](https://github.com/Skyvern-AI/skyvern/pull/7601), [#7638](https://github.com/Skyvern-AI/skyvern/pull/7638), [#7650](https://github.com/Skyvern-AI/skyvern/pull/7650), [#7651](https://github.com/Skyvern-AI/skyvern/pull/7651), [#7690](https://github.com/Skyvern-AI/skyvern/pull/7690), [#7696](https://github.com/Skyvern-AI/skyvern/pull/7696))
+
+</Update>
+
+<a id="week-jul-13-2026"></a>
+<Update label="Week of July 13, 2026" description="file delivery, Copilot authoring, MCP sessions, Studio usability, analytics, reliability">
+
+## New features
+
+- **External File Storage Targets** — Download blocks can now send files to external storage, and large Google Drive uploads resume after interruptions. ([#7444](https://github.com/Skyvern-AI/skyvern/pull/7444), [#7373](https://github.com/Skyvern-AI/skyvern/pull/7373), [#7391](https://github.com/Skyvern-AI/skyvern/pull/7391))
+- **Record and Synthesize Browser Sessions** — MCP sessions can now record safe browser actions and turn them directly into replayable code blocks. ([#7498](https://github.com/Skyvern-AI/skyvern/pull/7498), [#7522](https://github.com/Skyvern-AI/skyvern/pull/7522))
+- **Credential Help in Copilot** — The Copilot preview shows a credential card with Connect and Skip actions for enabled organizations. The card appears when a build needs access. ([#7418](https://github.com/Skyvern-AI/skyvern/pull/7418))
+- **Browser Profile Refresh and Usage Checks** — Browser Profiles now show dependencies, support refresh, and warn before deleting a profile in use. ([#7548](https://github.com/Skyvern-AI/skyvern/pull/7548), [#7550](https://github.com/Skyvern-AI/skyvern/pull/7550))
+
+## Improvements
+
+- **Grounded Copilot Workflows** — Copilot now preserves captured steps and completion checks, recognizes values by format, reuses inputs, and reports verified downloads. ([#7374](https://github.com/Skyvern-AI/skyvern/pull/7374), [#7349](https://github.com/Skyvern-AI/skyvern/pull/7349), [#7381](https://github.com/Skyvern-AI/skyvern/pull/7381), [#7375](https://github.com/Skyvern-AI/skyvern/pull/7375), [#7397](https://github.com/Skyvern-AI/skyvern/pull/7397), [#7439](https://github.com/Skyvern-AI/skyvern/pull/7439), [#7438](https://github.com/Skyvern-AI/skyvern/pull/7438), [#7441](https://github.com/Skyvern-AI/skyvern/pull/7441), [#7455](https://github.com/Skyvern-AI/skyvern/pull/7455))
+- **Safer Copilot Authoring** — Copilot now checks goal reach, code validity, and completion conditions before saving, then gives clear retry guidance. ([#7419](https://github.com/Skyvern-AI/skyvern/pull/7419), [#7429](https://github.com/Skyvern-AI/skyvern/pull/7429), [#7466](https://github.com/Skyvern-AI/skyvern/pull/7466), [#7507](https://github.com/Skyvern-AI/skyvern/pull/7507), [#7556](https://github.com/Skyvern-AI/skyvern/pull/7556), [#7442](https://github.com/Skyvern-AI/skyvern/pull/7442), [#7512](https://github.com/Skyvern-AI/skyvern/pull/7512), [#7336](https://github.com/Skyvern-AI/skyvern/pull/7336), [#7527](https://github.com/Skyvern-AI/skyvern/pull/7527), [#7549](https://github.com/Skyvern-AI/skyvern/pull/7549), [#7557](https://github.com/Skyvern-AI/skyvern/pull/7557))
+- **More Reliable Browser Actions** — Browser runs now verify form controls and wait for protected pages. ([#7334](https://github.com/Skyvern-AI/skyvern/pull/7334), [#7406](https://github.com/Skyvern-AI/skyvern/pull/7406), [#7454](https://github.com/Skyvern-AI/skyvern/pull/7454), [#7480](https://github.com/Skyvern-AI/skyvern/pull/7480), [#7483](https://github.com/Skyvern-AI/skyvern/pull/7483), [#7474](https://github.com/Skyvern-AI/skyvern/pull/7474))
+- **Reliable Artifacts and Downloads** — Artifact views refresh expired links, while downloads reject login pages and missing profiles start faster. ([#7459](https://github.com/Skyvern-AI/skyvern/pull/7459), [#7484](https://github.com/Skyvern-AI/skyvern/pull/7484), [#7411](https://github.com/Skyvern-AI/skyvern/pull/7411), [#7350](https://github.com/Skyvern-AI/skyvern/pull/7350))
+- **MCP Workflow and Browser Tools** — MCP now gives clearer guidance, valid snippets, file-based edits for large workflows, and selected iframe content. ([#7333](https://github.com/Skyvern-AI/skyvern/pull/7333), [#7460](https://github.com/Skyvern-AI/skyvern/pull/7460), [#7422](https://github.com/Skyvern-AI/skyvern/pull/7422), [#7433](https://github.com/Skyvern-AI/skyvern/pull/7433))
+- **Analytics and Run Health** — For organizations with analytics enabled, analytics now shows accurate credit usage and run outcomes. Runs retry transient failures, and run lists surface self-healing risk. ([#7493](https://github.com/Skyvern-AI/skyvern/pull/7493), [#7494](https://github.com/Skyvern-AI/skyvern/pull/7494), [#7523](https://github.com/Skyvern-AI/skyvern/pull/7523), [#7526](https://github.com/Skyvern-AI/skyvern/pull/7526), [#7541](https://github.com/Skyvern-AI/skyvern/pull/7541))
+- **Workflow Studio Preview: Usability** — The opt-in Studio preview now follows themes, shows changes, links run review to blocks, and restores run inputs and outputs. ([#7408](https://github.com/Skyvern-AI/skyvern/pull/7408), [#7417](https://github.com/Skyvern-AI/skyvern/pull/7417), [#7513](https://github.com/Skyvern-AI/skyvern/pull/7513), [#7409](https://github.com/Skyvern-AI/skyvern/pull/7409), [#7495](https://github.com/Skyvern-AI/skyvern/pull/7495), [#7388](https://github.com/Skyvern-AI/skyvern/pull/7388), [#7423](https://github.com/Skyvern-AI/skyvern/pull/7423), [#7426](https://github.com/Skyvern-AI/skyvern/pull/7426), [#7543](https://github.com/Skyvern-AI/skyvern/pull/7543))
+
+## Bug fixes
+
+- Fixed TOTP issuer errors and retryable OTP failures; tier upgrades now start fresh billing periods. ([#7365](https://github.com/Skyvern-AI/skyvern/pull/7365), [#7509](https://github.com/Skyvern-AI/skyvern/pull/7509))
+
+</Update>
+
+<a id="week-jul-6-2026"></a>
+<Update label="Week of July 6, 2026" description="Workflow Studio navigation, file automation, integrations, Copilot progress, MCP, analytics">
+
+## New features
+
+- **Workflow Studio Preview: Navigation and Layout** — The opt-in Studio preview now searches blocks, expands hidden containers, jumps through long workflows, and remembers panel layouts. ([#7103](https://github.com/Skyvern-AI/skyvern/pull/7103), [#7104](https://github.com/Skyvern-AI/skyvern/pull/7104), [#7107](https://github.com/Skyvern-AI/skyvern/pull/7107), [#7112](https://github.com/Skyvern-AI/skyvern/pull/7112), [#7118](https://github.com/Skyvern-AI/skyvern/pull/7118), [#7201](https://github.com/Skyvern-AI/skyvern/pull/7201), [#7270](https://github.com/Skyvern-AI/skyvern/pull/7270))
+- **Workflow File Tools** — Workflow file tools can now split PDFs, select upload files, deliver files to SFTP, and use sandbox scratch files. ([#7258](https://github.com/Skyvern-AI/skyvern/pull/7258), [#7268](https://github.com/Skyvern-AI/skyvern/pull/7268), [#7301](https://github.com/Skyvern-AI/skyvern/pull/7301))
+- **Organization OAuth Setup** — Organization-level OAuth setup is available for enabled organizations, and connections that need reconnection are clearly marked after settings changes. ([#7283](https://github.com/Skyvern-AI/skyvern/pull/7283), [#7288](https://github.com/Skyvern-AI/skyvern/pull/7288))
+- **Email Inbox Workflows** — Email Inbox workflows can read matching Gmail or Outlook messages for downstream processing. ([#7303](https://github.com/Skyvern-AI/skyvern/pull/7303), [#7309](https://github.com/Skyvern-AI/skyvern/pull/7309))
+- **Run History and Result Links** — Run history now filters by run type, while the Studio preview and MCP expose available outputs and recording links. ([#7251](https://github.com/Skyvern-AI/skyvern/pull/7251), [#7269](https://github.com/Skyvern-AI/skyvern/pull/7269), [#7307](https://github.com/Skyvern-AI/skyvern/pull/7307))
+
+## Improvements
+
+- **Copilot Build Progress and Recovery** — Copilot and agent runs now show live progress and recover from build, login, and model-response failures. ([#7097](https://github.com/Skyvern-AI/skyvern/pull/7097), [#7098](https://github.com/Skyvern-AI/skyvern/pull/7098), [#7099](https://github.com/Skyvern-AI/skyvern/pull/7099), [#7100](https://github.com/Skyvern-AI/skyvern/pull/7100), [#7120](https://github.com/Skyvern-AI/skyvern/pull/7120), [#7149](https://github.com/Skyvern-AI/skyvern/pull/7149), [#7155](https://github.com/Skyvern-AI/skyvern/pull/7155), [#7162](https://github.com/Skyvern-AI/skyvern/pull/7162), [#7216](https://github.com/Skyvern-AI/skyvern/pull/7216), [#7246](https://github.com/Skyvern-AI/skyvern/pull/7246), [#7275](https://github.com/Skyvern-AI/skyvern/pull/7275), [#7277](https://github.com/Skyvern-AI/skyvern/pull/7277), [#7308](https://github.com/Skyvern-AI/skyvern/pull/7308), [#7313](https://github.com/Skyvern-AI/skyvern/pull/7313), [#7314](https://github.com/Skyvern-AI/skyvern/pull/7314), [#7315](https://github.com/Skyvern-AI/skyvern/pull/7315), [#7327](https://github.com/Skyvern-AI/skyvern/pull/7327))
+- **Analytics Console Clarity** — For organizations with analytics enabled, Analytics now uses shared filters, clearer charts, accurate workflow breakdowns, and stable custom date ranges. ([#7136](https://github.com/Skyvern-AI/skyvern/pull/7136), [#7209](https://github.com/Skyvern-AI/skyvern/pull/7209))
+- **MCP Browser Reliability** — MCP now connects reliably, guides keys to setup, accepts query aliases, protects inputs, retains references, and supports direct dropdown actions. ([#7165](https://github.com/Skyvern-AI/skyvern/pull/7165), [#7166](https://github.com/Skyvern-AI/skyvern/pull/7166), [#7203](https://github.com/Skyvern-AI/skyvern/pull/7203), [#7206](https://github.com/Skyvern-AI/skyvern/pull/7206), [#7220](https://github.com/Skyvern-AI/skyvern/pull/7220), [#7250](https://github.com/Skyvern-AI/skyvern/pull/7250), [#7285](https://github.com/Skyvern-AI/skyvern/pull/7285))
+- **Browser Automation Reliability** — Browser automation now handles captchas, captures client-created files, preserves download names, and avoids extra recordings. ([#7102](https://github.com/Skyvern-AI/skyvern/pull/7102), [#7111](https://github.com/Skyvern-AI/skyvern/pull/7111), [#7123](https://github.com/Skyvern-AI/skyvern/pull/7123), [#7153](https://github.com/Skyvern-AI/skyvern/pull/7153), [#7156](https://github.com/Skyvern-AI/skyvern/pull/7156), [#7172](https://github.com/Skyvern-AI/skyvern/pull/7172), [#7192](https://github.com/Skyvern-AI/skyvern/pull/7192))
+
+## Bug fixes
+
+- Fixed credential setup so editable accounts, saved instructions, reused profile names, test cleanup, and token errors work correctly. ([#7122](https://github.com/Skyvern-AI/skyvern/pull/7122), [#7157](https://github.com/Skyvern-AI/skyvern/pull/7157), [#7160](https://github.com/Skyvern-AI/skyvern/pull/7160), [#7184](https://github.com/Skyvern-AI/skyvern/pull/7184), [#7219](https://github.com/Skyvern-AI/skyvern/pull/7219))
+- Fixed template run details failing to load, loading slowly, or omitting the Stop control in the Studio preview. ([#7105](https://github.com/Skyvern-AI/skyvern/pull/7105), [#7265](https://github.com/Skyvern-AI/skyvern/pull/7265), [#7330](https://github.com/Skyvern-AI/skyvern/pull/7330))
+- Fixed run inputs hiding download instructions, corrupting formatted card numbers, and mishandling workflow files or malformed definitions. ([#7202](https://github.com/Skyvern-AI/skyvern/pull/7202), [#7260](https://github.com/Skyvern-AI/skyvern/pull/7260), [#7264](https://github.com/Skyvern-AI/skyvern/pull/7264), [#7305](https://github.com/Skyvern-AI/skyvern/pull/7305), [#7306](https://github.com/Skyvern-AI/skyvern/pull/7306))
+
+</Update>
+
+<a id="week-jun-30-2026"></a>
+<Update label="Week of June 30, 2026" description="Workflow Studio preview panes, faster enrichment and live recording, code-first authoring, file parsing, credential and secret handling, code-block self-heal, extraction accuracy, bug fixes">
+
+## New features
+
+- **Workflow Studio Preview: Side-by-Side Panes** — The opt-in Workflow Studio preview now offers side-by-side panes, responsive layouts, and clearer run views. ([#7007](https://github.com/Skyvern-AI/skyvern/pull/7007), [#7008](https://github.com/Skyvern-AI/skyvern/pull/7008), [#7009](https://github.com/Skyvern-AI/skyvern/pull/7009), [#7010](https://github.com/Skyvern-AI/skyvern/pull/7010), [#7013](https://github.com/Skyvern-AI/skyvern/pull/7013), [#7021](https://github.com/Skyvern-AI/skyvern/pull/7021), [#7022](https://github.com/Skyvern-AI/skyvern/pull/7022), [#7024](https://github.com/Skyvern-AI/skyvern/pull/7024), [#7025](https://github.com/Skyvern-AI/skyvern/pull/7025), [#7043](https://github.com/Skyvern-AI/skyvern/pull/7043), [#7044](https://github.com/Skyvern-AI/skyvern/pull/7044), [#7045](https://github.com/Skyvern-AI/skyvern/pull/7045), [#7046](https://github.com/Skyvern-AI/skyvern/pull/7046), [#7047](https://github.com/Skyvern-AI/skyvern/pull/7047), [#7056](https://github.com/Skyvern-AI/skyvern/pull/7056))
+- **Code-First Workflow Authoring** — Teams can edit workflows as YAML or use MCP tools to lint, synthesize, validate, and save code-only workflows. ([#6997](https://github.com/Skyvern-AI/skyvern/pull/6997), [#6998](https://github.com/Skyvern-AI/skyvern/pull/6998), [#7017](https://github.com/Skyvern-AI/skyvern/pull/7017), [#7030](https://github.com/Skyvern-AI/skyvern/pull/7030), [#7065](https://github.com/Skyvern-AI/skyvern/pull/7065))
+- **ZIP Files in File Parser** — File Parser blocks now process ZIP archives, so workflows can extract data from bundled documents. ([#7049](https://github.com/Skyvern-AI/skyvern/pull/7049))
+- **Credential and Session Reuse** — Workflows can rotate login credentials across runs and save browser state in managed profiles. ([#7032](https://github.com/Skyvern-AI/skyvern/pull/7032), [#7053](https://github.com/Skyvern-AI/skyvern/pull/7053))
+- **Secret Values Across Blocks** — Workflows can pass selected HTTP response values as secrets between downstream blocks. Enabled self-hosted deployments can store credentials locally. ([#7054](https://github.com/Skyvern-AI/skyvern/pull/7054))
+
+## Improvements
+
+- **Block Type Shown in Workflow Studio Header** — The block detail panel in Workflow Studio now displays the block type in the header, making it easier to identify what kind of block you're editing at a glance. ([#6956](https://github.com/Skyvern-AI/skyvern/pull/6956))
+- **Improved Extraction Accuracy for Absent Data** — The agent now better handles cases where requested output is genuinely absent from the page, reducing false positives in extraction results. ([#6957](https://github.com/Skyvern-AI/skyvern/pull/6957))
+- **Data-Only Validation Skips Page Evidence** — Validation steps that check only extracted data no longer capture page screenshots when they aren't needed, reducing unnecessary work during runs. ([#6960](https://github.com/Skyvern-AI/skyvern/pull/6960))
+- **Copilot Block Runs Routed to UI Worker** — Copilot block runs are now dispatched to a dedicated UI worker, keeping the editor responsive during live automation. ([#6962](https://github.com/Skyvern-AI/skyvern/pull/6962))
+- **Clearer Invalid JSON Errors in Workflow Editor** — The workflow editor now surfaces a descriptive error when a parameter contains invalid JSON, making it faster to diagnose and fix configuration mistakes. ([#6963](https://github.com/Skyvern-AI/skyvern/pull/6963))
+- **"Ignore System Prompt" Moved to Advanced Settings** — The "Ignore system prompt" option has been relocated to the advanced settings panel, reducing clutter in the default block configuration view. ([#6964](https://github.com/Skyvern-AI/skyvern/pull/6964))
+- **Empty Extra HTTP Headers Hidden** — Extra HTTP header fields that are empty no longer appear in block configurations, reducing visual noise in the workflow editor. ([#6966](https://github.com/Skyvern-AI/skyvern/pull/6966))
+- **Block Selection Persisted in URL** — The selected block in Workflow Studio is now encoded in the URL, so your selection is preserved on reload and can be shared via link. ([#6969](https://github.com/Skyvern-AI/skyvern/pull/6969))
+- **Code-Block Self-Heal Minimum Retry Floor** — The code-block self-healing loop now enforces a minimum number of repair attempts before giving up, preventing premature failures on recoverable errors. ([#6971](https://github.com/Skyvern-AI/skyvern/pull/6971))
+- **Faster Live-Draft Enrichment** — Workflow recording live-draft enrichment now uses a faster model and a shorter debounce interval, making draft suggestions appear noticeably sooner while recording. ([#6973](https://github.com/Skyvern-AI/skyvern/pull/6973))
+- **Responsive Browser Recording** — Browser recording now shows editable live drafts and stays responsive across long sessions, repeat recordings, and browser transport changes. ([#6995](https://github.com/Skyvern-AI/skyvern/pull/6995), [#6999](https://github.com/Skyvern-AI/skyvern/pull/6999), [#7002](https://github.com/Skyvern-AI/skyvern/pull/7002), [#7004](https://github.com/Skyvern-AI/skyvern/pull/7004), [#7005](https://github.com/Skyvern-AI/skyvern/pull/7005), [#7036](https://github.com/Skyvern-AI/skyvern/pull/7036), [#7048](https://github.com/Skyvern-AI/skyvern/pull/7048))
+
+## Bug fixes
+
+- Fixed syntax highlighting disappearing when viewing large webhook payloads. ([#6967](https://github.com/Skyvern-AI/skyvern/pull/6967))
+- Fixed LLM blocks not enforcing their configured output schema, which could allow malformed data to propagate to downstream blocks. ([#6965](https://github.com/Skyvern-AI/skyvern/pull/6965))
+- Fixed Copilot repairs and builds that failed or stopped early when output evidence, action history, or prior outputs were incomplete. ([#6993](https://github.com/Skyvern-AI/skyvern/pull/6993), [#6994](https://github.com/Skyvern-AI/skyvern/pull/6994), [#6996](https://github.com/Skyvern-AI/skyvern/pull/6996), [#7000](https://github.com/Skyvern-AI/skyvern/pull/7000), [#7014](https://github.com/Skyvern-AI/skyvern/pull/7014), [#7015](https://github.com/Skyvern-AI/skyvern/pull/7015), [#7031](https://github.com/Skyvern-AI/skyvern/pull/7031), [#7040](https://github.com/Skyvern-AI/skyvern/pull/7040), [#7055](https://github.com/Skyvern-AI/skyvern/pull/7055), [#7069](https://github.com/Skyvern-AI/skyvern/pull/7069), [#7081](https://github.com/Skyvern-AI/skyvern/pull/7081), [#7086](https://github.com/Skyvern-AI/skyvern/pull/7086), [#7087](https://github.com/Skyvern-AI/skyvern/pull/7087), [#7088](https://github.com/Skyvern-AI/skyvern/pull/7088), [#7090](https://github.com/Skyvern-AI/skyvern/pull/7090), [#7091](https://github.com/Skyvern-AI/skyvern/pull/7091))
+- Fixed failures in workflow navigation, remote browser cleanup, and task listings. ([#7001](https://github.com/Skyvern-AI/skyvern/pull/7001), [#7006](https://github.com/Skyvern-AI/skyvern/pull/7006), [#7042](https://github.com/Skyvern-AI/skyvern/pull/7042), [#7084](https://github.com/Skyvern-AI/skyvern/pull/7084), [#7085](https://github.com/Skyvern-AI/skyvern/pull/7085))
+
+</Update>
+
+<a id="week-jun-22-2026"></a>
+<Update label="Week of June 22, 2026" description="Workflow Studio preview, new models, label management, Gmail OTP, Copilot improvements, analytics filters, bug fixes">
+
+## New features
+
+- **Gmail-Backed OTP Lookup** — Agents can now retrieve one-time passwords from Gmail via OAuth, enabling automated login flows that depend on email-delivered verification codes. ([#6769](https://github.com/Skyvern-AI/skyvern/pull/6769))
+- **Copilot Chat History per Workflow** — The Copilot now retains its full conversation history scoped to each individual workflow, so prior context and decisions are preserved as you continue building. ([#6767](https://github.com/Skyvern-AI/skyvern/pull/6767))
+- **Code-First Editor Polish** — Code-first code blocks now display block labels, correctly render extraction output, and include a Build-vs-Code toggle for switching between visual and code editing modes. ([#6771](https://github.com/Skyvern-AI/skyvern/pull/6771))
+- **Workflow Studio (Preview)** — A redesigned workflow editor with a refreshed build canvas, integrated browser view, and run viewer is now available as an opt-in preview, giving teams an early look at the next-generation authoring experience. ([#6782](https://github.com/Skyvern-AI/skyvern/pull/6782))
+- **DeepSeek and Xiaomi MiMo Models** — DeepSeek and Xiaomi MiMo are now available in the model dropdown for agent runs. Gemini 2.5 Pro and 2.5 Flash have been deprecated. ([#6831](https://github.com/Skyvern-AI/skyvern/pull/6831))
+- **Label Management Settings** — Labels can now be renamed, recolored, and soft-deleted directly from the Settings page, making it easier to maintain a clean tag taxonomy. ([#6830](https://github.com/Skyvern-AI/skyvern/pull/6830))
+- **Browser Profiles in MCP Sessions** — Browser sessions initiated via MCP can now be associated with a browser profile, enabling credential and state reuse across MCP-driven runs. ([#6798](https://github.com/Skyvern-AI/skyvern/pull/6798))
+- **Workflow-Tag Filter on Analytics** — The analytics dashboard now supports filtering runs and metrics by workflow tag. ([#6780](https://github.com/Skyvern-AI/skyvern/pull/6780))
+
+## Improvements
+
+- **Copilot Repair Shows Quiet Progress** — The Copilot's code-seam repair steps now appear as compact progress indicators instead of repeated chat messages, keeping the conversation readable during long repairs. ([#6746](https://github.com/Skyvern-AI/skyvern/pull/6746))
+- **Collapsible Sidebar with Avatar** — The left sidebar now features an edge toggle, a closed-state user avatar, and a smooth open/close animation for a more polished navigation experience. ([#6754](https://github.com/Skyvern-AI/skyvern/pull/6754))
+- **Structured Output Verified Before Completion** — Runs that produce structured data now verify the output satisfies the configured schema before marking the run as successfully complete. ([#6751](https://github.com/Skyvern-AI/skyvern/pull/6751))
+- **MCP Workflow Overlap Settings Preserved** — Overlap settings configured via MCP are now retained correctly when the workflow is subsequently edited, preventing unintentional resets. ([#6748](https://github.com/Skyvern-AI/skyvern/pull/6748))
+- **Browser Profile List Sorted Newest First** — The browser profile picker now orders profiles with the most recently created at the top, making recent profiles easier to find and select. ([#6739](https://github.com/Skyvern-AI/skyvern/pull/6739))
+- **Remote Browser Sessions Capped at Four Hours** — Remote browser sessions now have a maximum duration of four hours, preventing orphaned sessions from consuming resources indefinitely.
+- **Debug Sessions Stay Open After Runs** — Browser sessions launched from the workflow editor in debug mode now remain alive after a run completes, so you can inspect the final page state without the session closing immediately. ([#6832](https://github.com/Skyvern-AI/skyvern/pull/6832))
+- **GPT-5 Mini via OpenRouter** — GPT-5 Mini is now available as a selectable model via OpenRouter. ([#6816](https://github.com/Skyvern-AI/skyvern/pull/6816))
+- **Extraction and AI Steps in Code-Block View** — Extraction and AI steps are now surfaced in the code-block run view, filling a gap in execution visibility. ([#6823](https://github.com/Skyvern-AI/skyvern/pull/6823))
+- **Color Palette for Grouped Workflow Tags** — Tags that belong to a group are now displayed with a curated color palette, making it easier to distinguish tag groups at a glance. ([#6801](https://github.com/Skyvern-AI/skyvern/pull/6801))
+- **Improved Authenticator 2FA Credential Setup** — The credential setup flow for authenticator-based 2FA has been improved with clearer guidance and a smoother configuration experience. ([#6783](https://github.com/Skyvern-AI/skyvern/pull/6783))
+- **Copilot Data-Write Blocks Default to Safe Failure Mode** — New Copilot-generated data-write blocks now default to `continue_on_failure=false`, preventing downstream blocks from running on bad data. ([#6779](https://github.com/Skyvern-AI/skyvern/pull/6779))
+- **End-State Screenshots for All Open Tabs** — Task runs now capture end-state screenshots for every open tab at completion, giving a full snapshot of the browser state. ([#6777](https://github.com/Skyvern-AI/skyvern/pull/6777))
+- **Partial Deliverable on Budget Exhaustion** — Tasks that hit their credit budget now return the best-effort deliverable collected so far instead of failing without output. ([#6778](https://github.com/Skyvern-AI/skyvern/pull/6778))
+- **Planner Supports EXTRACT_INFORMATION and GOTO_URL** — The task planner can now emit EXTRACT_INFORMATION and GOTO_URL actions, expanding the set of strategies available during automated planning. ([#6800](https://github.com/Skyvern-AI/skyvern/pull/6800))
+- **Copilot Completion Recognition Improvements** — The Copilot completion recognizer is now more authoritative and evidence-backed, with stable criteria counts and more reliable recognition across runs. ([#6789](https://github.com/Skyvern-AI/skyvern/pull/6789))
+- **Copilot Code Repair Loop Reliability** — The Copilot code authoring repair loop is now more reliable, reducing cases where stuck repairs would stall progress. ([#6792](https://github.com/Skyvern-AI/skyvern/pull/6792))
+- **Workflow Studio Browser and Panel Improvements** — The Workflow Studio editor now supports take-control and viewport centering for the live browser, with alignment and toolbar polish for the run/editor panels. ([#6810](https://github.com/Skyvern-AI/skyvern/pull/6810))
+- **Analytics Tag Filters Accept Flexible Input Shapes** — Analytics tag filters now accept labels, groups, or `group:label` pairs in all three supported filter shapes. ([#6802](https://github.com/Skyvern-AI/skyvern/pull/6802))
+- **Run ID Search Fallback on Runs List** — The runs list now falls back to searching by run ID when no parameter-value match is found, making it easier to locate specific runs. ([#6788](https://github.com/Skyvern-AI/skyvern/pull/6788))
+
+## Bug fixes
+
+- Fixed login credentials not being reattached after editing a workflow via MCP, which could cause credential-gated runs to fail. ([#6761](https://github.com/Skyvern-AI/skyvern/pull/6761))
+- Fixed conditional routing logic not being preserved when loading a workflow stored in the v1 format. ([#6760](https://github.com/Skyvern-AI/skyvern/pull/6760))
+- Fixed the active run context being lost when switching between organizations, requiring a page refresh to restore the correct run view. ([#6753](https://github.com/Skyvern-AI/skyvern/pull/6753))
+- Fixed browser connection settings defined in a TaskV2 block not being forwarded to child task runs. ([#6750](https://github.com/Skyvern-AI/skyvern/pull/6750))
+- Fixed telephone number inputs dropping digits when bare NANP-format phone numbers were typed. ([#6826](https://github.com/Skyvern-AI/skyvern/pull/6826))
+- Fixed the workflow builder freezing due to an infinite FlowRenderer dimension/layout feedback loop. ([#6824](https://github.com/Skyvern-AI/skyvern/pull/6824))
+- Fixed the code editor crashing with a stack overflow when opened on large or deeply-nested JSON. ([#6817](https://github.com/Skyvern-AI/skyvern/pull/6817))
+- Fixed the app failing to load after a deploy due to stale webpack chunks; the app now auto-recovers via a cache-busting reload. ([#6818](https://github.com/Skyvern-AI/skyvern/pull/6818))
+- Fixed runs returning an incorrect terminal outcome when the extraction schema had been modified after the initial recording. ([#6815](https://github.com/Skyvern-AI/skyvern/pull/6815))
+- Fixed MCP workflow edits dropping non-credential parameter-to-block links. ([#6813](https://github.com/Skyvern-AI/skyvern/pull/6813))
+- Fixed address bar paste not working in the VNC streaming view. ([#6812](https://github.com/Skyvern-AI/skyvern/pull/6812))
+- Fixed newly added workflow blocks not receiving focus in the editor. ([#6809](https://github.com/Skyvern-AI/skyvern/pull/6809))
+- Fixed Copilot code-block file downloads being written to the wrong directory. ([#6797](https://github.com/Skyvern-AI/skyvern/pull/6797))
+- Fixed parameter-value search not appearing in the v2 runs list. ([#6796](https://github.com/Skyvern-AI/skyvern/pull/6796))
+- Fixed extra actions firing after selecting a combobox option during text entry. ([#6787](https://github.com/Skyvern-AI/skyvern/pull/6787))
+- Fixed shadow DOM text nodes being missed during element text extraction. ([#6791](https://github.com/Skyvern-AI/skyvern/pull/6791))
+- Fixed persistent browser sessions incorrectly reporting a cached session as live when it had become stale.
+
+</Update>
+
+<a id="week-jun-15-2026"></a>
+<Update label="Week of June 15, 2026" description="Code-first code block editor, analytics drill-down, copilot repair loop, OTP fill, uncapped runtimes, voice input fixes">
+
+## New features
+
+- **OTP Fill at Runtime in Code-Block Sandbox** — Code blocks can now fill OTP fields using your stored TOTP credentials at runtime, enabling fully automated two-factor authentication flows without manual input. ([#6571](https://github.com/Skyvern-AI/skyvern/pull/6571))
+- **Uncapped Workflow Runtime** — Workflows can now be configured to run without a maximum time limit, enabling long-running automations that previously timed out. ([#6567](https://github.com/Skyvern-AI/skyvern/pull/6567))
+- **Code-First Code Block Editor** — Code blocks now feature a dedicated code editor with syntax highlighting, Jinja parameter hints, and a run timeline showing each action taken, giving developers full visibility and control over code-driven automations. ([#6604](https://github.com/Skyvern-AI/skyvern/pull/6604))
+- **Period-Aware Analytics Drill-Down** — The agent analytics drill-down panel now respects the selected time period (7/30/90/365 days or custom range) and shows per-agent average duration, credits per run, and period-over-period trends.
+- **Agent Directory Tree** — The agents and folders list has been redesigned as a navigable directory tree, making it easier to browse and organize agents across nested folder hierarchies. ([#6631](https://github.com/Skyvern-AI/skyvern/pull/6631))
+- **GCP Self-Host: Storage and Vault** — Self-hosted deployments on Google Cloud Platform now support GCS artifact storage and GCP Secret Manager vault, enabling full GCP-native deployments. ([#6632](https://github.com/Skyvern-AI/skyvern/pull/6632))
+- **1Password Credential Picker** — Credential inputs now include an item picker for 1Password vaults, letting you browse and select vault items directly during credential setup. ([#6651](https://github.com/Skyvern-AI/skyvern/pull/6651))
+- **Typed Extraction Schema for Copilot Code Blocks** — Copilot-generated code blocks now support a typed data extraction schema (matching `data_schema` parity), enabling structured data output from code-block automations. ([#6674](https://github.com/Skyvern-AI/skyvern/pull/6674))
+- **SDK-Backed Remote Browser Provider** — Agents can now connect to external browser providers via SDK, enabling tighter integration with third-party remote browser services. ([#6687](https://github.com/Skyvern-AI/skyvern/pull/6687))
+- **Bitwarden Credential Integration** — Saved credentials can now be sourced directly from Bitwarden vaults, bringing Bitwarden to full UI and functional parity with other supported credential providers. ([#6729](https://github.com/Skyvern-AI/skyvern/pull/6729))
+
+## Improvements
+
+- **Smarter Loop Planning for Repeated Work** — The task planner now prefers loop-based tasks when it detects repeated same-shaped operations, improving throughput on multi-item automation runs. ([#6575](https://github.com/Skyvern-AI/skyvern/pull/6575))
+- **Agent Auto-Acts on Stalled Pages** — When the agent re-evaluates a page that hasn't changed, it now applies steering heuristics and acts immediately instead of stalling. ([#6577](https://github.com/Skyvern-AI/skyvern/pull/6577))
+- **Final Answer Surfaced Directly** — The task agent now returns the final deliverable directly instead of spinning through redundant synthesis steps, reducing latency on completed tasks. ([#6574](https://github.com/Skyvern-AI/skyvern/pull/6574))
+- **Copilot Stops Stuck Repair Loops** — The Workflow Copilot now detects when consecutive repairs make no verified progress, halts after three attempts, and presents an honest escalation with the draft preserved for review. ([#6608](https://github.com/Skyvern-AI/skyvern/pull/6608))
+- **Voice Input Microphone Permission** — The browser microphone permission prompt now appears correctly when using voice dictation in the Prompt Box and Workflow Copilot. ([#6601](https://github.com/Skyvern-AI/skyvern/pull/6601))
+- **`page.evaluate` Recorded in Code Block Timeline** — JavaScript `page.evaluate(...)` calls made inside code blocks are now recorded as actions in the run timeline, filling a gap in execution visibility. ([#6600](https://github.com/Skyvern-AI/skyvern/pull/6600))
+- **Active Run Shown on Browser Session Page** — Browser session detail pages now display which workflow run currently occupies the session, making it easier to understand session usage. ([#6691](https://github.com/Skyvern-AI/skyvern/pull/6691))
+- **Distinct Visual for Terminate Actions** — Terminate actions now appear with a distinct amber triangle icon in the run timeline, making it easy to spot where a run was stopped. ([#6693](https://github.com/Skyvern-AI/skyvern/pull/6693))
+- **PDF Field Mapping by Positional Labels** — PDF form filling now uses positional field labels to improve accuracy when mapping data to form fields with ambiguous names. ([#6663](https://github.com/Skyvern-AI/skyvern/pull/6663))
+- **MiMo-V2.5 Model Support via OpenRouter** — Added Xiaomi MiMo-V2.5 as a selectable LLM via OpenRouter for agent runs. ([#6636](https://github.com/Skyvern-AI/skyvern/pull/6636))
+- **Settings "API Keys" Renamed to "General"** — The "API Keys" section in Settings has been renamed to "General" to better reflect its full scope of configuration options. ([#6642](https://github.com/Skyvern-AI/skyvern/pull/6642))
+- **Run URLs Surfaced in MCP and CLI** — The agent app URL and session recording URLs are now included in run responses returned via MCP and the CLI, making it easier to link directly to a live run. ([#6719](https://github.com/Skyvern-AI/skyvern/pull/6719))
+- **Email OTP Credentials Supported in Copilot** — The Copilot can now use stored email OTP credentials when generating and validating code-block automations that require email-based authentication. ([#6716](https://github.com/Skyvern-AI/skyvern/pull/6716))
+- **Auto-Fill Default Google Account for Sheets Blocks** — Google Sheets blocks now automatically select the default linked Google account, reducing manual setup when configuring Sheets integrations. ([#6715](https://github.com/Skyvern-AI/skyvern/pull/6715))
+- **Copilot Output Accurately Reflects Verified Results** — The Copilot no longer under-reports successfully verified output, ensuring the run summary accurately reflects what was accomplished. ([#6710](https://github.com/Skyvern-AI/skyvern/pull/6710))
+- **Runs Halt Reliably on Terminal Blockers** — When the agent encounters strong evidence of an unresolvable blocker (such as a persistent challenge page), it now stops immediately rather than continuing to attempt further actions. ([#6714](https://github.com/Skyvern-AI/skyvern/pull/6714))
+- **Workflow Save Performance Improved** — Cache invalidation on workflow save is now batched, eliminating a per-block N+1 query pattern that slowed saves for large workflows. ([#6718](https://github.com/Skyvern-AI/skyvern/pull/6718))
+
+## Bug fixes
+
+- Fixed the Run Inputs panel collapsing unexpectedly when filtering Run History. ([#6573](https://github.com/Skyvern-AI/skyvern/pull/6573))
+- Fixed the agent incorrectly retrying click fallbacks after an action dispatch timed out, causing unintended interactions. ([#6569](https://github.com/Skyvern-AI/skyvern/pull/6569))
+- Fixed session recordings and page interpretation not resuming correctly after navigation, causing missed recording segments. ([#6568](https://github.com/Skyvern-AI/skyvern/pull/6568))
+- Fixed code block runs not generating a recording entry, causing the Recording tab to appear empty. ([#6607](https://github.com/Skyvern-AI/skyvern/pull/6607))
+- Fixed code block action screenshots not appearing on the run Overview page. ([#6605](https://github.com/Skyvern-AI/skyvern/pull/6605))
+- Fixed long usernames or email addresses hiding the sidebar collapse button on desktop.
+- Fixed the FileParserBlock crashing instead of surfacing a clear error when it encountered an unparseable file. ([#6657](https://github.com/Skyvern-AI/skyvern/pull/6657))
+- Fixed the Inputs field missing from the Code view of code-first code blocks. ([#6633](https://github.com/Skyvern-AI/skyvern/pull/6633))
+- Fixed Copilot-synthesized download blocks not downloading the file during code replay. ([#6637](https://github.com/Skyvern-AI/skyvern/pull/6637), [#6638](https://github.com/Skyvern-AI/skyvern/pull/6638))
+- Fixed multi-step login flows not advancing when credentials were filled into JavaScript-gated fields. ([#6650](https://github.com/Skyvern-AI/skyvern/pull/6650))
+- Fixed an infinite update loop on the workflow build page when certain block configurations were active. ([#6660](https://github.com/Skyvern-AI/skyvern/pull/6660))
+- Fixed adopted-session file downloads not being available as run artifacts after the session ended. ([#6679](https://github.com/Skyvern-AI/skyvern/pull/6679))
+- Fixed the run timeline showing action and step rows for non-code blocks when they should only appear for code blocks. ([#6675](https://github.com/Skyvern-AI/skyvern/pull/6675))
+- Fixed workflow run actions not appearing in the timeline for all block types.
+- Fixed workflow runs not stopping when a configured time limit was exceeded. ([#6677](https://github.com/Skyvern-AI/skyvern/pull/6677))
+- Fixed the analytics plan-tier badge showing the incorrect tier for some organizations.
+- Fixed credits not being recorded when data was captured inside a Navigate block in task runs. ([#6698](https://github.com/Skyvern-AI/skyvern/pull/6698))
+- Fixed Copilot directory mode synthesizing incorrect code bindings. ([#6702](https://github.com/Skyvern-AI/skyvern/pull/6702))
+- Fixed FileUpload blocks silently skipping the upload when no file was provided, instead of recording a clean no-op and continuing. ([#6728](https://github.com/Skyvern-AI/skyvern/pull/6728))
+- Fixed the product tour not launching when triggered from the "Take a tour" menu option. ([#6727](https://github.com/Skyvern-AI/skyvern/pull/6727))
+- Fixed scanned PDF files being parsed as a single large page rather than processed page-by-page, which caused extraction to miss content on multi-page documents. ([#6722](https://github.com/Skyvern-AI/skyvern/pull/6722))
+- Fixed the block library drawer overflowing its container bounds in the workflow builder. ([#6721](https://github.com/Skyvern-AI/skyvern/pull/6721))
+
+</Update>
+
+<a id="week-jun-8-2026"></a>
+<Update label="Week of June 8, 2026" description="Multi-tab agent control, Gemini 3.5 Flash, GCP Vault, bulk agent actions, credential clears, code-block credentials">
+
+## New features
+
+- **Copilot Ask/Build/Code Mode Routing** — The Copilot now routes each request based on the active mode: Ask returns answers without modifying the workflow, Build creates or updates workflows, and Code generates executable code blocks. ([#6459](https://github.com/Skyvern-AI/skyvern/pull/6459))
+- **GCS Storage Backend** — Added Google Cloud Storage as an artifact storage backend for self-hosted deployments. ([#6442](https://github.com/Skyvern-AI/skyvern/pull/6442))
+- **Key-Optional Labels and Flexible Tag Filters** — Tags now support key-optional labels, and tag filter queries accept more flexible formats for richer agent organization. ([#6458](https://github.com/Skyvern-AI/skyvern/pull/6458))
+- **Self-Serve Editor Onboarding** — New users in the workflow editor now see a get-started modal with intent routing and template cards, a 4-stop guided product tour, and smart empty states on the dashboard and runs pages to accelerate time-to-first-automation. ([#6475](https://github.com/Skyvern-AI/skyvern/pull/6475))
+- **Multi-Tab Browser Control** — The autonomous agent loop can now open and interact with multiple browser tabs simultaneously, enabling workflows that span across new tab links and pop-ups. ([#6507](https://github.com/Skyvern-AI/skyvern/pull/6507))
+- **Gemini 3.5 Flash Model Support** — Added Google Gemini 3.5 Flash as a selectable LLM for agent runs, providing a faster inference option. ([#6505](https://github.com/Skyvern-AI/skyvern/pull/6505))
+- **GCP Secret Manager Vault Adapter** — Added Google Cloud Secret Manager as a supported vault backend for storing and retrieving secrets in self-hosted deployments. ([#6488](https://github.com/Skyvern-AI/skyvern/pull/6488))
+- **Bulk Actions on Agents List** — You can now select multiple agents at once and apply bulk actions directly from the agents list page. ([#6485](https://github.com/Skyvern-AI/skyvern/pull/6485))
+- **Self-Service Credential Clears** — Saved credentials can now be individually cleared from the credentials settings page without deleting and recreating them. ([#6480](https://github.com/Skyvern-AI/skyvern/pull/6480))
+- **Per-Run Session Recordings as Artifacts** — Recordings are now clipped to each run's time window and stored as downloadable run-scoped artifacts. ([#6479](https://github.com/Skyvern-AI/skyvern/pull/6479))
+- **Credential-Aware Scouting in Code-Block Mode** — The Copilot now uses saved credentials while scouting pages for code-block generation and produces credential-typed code that fills login fields using your stored credentials. ([#6521](https://github.com/Skyvern-AI/skyvern/pull/6521))
+- **Claude Fable 5 Model Support** — Added Claude Fable 5 as a selectable model for agent runs. ([#6539](https://github.com/Skyvern-AI/skyvern/pull/6539))
+- **Live Browser Recording with Instant Placeholders** — Session recordings now commit navigation and wait blocks immediately as placeholders during live recording, with support for capture pause and draft interpretation. ([#6561](https://github.com/Skyvern-AI/skyvern/pull/6561))
+- **Act-and-Observe Copilot Scouting** — The Copilot's page scouting now uses act-and-observe interactions that return bounded page evidence alongside gathered actions, improving code-block generation accuracy. ([#6533](https://github.com/Skyvern-AI/skyvern/pull/6533))
+
+## Improvements
+
+- **Deterministic Copilot Code-Block Synthesis** — Code blocks generated by the Copilot from scouted page interactions are now deterministic, producing consistent scripts across repeated generations. ([#6463](https://github.com/Skyvern-AI/skyvern/pull/6463))
+- **Smarter Element Focus in Page Analysis** — The agent now drops non-navigable links from its internal element tree, reducing noise and improving targeting accuracy. ([#6461](https://github.com/Skyvern-AI/skyvern/pull/6461))
+- **Workflow Builder Left Sidebar Preserved** — The left sidebar in the workflow builder now stays open when you switch between blocks, keeping your panel state between edits. ([#6453](https://github.com/Skyvern-AI/skyvern/pull/6453))
+- **TOTP Prioritized Over Webhook for OTP** — Stored TOTP secrets are now tried before webhook polling when retrieving one-time passwords, speeding up authentication flows that use stored credentials. ([#6451](https://github.com/Skyvern-AI/skyvern/pull/6451))
+- **Improved Caching for Click-Reached Blocks** — Scout interactions for blocks reached via click are now automatically credited toward the cached script, increasing cache hit rates. ([#6450](https://github.com/Skyvern-AI/skyvern/pull/6450))
+- **Accessible Status Badges** — Status badges across the product have been updated with improved contrast and consistent pill styling for better accessibility. ([#6444](https://github.com/Skyvern-AI/skyvern/pull/6444))
+- **Block Title Editable from Settings Sidebar** — Workflow block titles can now be edited from the right-hand settings sidebar, without needing to use the inline editor on the canvas. ([#6443](https://github.com/Skyvern-AI/skyvern/pull/6443))
+- **API Reference Split into Agents and Runs Sections** — The public API reference is now organized into separate Agents and Runs sections for easier navigation. ([#6448](https://github.com/Skyvern-AI/skyvern/pull/6448))
+- **Label-First Tag Editor and Flexible Tag Filter UI** — The tag editor now accepts standalone labels or `group:label` format in a single input, and the filter bar supports filtering by label, group, or group:label for richer agent organization. ([#6470](https://github.com/Skyvern-AI/skyvern/pull/6470))
+- **2FA Field Progressive Disclosure in Login Block** — Two-factor authentication fields in the login workflow block are now collapsed by default and expanded on demand, reducing visual noise for workflows that don't use 2FA. ([#6490](https://github.com/Skyvern-AI/skyvern/pull/6490))
+- **Persistent Browser Session Profile Generation Now Opt-In** — Automatic browser profile generation during persistent sessions is now opt-in, giving you explicit control over when profiles are captured. ([#6489](https://github.com/Skyvern-AI/skyvern/pull/6489))
+- **Icon-Only Status Pills on Mobile Viewports** — Status badges now render in a compact icon-only format on small screen widths, preventing layout overflow on mobile devices. ([#6481](https://github.com/Skyvern-AI/skyvern/pull/6481))
+- **Hardened Webhook Delivery** — Workflow webhook delivery is now more reliable, with improved handling of transient failures and prioritized delivery ordering. ([#6478](https://github.com/Skyvern-AI/skyvern/pull/6478))
+- **Reduced Live Recording Draft Latency** — Live session recordings now appear almost instantly with placeholder entries, with final blocks committed after a short debounce window. ([#6553](https://github.com/Skyvern-AI/skyvern/pull/6553))
+- **Copilot Stops on Terminal Blockers** — The Copilot now correctly halts when it reaches a condition that blocks further progress, preventing runaway sessions. ([#6535](https://github.com/Skyvern-AI/skyvern/pull/6535))
+- **Copilot Chat Shows Run Outcome Verdict** — The Copilot chat timeline now reflects the actual run outcome verdict, giving a more accurate view of what the agent accomplished. ([#6532](https://github.com/Skyvern-AI/skyvern/pull/6532))
+
+## Bug fixes
+
+- Fixed org-verified discovered credentials not being credited in the Copilot credential gate, which could prevent runs from starting. ([#6462](https://github.com/Skyvern-AI/skyvern/pull/6462))
+- Fixed OTP codes from previous workflow runs being picked up and incorrectly used in new runs. ([#6455](https://github.com/Skyvern-AI/skyvern/pull/6455))
+- Fixed persistent-session screen recordings not appearing in the run view when the recording timestamp fell outside the run's time window. ([#6454](https://github.com/Skyvern-AI/skyvern/pull/6454))
+- Fixed Copilot inconsistently asking for a URL before running discovery when the user had only named a site without providing one. ([#6473](https://github.com/Skyvern-AI/skyvern/pull/6473))
+- Fixed Copilot asking for a URL after already successfully navigating to the requested site during discovery. ([#6472](https://github.com/Skyvern-AI/skyvern/pull/6472))
+- Fixed self-hosted deployments rejecting requests with "Invalid credentials" (HTTP 403) when the Docker UI injected an API key that the container's server incorrectly filtered out.
+- Fixed persistent session recordings not being finalized when the video encoding process outlasted the session's cleanup window. ([#6519](https://github.com/Skyvern-AI/skyvern/pull/6519))
+- Fixed the saved credentials status indicator not updating until the page was manually refreshed. ([#6517](https://github.com/Skyvern-AI/skyvern/pull/6517))
+- Fixed the workflow run timeline rendering blocks in branch-tree order instead of execution order, producing a confusing step sequence. ([#6515](https://github.com/Skyvern-AI/skyvern/pull/6515))
+- Fixed downloaded files inside loop blocks being shared across all iterations instead of scoped to the block that downloaded them. ([#6487](https://github.com/Skyvern-AI/skyvern/pull/6487))
+- Fixed session recordings defaulting to an incorrect resolution; recordings now use Playwright's default viewport size. ([#6524](https://github.com/Skyvern-AI/skyvern/pull/6524))
+- Fixed Copilot failing to recognize and use a saved credential when the credential ID was typed with a space or hyphen separator instead of an underscore; malformed IDs are now normalized and resolved correctly. ([#6529](https://github.com/Skyvern-AI/skyvern/pull/6529))
+- Fixed Copilot chat showing workflow blocks as completed even when the overall run goal was not demonstrated — the recorded run outcome verdict is now surfaced in the chat narrative. ([#6528](https://github.com/Skyvern-AI/skyvern/pull/6528))
+- Fixed Copilot browser sessions incorrectly blocking localhost navigation during page scouting, which could prevent evidence from being gathered from locally-served pages. ([#6527](https://github.com/Skyvern-AI/skyvern/pull/6527))
+- Fixed single-element JSON arrays being unwrapped to a scalar when passed as workflow run inputs. ([#6560](https://github.com/Skyvern-AI/skyvern/pull/6560))
+- Fixed code blocks silently dropping non-dict return values instead of passing them through to downstream blocks. ([#6556](https://github.com/Skyvern-AI/skyvern/pull/6556))
+- Fixed the task agent ignoring the `max_iterations` override, causing runs to exceed their configured step limit. ([#6544](https://github.com/Skyvern-AI/skyvern/pull/6544))
+- Fixed generated workflow parameter keys being duplicated, which caused a hard failure when the workflow was run. ([#6543](https://github.com/Skyvern-AI/skyvern/pull/6543))
+- Fixed task runs completing successfully even when a required sub-goal had not been satisfied. ([#6546](https://github.com/Skyvern-AI/skyvern/pull/6546))
+- Fixed the credential-clear confirmation dialog being hidden behind other overlays. ([#6542](https://github.com/Skyvern-AI/skyvern/pull/6542))
+- Fixed click actions on elements wrapped in disabled containers not being retargeted to the clickable child element. ([#6540](https://github.com/Skyvern-AI/skyvern/pull/6540))
+- Fixed Copilot loop detector incorrectly triggering at block dispatch boundaries. ([#6550](https://github.com/Skyvern-AI/skyvern/pull/6550))
+
+</Update>
+
+<a id="week-jun-1-2026"></a>
+<Update label="Week of June 1, 2026" description="Workflows are now Agents, feature preview, tag filters, OSS schedules, captcha improvements">
+
+## New features
+
+- **Workflows are now Agents** — We've renamed "Workflows" to "Agents" across the product, public API, and docs. The API is now served under `/agents` (e.g. `POST /v1/run/agents`) and accepts an `agent_id` alias for `workflow_id` (same `wpid_` value), with `agent_id` echoed in responses. Fully backwards-compatible: existing `workflow_id` inputs, `/workflows` endpoints, SDK methods, and bookmarked doc URLs all keep working.
+
+- **Feature Preview Section in Settings** — A new "Feature Preview" panel in account settings lets you opt into upcoming features before they are fully released. ([#6318](https://github.com/Skyvern-AI/skyvern/pull/6318))
+- **Filter Workflows by Tags** — The `GET /workflows` API now accepts a `?tags=` query parameter to filter results by tag. ([#6334](https://github.com/Skyvern-AI/skyvern/pull/6334))
+- **Workflow Schedules in Open Source** — Self-hosted Skyvern deployments now support workflow schedules, previously a cloud-only feature. ([#6344](https://github.com/Skyvern-AI/skyvern/pull/6344))
+- **Claude Opus 4.8 Support** — Added Claude Opus 4.8 as a selectable model for both direct Anthropic and AWS Bedrock inference paths. ([#6409](https://github.com/Skyvern-AI/skyvern/pull/6409))
+- **Automatic Re-save of Expired Credential Sessions** — Saved credential sessions that have expired or encountered an error are now automatically re-saved, keeping browser profiles available without manual intervention. ([#6435](https://github.com/Skyvern-AI/skyvern/pull/6435))
+- **GPT-5-mini Support** — Added GPT-5-mini as a selectable LLM for customers using their own OpenAI API keys, providing a faster, lower-cost inference option.
+
+## Improvements
+
+- **Improved CAPTCHA Solving Reliability** — Added a timeout circuit breaker and better timing around CAPTCHA solves on submit-protected pages, reducing failures caused by timing races. ([#6349](https://github.com/Skyvern-AI/skyvern/pull/6349))
+- **Undo/Redo Moved to Canvas Toolbar** — Undo and redo controls are back on the workflow canvas toolbar for easier access. ([#6310](https://github.com/Skyvern-AI/skyvern/pull/6310))
+- **Better Loading and Error States in Browser Streams** — Improved copy and animations for loading and error states across all browser stream views. ([#6332](https://github.com/Skyvern-AI/skyvern/pull/6332))
+- **Extended Credential Test Timeout** — The browser profile credential test now polls for up to 10 minutes, accommodating slower authentication flows that previously timed out. ([#6359](https://github.com/Skyvern-AI/skyvern/pull/6359))
+- **Code-First Copilot Validation Gates** — The code-first Copilot now runs preflight checks, MCP evidence gates, and validation steps before executing generated code blocks, reducing silent failures. ([#6410](https://github.com/Skyvern-AI/skyvern/pull/6410))
+- **OpenRouter Cost Tracking** — LLM token counts and costs are now tracked for runs using OpenRouter models, making per-run spending visible alongside other LLM providers. ([#6427](https://github.com/Skyvern-AI/skyvern/pull/6427))
+- **CUA and Claude Opus Models Now Enterprise-Only** — The CUA browser-control mode and Claude Opus model family are now reserved for enterprise accounts. ([#6420](https://github.com/Skyvern-AI/skyvern/pull/6420))
+
+## Bug fixes
+
+- Fixed session cookies not being restored when reusing a saved browser profile. ([#6362](https://github.com/Skyvern-AI/skyvern/pull/6362))
+- Fixed TOTP codes not being recovered from webhook response bodies that are not strictly valid JSON. ([#6354](https://github.com/Skyvern-AI/skyvern/pull/6354))
+- Fixed webhook responses being truncated at 2KB when routed through the NAT proxy.
+- Fixed filtered dropdown options not being selectable in certain search-driven input components. ([#6348](https://github.com/Skyvern-AI/skyvern/pull/6348))
+- Fixed block prompts not rendering in the workflow version comparison view. ([#6331](https://github.com/Skyvern-AI/skyvern/pull/6331))
+- Fixed agent navigation buttons rendered via CSS `::before`/`::after` pseudo-content icons being missed when the icon element's bounding rect was zero due to out-of-flow positioning. ([#6385](https://github.com/Skyvern-AI/skyvern/pull/6385))
+- Fixed credential edit form values and in-progress test state being cleared when the credentials list refreshed in the background during a browser profile test. ([#6404](https://github.com/Skyvern-AI/skyvern/pull/6404))
+- Fixed workflow canvas layout not updating correctly when a container block is collapsed. ([#6436](https://github.com/Skyvern-AI/skyvern/pull/6436))
+- Fixed session cookie capture not persisting correctly when saving browser credential sessions. ([#6434](https://github.com/Skyvern-AI/skyvern/pull/6434))
+- Fixed persistent browser session final status not being reconciled when a session close races a timeout cleanup.
+- Fixed shadow DOM inputs inside closed dropdown components incorrectly being forced visible. ([#6433](https://github.com/Skyvern-AI/skyvern/pull/6433))
+
+</Update>
+
+<a id="week-may-25-2026"></a>
+<Update label="Week of May 25, 2026" description="Sidebar redesign, run retry, copilot narrative, tagging API, block progress">
+
+## New features
+
+- **Redesigned Sidebar Navigation** — The app sidebar has been redesigned with collapsible groups, improved visual hierarchy, and a cleaner layout. ([#6211](https://github.com/Skyvern-AI/skyvern/pull/6211))
+- **Workflow Run Retry** — Workflow runs can now be retried directly from the UI or API without creating a new run from scratch. ([#6195](https://github.com/Skyvern-AI/skyvern/pull/6195))
+- **New Workflow Run Page Layout** — The workflow run detail page has been split into a compact timeline and a detail panel for faster navigation and better readability. ([#6214](https://github.com/Skyvern-AI/skyvern/pull/6214))
+- **Copilot Turn Narrative** — The workflow copilot now displays a summary bubble after each turn, giving you a clear audit trail of what the agent did and decided. ([#6231](https://github.com/Skyvern-AI/skyvern/pull/6231))
+- **Block Completion Progress on Run Page** — The workflow run page now shows an N/M progress indicator so you can see how many blocks have completed at a glance. ([#6230](https://github.com/Skyvern-AI/skyvern/pull/6230))
+- **Selector and AI Fallback Fields in Action Blocks** — Action blocks now expose explicit selector and AI fallback configuration, giving you finer control over element targeting. ([#6212](https://github.com/Skyvern-AI/skyvern/pull/6212))
+- **Workflow Tagging API** — Tags can now be created, applied, queried, and managed via the API for programmatic workflow organization. ([#6251](https://github.com/Skyvern-AI/skyvern/pull/6251))
+- **Run Cost Visibility in Task Runs** — Task runs now expose LLM, proxy, and captcha cost fields, making per-run spending trackable via the API. ([#6219](https://github.com/Skyvern-AI/skyvern/pull/6219))
+- **Double-Click Action Support** — The click action block now supports double-click for elements that require it. ([#6166](https://github.com/Skyvern-AI/skyvern/pull/6166))
+- **Search on Credentials Page** — Added a search bar to the credentials page for quick filtering by name.
+
+## Improvements
+
+- **"Inputs" Replaces "Parameters" Across the UI** — Workflow block parameters are now consistently labeled "Inputs" throughout the editor and run views. ([#6296](https://github.com/Skyvern-AI/skyvern/pull/6296))
+- **Sidebar Flyout on Hover** — Hovering over a collapsed sidebar icon now reveals the flyout menu without requiring a click. ([#6270](https://github.com/Skyvern-AI/skyvern/pull/6270))
+- **Copilot Follows Live Frontier During Runs** — The copilot chat panel now tracks the active workflow frontier as the run progresses, keeping you oriented on the agent's current work. ([#6283](https://github.com/Skyvern-AI/skyvern/pull/6283))
+- **Completed Copilot Turns Collapse to Summary Card** — Finished copilot turns now collapse into a compact summary card, reducing clutter in long sessions. ([#6280](https://github.com/Skyvern-AI/skyvern/pull/6280))
+- **Copilot Workflow Proposal Staged View** — Accepting or rejecting a copilot workflow proposal now shows a staged diff view that snaps back cleanly on cancel or reject. ([#6260](https://github.com/Skyvern-AI/skyvern/pull/6260))
+- **Browser Profile Saving Indicator** — A placeholder row now appears while a browser profile is being saved, giving immediate visual confirmation that the save is in progress. ([#6215](https://github.com/Skyvern-AI/skyvern/pull/6215))
+- **Copilot Loop Detection** — The copilot now detects when it is stuck repeating the same reply and actively rewrites its approach to break the loop. ([#6161](https://github.com/Skyvern-AI/skyvern/pull/6161))
+
+## Bug fixes
+
+- Fixed credentials with embedded multi-placeholder secret references not being resolved correctly during workflow runs. ([#6245](https://github.com/Skyvern-AI/skyvern/pull/6245))
+
+</Update>
+
+<a id="week-may-18-2026"></a>
+<Update label="Week of May 18, 2026" description="Guided browser profile setup, archived artifact status, webhook retry, download fixes">
+
+## New features
+
+- **Guided Browser Profile Setup** — A new step-by-step flow walks you through creating a saved browser profile, making it easier to set up persistent login sessions. ([#6043](https://github.com/Skyvern-AI/skyvern/pull/6043))
+- **MCP Setup in Cloud Settings** — Added a dedicated MCP setup section to cloud account settings for easier MCP client configuration.
+- **Draggable Workflow Blocks** — Blocks in the workflow editor can now be reordered by dragging and collapsed to save space, making it easier to navigate complex workflows.
+- **CDP Connect Headers** — The workflow editor now exposes a settings field for custom CDP connect headers, enabling authentication with remotely managed browser instances. ([#6125](https://github.com/Skyvern-AI/skyvern/pull/6125))
+- **Credits Consumed per Run** — Workflow run detail pages now show how many credits were consumed by that specific run. ([#6133](https://github.com/Skyvern-AI/skyvern/pull/6133))
+- **Bulk Cancel Runs** — A new API endpoint lets you cancel multiple in-progress workflow runs in a single request.
+
+## Improvements
+
+- **Archived Artifact Status** — Workflow runs now show when their artifacts have been archived, with a clear status indicator in the UI. ([#6075](https://github.com/Skyvern-AI/skyvern/pull/6075))
+- **Automatic Webhook Retry on Infrastructure Failures** — Workflow webhooks are now retried automatically after transient infrastructure failures, reducing missed notifications. ([#6062](https://github.com/Skyvern-AI/skyvern/pull/6062))
+- **Faster Script-Mode Runs** — Speculative extract-action steps are skipped in script-mode workflows, cutting unnecessary LLM calls. ([#6057](https://github.com/Skyvern-AI/skyvern/pull/6057))
+- **LLM Router Length-Truncation Fallback** — When a model response is cut off by a length limit, the router now automatically retries with a fallback model instead of returning a partial response. ([#6079](https://github.com/Skyvern-AI/skyvern/pull/6079))
+- **Analytics Range Extended to 365 Days** — The analytics dashboard now offers a "365 days" time range, replacing "All time" which was slow for high-volume accounts.
+- **Copilot Recovers from Unexpected Errors** — The workflow copilot now catches unexpected errors mid-run and presents a recovery option instead of silently stopping. ([#6143](https://github.com/Skyvern-AI/skyvern/pull/6143))
+- **Copilot Surfaces Missing-Context Fallback** — When the copilot lacks enough context to proceed, it now shows a clear fallback message explaining what information is needed. ([#6144](https://github.com/Skyvern-AI/skyvern/pull/6144))
+- **Reduced LLM Context Overflow Failures** — Prompt data (element trees, extraction goals) is now capped before being sent to the LLM, significantly reducing context-overflow and rate-limit errors on complex pages. ([#6098](https://github.com/Skyvern-AI/skyvern/pull/6098))
+
+## Bug fixes
+
+- Fixed popup pages opened during a run not being included in session recordings. ([#6078](https://github.com/Skyvern-AI/skyvern/pull/6078))
+- Fixed XHR-triggered file downloads not being captured when using download action blocks. ([#6054](https://github.com/Skyvern-AI/skyvern/pull/6054))
+- Fixed transient download-error popups incorrectly causing run failures. ([#6080](https://github.com/Skyvern-AI/skyvern/pull/6080))
+- Fixed child tasks not being terminated and workflow runs getting resurrected after a cleanup cron timeout. ([#6047](https://github.com/Skyvern-AI/skyvern/pull/6047))
+- Fixed copilot feasibility check stalling when given diagnostic input for an existing workflow. ([#6061](https://github.com/Skyvern-AI/skyvern/pull/6061))
+- Fixed reCAPTCHA v2 invisible variant being misidentified as v3, causing solve failures.
+- Fixed downloaded file links on workflow runs showing internal storage paths instead of actual filenames. ([#6137](https://github.com/Skyvern-AI/skyvern/pull/6137))
+- Fixed the workflow copilot stopping unexpectedly when a browser session becomes unresponsive. ([#6106](https://github.com/Skyvern-AI/skyvern/pull/6106))
+
+</Update>
+
+<a id="week-may-11-2026"></a>
+<Update label="Week of May 11, 2026" description="Analytics dashboard, browser profile pages, scheduled run badges, faster API">
+
+## New features
+
+- **Analytics Dashboard** — A new /analytics page provides a breakdown of workflow run activity and performance over time. ([#5980](https://github.com/Skyvern-AI/skyvern/pull/5980))
+- **Browser Profile Management Page** — A dedicated browser profiles page lets you view, search, and rename your saved browser profiles. ([#5990](https://github.com/Skyvern-AI/skyvern/pull/5990))
+- **Smarter Element Targeting** — The agent now uses deterministic HTML element-tree compression, improving selector reliability on complex pages. ([#5970](https://github.com/Skyvern-AI/skyvern/pull/5970))
+- **Block-Scoped Parameter Prompts in Debugger** — The workflow debugger now prompts for parameters scoped to the specific block being tested, making per-block runs easier to set up.
+
+## Improvements
+
+- **Scheduled Trigger Badge on Runs Page** — The global Runs page now shows a badge on runs triggered by a schedule, making scheduled runs easy to identify. ([#5948](https://github.com/Skyvern-AI/skyvern/pull/5948))
+- **Signed Artifact Content URLs** — Artifact content URLs are now always signed with configurable expiry for secure access control. ([#5940](https://github.com/Skyvern-AI/skyvern/pull/5940))
+- **Faster Workflow Run API** — The GET workflow run endpoint has been significantly optimized for speed. ([#5993](https://github.com/Skyvern-AI/skyvern/pull/5993))
+- **Copilot Diff View Detects Nested Changes** — The Copilot diff panel now correctly highlights changes inside nested conditional and loop blocks. ([#5945](https://github.com/Skyvern-AI/skyvern/pull/5945))
+- **Output Parameter Size Protection** — Workflow output parameter values are now capped to prevent oversized JSON payloads from causing downstream failures. ([#5974](https://github.com/Skyvern-AI/skyvern/pull/5974))
+
+## Bug fixes
+
+- Fixed scheduled workflow runs not appearing on the global Runs page. ([#5949](https://github.com/Skyvern-AI/skyvern/pull/5949))
+- Fixed webhook delivery silently failing on transient 403, 5xx, or network errors. ([#5952](https://github.com/Skyvern-AI/skyvern/pull/5952))
+- Fixed artifact downloads failing for clients that send HTTP Range request headers. ([#5982](https://github.com/Skyvern-AI/skyvern/pull/5982))
+- Fixed FileParserBlock failures not appearing in workflow run outputs. ([#5964](https://github.com/Skyvern-AI/skyvern/pull/5964))
+
+</Update>
+
+<a id="week-may-4-2026"></a>
+<Update label="Week of May 4, 2026" description="While Loop block, multiple schedules per workflow, Google Sheets connector, browser session runs tab">
+
+## New features
+
+- **While Loop Block** — A new workflow block type that repeats a sub-workflow until a condition is met, enabling dynamic iteration without a fixed loop count. ([#5809](https://github.com/Skyvern-AI/skyvern/pull/5809))
+- **Multiple Schedules per Workflow** — Workflows can now have multiple independent schedules (e.g., run at 9am on weekdays and noon on weekends). ([#5799](https://github.com/Skyvern-AI/skyvern/pull/5799))
+- **Google Sheets Connector (Open Source)** — The Google Sheets connector authentication flow is now part of the open source package. ([#5815](https://github.com/Skyvern-AI/skyvern/pull/5815))
+- **Runs Tab on Browser Session Page** — The browser session detail page now includes a Runs tab listing all workflow runs associated with that session. ([#5830](https://github.com/Skyvern-AI/skyvern/pull/5830))
+- **Per-Workflow Total Step Cap** — A new workflow-run step cap lets you limit the maximum number of agent steps across all blocks in a single run. ([#5834](https://github.com/Skyvern-AI/skyvern/pull/5834))
+
+## Improvements
+
+- **TOTP Scoped to Active Credential** — Credential-derived TOTP values are now scoped to the active credential, preventing stale tokens from being used mid-run. ([#5805](https://github.com/Skyvern-AI/skyvern/pull/5805))
+- **Browser Dialogs Surfaced to Agent** — JavaScript dialogs (alerts, confirms, prompts) that the browser blocks are now surfaced to the agent so it can adapt its next action. ([#5810](https://github.com/Skyvern-AI/skyvern/pull/5810))
+
+## Bug fixes
+
+- Fixed the workflow-deleted banner not appearing on the run detail page when the parent workflow has been deleted. ([#5800](https://github.com/Skyvern-AI/skyvern/pull/5800))
+
+</Update>
+
+<a id="week-apr-27-2026"></a>
+<Update label="Week of April 27, 2026" description="MCP CLI for schedules and config, copilot hard-cancel, cursor in recordings, artifact URL improvements">
+
+## New features
+
+- **Workflow Schedule Management via MCP** — Manage workflow schedules from MCP clients (e.g., Claude Code) using the new `skyvern schedule` CLI commands. ([#5713](https://github.com/Skyvern-AI/skyvern/pull/5713))
+- **Org Settings via MCP** — Configure organization settings from MCP clients using the new `skyvern config` CLI tool. ([#5694](https://github.com/Skyvern-AI/skyvern/pull/5694))
+- **MCP OAuth Org Selection** — Multi-org users can now choose which organization to connect to during MCP OAuth authentication. ([#5699](https://github.com/Skyvern-AI/skyvern/pull/5699))
+- **Platform-Level JS Dialog Handler** — The agent now handles JavaScript dialogs at the browser level using LLM-guided decision logic, improving reliability on dialog-heavy pages. ([#5679](https://github.com/Skyvern-AI/skyvern/pull/5679))
+- **Print-to-PDF in Downloaded Files** — Workflow blocks that trigger a browser print-to-PDF now expose the resulting file in the block's downloaded files list. ([#5784](https://github.com/Skyvern-AI/skyvern/pull/5784))
+
+## Improvements
+
+- **Cursor Visualization in Run Recordings** — Playwright recordings now overlay a visible cursor, making it easy to follow the agent's actions when reviewing a recording. ([#5683](https://github.com/Skyvern-AI/skyvern/pull/5683))
+- **Short Signed Recording URLs** — Browser session recording links are now compact signed URLs instead of full S3 paths. ([#5686](https://github.com/Skyvern-AI/skyvern/pull/5686))
+- **Configurable Artifact URL Expiry** — A settings field lets you control how long artifact content URLs stay valid before expiring. ([#5690](https://github.com/Skyvern-AI/skyvern/pull/5690))
+- **Copilot Hard-Cancel** — A hard-cancel button immediately stops an in-progress copilot run without waiting for the current step to finish. ([#5726](https://github.com/Skyvern-AI/skyvern/pull/5726))
+- **Copilot Reuses Live Debug Browser Session** — When testing a workflow from the debugger, the copilot now reuses the open browser session instead of starting a new one. ([#5709](https://github.com/Skyvern-AI/skyvern/pull/5709))
+- **Copilot Surfaces WIP Workflow on Timeout** — If the copilot times out or a test fails, it now offers the in-progress workflow so you can review and continue. ([#5755](https://github.com/Skyvern-AI/skyvern/pull/5755))
+- **Pre-Filled Debugger Run Dialog** — The Run dialog in the workflow debugger now pre-fills with values from your last run. ([#5724](https://github.com/Skyvern-AI/skyvern/pull/5724))
+- **Copilot Atomic Workflow Accept** — Accepting a copilot workflow proposal now applies all block changes atomically, preventing partial updates. ([#5695](https://github.com/Skyvern-AI/skyvern/pull/5695))
+- **Loop Block Failure-Handling Clarity** — The loop block UI has clearer controls and labels for configuring how failures inside the loop are handled. ([#5731](https://github.com/Skyvern-AI/skyvern/pull/5731))
+
+## Bug fixes
+
+- Fixed the in-progress workflow not being preserved when closing the copilot mid-run. ([#5787](https://github.com/Skyvern-AI/skyvern/pull/5787))
+
+</Update>
+
+<a id="week-apr-20-2026"></a>
+<Update label="Week of April 20, 2026" description="Copilot reliability, run recordings, 2FA improvements, and more">
+
+## Improvements
+
+- **Copilot Live Status Narration** — The workflow editor copilot now displays a short live status line while it works, so you can see what the agent is doing instead of waiting in silence. ([#5567](https://github.com/Skyvern-AI/skyvern/pull/5567))
+
+- **Renamed Browser Profile Reset Action** — The API endpoint for clearing a persisted browser session has been renamed from `/browser_session/refresh` to `/browser_session/reset_profile` for clarity. The old path remains available as a deprecated alias. ([#5572](https://github.com/Skyvern-AI/skyvern/pull/5572))
+
+- **Fewer Screenshots for API Runs** — Screenshot capture frequency has been reduced for API-triggered runs, lowering storage overhead on long-running automations without affecting interactive sessions. ([#5565](https://github.com/Skyvern-AI/skyvern/pull/5565))
+
+## Bug fixes
+
+- Fixed the workflow copilot incorrectly proposing a workflow it had just failed to build. The copilot now only surfaces an Accept/Reject panel when the last test actually passed. ([#5574](https://github.com/Skyvern-AI/skyvern/pull/5574))
+- Fixed 2FA entry failing on pages with custom overlay input components where the real input field is hidden. The agent now types digit keys directly when no interactable input exists. ([#5568](https://github.com/Skyvern-AI/skyvern/pull/5568))
+
+</Update>
+
+<a id="week-apr-13-2026"></a>
+<Update label="Week of April 13, 2026" description="Saudi Arabia proxy, workflow error mapping, smarter caching, MCP OAuth, AI output summaries, and reliability fixes">
+
+## New features
+
+- **Saudi Arabia Proxy Location** — Added `RESIDENTIAL_SA` as a proxy geolocation option for automations targeting Saudi Arabian websites.
+
+- **Workflow-Level Error Code Mapping** — Workflows now support an `error_code_mapping` field that all blocks inherit automatically. Block-level mappings still take precedence, giving you a single place to define default error handling without repeating it on every block. ([#5506](https://github.com/Skyvern-AI/skyvern/pull/5506))
+
+- **AI Summarize for Workflow Run Outputs** — A magic-wand "Summarize with AI" button now appears next to block and workflow run output sections, generating a plain-language summary of raw JSON output on demand. ([#5556](https://github.com/Skyvern-AI/skyvern/pull/5556))
+
+- **Reset Browser Profile API** — A new `POST /workflows/{workflow_permanent_id}/browser_session/reset_profile` endpoint clears a corrupted persisted browser session so the next run starts from a fresh browser state. ([#5544](https://github.com/Skyvern-AI/skyvern/pull/5544))
+
+- **MCP OAuth for Remote Clients** — MCP clients (e.g. Claude Code, Codex) can now complete browser-based OAuth to authenticate with Skyvern without getting stuck in redirect chains. ([#5558](https://github.com/Skyvern-AI/skyvern/pull/5558))
+
+- **OpenClaw MCP Setup** — `skyvern setup openclaw` and `skyvern mcp switch` now support OpenClaw as an MCP client target for both remote and local stdio configurations. ([#5536](https://github.com/Skyvern-AI/skyvern/pull/5536))
+
+## Improvements
+
+- **Smarter Extraction Cache Keys** — The extraction cache now normalizes session-volatile tokens (random UUIDs, CSRF values, nonce query params, timestamps) before hashing cache keys. Semantically identical page visits now share cached extraction results, improving cache hit rates across workflow re-runs. ([#5504](https://github.com/Skyvern-AI/skyvern/pull/5504))
+
+- **Reduced Rate-Limit Errors on Extraction Prompts** — Extraction prompts are now capped in size before being sent to the LLM. Oversized `previous_extracted_information`, `extracted_information_schema`, and element trees are truncated rather than sent whole, significantly reducing `429 RESOURCE_EXHAUSTED` errors on high-volume workflows. ([#5502](https://github.com/Skyvern-AI/skyvern/pull/5502))
+
+- **Cross-Run Extraction Cache** — Extraction results are now cached in Redis across workflow runs, scoped to the workflow. Recurring scheduled workflows skip redundant LLM calls when the page content hasn't changed. ([#5562](https://github.com/Skyvern-AI/skyvern/pull/5562))
+
+- **Copilot Survives Tab Switches and Reconnects** — The workflow copilot agent now runs to completion even if the browser tab is closed or the connection drops mid-request, and the AI reply is persisted so it appears when you reconnect. ([#5560](https://github.com/Skyvern-AI/skyvern/pull/5560))
+
+- **Copilot Fails Fast on Unresolvable URLs** — The workflow copilot now immediately surfaces the real error (e.g. DNS resolution failure) and stops retrying when a URL cannot be reached, rather than reporting success. ([#5563](https://github.com/Skyvern-AI/skyvern/pull/5563))
+
+## Bug fixes
+
+- Fixed CSV parsing failing on files whose first header row exceeded ~1 MB, causing valid wide-format CSVs to be rejected with "Could not determine delimiter". ([#5510](https://github.com/Skyvern-AI/skyvern/pull/5510))
+- Fixed a browser automation crash on sites with cross-origin stylesheets (e.g. MUI-based apps). CSS hover styles are now parsed entirely in memory without modifying the DOM, preventing React reconciliation errors that caused the agent to loop until max steps. ([#5508](https://github.com/Skyvern-AI/skyvern/pull/5508))
+- Fixed context-window overflow failures being misdiagnosed. Steps that fail due to oversized input are now correctly counted and short-circuit to a clear `LLM_ERROR` failure reason instead of triggering a redundant LLM-based failure analysis. ([#5507](https://github.com/Skyvern-AI/skyvern/pull/5507))
+- Fixed workflow file-download blocks losing their configured `download_suffix` at task finalization, causing downloaded files to be persisted without the expected filename suffix. ([#5499](https://github.com/Skyvern-AI/skyvern/pull/5499))
+- Fixed cached scripts for non-ATS workflows incorrectly generating `fill_form()` calls, which defeated the performance benefits of caching by delegating back to AI at runtime. ([#5497](https://github.com/Skyvern-AI/skyvern/pull/5497))
+- Fixed the pagination navigator on the Workflow Past Runs and Run History pages being right-aligned instead of centered.
+- Fixed run recordings missing an end timestamp and broken scrubbing. Recordings are now finalized with a stream-copy remux so players correctly show duration and support seeking. ([#5551](https://github.com/Skyvern-AI/skyvern/pull/5551))
+- Fixed tag input fields (e.g. skill set fields on job application forms) not selecting values from the dropdown. These fields are now correctly treated as auto-completion inputs. ([#5557](https://github.com/Skyvern-AI/skyvern/pull/5557))
+- Fixed per-step video sync spawning a redundant ffmpeg process on every step, causing CPU spikes and log noise. ([#5559](https://github.com/Skyvern-AI/skyvern/pull/5559))
+- Fixed workflow parameter edit and delete buttons being hidden when a parameter name was too long.
+- Fixed webhook delivery failing silently when a stored webhook URL had a leading or trailing space. ([#5550](https://github.com/Skyvern-AI/skyvern/pull/5550))
+
+</Update>
+
+<a id="week-feb-23-2026"></a>
+<Update label="Week of February 23, 2026" description="Adaptive caching, Workflow Trigger block, CLI signup, reserved parameters, new LLM models">
+
+## New features
+
+- **Adaptive Caching (Script Generation)** — Skyvern can now learn from repeated workflow runs and generate cached scripts that speed up future executions. When a block runs successfully, Skyvern records a reusable script and replays it on subsequent runs, falling back to the AI agent only if the script fails. ([#4908](https://github.com/Skyvern-AI/skyvern/pull/4908), [#4916](https://github.com/Skyvern-AI/skyvern/pull/4916), [#4917](https://github.com/Skyvern-AI/skyvern/pull/4917), [#4920](https://github.com/Skyvern-AI/skyvern/pull/4920), [#4922](https://github.com/Skyvern-AI/skyvern/pull/4922), [#4931](https://github.com/Skyvern-AI/skyvern/pull/4931))
+- **Workflow Trigger Block** — A new block type that lets one workflow trigger another from within the workflow editor. Chain workflows together as building blocks for complex automations. ([#4885](https://github.com/Skyvern-AI/skyvern/pull/4885))
+- **Browser-based CLI Signup** — New users can sign up for Skyvern Cloud directly from the CLI. Running `skyvern signup` opens a browser flow that creates your account and stores your API key locally. ([#4925](https://github.com/Skyvern-AI/skyvern/pull/4925))
+- **Interactive ngrok Tunnel** — `skyvern browser serve` can now create an ngrok tunnel automatically, making it easy to expose your local browser to Skyvern Cloud without manual network configuration. ([#4924](https://github.com/Skyvern-AI/skyvern/pull/4924))
+- **South Korea Proxy Location** — Added `RESIDENTIAL_KR` as a proxy geolocation option for automations targeting South Korean websites. ([#4918](https://github.com/Skyvern-AI/skyvern/pull/4918))
+- **Downloaded Files Tab** — Browser session detail pages now include a Downloaded Files tab for viewing and accessing files captured during a session. ([#4911](https://github.com/Skyvern-AI/skyvern/pull/4911))
+- **CDP Proxy Authentication** — Remote browser connections now support authenticated proxies via the CDP `Fetch.authRequired` protocol. ([#4936](https://github.com/Skyvern-AI/skyvern/pull/4936))
+- **Remote Browser Download Interception** — File downloads triggered by XHR requests and other non-navigation events are now captured when using remote CDP browser connections. ([#4906](https://github.com/Skyvern-AI/skyvern/pull/4906), [#4921](https://github.com/Skyvern-AI/skyvern/pull/4921), [#4934](https://github.com/Skyvern-AI/skyvern/pull/4934))
+- **`current_date` Reserved Parameter** — Workflows now have a built-in `current_date` parameter that resolves to today's date automatically. ([#4854](https://github.com/Skyvern-AI/skyvern/pull/4854))
+- **Reserved Parameters in Block Editor** — The workflow block parameter picker now shows reserved system parameters, making them discoverable without memorizing names. ([#4857](https://github.com/Skyvern-AI/skyvern/pull/4857))
+- **Natural Language Loop `data_schema`** — Loop blocks driven by natural language extraction now support a `data_schema` field for consistent output structure. ([#4851](https://github.com/Skyvern-AI/skyvern/pull/4851))
+- **Gemini 3.1 Pro and Inception Mercury-2** — Two new LLM engine options for your automations. ([#4847](https://github.com/Skyvern-AI/skyvern/pull/4847))
+- **MCP Server on API Service** — The MCP remote server is now mounted at `/mcp` on the existing API, eliminating the need for a separate process. ([#4843](https://github.com/Skyvern-AI/skyvern/pull/4843))
+
+## Improvements
+
+- **Renamed "Login-Free" to "Saved Profile"** — Clearer terminology throughout the UI. Browser session checkbox wording has also been improved. ([#4914](https://github.com/Skyvern-AI/skyvern/pull/4914))
+- **TOTP Verification Improvements** — Better timer handling, expired code retry, 2FA banner suppression, and more reliable goal-text extraction during TOTP flows. ([#4860](https://github.com/Skyvern-AI/skyvern/pull/4860))
+- **TOTP Webhook includes `workflow_permanent_id`** — Easier to identify which workflow is requesting a 2FA code. ([#4871](https://github.com/Skyvern-AI/skyvern/pull/4871))
+- **Consolidated Gemini 3 Pro Model Key** — `VERTEX_GEMINI_3_PRO` now auto-resolves to the latest version, so you no longer need to update config when Google releases point versions. ([#4926](https://github.com/Skyvern-AI/skyvern/pull/4926))
+- **Browser Rotation for Remote Connections** — Remote browser environments now support context rotation, improving reliability for long-running automations. ([#4929](https://github.com/Skyvern-AI/skyvern/pull/4929))
+- Workflow save validation (HTTP 422) now returns clear, field-level error messages. ([#4852](https://github.com/Skyvern-AI/skyvern/pull/4852))
+- Browser launch errors now show actionable messages instead of raw exceptions. ([#4844](https://github.com/Skyvern-AI/skyvern/pull/4844))
+- Cloud LLM fallback overrides are now properly applied when selecting models. ([#4839](https://github.com/Skyvern-AI/skyvern/pull/4839))
+
+## Bug fixes
+
+- Fixed a race condition where final task status could be overwritten by a late-arriving non-final status. ([#4928](https://github.com/Skyvern-AI/skyvern/pull/4928))
+- Conditional blocks no longer crash when evaluating empty or null parameters. ([#4907](https://github.com/Skyvern-AI/skyvern/pull/4907))
+- Browser sessions using `FORCE_BROWSER_SESSION` no longer time out prematurely. ([#4903](https://github.com/Skyvern-AI/skyvern/pull/4903))
+- SVG-based captcha text is now correctly extracted during DOM scraping. ([#4880](https://github.com/Skyvern-AI/skyvern/pull/4880))
+- MCP remote tool handlers now route to the correct API environment. ([#4869](https://github.com/Skyvern-AI/skyvern/pull/4869))
+- MCP remote auth token comparison no longer fails on encrypted tokens. ([#4863](https://github.com/Skyvern-AI/skyvern/pull/4863))
+- `skyvern quickstart` now handles local PostgreSQL without a pre-existing `skyvern` role. ([#4878](https://github.com/Skyvern-AI/skyvern/pull/4878))
+- WebSocket URLs through ngrok tunnels now rewrite correctly for live browser streaming. ([#4927](https://github.com/Skyvern-AI/skyvern/pull/4927))
+- Conditional blocks no longer crash when all branches use Jinja templates. ([#4849](https://github.com/Skyvern-AI/skyvern/pull/4849))
+- Conditional blocks no longer misinterpret resolved Jinja template variables. ([#4841](https://github.com/Skyvern-AI/skyvern/pull/4841))
+
+</Update>
+
+<a id="week-feb-16-2026"></a>
+<Update label="Week of February 16, 2026" description="Unified Browser Task block, browser profile testing, 2FA detection, Skills package, Claude Opus 4.6, MCP block discovery">
+
+## New features
+
+- **Browser Profile Testing UI (Frontend)** — The Browsers page now lets you launch a test run against a saved browser profile to confirm its login state is still valid before scheduling production workflows. ([#4833](https://github.com/Skyvern-AI/skyvern/pull/4833))
+- **2FA Verification Code UI and Notifications** — When a workflow pauses for a 2FA code, the UI now shows a clear prompt and pushes a notification so you don't miss it. ([#4787](https://github.com/Skyvern-AI/skyvern/pull/4787))
+- **Gated Admin Impersonation for MCP API Keys** — Adds gated admin controls so support engineers can impersonate an organization scope when troubleshooting MCP-based automations, with audit-friendly access controls. ([#4822](https://github.com/Skyvern-AI/skyvern/pull/4822))
+- **Browser Profile Testing** — Test browser profiles directly from the UI to verify that saved login sessions are still valid. Workflows can also run with a saved browser profile, enabling login-free automations that reuse authenticated sessions. ([#4818](https://github.com/Skyvern-AI/skyvern/pull/4818))
+- **Skyvern Skills Package** — The new `skyvern skill` CLI command provides pre-built workflow templates and reference documentation for common automation patterns. ([#4817](https://github.com/Skyvern-AI/skyvern/pull/4817))
+- **Clear Cached Scripts API** — A new endpoint lets you clear cached automation scripts for a workflow when a target website changes and you want to force Skyvern to re-learn. ([#4809](https://github.com/Skyvern-AI/skyvern/pull/4809))
+- **Automatic 2FA Detection Without TOTP Credentials** — Skyvern now detects when a website asks for a 2FA code even without pre-configured TOTP credentials. The system pauses and waits for you to provide the code via the UI or webhook. ([#4786](https://github.com/Skyvern-AI/skyvern/pull/4786))
+- **Full CLI Parity with MCP** — The CLI now supports browser session management, credential management, block operations, and enhanced workflow commands. Everything available through MCP is now accessible from the command line. ([#4789](https://github.com/Skyvern-AI/skyvern/pull/4789), [#4792](https://github.com/Skyvern-AI/skyvern/pull/4792), [#4793](https://github.com/Skyvern-AI/skyvern/pull/4793))
+- **Claude Opus 4.6 CUA Support** — Anthropic's Claude Opus 4.6 is now available as a Computer Use Agent model for driving browser interactions. ([#4780](https://github.com/Skyvern-AI/skyvern/pull/4780))
+- **Anthropic Claude Opus 4.6** — Added Claude Opus 4.6 as an available LLM engine for web automation tasks. ([#4777](https://github.com/Skyvern-AI/skyvern/pull/4777), [#4778](https://github.com/Skyvern-AI/skyvern/pull/4778))
+- **Unified Browser Task Block** — The Navigation V1 and Task V2 blocks have been merged into a single **Browser Task** block. The block now exposes both engines as a dropdown, simplifying the workflow editor and reducing block-type confusion. ([#4695](https://github.com/Skyvern-AI/skyvern/pull/4695))
+- **Block Discovery MCP Tools** — Added MCP tools that let AI assistants enumerate available block types and their schemas, plus richer instructions for building workflows through MCP. ([#4683](https://github.com/Skyvern-AI/skyvern/pull/4683))
+- **Edit Existing Credentials API** — A new endpoint lets you update credential values without deleting and recreating them, preserving credential IDs across changes. ([#4693](https://github.com/Skyvern-AI/skyvern/pull/4693))
+- **Filter Workflow Runs by Error Code and Search Key** — The workflow runs list endpoint now supports `error_code` and `search_key` query parameters for narrowing down failed runs. ([#4694](https://github.com/Skyvern-AI/skyvern/pull/4694))
+- **GPT-5 Mini in Model Selector** — GPT-5 Mini is now selectable as an LLM engine. GPT-5 has been hidden in favor of more reliable variants. ([#4686](https://github.com/Skyvern-AI/skyvern/pull/4686))
+
+## Improvements
+
+- **2FA Backend Cleanup** — Refactored the 2FA pipeline to make code delivery more reliable across both the UI form and the API endpoint. ([#4826](https://github.com/Skyvern-AI/skyvern/pull/4826))
+- **Environment Variables Override Mounted API Keys** — In Skyvern's Streamlit-based deployment, env vars now take precedence over keys baked into the image, making local overrides simpler. ([#4824](https://github.com/Skyvern-AI/skyvern/pull/4824))
+- The workflow run timeline now properly displays loop iterations and conditional branches, making complex runs easier to debug. ([#4782](https://github.com/Skyvern-AI/skyvern/pull/4782))
+- **Block Failure Reasons Surfaced in UI** — Every block type now shows its `failure_reason` in the run timeline, making debugging non-obvious failures faster. ([#4672](https://github.com/Skyvern-AI/skyvern/pull/4672))
+- **Webhook Payload Truncation in Logs** — Large webhook payloads are now truncated in log entries, keeping logs readable without losing context. ([#4701](https://github.com/Skyvern-AI/skyvern/pull/4701))
+
+## Bug fixes
+
+- When both a TOTP credential and a webhook are configured for 2FA, the credential is now correctly prioritized. ([#4811](https://github.com/Skyvern-AI/skyvern/pull/4811))
+- Fixed conditional blocks evaluating the wrong value after Jinja template rendering. ([#4801](https://github.com/Skyvern-AI/skyvern/pull/4801))
+- Fixed MFA resolution priority when both TOTP credentials and webhooks are configured. ([#4800](https://github.com/Skyvern-AI/skyvern/pull/4800))
+- Fixed the cursor jumping to the end while editing conditional expressions in the workflow editor. ([#4682](https://github.com/Skyvern-AI/skyvern/pull/4682))
+- Fixed dotted Jinja variables (e.g. `{{ block_output.field }}`) rendering incorrectly in the expression preview. ([#4684](https://github.com/Skyvern-AI/skyvern/pull/4684))
+- The API now returns 404 instead of 500 when a workflow is not found. ([#4699](https://github.com/Skyvern-AI/skyvern/pull/4699))
+
+</Update>
+
+<a id="week-feb-9-2026"></a>
+<Update label="Week of February 9, 2026" description="Cached scripts for control-flow blocks, OTEL, and workflow editor polish">
+
+## New features
+
+- **Conditional Block Caching** — The script cache now supports Conditional blocks, so workflows that branch based on page state can replay from cache instead of re-running the AI agent. ([#4642](https://github.com/Skyvern-AI/skyvern/pull/4642))
+
+- **OpenTelemetry Backend** — Skyvern can now export metrics, traces, and logs to any OTEL-compatible collector for centralized observability. ([#4632](https://github.com/Skyvern-AI/skyvern/pull/4632))
+
+- **Workflow API Route Reorganization** — Workflow API endpoints have been split into focused routers, making the OpenAPI surface easier to navigate. ([#4628](https://github.com/Skyvern-AI/skyvern/pull/4628))
+
+## Improvements
+
+- **Workflow Copilot Auto-Opens for Empty Workflows** — When you create a new workflow with no blocks yet, the Workflow Copilot opens by default to help you get started. ([#4625](https://github.com/Skyvern-AI/skyvern/pull/4625))
+
+- **Run Workflow Button Moved to Top** — The Run button now lives at the top of the workflow editor for easier access. ([#4626](https://github.com/Skyvern-AI/skyvern/pull/4626))
+
+- **Skip LLM for Single-Match Location Autocomplete** — Location autocomplete now skips the LLM call when only one option matches the user's input, reducing cost and latency. ([#4631](https://github.com/Skyvern-AI/skyvern/pull/4631))
+
+- **Improved Version History Icon** — The workflow version history button now uses an icon that better represents document versions. ([#4640](https://github.com/Skyvern-AI/skyvern/pull/4640))
+
+## Bug fixes
+
+- Fixed `ForLoop` blocks failing to execute under script caching (regression from v1.0.12). ([#4630](https://github.com/Skyvern-AI/skyvern/pull/4630))
+- Fixed `ActionDragPath` subscript error in CUA drag-action parsing. ([#4623](https://github.com/Skyvern-AI/skyvern/pull/4623))
+- Fixed cron-scheduled tasks getting stuck with "task not found" errors. ([#4627](https://github.com/Skyvern-AI/skyvern/pull/4627))
+- Fixed parameter creation dialog not clearing default-value state when switching to credential type. ([#4622](https://github.com/Skyvern-AI/skyvern/pull/4622))
+- Fixed debugger loop-block visual overlap when the status row appeared. ([#4641](https://github.com/Skyvern-AI/skyvern/pull/4641))
+
+</Update>
+
+<a id="week-feb-2-2026"></a>
+<Update label="Week of February 2, 2026" description="Task V2 termination, ForLoop caching, and cleaner conditional debugging">
+
+## New features
+
+- **Task V2 Termination** — Task V2 (the planner-agent-validator system) can now be terminated mid-run via API, matching the cancel behavior already available for Task V1. ([#4589](https://github.com/Skyvern-AI/skyvern/pull/4589))
+
+- **ForLoop Block Caching** — Cached scripts now support `ForLoop` blocks. Workflows that iterate over lists can replay from cache after the first successful run. ([#4600](https://github.com/Skyvern-AI/skyvern/pull/4600))
+
+- **Conditional Block Caching** — Initial support for caching workflows that include conditional branching. ([#4603](https://github.com/Skyvern-AI/skyvern/pull/4603))
+
+- **`run_with` Parameter for Run Task** — The `run_task` endpoint now accepts a `run_with` parameter so you can target Task V2 (or future variants) without changing the endpoint. ([#4576](https://github.com/Skyvern-AI/skyvern/pull/4576))
+
+- **`skyvern run dev` Command** — A new CLI command spins up a Superset workspace alongside the standard dev environment for local analytics work. ([#4593](https://github.com/Skyvern-AI/skyvern/pull/4593))
+
+## Improvements
+
+- **All Branch Evaluations Shown in Conditional Block Timeline** — The run timeline now shows every conditional branch's evaluation result, not just the chosen one — useful when debugging "why did it pick that branch?" ([#4577](https://github.com/Skyvern-AI/skyvern/pull/4577))
+
+- **Sidebar Expand/Collapse Icon** — Replaced the pin icon with a chevron, matching common conventions. ([#4586](https://github.com/Skyvern-AI/skyvern/pull/4586))
+
+- **PDF Parsing Token Cap** — PDF parsing now caps token volume per request to avoid total failure on very large documents. ([#4602](https://github.com/Skyvern-AI/skyvern/pull/4602))
+
+- **`DATABASE_STRING` Parameter on Quickstart** — `skyvern quickstart` now accepts a `DATABASE_STRING` argument for explicit DB connection configuration. ([#4580](https://github.com/Skyvern-AI/skyvern/pull/4580))
+
+## Bug fixes
+
+- Fixed credentials not clearing from the Login block when deselected from the picker. ([#4581](https://github.com/Skyvern-AI/skyvern/pull/4581))
+- Fixed workflow run timeline missing recent steps until a manual refresh. ([#4587](https://github.com/Skyvern-AI/skyvern/pull/4587))
+- Fixed the workflow editor showing spurious "unsaved changes" when switching between conditional branches. ([#4588](https://github.com/Skyvern-AI/skyvern/pull/4588))
+
+</Update>
+
+<a id="week-jan-26-2026"></a>
+<Update label="Week of January 26, 2026" description="Workflow Copilot GA, Browser Sessions v2 frontend, and TOTP improvements">
+
+## New features
+
+- **Workflow Copilot Generally Available** — The Workflow Copilot is now enabled for all users. Describe what you want in natural language and it generates a multi-block workflow you can edit. ([#4533](https://github.com/Skyvern-AI/skyvern/pull/4533))
+
+- **Browser Sessions v2 Frontend** — The new browser session management UI lands on the Browsers page, building on the v2 backend shipped in v1.0.10. ([#4514](https://github.com/Skyvern-AI/skyvern/pull/4514))
+
+- **TOTP Endpoint OTP Type Filter** — The TOTP listing endpoint now accepts an `otp_type` query parameter for filtering numeric codes vs. magic links. ([#4529](https://github.com/Skyvern-AI/skyvern/pull/4529))
+
+- **Mintlify Documentation Setup** — Skyvern's documentation site moves to Mintlify, with redirects for the legacy Fern URLs. ([#4516](https://github.com/Skyvern-AI/skyvern/pull/4516))
+
+## Improvements
+
+- **Async File I/O via aiofiles** — Replaced blocking file I/O with `aiofiles` throughout the agent runtime, improving throughput on I/O-heavy workloads. ([#4520](https://github.com/Skyvern-AI/skyvern/pull/4520))
+
+- **Cached Experimentation Provider TTL** — `BaseExperimentationProvider` now caches feature-flag lookups with a per-item TTL, reducing pressure on the experimentation backend. ([#4536](https://github.com/Skyvern-AI/skyvern/pull/4536), [#4540](https://github.com/Skyvern-AI/skyvern/pull/4540))
+
+## Bug fixes
+
+- Fixed `ai_fallback` not being read correctly from the database for cached workflow runs. ([#4524](https://github.com/Skyvern-AI/skyvern/pull/4524))
+- Fixed iframe-tree extraction crashing when the page raised a transient exception. ([#4530](https://github.com/Skyvern-AI/skyvern/pull/4530))
+- Fixed the workflow version comparison view ordering versions on the wrong sides. ([#4531](https://github.com/Skyvern-AI/skyvern/pull/4531))
+- Fixed the workflow history panel scroll behavior in debug mode. ([#4532](https://github.com/Skyvern-AI/skyvern/pull/4532))
+- Fixed `TypeError` when comparing offset-naive and offset-aware datetimes during workflow scheduling. ([#4534](https://github.com/Skyvern-AI/skyvern/pull/4534))
+- Fixed schema regeneration overwriting unchanged block field names. ([#4535](https://github.com/Skyvern-AI/skyvern/pull/4535))
+- Fixed `uvicorn` reload breaking on Windows due to async event loop policy. ([#4538](https://github.com/Skyvern-AI/skyvern/pull/4538))
+
+</Update>
+
+<a id="week-jan-19-2026"></a>
+<Update label="Week of January 19, 2026" description="Browser Sessions v2, Print PDF block, Copilot streaming, general text CAPTCHA, HTTP file downloads">
+
+## New features
+
+- **Browser Sessions v2 (Backend)** — A new persistent browser session architecture with cleaner lifecycle management, better resource reuse, and improved reliability for long-running automations. The frontend follows in v1.0.11. ([#4515](https://github.com/Skyvern-AI/skyvern/pull/4515))
+- **General Text CAPTCHA Solver** — Skyvern can now solve a wider range of text-based CAPTCHAs without site-specific configuration. ([#4517](https://github.com/Skyvern-AI/skyvern/pull/4517))
+- **TOTP Webhook Retries** — TOTP webhook delivery now retries automatically on transient failures, reducing the rate of "no code received" errors during 2FA flows. ([#4518](https://github.com/Skyvern-AI/skyvern/pull/4518))
+- **Block-Label Validation in `run_blocks`** — The `run_blocks` endpoint now validates block labels up front, returning a clear error instead of failing partway through execution. ([#4500](https://github.com/Skyvern-AI/skyvern/pull/4500))
+- **Print PDF Block** — A new workflow block that prints the current page to PDF and saves it to your run's downloaded files, useful for archiving receipts, invoices, and reports. ([#4452](https://github.com/Skyvern-AI/skyvern/pull/4452))
+- **HTTP File Downloads** — The HTTP Request block can now download files directly via HTTP (not just GET JSON), enabling workflows that pull artifacts from authenticated APIs. ([#4440](https://github.com/Skyvern-AI/skyvern/pull/4440))
+- **Workflow Copilot Streaming with Cancel** — The Workflow Copilot now streams its responses with a cancel button, so you can stop generation mid-stream if you want to refine your prompt. ([#4437](https://github.com/Skyvern-AI/skyvern/pull/4437), [#4456](https://github.com/Skyvern-AI/skyvern/pull/4456))
+- **"Execute on Any Outcome" (Finally) Block Option** — Blocks can now be configured to run regardless of whether prior blocks succeeded, enabling cleanup steps and "always send report" workflows. ([#4443](https://github.com/Skyvern-AI/skyvern/pull/4443))
+- **Persistent Browser Session Uptime Billing** — Billing v2 now meters persistent browser session uptime separately, with PostHog feature flags controlling rollout. ([#4444](https://github.com/Skyvern-AI/skyvern/pull/4444))
+- **GPT-5 Mini Flex Engine** — Added GPT-5 Mini Flex as an available LLM engine. ([#4432](https://github.com/Skyvern-AI/skyvern/pull/4432))
+- **Clipboard Copy over HTTP** — The browser now exposes clipboard copy functionality that works in HTTP-served browser sessions, not just HTTPS. ([#4446](https://github.com/Skyvern-AI/skyvern/pull/4446))
+
+## Improvements
+
+- **Confirmation Dialog Shows Affected Blocks** — Deleting a parameter or block now lists every block that references it, so you don't accidentally break downstream logic. ([#4519](https://github.com/Skyvern-AI/skyvern/pull/4519))
+- **Workflow Updates Return 409 on Race** — Concurrent workflow updates now return HTTP 409 instead of silently overwriting each other. ([#4510](https://github.com/Skyvern-AI/skyvern/pull/4510))
+- **Tiktoken Caching** — Tokenizer instances are now cached, cutting per-step overhead on token counting. ([#4521](https://github.com/Skyvern-AI/skyvern/pull/4521))
+- **HTTP Block Boolean and Integer Templates** — The HTTP Request block now correctly passes boolean and integer template values without coercing them to strings. ([#4435](https://github.com/Skyvern-AI/skyvern/pull/4435))
+- **Bitwarden and Azure Vault Tooltips** — Added inline help tooltips explaining how to set up Bitwarden and Azure Key Vault credential sources. ([#4447](https://github.com/Skyvern-AI/skyvern/pull/4447))
+- **Smaller S3 Objects Use STANDARD Tier** — Storage cost optimization: small artifacts now use STANDARD instead of GLACIER_IR. ([#4453](https://github.com/Skyvern-AI/skyvern/pull/4453))
+- **Reduced Max SVG Parsing** — Lowered the SVG parsing cap to prevent runaway memory usage on pathological pages. ([#4430](https://github.com/Skyvern-AI/skyvern/pull/4430))
+
+## Bug fixes
+
+- Fixed a Gemini 3 Flash cache-creation bug that caused false-positive fallback detection. ([#4502](https://github.com/Skyvern-AI/skyvern/pull/4502))
+- Fixed Bitwarden item-ID format validation rejecting valid IDs. ([#4508](https://github.com/Skyvern-AI/skyvern/pull/4508))
+- Fixed dangling block-output and parameter references after rename or deletion. ([#4507](https://github.com/Skyvern-AI/skyvern/pull/4507))
+
+</Update>
+
+<a id="week-jan-5-2026"></a>
+<Update label="Week of January 5, 2026" description="Workflow Copilot v1, Azure secret storage, and per-action billing">
+
+## New features
+
+- **Workflow Copilot v1** — The first version of the Workflow Copilot ships behind a feature flag. Describe a workflow in natural language and the copilot generates blocks, parameters, and connections you can edit on the canvas. ([#4401](https://github.com/Skyvern-AI/skyvern/pull/4401), [#4413](https://github.com/Skyvern-AI/skyvern/pull/4413), [#4416](https://github.com/Skyvern-AI/skyvern/pull/4416), [#4423](https://github.com/Skyvern-AI/skyvern/pull/4423))
+
+- **Per-Action Credit Billing (Billing v2)** — A new billing model meters credits per browser action instead of per step, giving more predictable cost behavior on action-heavy workflows. ([#4398](https://github.com/Skyvern-AI/skyvern/pull/4398))
+
+- **Azure Key Vault Secret Storage** — Skyvern can now store and retrieve credentials from Azure Key Vault as a managed secret backend. ([#4384](https://github.com/Skyvern-AI/skyvern/pull/4384))
+
+- **Conditional Inside Conditional** — Conditional blocks can now be nested inside other conditional blocks for richer branching logic. ([#4362](https://github.com/Skyvern-AI/skyvern/pull/4362))
+
+- **Reference Workflow Output in Sub-Blocks** — Blocks can now reference upstream `workflow_output` variables, simplifying multi-stage workflows. ([#4414](https://github.com/Skyvern-AI/skyvern/pull/4414))
+
+- **Browser Type Choice for Persistent Browser Sessions** — Persistent sessions now let you choose the browser type (Chromium, etc.) at create time. ([#4406](https://github.com/Skyvern-AI/skyvern/pull/4406))
+
+- **Browser Extension Support for PBS** — Persistent browser sessions can launch with a specified browser extension. ([#4364](https://github.com/Skyvern-AI/skyvern/pull/4364))
+
+- **Step Count in Webhooks and Run Payloads** — Webhook payloads and `get_run` responses now include `step_count` for cost reconciliation. ([#4410](https://github.com/Skyvern-AI/skyvern/pull/4410))
+
+- **PH (Philippines) Proxy Location** — Added Philippines as a residential proxy option. ([#4395](https://github.com/Skyvern-AI/skyvern/pull/4395))
+
+- **TextPromptBlock Artifact Storage** — TextPromptBlock now saves the LLM prompt and response as run artifacts for debugging. ([#4361](https://github.com/Skyvern-AI/skyvern/pull/4361))
+
+- **Action–Screenshot Linking** — Actions in the run timeline now link directly to the screenshot captured at the time of execution, so you can see what the agent saw when it made each decision. ([#4403](https://github.com/Skyvern-AI/skyvern/pull/4403), [#4404](https://github.com/Skyvern-AI/skyvern/pull/4404))
+
+## Improvements
+
+- **Clearer Errors for Missing Workflow Parameters** — Missing required parameters now return a clear HTTP 400 instead of HTTP 500. ([#4380](https://github.com/Skyvern-AI/skyvern/pull/4380))
+
+- **Empty-String Defaults for String Parameters** — Workflow string parameters without explicit defaults now initialize to `""` instead of `null`, matching common Jinja-template expectations. ([#4382](https://github.com/Skyvern-AI/skyvern/pull/4382))
+
+- **HAR Files Use Zstd Compression** — HAR archives now ship as `.har.zst`, cutting storage size significantly with no fidelity loss. ([#4420](https://github.com/Skyvern-AI/skyvern/pull/4420))
+
+- **Hydrated Workflow Title in Run Responses** — `workflow_run` responses now include the workflow title for cleaner logging without an extra API call. ([#4363](https://github.com/Skyvern-AI/skyvern/pull/4363))
+
+- **Cached Workflow-Script Lookup** — `get_workflow_script_by_cache_key_value` is now cached and post-action execution can re-enable code generation. ([#4385](https://github.com/Skyvern-AI/skyvern/pull/4385))
+
+- **Updated Datacenter Proxy Provider** — Datacenter proxies now route through a new provider with broader IP coverage. ([#4386](https://github.com/Skyvern-AI/skyvern/pull/4386))
+
+- **Improved Conditional NL Branch Tooltip** — Updated tooltip and placeholder text on conditional blocks to better describe how natural-language branches are evaluated. ([#4368](https://github.com/Skyvern-AI/skyvern/pull/4368), [#4369](https://github.com/Skyvern-AI/skyvern/pull/4369))
+
+- **OLLAMA Vision Support Toggle** — Added `OLLAMA_SUPPORTS_VISION` env var to enable vision-capable Ollama models. ([#4351](https://github.com/Skyvern-AI/skyvern/pull/4351))
+
+## Bug fixes
+
+- Fixed older credentials becoming inaccessible after an internal schema change. ([#4358](https://github.com/Skyvern-AI/skyvern/pull/4358))
+- Fixed scrolling actions misfiring on pages with overflow-hidden ancestors. ([#4389](https://github.com/Skyvern-AI/skyvern/pull/4389))
+- Fixed `close_browser_on_completion` not being honored during workflow run cleanup. ([#4381](https://github.com/Skyvern-AI/skyvern/pull/4381))
+- Fixed run-ID generation collisions under high concurrency. ([#4383](https://github.com/Skyvern-AI/skyvern/pull/4383))
+- Fixed empty browser-extension config crashing PBS launch. ([#4365](https://github.com/Skyvern-AI/skyvern/pull/4365))
+- Fixed wrong screenshots being attached to certain actions. ([#4400](https://github.com/Skyvern-AI/skyvern/pull/4400))
+- Fixed nested DB connection management in workflow execution. ([#4402](https://github.com/Skyvern-AI/skyvern/pull/4402), [#4411](https://github.com/Skyvern-AI/skyvern/pull/4411))
+- Fixed `local variable not defined` errors in cached-action execution. ([#4376](https://github.com/Skyvern-AI/skyvern/pull/4376))
+- Fixed artifacts endpoint incorrectly including `api/` in the path. ([#4417](https://github.com/Skyvern-AI/skyvern/pull/4417))
+- Fixed S3 storage class selection for small objects (`_get_storage_class_for_org`). ([#4424](https://github.com/Skyvern-AI/skyvern/pull/4424))
+- Fixed cached actions executing without a brief settling delay. ([#4418](https://github.com/Skyvern-AI/skyvern/pull/4418))
+
+</Update>
+
+  </div>
+</div>

@@ -1,0 +1,218 @@
+# BROWSER-post.md - LinkedIn Post Creation, Poll & Repost Patterns
+
+## Shadow DOM
+
+LinkedIn's post/poll/repost creation modal lives inside shadow DOM. All modal UI elements are inside `#interop-outlet` shadowRoot:
+```
+host = document.querySelector('#interop-outlet')
+shadow = host.shadowRoot
+shadow.querySelector('button')  // finds modal buttons
+```
+
+---
+
+## SS 8. Open Post Creation Modal
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); if (host && host.shadowRoot) { var editor = host.shadowRoot.querySelector('[contenteditable=\"true\"][role=\"textbox\"]'); if (editor) return { alreadyOpen: true }; } var startBtn = Array.from(document.querySelectorAll('div, button')).find(function(el) { return (el.innerText || '').trim() === 'Start a post' && (el.getAttribute('role') === 'button' || el.tagName === 'BUTTON'); }); if (!startBtn) return { success: false, reason: 'no-start-post-button' }; startBtn.click(); return { success: true }; }"}
+ENDJSON
+```
+
+🚨 **MUST filter by `role="button"` or `tagName === "BUTTON"`** — first plain `<div>` is a decorative wrapper that no-ops on click.
+
+Wait 4s. Verify modal opened:
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 4000)); var host = document.querySelector('#interop-outlet'); if (!host || !host.shadowRoot) return { open: false, reason: 'no-shadow-root' }; var shadow = host.shadowRoot; var btns = Array.from(shadow.querySelectorAll('button')); return { open: btns.length > 3, buttons: btns.map(b => ({ text: (b.innerText || '').trim().slice(0, 30), label: b.getAttribute('aria-label') || '' })) }; }"}
+ENDJSON
+```
+
+## SS 9. Create Poll
+
+### Poll option limit: 30 characters max. Always `.slice(0, 30)` option text.
+
+### Step 2: Click "More" then "Create a poll"
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var moreBtn = Array.from(shadow.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'More'); if (!moreBtn) return { success: false, reason: 'no-more-button' }; moreBtn.click(); await new Promise(r => setTimeout(r, 1000)); var pollBtn = Array.from(shadow.querySelectorAll('button')).find(b => b.getAttribute('aria-label') === 'Create a poll'); if (!pollBtn) return { success: false, reason: 'no-poll-button' }; pollBtn.click(); return { success: true }; }"}
+ENDJSON
+```
+
+Wait 2s for poll form.
+
+### Step 3: Fill question
+
+Replace `${pollQuestion}`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var ta = shadow.querySelector('textarea[placeholder*=\"How do you commute\"]') || Array.from(shadow.querySelectorAll('textarea')).find(t => t.className.includes('polls-detour')); if (!ta) return { success: false, reason: 'no-question-textarea' }; var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set; nativeSetter.call(ta, window.__data.text); ta.dispatchEvent(new Event('input', { bubbles: true })); ta.dispatchEvent(new Event('change', { bubbles: true })); return { success: true, value: ta.value }; }", "data": {"text": "YOUR_POLL_QUESTION"}}
+ENDJSON
+```
+
+### Step 4: Fill options 1 and 2
+
+Replace `${option1}` and `${option2}`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var opt1 = shadow.querySelector('#poll-option-1'); var opt2 = shadow.querySelector('#poll-option-2'); if (!opt1 || !opt2) return { success: false, reason: 'no-option-inputs' }; var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(opt1, window.__data.opt1.slice(0, 30)); opt1.dispatchEvent(new Event('input', { bubbles: true })); opt1.dispatchEvent(new Event('change', { bubbles: true })); setter.call(opt2, window.__data.opt2.slice(0, 30)); opt2.dispatchEvent(new Event('input', { bubbles: true })); opt2.dispatchEvent(new Event('change', { bubbles: true })); return { success: true, opt1: opt1.value, opt2: opt2.value }; }", "data": {"opt1": "Option 1 text", "opt2": "Option 2 text"}}
+ENDJSON
+```
+
+### Step 5: Add option 3 (click "Add option", wait 1s, fill)
+
+Replace `${option3}`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var addBtn = Array.from(shadow.querySelectorAll('button')).find(b => (b.innerText || '').includes('Add option')); if (!addBtn) return { success: false, reason: 'no-add-option-button' }; addBtn.click(); await new Promise(r => setTimeout(r, 1000)); var opt3 = shadow.querySelector('#poll-option-3'); if (!opt3) return { success: false, reason: 'no-option-3' }; var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(opt3, window.__data.text.slice(0, 30)); opt3.dispatchEvent(new Event('input', { bubbles: true })); opt3.dispatchEvent(new Event('change', { bubbles: true })); return { success: true, value: opt3.value }; }", "data": {"text": "Option 3 text"}}
+ENDJSON
+```
+
+### Step 6: Add option 4 (same pattern)
+
+Replace `${option4}`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var addBtn = Array.from(shadow.querySelectorAll('button')).find(b => (b.innerText || '').includes('Add option')); if (addBtn) addBtn.click(); await new Promise(r => setTimeout(r, 1000)); var opt4 = shadow.querySelector('#poll-option-4'); if (!opt4) return { success: false, reason: 'no-option-4' }; var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(opt4, window.__data.text.slice(0, 30)); opt4.dispatchEvent(new Event('input', { bubbles: true })); opt4.dispatchEvent(new Event('change', { bubbles: true })); return { success: true, value: opt4.value }; }", "data": {"text": "Option 4 text"}}
+ENDJSON
+```
+
+### Step 7: Click "Done"
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var doneBtn = Array.from(shadow.querySelectorAll('button')).find(b => (b.innerText || '').trim() === 'Done'); if (!doneBtn) return { success: false, reason: 'no-done-button' }; doneBtn.click(); return { success: true }; }"}
+ENDJSON
+```
+
+Wait 2s for poll preview.
+
+### Step 8: Add post text (optional intro above poll)
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var editor = shadow.querySelector('.ql-editor[role=\"textbox\"]') || shadow.querySelector('[contenteditable=\"true\"][role=\"textbox\"]'); if (!editor) return { success: false, reason: 'no-editor' }; editor.focus(); editor.innerHTML = '<p>' + window.__data.text + '</p>'; editor.dispatchEvent(new Event('input', { bubbles: true })); return { success: true, length: editor.innerText.length }; }", "data": {"text": "YOUR_POST_TEXT"}}
+ENDJSON
+```
+
+### Step 9: Click "Post"
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var postBtn = Array.from(shadow.querySelectorAll('button')).find(b => (b.innerText || '').trim() === 'Post' && !b.disabled); if (!postBtn) return { success: false, reason: 'post-button-not-ready' }; postBtn.click(); return { success: true }; }"}
+ENDJSON
+```
+
+Wait 4s.
+
+### Step 10: Dismiss verification prompt + get post URL
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); var host = document.querySelector('#interop-outlet'); var shadow = host ? host.shadowRoot : null; if (shadow) { var notNow = Array.from(shadow.querySelectorAll('button')).find(b => (b.innerText || '').includes('Not now')); if (notNow) notNow.click(); } await new Promise(r => setTimeout(r, 1000)); var links = Array.from(document.querySelectorAll('a')); var postLink = links.find(a => a.href && a.href.includes('/feed/update/urn:li:ugcPost:')); return { dismissed: true, url: postLink ? postLink.href : null }; }"}
+ENDJSON
+```
+
+---
+
+## SS 10. Create Regular Post (Text Only)
+
+### Step 1: Open modal (SS 8), wait 2s
+
+### Step 2: Type post text
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); var shadow = host.shadowRoot; var editor = shadow.querySelector('.ql-editor[role=\"textbox\"]') || shadow.querySelector('[contenteditable=\"true\"][role=\"textbox\"]'); if (!editor) return { success: false, reason: 'no-editor' }; editor.focus(); var lines = window.__data.text.split(String.fromCharCode(10)); editor.innerHTML = lines.map(function(line) { return '<p>' + (line.trim() === '' ? '<br>' : line) + '</p>'; }).join(''); editor.dispatchEvent(new Event('input', { bubbles: true })); return { success: true, length: editor.innerText.length }; }", "data": {"text": "YOUR_POST_CONTENT"}}
+ENDJSON
+```
+
+### Step 3: Click "Post" (SS 9 Step 9)
+### Step 4: Dismiss + verify (SS 9 Step 10)
+
+---
+
+## SS 10b. Create Regular Post with Image Attached
+
+Same as SS 10 but inserts a media-upload stage between editor open and Post click. Use when `linkedin-post-image.spec.json` exists alongside today's `linkedin-post.md`.
+
+### Step 0: Render spec to PNG
+
+```bash
+mkdir -p /tmp/opentwins-uploads
+SPEC={{pipeline_workspace}}/content-ready/{today}/linkedin-post-image.spec.json
+LAYOUT=$(jq -r .type "$SPEC")
+node {{pipeline_workspace}}/image-core/cli.mjs render \
+  --platform linkedin --layout "$LAYOUT" \
+  --data "$SPEC" \
+  --out /tmp/opentwins-uploads/linkedin-post-image.png
+```
+
+🚨 If render exits non-zero, skip image stage and fall through to SS 10 (text-only). Never block the post.
+
+### Step 1: Open modal (SS 8, 4s wait)
+### Step 2: Type post text (SS 10 Step 2), wait 1s
+
+### Step 3: Click More, then "Add media" (shadow DOM)
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var shadow = document.querySelector('#interop-outlet').shadowRoot; var moreBtn = Array.from(shadow.querySelectorAll('button')).find(function(b) { return b.getAttribute('aria-label') === 'More'; }); if (!moreBtn) return { success: false, reason: 'no-more-button' }; moreBtn.click(); await new Promise(r => setTimeout(r, 1000)); var mediaBtn = Array.from(shadow.querySelectorAll('button')).find(function(b) { return b.getAttribute('aria-label') === 'Add media'; }); if (!mediaBtn) return { success: false, reason: 'no-add-media' }; mediaBtn.click(); await new Promise(r => setTimeout(r, 2000)); return { success: true }; }"}
+ENDJSON
+```
+
+### Step 4: Direct-set file via selector-mode upload
+
+🚨 **MUST use `selector`.** Intercept mode fires the chooser twice → "1 of 2" duplicate. Selector sets files directly, no chooser.
+
+```bash
+curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/upload -H 'Content-Type: application/json' \
+  -d '{"filePath":"/tmp/opentwins-uploads/linkedin-post-image.png","selector":"#media-editor-file-selector__file-input","timeoutMs":10000}'
+```
+
+Wait 3s. Editor opens with "1 of 1".
+
+### Step 5: Click "Next" in Editor dialog, wait 2s
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { function walk(root, pred, depth) { depth = depth || 0; if (depth > 6) return null; var hit = Array.from(root.querySelectorAll('*')).find(pred); if (hit) return hit; var hosts = Array.from(root.querySelectorAll('*')).filter(function(el) { return el.shadowRoot; }); for (var i = 0; i < hosts.length; i++) { var r = walk(hosts[i].shadowRoot, pred, depth + 1); if (r) return r; } return null; } var next = walk(document, function(el) { return el.tagName === 'BUTTON' && el.getAttribute('aria-label') === 'Next'; }); if (!next) return { success: false, reason: 'no-next' }; next.click(); await new Promise(r => setTimeout(r, 2500)); return { success: true }; }"}
+ENDJSON
+```
+
+### Step 6: Click "Post" (SS 9 Step 9)
+### Step 7: Dismiss + verify (SS 9 Step 10)
+
+🚨 **Failure recovery:** if any step 3-5 fails, click Dismiss on the Editor modal (if open), then fall through to SS 10 Step 3 (post text-only). Log as `Post Published` with `image: false`.
+
+---
+
+## SS 11. Repost with Commentary
+
+### Step 1: Click Repost → "Repost with your thoughts"
+
+Replace `${targetMinY}` and `${targetMaxY}` with the Y-coordinate range of the target post's Repost button.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); var allBtns = Array.from(document.querySelectorAll('button')); var repostBtns = allBtns.filter(function(b) { return b.innerText.trim() === 'Repost' && b.offsetParent !== null; }); var targetBtn = repostBtns.find(function(b) { var top = b.getBoundingClientRect().top; return top > window.__data.minY && top < window.__data.maxY; }); if (!targetBtn) return { error: 'no Repost button in range', count: repostBtns.length }; targetBtn.click(); await new Promise(r => setTimeout(r, 1500)); var allDivs = Array.from(document.querySelectorAll('div')); var thoughtsDiv = allDivs.find(function(d) { var t = (d.textContent || '').trim(); return d.offsetParent !== null && t.startsWith('Repost with your thoughts') && t.length < 100; }); if (!thoughtsDiv) return { repostClicked: true, error: 'no thoughts option' }; thoughtsDiv.click(); await new Promise(r => setTimeout(r, 3000)); var host = document.querySelector('#interop-outlet'); if (!host || !host.shadowRoot) return { repostClicked: true, thoughtsClicked: true, error: 'no shadow root' }; var editor = host.shadowRoot.querySelector('.ql-editor'); return { repostClicked: true, thoughtsClicked: true, editorReady: !!editor }; }", "data": {"minY": 200, "maxY": 600}}
+ENDJSON
+```
+
+### Step 2: Type commentary + click Post
+
+Replace `${commentaryText}`.
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var host = document.querySelector('#interop-outlet'); if (!host || !host.shadowRoot) return { error: 'no shadow root' }; var editor = host.shadowRoot.querySelector('.ql-editor'); if (!editor) return { error: 'no editor' }; editor.focus(); editor.innerHTML = '<p>' + window.__data.text + '</p>'; editor.dispatchEvent(new Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 1000)); var postBtn = Array.from(host.shadowRoot.querySelectorAll('button')).find(function(b) { return b.innerText.trim() === 'Post' && !b.disabled; }); if (!postBtn) return { typed: true, error: 'no Post button' }; postBtn.click(); await new Promise(r => setTimeout(r, 3000)); var editorGone = !host.shadowRoot.querySelector('.ql-editor'); return { posted: true, editorGone: editorGone }; }", "data": {"text": "YOUR_COMMENTARY"}}
+ENDJSON
+```
+
+Verify: editor should be gone after post. Log as Type=Repost.

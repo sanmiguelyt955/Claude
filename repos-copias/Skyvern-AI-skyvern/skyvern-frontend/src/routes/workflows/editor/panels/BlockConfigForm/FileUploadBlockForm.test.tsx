@@ -1,0 +1,615 @@
+// @vitest-environment jsdom
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import type { ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+const mockNodes = new Map<
+  string,
+  { id: string; type: string; data?: Record<string, unknown> } | undefined
+>();
+const updateNodeData = vi.fn();
+
+vi.mock("@xyflow/react", async () => {
+  const actual =
+    await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  return {
+    ...actual,
+    useReactFlow: () => ({
+      getNode: (id: string) => mockNodes.get(id),
+      updateNodeData,
+    }),
+    useNodes: () => Array.from(mockNodes.values()),
+    useEdges: () => [],
+    useNodesData: (id: string) => {
+      const node = mockNodes.get(id);
+      return node ? { id: node.id, type: node.type, data: node.data } : null;
+    },
+  };
+});
+
+vi.mock("@/components/WorkflowBlockInput", () => ({
+  WorkflowBlockInput: (props: {
+    value: string;
+    onChange: (value: string) => void;
+    type?: string;
+  }) => (
+    <input
+      data-testid={`wbi-${props.type ?? "text"}`}
+      type={props.type ?? "text"}
+      value={props.value ?? ""}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
+
+vi.mock("@/components/WorkflowBlockInputTextarea", () => ({
+  WorkflowBlockInputTextarea: (props: {
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+    name?: string;
+    disabled?: boolean;
+  }) => (
+    <textarea
+      data-testid={
+        props.name === "sftpPrivateKey" ? "wbi-private-key" : "wbi-textarea"
+      }
+      name={props.name}
+      disabled={props.disabled}
+      value={props.value ?? ""}
+      placeholder={props.placeholder}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
+
+vi.mock("@/routes/workflows/components/GoogleOAuthCredentialSelector", () => ({
+  GoogleOAuthCredentialSelector: (props: {
+    value: string;
+    onChange: (value: string) => void;
+  }) => (
+    <input
+      data-testid="google-oauth-selector"
+      value={props.value ?? ""}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  ),
+}));
+
+// Stub the shadcn Select to a native <select> so we can fire change events
+// directly. The form only consumes value + onValueChange.
+vi.mock("@/components/ui/select", () => {
+  type SelectProps = {
+    value?: string;
+    onValueChange?: (value: string) => void;
+    disabled?: boolean;
+    children?: ReactNode;
+  };
+  const Select = ({
+    value,
+    onValueChange,
+    disabled,
+    children,
+  }: SelectProps) => (
+    <select
+      data-testid="storage-type-select"
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onValueChange?.(e.target.value)}
+    >
+      {children}
+    </select>
+  );
+  const Pass = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  const SelectItem = ({
+    value,
+    children,
+  }: {
+    value: string;
+    children?: ReactNode;
+  }) => <option value={value}>{children}</option>;
+  return {
+    Select,
+    SelectContent: Pass,
+    SelectTrigger: Pass,
+    SelectValue: Pass,
+    SelectItem,
+  };
+});
+
+import { useSidebarSaveStateStore } from "@/store/SidebarSaveStateStore";
+import { usePendingCommitsStore } from "@/store/PendingCommitsStore";
+import { useWorkflowYamlEditorStore } from "@/store/WorkflowYamlEditorStore";
+import { FileUploadBlockForm } from "./FileUploadBlockForm";
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  mockNodes.clear();
+  updateNodeData.mockReset();
+  usePendingCommitsStore.setState({ commits: {} });
+  useSidebarSaveStateStore.getState().reset();
+});
+
+afterEach(() => {
+  useWorkflowYamlEditorStore.getState().setCommitInProgress(false);
+  vi.useRealTimers();
+  cleanup();
+});
+
+function setFileUploadNode(
+  id: string,
+  overrides: Partial<{
+    storageType: "s3" | "azure" | "google_drive" | "sftp";
+    path: string;
+    prompt: string | null;
+    s3Bucket: string | null;
+    awsAccessKeyId: string | null;
+    awsSecretAccessKey: string | null;
+    regionName: string | null;
+    endpointUrl: string | null;
+    azureStorageAccountName: string | null;
+    azureStorageAccountKey: string | null;
+    azureBlobContainerName: string | null;
+    googleCredentialId: string | null;
+    googleDriveFolderId: string | null;
+    sftpPrivateKey: string | null;
+    editable: boolean;
+  }> = {},
+) {
+  mockNodes.set(id, {
+    id,
+    type: "fileUpload",
+    data: {
+      storageType: overrides.storageType ?? "s3",
+      path: overrides.path ?? "{{ workflow_run_id }}",
+      prompt: overrides.prompt ?? null,
+      s3Bucket: overrides.s3Bucket ?? null,
+      awsAccessKeyId: overrides.awsAccessKeyId ?? null,
+      awsSecretAccessKey: overrides.awsSecretAccessKey ?? null,
+      regionName: overrides.regionName ?? null,
+      endpointUrl: overrides.endpointUrl ?? null,
+      azureStorageAccountName: overrides.azureStorageAccountName ?? null,
+      azureStorageAccountKey: overrides.azureStorageAccountKey ?? null,
+      azureBlobContainerName: overrides.azureBlobContainerName ?? null,
+      googleCredentialId: overrides.googleCredentialId ?? null,
+      googleDriveFolderId: overrides.googleDriveFolderId ?? null,
+      sftpPrivateKey: overrides.sftpPrivateKey ?? null,
+      editable: overrides.editable ?? true,
+      label: "file_upload_1",
+      continueOnFailure: false,
+      debuggable: true,
+      model: null,
+    },
+  });
+}
+
+describe("FileUploadBlockForm (SKY-9361)", () => {
+  test("returns null for missing node", () => {
+    const { container } = render(<FileUploadBlockForm blockId="missing" />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  test("returns null for wrong node type", () => {
+    mockNodes.set("f1", { id: "f1", type: "task", data: {} });
+    const { container } = render(<FileUploadBlockForm blockId="f1" />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  test("hides a saved SFTP private key and preserves it when saving untouched", async () => {
+    const privateKey = "saved-synthetic-key-marker";
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: privateKey,
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(
+      screen.getByText("A private key is saved and hidden."),
+    ).toBeDefined();
+    expect(document.body.textContent).not.toContain(privateKey);
+    expect(screen.queryByTestId("wbi-private-key")).toBeNull();
+    expect(updateNodeData).not.toHaveBeenCalled();
+
+    const { getWorkflowBlocks } = await vi.importActual<
+      typeof import("../../workflowEditorUtils")
+    >("../../workflowEditorUtils");
+    const [savedBlock] = getWorkflowBlocks([mockNodes.get("f1") as never], []);
+    expect(savedBlock).toHaveProperty("sftp_private_key", privateKey);
+  });
+
+  test("keeps SFTP private-key parameter references editable", () => {
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: "{{ sftp_key }}",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(
+      (screen.getByTestId("wbi-private-key") as HTMLTextAreaElement).value,
+    ).toBe("{{ sftp_key }}");
+    expect(screen.queryByText("A private key is saved and hidden.")).toBeNull();
+  });
+
+  test("resets the private-key draft when switching between upload blocks", () => {
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: "block-a-saved-key",
+    });
+    setFileUploadNode("f2", {
+      storageType: "sftp",
+      sftpPrivateKey: "block-b-saved-key",
+    });
+    const { rerender } = render(<FileUploadBlockForm blockId="f1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace key" }));
+    fireEvent.change(screen.getByTestId("wbi-private-key"), {
+      target: { value: "block-a-replacement-draft" },
+    });
+
+    rerender(<FileUploadBlockForm blockId="f2" />);
+    expect(
+      screen.getByText("A private key is saved and hidden."),
+    ).toBeDefined();
+    expect(screen.queryByTestId("wbi-private-key")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      "block-a-replacement-draft",
+    );
+
+    rerender(<FileUploadBlockForm blockId="f1" />);
+    expect(
+      screen.getByText("A private key is saved and hidden."),
+    ).toBeDefined();
+    expect(screen.queryByTestId("wbi-private-key")).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      "block-a-replacement-draft",
+    );
+  });
+
+  test("resets the private-key draft after an external value change", () => {
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: "saved-key",
+    });
+    const { rerender } = render(<FileUploadBlockForm blockId="f1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace key" }));
+    fireEvent.change(screen.getByTestId("wbi-private-key"), {
+      target: { value: "local-replacement-draft" },
+    });
+
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: "restored-key",
+    });
+    rerender(<FileUploadBlockForm blockId="f1" />);
+
+    expect(
+      screen.getByText("A private key is saved and hidden."),
+    ).toBeDefined();
+    expect(screen.queryByTestId("wbi-private-key")).toBeNull();
+    expect(document.body.textContent).not.toContain("local-replacement-draft");
+  });
+
+  test("keeps a saved key hidden when removal is rejected during a YAML commit", () => {
+    setFileUploadNode("f1", {
+      storageType: "sftp",
+      sftpPrivateKey: "saved-key",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+    useWorkflowYamlEditorStore.getState().setCommitInProgress(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove key" }));
+
+    expect(
+      screen.getByText("A private key is saved and hidden."),
+    ).toBeDefined();
+    expect(screen.queryByTestId("wbi-private-key")).toBeNull();
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  test("renders s3 fields when storageType is 's3'", () => {
+    setFileUploadNode("f1", {
+      storageType: "s3",
+      awsAccessKeyId: "AKIA...",
+      awsSecretAccessKey: "secret",
+      s3Bucket: "my-bucket",
+      regionName: "us-west-2",
+      endpointUrl: "https://storage.example.com",
+      path: "uploads",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.getByText("Storage Type")).toBeDefined();
+    expect(screen.getByText("AWS Access Key ID")).toBeDefined();
+    expect(screen.getByText("AWS Secret Access Key")).toBeDefined();
+    expect(screen.getByText("S3 Bucket")).toBeDefined();
+    expect(screen.getByText("Region Name")).toBeDefined();
+    expect(screen.getByText("(Optional) Endpoint URL")).toBeDefined();
+    expect(screen.getByText("(Optional) Folder Path")).toBeDefined();
+
+    // Azure fields are not visible
+    expect(screen.queryByText("Storage Account Name")).toBeNull();
+    expect(screen.queryByText("Storage Account Key")).toBeNull();
+    expect(screen.queryByText("Blob Container Name")).toBeNull();
+    expect(screen.queryByText("Google Account")).toBeNull();
+    expect(screen.queryByText("Google Drive Folder ID")).toBeNull();
+
+    // 6 textareas (prompt, key id, bucket, region, endpoint url, path) and 1 password input
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    expect(textareas).toHaveLength(6);
+    const password = screen.getByTestId("wbi-password") as HTMLInputElement;
+    expect(password.value).toBe("secret");
+  });
+
+  test("renders azure fields when storageType is 'azure'", () => {
+    setFileUploadNode("f1", {
+      storageType: "azure",
+      azureStorageAccountName: "acct",
+      azureStorageAccountKey: "key",
+      azureBlobContainerName: "container",
+      path: "uploads",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.getByText("Storage Type")).toBeDefined();
+    expect(screen.getByText("Storage Account Name")).toBeDefined();
+    expect(screen.getByText("Storage Account Key")).toBeDefined();
+    expect(screen.getByText("Blob Container Name")).toBeDefined();
+    expect(screen.getByText("(Optional) Folder Path")).toBeDefined();
+
+    // S3 fields are not visible
+    expect(screen.queryByText("AWS Access Key ID")).toBeNull();
+    expect(screen.queryByText("AWS Secret Access Key")).toBeNull();
+    expect(screen.queryByText("S3 Bucket")).toBeNull();
+    expect(screen.queryByText("Region Name")).toBeNull();
+    expect(screen.queryByText("Google Account")).toBeNull();
+    expect(screen.queryByText("Google Drive Folder ID")).toBeNull();
+
+    // 4 textareas (prompt, account name, container, path) and 1 password input
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    expect(textareas).toHaveLength(4);
+    const password = screen.getByTestId("wbi-password") as HTMLInputElement;
+    expect(password.value).toBe("key");
+  });
+
+  test("renders google drive fields when storageType is 'google_drive'", () => {
+    setFileUploadNode("f1", {
+      storageType: "google_drive",
+      googleCredentialId: "goac_123",
+      googleDriveFolderId: "folder_123",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.getByText("Google Account")).toBeDefined();
+    expect(screen.getByText("Google Drive Folder ID (Optional)")).toBeDefined();
+    expect(
+      (screen.getByTestId("google-oauth-selector") as HTMLInputElement).value,
+    ).toBe("goac_123");
+    expect(
+      (screen.getAllByTestId("wbi-textarea")[1] as HTMLTextAreaElement).value,
+    ).toBe("folder_123");
+  });
+
+  test("switching storageType s3 -> azure swaps the conditional fields", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    const { rerender } = render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.getByText("AWS Access Key ID")).toBeDefined();
+    expect(screen.queryByText("Storage Account Name")).toBeNull();
+
+    setFileUploadNode("f1", { storageType: "azure" });
+    rerender(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.queryByText("AWS Access Key ID")).toBeNull();
+    expect(screen.getByText("Storage Account Name")).toBeDefined();
+  });
+
+  test("editing storageType propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    fireEvent.change(screen.getByTestId("storage-type-select"), {
+      target: { value: "google_drive" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      storageType: "google_drive",
+    });
+  });
+
+  test("renders prompt and propagates changes", () => {
+    setFileUploadNode("f1", {
+      storageType: "google_drive",
+      prompt: "Only upload invoices",
+    });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    expect(screen.getByText("Prompt")).toBeDefined();
+    expect(
+      screen.getByText("Optional. Leave empty to upload all downloaded files."),
+    ).toBeDefined();
+    const prompt = screen.getByPlaceholderText(
+      'e.g. Only upload the PDF files whose names contain "invoice"',
+    ) as HTMLTextAreaElement;
+    expect(prompt.value).toBe("Only upload invoices");
+
+    fireEvent.change(prompt, {
+      target: { value: "Only upload {{ file_pattern }}" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      prompt: "Only upload {{ file_pattern }}",
+    });
+  });
+
+  test("editing s3Bucket (when s3) propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    // Order: prompt, awsAccessKeyId, s3Bucket, regionName, path
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[2] as HTMLTextAreaElement, {
+      target: { value: "new-bucket" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      s3Bucket: "new-bucket",
+    });
+  });
+
+  test("editing awsAccessKeyId (when s3) propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[1] as HTMLTextAreaElement, {
+      target: { value: "AKIA-NEW" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      awsAccessKeyId: "AKIA-NEW",
+    });
+  });
+
+  test("editing awsSecretAccessKey (when s3) propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    fireEvent.change(screen.getByTestId("wbi-password"), {
+      target: { value: "new-secret" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      awsSecretAccessKey: "new-secret",
+    });
+  });
+
+  test("editing path (when s3) propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    // Order: prompt, awsAccessKeyId, s3Bucket, regionName, endpointUrl, path
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[5] as HTMLTextAreaElement, {
+      target: { value: "uploads/2026" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      path: "uploads/2026",
+    });
+  });
+
+  test("editing endpointUrl (when s3) propagates", () => {
+    setFileUploadNode("f1", { storageType: "s3" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    // Order: prompt, awsAccessKeyId, s3Bucket, regionName, endpointUrl, path
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[4] as HTMLTextAreaElement, {
+      target: { value: "https://storage.example.com" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      endpointUrl: "https://storage.example.com",
+    });
+  });
+
+  test("editing azureStorageAccountName (when azure) propagates", () => {
+    setFileUploadNode("f1", { storageType: "azure" });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    // Order: prompt, azureStorageAccountName, azureBlobContainerName, path
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[1] as HTMLTextAreaElement, {
+      target: { value: "newaccount" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("f1", {
+      azureStorageAccountName: "newaccount",
+    });
+  });
+
+  test("non-editable: edits do not propagate", () => {
+    setFileUploadNode("f1", { storageType: "s3", editable: false });
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    const textareas = screen.getAllByTestId("wbi-textarea");
+    fireEvent.change(textareas[2] as HTMLTextAreaElement, {
+      target: { value: "blocked" },
+    });
+    fireEvent.change(screen.getByTestId("wbi-password"), {
+      target: { value: "blocked" },
+    });
+
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  test("registers/unregisters commit", () => {
+    setFileUploadNode("f1");
+    const { unmount } = render(<FileUploadBlockForm blockId="f1" />);
+    expect(usePendingCommitsStore.getState().commits["f1"]).toBeDefined();
+    unmount();
+    expect(usePendingCommitsStore.getState().commits["f1"]).toBeUndefined();
+  });
+
+  test("flush via PendingCommitsStore returns true", () => {
+    setFileUploadNode("f1");
+    render(<FileUploadBlockForm blockId="f1" />);
+
+    let ok = false;
+    act(() => {
+      ok = usePendingCommitsStore.getState().flush("f1");
+    });
+    expect(ok).toBe(true);
+  });
+});
+
+describe("file upload serialization", () => {
+  test.each<[string | null]>([[""], [null]])(
+    "serializes an unset s3 endpoint (%j) as null, never an empty string",
+    async (endpointUrl) => {
+      const { getWorkflowBlocks } = await vi.importActual<
+        typeof import("../../workflowEditorUtils")
+      >("../../workflowEditorUtils");
+
+      setFileUploadNode("f1", { storageType: "s3", endpointUrl });
+      const node = mockNodes.get("f1");
+      const [savedBlock] = getWorkflowBlocks(
+        [node] as never,
+        [],
+      ) as unknown as Array<Record<string, unknown>>;
+
+      // botocore raises "Invalid endpoint:" on "", so an unset endpoint must round-trip
+      // as null and let the backend fall back to AWS S3.
+      expect(savedBlock).toHaveProperty("endpoint_url", null);
+    },
+  );
+
+  test("preserves a configured s3 endpoint", async () => {
+    const { getWorkflowBlocks } = await vi.importActual<
+      typeof import("../../workflowEditorUtils")
+    >("../../workflowEditorUtils");
+
+    setFileUploadNode("f1", {
+      storageType: "s3",
+      endpointUrl: "https://storage.example.com",
+    });
+    const node = mockNodes.get("f1");
+    const [savedBlock] = getWorkflowBlocks(
+      [node] as never,
+      [],
+    ) as unknown as Array<Record<string, unknown>>;
+
+    expect(savedBlock).toHaveProperty(
+      "endpoint_url",
+      "https://storage.example.com",
+    );
+  });
+});
