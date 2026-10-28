@@ -41,10 +41,26 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'notas' }, async $ => {
-    await $.ui.open({ id: PANE, title: 'Notas' })
+  // En el celular no hay panel ni campo de texto: las notas salen en el chat.
+  on('command.run', { command: 'notas' }, async ($, e) => {
+    const arg = e.args.trim()
+    const list = await read($, items)
+    if (arg.startsWith('borrar')) {
+      const n = Number(arg.split(/\s+/)[1])
+      if (!Number.isInteger(n) || n < 1 || n > list.length) {
+        return { text: 'Uso: /notas borrar <número>' }
+      }
+      const next = list.filter((_, i) => i !== n - 1)
+      await update($, items, () => next)
+      await save($, next)
+      return { text: `Nota ${n} borrada.` }
+    }
+    void $.ui.open({ id: PANE, title: 'Notas' })
+    if (list.length === 0) return { text: 'Aún no hay notas. Agrega una con `/nota texto`.' }
 
-    return { text: 'Panel de notas abierto.' }
+    return {
+      text: `${list.map((n, i) => `${i + 1}. ${n.text}`).join('\n')}\n\nBorra una con \`/notas borrar <número>\`.`,
+    }
   })
 
   on('command.run', { command: 'nota' }, async ($, e) => {

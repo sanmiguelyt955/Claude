@@ -58,6 +58,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'privado' }, async ($, e) => {
     const arg = e.args.trim()
+    if (arg === '') {
+      return { text: `Modo privado: ${await read($, mode)} (${(await isActive($)) ? '🔒 tapando ahora' : 'sin tapar ahora'}).` }
+    }
     if (arg !== 'on' && arg !== 'off' && arg !== 'auto') {
       return { text: 'Uso: /privado on | off | auto' }
     }

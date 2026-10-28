@@ -42,7 +42,19 @@ const GROUPS: Group[] = [
       { text: '/autoguardar off', what: 'apagado' },
     ],
   },
+  {
+    mod: '📋 Comandos',
+    cmds: [
+      { text: '/comandos', what: 'esta lista' },
+      { text: '/comandos panel', what: 'panel lateral (computadora)' },
+    ],
+  },
 ]
+
+function table() {
+  const rows = GROUPS.flatMap(g => g.cmds.map(c => `| ${g.mod} | \`${c.text.trim()}\` | ${c.what} |`))
+  return ['| Mod | Comando | Qué hace |', '|---|---|---|', ...rows].join('\n')
+}
 
 const KNOWN = ['notas', 'cache-timer', 'modo-privado', 'modelo-recomendado', 'autoguardado', 'comandos']
 
@@ -64,16 +76,20 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'comandos',
-      description: 'Muestra o esconde el panel con tus comandos',
+      description: 'Lista tus comandos en el chat; /comandos panel abre o esconde el panel',
     })
 
     return next(e)
   })
 
-  on('command.run', { command: 'comandos' }, async $ => {
-    await toggle($)
+  // En el celular no hay barra ni panel lateral: la tabla sale en el chat.
+  on('command.run', { command: 'comandos' }, async ($, e) => {
+    if (e.args.trim() === 'panel') {
+      await toggle($)
+      return { text: (await isOpen($)) ? 'Panel de comandos abierto.' : 'Panel de comandos escondido.' }
+    }
 
-    return { text: (await isOpen($)) ? 'Panel de comandos abierto.' : 'Panel de comandos escondido.' }
+    return { text: `${table()}\n\nEn computadora: \`/comandos panel\` muestra o esconde el panel lateral.` }
   })
 
   on('ui.close', async ($, e, next) => {

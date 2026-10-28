@@ -17,7 +17,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'cache',
-      description: 'Duración de la caché del timer: /cache 5m o /cache 1h',
+      description: 'Cuánto falta para que se enfríe la caché; /cache 5m o 1h cambia la duración',
     })
     $.clock.every(1000, async () => {
       const at = await read($, lastAt)
@@ -35,8 +35,16 @@ export const register: Register = on => {
 
   on('command.run', { command: 'cache' }, async ($, e) => {
     const arg = e.args.trim()
+    if (arg === '') {
+      const at = await read($, lastAt)
+      if (at === null) return { text: 'Aún no hay caché: espera a que termine una respuesta.' }
+      const left = at + (await read($, ttlMs)) - (await $.clock.now())
+      return {
+        text: left > 0 ? `Caché: se enfría en ${clock(left)}.` : 'Caché fría: el próximo mensaje la vuelve a escribir.',
+      }
+    }
     if (arg !== '5m' && arg !== '1h') {
-      return { text: 'Uso: /cache 5m  o  /cache 1h' }
+      return { text: 'Uso: /cache (cuánto falta), /cache 5m o /cache 1h' }
     }
     await update($, ttlMs, () => (arg === '1h' ? 60 * 60_000 : 5 * 60_000))
 
