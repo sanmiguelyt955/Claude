@@ -1,0 +1,1 @@
+{ "name": "modelo-recomendado", "version": "0.1.0", "description": "Recomienda modelo y esfuerzo según el tipo de pregunta (/modelo <pregunta>)", "types": "./types/index.d.ts" }

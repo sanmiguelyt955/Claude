@@ -1,0 +1,1 @@
+{ "name": "cache-timer", "version": "0.1.0", "description": "Cuenta regresiva de cuánto falta para que se enfríe la caché del prompt", "types": "./types/index.d.ts" }

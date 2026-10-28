@@ -1,0 +1,1 @@
+{ "name": "notas", "version": "0.1.0", "description": "Panel de notas junto al chat, guardadas entre sesiones", "types": "./types/index.d.ts" }

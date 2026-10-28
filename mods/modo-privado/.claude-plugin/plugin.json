@@ -1,0 +1,1 @@
+{ "name": "modo-privado", "version": "0.1.0", "description": "Tapa llaves, correos, teléfonos, tarjetas, CURP y RFC en pantalla (/privado on|off|auto)", "types": "./types/index.d.ts" }
