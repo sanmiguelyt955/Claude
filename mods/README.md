@@ -5,3 +5,4 @@
 - `modo-privado`: tapa llaves, correos, teléfonos, tarjetas, CURP y RFC en pantalla (`/privado on|off|auto`). Solo tapa lo que se ve; Claude recibe el texto real.
 - `modelo-recomendado`: sugiere modelo y esfuerzo según la pregunta (`/modelo <pregunta>`).
 - `autoguardado`: al terminar cada turno copia los mods a `mods/`, hace commit y push de todo a GitHub. No sube si detecta una llave secreta ni empuja directo a `main`/`master` (`/guardar`, `/autoguardar on|aviso|off`).
+- `comandos`: panel lateral con todos los comandos de tus mods; al tocar uno se escribe en el cuadro de texto. Se muestra y esconde con el botón "📋 Comandos" o con `/comandos`.
