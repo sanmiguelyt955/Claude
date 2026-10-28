@@ -25,6 +25,25 @@ async function add($: any, text: string) {
   })
 }
 
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const saved = await $.store.get(STORE)
@@ -53,13 +72,13 @@ export const register: Register = on => {
       const next = list.filter((_, i) => i !== n - 1)
       await update($, items, () => next)
       await save($, next)
-      return { text: `Nota ${n} borrada.` }
+      return { text: `✓ Nota ${n} borrada.` }
     }
     void $.ui.open({ id: PANE, title: 'Notas' })
-    if (list.length === 0) return { text: 'Aún no hay notas. Agrega una con `/nota texto`.' }
+    if (list.length === 0) return { text: '_Aún no hay notas._' }
 
     return {
-      text: `${list.map((n, i) => `${i + 1}. ${n.text}`).join('\n')}\n\nBorra una con \`/notas borrar <número>\`.`,
+      text: list.map((n, i) => `**${i + 1}.** ${n.text}`).join('\n\n'),
     }
   })
 
@@ -67,7 +86,7 @@ export const register: Register = on => {
     if (e.args.trim() === '') return { text: 'Uso: /nota texto de la nota' }
     await add($, e.args)
 
-    return { text: 'Nota guardada.' }
+    return { text: `✓ Guardada: _${e.args.trim()}_` }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -115,5 +134,21 @@ export const register: Register = on => {
         )}
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if ((e.props.command !== 'notas' && e.props.command !== 'nota') || e.props.isErrored) {
+      return next(e)
+    }
+    const ui = $.ui.resolve(e)
+    const { Markdown } = ui
+
+    return card(ui, {
+      icon: '📝',
+      title: 'Notas',
+      accent: 'suggestion',
+      hint: 'Agrega con /nota texto · borra con /notas borrar 2',
+      body: <Markdown text={e.props.text} />,
+    })
   })
 }

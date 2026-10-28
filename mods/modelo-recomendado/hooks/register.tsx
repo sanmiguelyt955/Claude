@@ -65,6 +65,25 @@ export const recommend = (raw: string): Reco => {
 
 const line = (r: Reco) => `${r.model} · esfuerzo ${r.effort} (${r.why})`
 
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -81,7 +100,7 @@ export const register: Register = on => {
     await update($, last, () => r)
 
     return {
-      text: `Recomendado: ${line(r)}\nCámbialo con /model ${r.model.toLowerCase()}`,
+      text: `**${r.model}** · esfuerzo **${r.effort}**\n\n${r.why}\n\nCámbialo con \`/model ${r.model.toLowerCase()}\``,
     }
   })
 
@@ -105,5 +124,35 @@ export const register: Register = on => {
         <Text dimColor>Modelo recomendado: {line(r)}</Text>
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'modelo' || e.props.isErrored || e.props.args.trim() === '') {
+      return next(e)
+    }
+    const ui = $.ui.resolve(e)
+    const { Box, Text } = ui
+    const r = recommend(e.props.args)
+    const accent = r.model === 'Opus' ? 'claude' : r.model === 'Sonnet' ? 'planMode' : 'success'
+
+    return card(ui, {
+      icon: '🧠',
+      title: 'Modelo recomendado',
+      accent,
+      hint: `Cámbialo con /model ${r.model.toLowerCase()}`,
+      body: [
+        <Box key="pick" gap="sm" alignItems="center">
+          <Text size="title" weight="bold" bold color={accent}>
+            {r.model}
+          </Text>
+          <Text weight="semibold" bold inverse color={accent}>
+            {` esfuerzo ${r.effort} `}
+          </Text>
+        </Box>,
+        <Text key="why" color="subtle">
+          {r.why}
+        </Text>,
+      ],
+    })
   })
 }

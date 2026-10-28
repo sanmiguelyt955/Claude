@@ -44,6 +44,25 @@ async function refreshObs($: any) {
   }
 }
 
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -68,7 +87,7 @@ export const register: Register = on => {
     $.ui.toast(`🔒 Modo privado: ${arg}`)
     $.ui.invalidate('ui.render')
 
-    return { text: `Modo privado: ${arg}.` }
+    return { text: `Modo privado: **${arg}**.` }
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
@@ -118,5 +137,29 @@ export const register: Register = on => {
         <Text color="green">🔒 privado</Text>
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'privado' || e.props.isErrored) return next(e)
+    const ui = $.ui.resolve(e)
+    const { Text } = ui
+    const m = await read($, mode)
+    const active = await isActive($)
+    const label = { on: 'Siempre activo', off: 'Apagado', auto: 'Solo con OBS abierto' }[m]
+
+    return card(ui, {
+      icon: active ? '🔒' : '🔓',
+      title: 'Modo privado',
+      accent: active ? 'success' : 'subtle',
+      hint: 'Tapa llaves, correos, teléfonos, tarjetas, CURP y RFC en pantalla',
+      body: [
+        <Text key="estado" size="title" weight="bold" bold color={active ? 'success' : 'subtle'}>
+          {active ? 'Tapando ahora' : 'Sin tapar'}
+        </Text>,
+        <Text key="modo" color="subtle">
+          Modo: {label}
+        </Text>,
+      ],
+    })
   })
 }

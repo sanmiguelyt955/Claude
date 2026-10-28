@@ -104,6 +104,25 @@ async function guardar($: any, isForced: boolean) {
   await setEstado($, { kind: 'ok', text: `subido a GitHub (${await hora($)})` })
 }
 
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   let isBusy = false
 
@@ -165,5 +184,25 @@ export const register: Register = on => {
         <Text color={now.kind === 'error' ? 'red' : 'yellow'}>⚠️ GitHub: {now.text}</Text>
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if ((e.props.command !== 'guardar' && e.props.command !== 'autoguardar') || e.props.isErrored) {
+      return next(e)
+    }
+    const ui = $.ui.resolve(e)
+    const { Text } = ui
+    const now = await read($, estado)
+    const m = await read($, mode)
+    const accent = now === null || now.kind === 'ok' ? 'success' : now.kind === 'error' ? 'error' : 'warning'
+    const label = { on: 'sube solo al final de cada turno', aviso: 'solo avisa', off: 'apagado' }[m]
+
+    return card(ui, {
+      icon: '☁️',
+      title: 'GitHub',
+      accent,
+      hint: `Autoguardado: ${label}`,
+      body: <Text weight="semibold" bold color={accent}>{e.props.text}</Text>,
+    })
   })
 }

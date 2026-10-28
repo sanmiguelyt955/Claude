@@ -3,60 +3,129 @@ import type { Register } from 'claude-code'
 const PANE = 'comandos'
 
 type Cmd = { text: string; what: string }
-type Group = { mod: string; cmds: Cmd[] }
+type Group = { icon: string; mod: string; accent: string; cmds: Cmd[] }
 
-// Al agregar un mod nuevo, agrega aquí sus comandos.
+// Al agregar un mod nuevo, agrega aquí sus comandos. Un comando que termina en
+// espacio necesita texto después y no lleva botón.
 const GROUPS: Group[] = [
   {
-    mod: '📝 Notas',
+    icon: '📝',
+    mod: 'Notas',
+    accent: 'suggestion',
     cmds: [
-      { text: '/notas', what: 'abre el panel de notas' },
-      { text: '/nota ', what: 'guarda una nota rápida' },
+      { text: '/notas', what: 'Ver tus notas' },
+      { text: '/nota ', what: 'Guardar una nota: /nota texto' },
     ],
   },
   {
-    mod: '🔒 Modo privado',
+    icon: '🔒',
+    mod: 'Modo privado',
+    accent: 'success',
     cmds: [
-      { text: '/privado on', what: 'tapa datos sensibles' },
-      { text: '/privado off', what: 'deja de taparlos' },
-      { text: '/privado auto', what: 'solo con OBS abierto' },
+      { text: '/privado', what: 'Ver si está activo' },
+      { text: '/privado on', what: 'Tapar datos sensibles' },
+      { text: '/privado off', what: 'Dejar de taparlos' },
+      { text: '/privado auto', what: 'Solo con OBS abierto' },
     ],
   },
   {
-    mod: '⏱️ Caché',
+    icon: '⏱️',
+    mod: 'Caché',
+    accent: 'warning',
     cmds: [
-      { text: '/cache 5m', what: 'la caché dura 5 minutos' },
-      { text: '/cache 1h', what: 'la caché dura 1 hora' },
+      { text: '/cache', what: 'Cuánto falta para que se enfríe' },
+      { text: '/cache 5m', what: 'Dura 5 minutos' },
+      { text: '/cache 1h', what: 'Dura 1 hora' },
     ],
   },
   {
-    mod: '🧠 Modelo',
-    cmds: [{ text: '/modelo ', what: 'qué modelo y esfuerzo usar' }],
+    icon: '🧠',
+    mod: 'Modelo',
+    accent: 'planMode',
+    cmds: [{ text: '/modelo ', what: 'Qué modelo usar: /modelo tu pregunta' }],
   },
   {
-    mod: '☁️ GitHub',
+    icon: '☁️',
+    mod: 'GitHub',
+    accent: 'ide',
     cmds: [
-      { text: '/guardar', what: 'sube todo ahora' },
-      { text: '/autoguardar on', what: 'sube solo al final de cada turno' },
-      { text: '/autoguardar aviso', what: 'solo avisa' },
-      { text: '/autoguardar off', what: 'apagado' },
-    ],
-  },
-  {
-    mod: '📋 Comandos',
-    cmds: [
-      { text: '/comandos', what: 'esta lista' },
-      { text: '/comandos panel', what: 'panel lateral (computadora)' },
+      { text: '/guardar', what: 'Subir todo ahora' },
+      { text: '/autoguardar on', what: 'Subir solo al final de cada turno' },
+      { text: '/autoguardar aviso', what: 'Solo avisar' },
+      { text: '/autoguardar off', what: 'Apagar' },
     ],
   },
 ]
 
-function table() {
-  const rows = GROUPS.flatMap(g => g.cmds.map(c => `| ${g.mod} | \`${c.text.trim()}\` | ${c.what} |`))
-  return ['| Mod | Comando | Qué hace |', '|---|---|---|', ...rows].join('\n')
+const KNOWN = ['notas', 'cache-timer', 'modo-privado', 'modelo-recomendado', 'autoguardado', 'comandos']
+
+// El texto que queda guardado en el chat (y el que se ve si la tarjeta no se dibuja).
+function markdown() {
+  return GROUPS.map(
+    g => `**${g.icon} ${g.mod}**\n${g.cmds.map(c => `- \`${c.text.trim()}\` · ${c.what}`).join('\n')}`,
+  ).join('\n\n')
 }
 
-const KNOWN = ['notas', 'cache-timer', 'modo-privado', 'modelo-recomendado', 'autoguardado', 'comandos']
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
+function runCommand($: any, text: string) {
+  const [command, ...rest] = text.slice(1).split(' ')
+  void $.command.run({ command, args: rest.join(' ') })
+}
+
+function section(ui: any, $: any, g: Group, isPane: boolean) {
+  const { Box, Button, Text } = ui
+
+  return (
+    <Box key={g.mod} flexDirection="column" gap="xs" marginTop={1}>
+      <Text size="caption" weight="semibold" bold color={g.accent}>
+        {g.icon} {g.mod.toUpperCase()}
+      </Text>
+      {g.cmds.map(c => {
+        const needsText = c.text.endsWith(' ')
+
+        return (
+          <Box key={c.text} flexDirection="column">
+            {needsText && !isPane ? (
+              <Text mono color="suggestion">
+                {c.text.trim()} …
+              </Text>
+            ) : (
+              <Button
+                key={`run-${c.text}`}
+                label={needsText ? `✎ ${c.text.trim()} …` : `▶ ${c.text}`}
+                variant="secondary"
+                onPress={() =>
+                  needsText ? $.prompt.fill({ text: c.text }) : runCommand($, c.text)
+                }
+              />
+            )}
+            <Text size="footnote" color="subtle">
+              {c.what}
+            </Text>
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
 
 async function isOpen($: any) {
   const panes = await $.ui.panes()
@@ -76,20 +145,35 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'comandos',
-      description: 'Lista tus comandos en el chat; /comandos panel abre o esconde el panel',
+      description: 'Tus comandos en una tarjeta; /comandos panel abre el panel lateral',
     })
 
     return next(e)
   })
 
-  // En el celular no hay barra ni panel lateral: la tabla sale en el chat.
   on('command.run', { command: 'comandos' }, async ($, e) => {
     if (e.args.trim() === 'panel') {
       await toggle($)
       return { text: (await isOpen($)) ? 'Panel de comandos abierto.' : 'Panel de comandos escondido.' }
     }
 
-    return { text: `${table()}\n\nEn computadora: \`/comandos panel\` muestra o esconde el panel lateral.` }
+    return { text: markdown() }
+  })
+
+  // La respuesta de /comandos en el chat: se ve en el celular y en computadora.
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'comandos' || e.props.isErrored || e.props.args.trim() !== '') {
+      return next(e)
+    }
+    const ui = $.ui.resolve(e)
+
+    return card(ui, {
+      icon: '📋',
+      title: 'Tus comandos',
+      accent: 'claude',
+      hint: 'Toca ▶ para ejecutar. Los que llevan … necesitan texto después.',
+      body: GROUPS.map(g => section(ui, $, g, false)),
+    })
   })
 
   on('ui.close', async ($, e, next) => {
@@ -100,41 +184,35 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
-    // Comandos de otros mods que aún no estén en la tabla.
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Text } = ui
+    // Comandos de otros mods que aún no estén en la lista.
     const others = (await $.command.list()).filter(
       (c: any) => c.plugin !== undefined && !KNOWN.includes(c.plugin),
     )
 
     return (
-      <Box flexDirection="column">
-        <Text dimColor>Toca uno y se escribe en el cuadro de texto.</Text>
-        {GROUPS.map(g => (
-          <Box key={g.mod} flexDirection="column" marginTop={1}>
-            <Text bold>{g.mod}</Text>
-            {g.cmds.map(c => (
-              <Box key={c.text}>
-                <Button
-                  key={`cmd-${c.text}`}
-                  label={c.text.trim()}
-                  onPress={() => $.prompt.fill({ text: c.text })}
-                />
-                <Text dimColor> {c.what}</Text>
-              </Box>
-            ))}
-          </Box>
-        ))}
+      <Box flexDirection="column" gap="xs">
+        <Text size="footnote" color="subtle" italic>
+          ▶ ejecuta · ✎ lo escribe para que lo completes
+        </Text>
+        {GROUPS.map(g => section(ui, $, g, true))}
         {others.length > 0 && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold>🧩 Otros mods</Text>
+          <Box flexDirection="column" gap="xs" marginTop={1}>
+            <Text size="caption" weight="semibold" bold color="merged">
+              🧩 OTROS MODS
+            </Text>
             {others.map((c: any) => (
-              <Box key={c.name}>
+              <Box key={c.name} flexDirection="column">
                 <Button
                   key={`otro-${c.name}`}
-                  label={`/${c.name}`}
+                  label={`✎ /${c.name}`}
+                  variant="secondary"
                   onPress={() => $.prompt.fill({ text: `/${c.name} ` })}
                 />
-                <Text dimColor> {c.description}</Text>
+                <Text size="footnote" color="subtle">
+                  {c.description}
+                </Text>
               </Box>
             ))}
           </Box>
@@ -153,6 +231,7 @@ export const register: Register = on => {
         <Button
           key="toggle"
           label={open ? '✕ Ocultar comandos' : '📋 Comandos'}
+          variant="secondary"
           onPress={() => toggle($)}
         />
       </Box>

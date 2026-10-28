@@ -11,6 +11,25 @@ const clock = (ms: number) => {
   return `${m}:${s}`
 }
 
+// Una tarjeta: borde redondeado del color del mod, título y una pista abajo.
+function card(ui: any, c: { icon: string; title: string; accent: string; hint?: string; body: any }) {
+  const { Box, Text } = ui
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={c.accent} paddingX={1} gap="xs">
+      <Text size="heading" weight="semibold" bold color={c.accent}>
+        {c.icon} {c.title}
+      </Text>
+      {c.body}
+      {c.hint !== undefined && (
+        <Text size="footnote" color="subtle" italic>
+          {c.hint}
+        </Text>
+      )}
+    </Box>
+  )
+}
+
 export const register: Register = on => {
   let warned = false
 
@@ -48,7 +67,7 @@ export const register: Register = on => {
     }
     await update($, ttlMs, () => (arg === '1h' ? 60 * 60_000 : 5 * 60_000))
 
-    return { text: `Timer de caché en ${arg}.` }
+    return { text: `✓ La caché ahora dura **${arg === '1h' ? '1 hora' : '5 minutos'}**.` }
   })
 
   // Cada turno que llega a la API renueva la caché.
@@ -78,5 +97,36 @@ export const register: Register = on => {
         )}
       </Box>
     )
+  })
+
+  on('ui.render', { component: 'CommandOutput' }, async ($, e, next) => {
+    if (e.props.command !== 'cache' || e.props.isErrored) return next(e)
+    const ui = $.ui.resolve(e)
+    const { Markdown, Text } = ui
+    if (e.props.args.trim() !== '') {
+      return card(ui, { icon: '⏱️', title: 'Caché', accent: 'warning', body: <Markdown text={e.props.text} /> })
+    }
+    const at = await read($, lastAt)
+    const left = at === null ? null : at + (await read($, ttlMs)) - (await $.clock.now())
+    const accent = left === null ? 'subtle' : left <= 0 ? 'error' : left <= 60_000 ? 'warning' : 'success'
+
+    return card(ui, {
+      icon: '⏱️',
+      title: 'Caché',
+      accent,
+      hint: 'Cada respuesta la renueva · /cache 5m o /cache 1h cambia la duración',
+      body:
+        left === null ? (
+          <Text color="subtle">Aún no hay caché: espera a que termine una respuesta.</Text>
+        ) : left > 0 ? (
+          <Text size="title" weight="bold" bold tabular color={accent}>
+            {clock(left)}
+          </Text>
+        ) : (
+          <Text weight="semibold" bold color="error">
+            Fría: el próximo mensaje la vuelve a escribir
+          </Text>
+        ),
+    })
   })
 }
