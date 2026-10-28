@@ -1,0 +1,1 @@
+{ "name": "autoguardado", "version": "0.1.0", "description": "Al terminar cada turno hace commit y push de todo a GitHub (/guardar, /autoguardar on|aviso|off)", "types": "./types/index.d.ts" }
