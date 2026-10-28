@@ -20,3 +20,7 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# Eco: sesiones OAuth guardadas por el servidor
+eco-player/data/
+!.env.example

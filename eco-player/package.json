@@ -1,0 +1,15 @@
+{
+  "name": "eco-player",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tu música en el dispositivo sin conexión y tu biblioteca de SoundCloud en streaming vía la API oficial.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/e2e.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

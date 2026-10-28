@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14110f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Eco">
+  <title>Eco</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1><img src="icon.svg" alt="" width="28" height="28"> Eco</h1>
+    <span id="net" class="net"></span>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-local" data-view="local" aria-selected="true">En mi dispositivo</button>
+    <button role="tab" id="tab-soundcloud" data-view="soundcloud" aria-selected="false">SoundCloud</button>
+  </nav>
+
+  <main>
+    <!-- Biblioteca local: archivos del usuario guardados en el navegador, disponible sin conexión -->
+    <section id="view-local" class="view">
+      <nav class="subtabs">
+        <button data-sub="songs" aria-pressed="true">Canciones</button>
+        <button data-sub="lists" aria-pressed="false">Listas</button>
+        <button data-sub="import" aria-pressed="false">Añadir</button>
+      </nav>
+
+      <div id="sub-songs" class="sub">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Buscar" autocomplete="off">
+          <select id="sort" aria-label="Ordenar">
+            <option value="added">Recientes</option>
+            <option value="title">Título</option>
+            <option value="artist">Artista</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button id="play-all" class="primary">▶ Reproducir</button>
+          <button id="shuffle-all">⤮ Aleatorio</button>
+          <span id="count" class="muted"></span>
+        </div>
+        <ul id="local-list" class="tracks"></ul>
+        <p id="local-empty" class="empty" hidden>Aún no hay canciones. Pulsa <b>Añadir</b> para importar tus archivos de audio.</p>
+      </div>
+
+      <div id="sub-lists" class="sub" hidden>
+        <form id="new-list" class="toolbar">
+          <input id="list-name" placeholder="Nombre de la nueva lista" required maxlength="80">
+          <button class="primary">Crear</button>
+        </form>
+        <ul id="lists" class="cards"></ul>
+        <div id="list-detail" hidden>
+          <div class="detail-head">
+            <button id="list-back" class="ghost">← Listas</button>
+            <h2 id="list-title"></h2>
+          </div>
+          <div class="actions">
+            <button id="list-play" class="primary">▶ Reproducir</button>
+            <button id="list-shuffle">⤮ Aleatorio</button>
+            <button id="list-delete" class="danger">Borrar lista</button>
+          </div>
+          <ul id="list-tracks" class="tracks"></ul>
+        </div>
+      </div>
+
+      <div id="sub-import" class="sub" hidden>
+        <div id="drop" class="drop">
+          <p><b>Arrastra aquí</b> tus archivos de audio o elige una carpeta.</p>
+          <div class="actions center">
+            <label class="button primary">Elegir archivos
+              <input id="pick-files" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.aif,.aiff" multiple hidden></label>
+            <label class="button">Elegir carpeta
+              <input id="pick-folder" type="file" webkitdirectory multiple hidden></label>
+          </div>
+        </div>
+        <div id="import-progress" class="progress" hidden><div class="bar"></div><span></span></div>
+        <p id="storage" class="muted"></p>
+        <p class="muted">Las canciones se guardan dentro de este navegador, en este dispositivo, y se escuchan sin internet.
+          Úsalo con música que tengas en tus archivos, por ejemplo los originales de las pistas que tú subes.</p>
+      </div>
+    </section>
+
+    <!-- Biblioteca de SoundCloud vía API oficial: solo con conexión -->
+    <section id="view-soundcloud" class="view" hidden>
+      <div id="sc-offline" class="notice" hidden>Sin conexión. Tu biblioteca de SoundCloud solo está disponible con internet; tus canciones de <b>En mi dispositivo</b> siguen funcionando.</div>
+      <div id="sc-unconfigured" class="notice" hidden>Este servidor de Eco aún no tiene credenciales de la API de SoundCloud. Mira el README para configurarlas.</div>
+      <div id="sc-login" hidden>
+        <p>Conecta tu cuenta para escuchar en streaming tus Me gusta, tus listas y tus pistas.</p>
+        <a class="button primary" href="/auth/login">Conectar con SoundCloud</a>
+      </div>
+      <div id="sc-library" hidden>
+        <div class="me">
+          <img id="me-avatar" alt="" width="36" height="36">
+          <a id="me-name" target="_blank" rel="noopener"></a>
+          <button id="logout" class="ghost">Desconectar</button>
+        </div>
+        <nav class="subtabs">
+          <button data-sc="likes" aria-pressed="true">Me gusta</button>
+          <button data-sc="playlists" aria-pressed="false">Mis listas</button>
+          <button data-sc="liked-playlists" aria-pressed="false">Listas que me gustan</button>
+          <button data-sc="tracks" aria-pressed="false">Mis pistas</button>
+        </nav>
+        <div id="sc-playlist-head" class="detail-head" hidden>
+          <button id="sc-back" class="ghost">← Volver</button>
+          <h2 id="sc-playlist-title"></h2>
+        </div>
+        <div class="actions" id="sc-actions">
+          <button id="sc-play-all" class="primary">▶ Reproducir</button>
+        </div>
+        <ul id="sc-list" class="tracks"></ul>
+        <button id="sc-more" class="wide" hidden>Cargar más</button>
+        <p id="sc-status" class="muted"></p>
+      </div>
+      <p class="attribution">Contenido de <a href="https://soundcloud.com" target="_blank" rel="noopener">SoundCloud</a>.
+        Las pistas de SoundCloud solo se escuchan en streaming, con conexión: sus condiciones de uso no permiten guardarlas para escuchar sin internet.</p>
+    </section>
+  </main>
+
+  <footer id="player" class="player" hidden>
+    <img id="np-art" alt="" width="48" height="48">
+    <div class="np-meta">
+      <div id="np-title" class="np-title"></div>
+      <div id="np-artist" class="np-artist"></div>
+      <div class="seek">
+        <span id="np-time">0:00</span>
+        <input id="np-seek" type="range" min="0" max="1000" value="0" aria-label="Posición">
+        <span id="np-dur">0:00</span>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="btn-prev" aria-label="Anterior">⏮</button>
+      <button id="btn-play" class="play" aria-label="Reproducir">▶</button>
+      <button id="btn-next" aria-label="Siguiente">⏭</button>
+      <button id="btn-repeat" aria-label="Repetir" aria-pressed="false">↻</button>
+    </div>
+    <a id="np-link" class="np-link" target="_blank" rel="noopener" hidden>Ver en SoundCloud</a>
+  </footer>
+
+  <dialog id="add-dialog">
+    <form method="dialog">
+      <h3>Añadir a una lista</h3>
+      <ul id="add-options" class="options"></ul>
+      <button value="cancel" class="ghost">Cancelar</button>
+    </form>
+  </dialog>
+
+  <audio id="audio" preload="metadata"></audio>
+  <script src="local-library.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
