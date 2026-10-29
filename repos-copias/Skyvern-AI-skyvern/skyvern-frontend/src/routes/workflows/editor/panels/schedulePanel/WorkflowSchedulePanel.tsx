@@ -1,0 +1,161 @@
+import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useWorkflowSchedulesQuery } from "@/routes/workflows/hooks/useWorkflowSchedulesQuery";
+import {
+  useCreateScheduleMutation,
+  useToggleScheduleMutation,
+  useDeleteScheduleMutation,
+} from "@/routes/workflows/hooks/useScheduleMutations";
+import { useWorkflowQuery } from "@/routes/workflows/hooks/useWorkflowQuery";
+import { ScheduleCard } from "./ScheduleCard";
+import { CreateScheduleDialog } from "./CreateScheduleDialog";
+import { Cross2Icon, ReloadIcon } from "@radix-ui/react-icons";
+import { useState } from "react";
+import { useWorkflowPermanentId } from "@/routes/workflows/WorkflowPermanentIdContext";
+import type { CadencePayload } from "./scheduleCadence";
+
+type Props = {
+  onClose?: () => void;
+};
+
+function WorkflowSchedulePanel({ onClose }: Props) {
+  const {
+    data: schedules,
+    isLoading,
+    isError,
+    error,
+  } = useWorkflowSchedulesQuery();
+  const createSchedule = useCreateScheduleMutation();
+  const toggleSchedule = useToggleScheduleMutation();
+  const deleteSchedule = useDeleteScheduleMutation();
+  const [deleteDialogState, setDeleteDialogState] = useState<{
+    open: boolean;
+    scheduleId: string | null;
+  }>({ open: false, scheduleId: null });
+
+  const workflowPermanentId = useWorkflowPermanentId();
+  const { data: workflow } = useWorkflowQuery({ workflowPermanentId });
+  const workflowParameters = workflow?.workflow_definition.parameters ?? [];
+
+  const handleCreate = (
+    cadence: CadencePayload,
+    timezone: string,
+    name: string,
+    description: string,
+    parameters: Record<string, unknown> | null,
+    callbacks: { onSuccess: () => void },
+  ) => {
+    createSchedule.mutate(
+      {
+        ...cadence,
+        timezone,
+        enabled: true,
+        ...(name && { name }),
+        ...(description && { description }),
+        ...(parameters && { parameters }),
+      },
+      { onSuccess: callbacks.onSuccess },
+    );
+  };
+
+  const handleToggle = (scheduleId: string, enabled: boolean) => {
+    toggleSchedule.mutate({ scheduleId, enabled });
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deleteDialogState.scheduleId) {
+      deleteSchedule.mutate(deleteDialogState.scheduleId, {
+        onSettled: () => {
+          setDeleteDialogState({ open: false, scheduleId: null });
+        },
+      });
+    }
+  };
+
+  return (
+    <div className="flex h-full w-[22rem] flex-col rounded-lg border border-border bg-slate-elevation3">
+      <div className="flex items-center justify-between border-b border-border px-4 py-4">
+        <h3 className="text-sm font-normal text-foreground">
+          Schedules
+          {schedules && schedules.length > 0 ? ` (${schedules.length})` : ""}
+        </h3>
+        <div className="flex items-center gap-2">
+          <CreateScheduleDialog
+            workflowParameters={workflowParameters}
+            onSubmit={handleCreate}
+            isPending={createSchedule.isPending}
+          />
+          {onClose && (
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Close"
+              className="size-7"
+              onClick={onClose}
+            >
+              <Cross2Icon className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <ScrollArea>
+        <ScrollAreaViewport className="max-h-[calc(100vh-16rem)]">
+          <div className="flex flex-col gap-3 px-4 py-2">
+            {isLoading && (
+              <div className="flex items-center justify-center py-8">
+                <ReloadIcon className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {isError && (
+              <div className="py-8 text-center text-sm text-red-700 dark:text-red-400">
+                Failed to load schedules.
+                {error?.message && (
+                  <span className="block text-xs text-muted-foreground dark:text-slate-500">
+                    {error.message}
+                  </span>
+                )}
+              </div>
+            )}
+            {!isLoading &&
+              !isError &&
+              (!schedules || schedules.length === 0) && (
+                <div className="py-8 text-center text-sm text-muted-foreground dark:text-slate-500">
+                  No schedules configured.
+                  <br />
+                  Click &quot;Add&quot; to create one.
+                </div>
+              )}
+            {schedules?.map((schedule) => (
+              <ScheduleCard
+                key={schedule.workflow_schedule_id}
+                schedule={schedule}
+                isToggling={toggleSchedule.isPending}
+                onToggle={handleToggle}
+                onDelete={(id) =>
+                  setDeleteDialogState({ open: true, scheduleId: id })
+                }
+              />
+            ))}
+          </div>
+        </ScrollAreaViewport>
+      </ScrollArea>
+
+      <ConfirmDialog
+        open={deleteDialogState.open}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteDialogState({ open: false, scheduleId: null });
+          }
+        }}
+        title="Delete schedule?"
+        description={<p>This schedule will be permanently deleted.</p>}
+        isPending={deleteSchedule.isPending}
+        onConfirm={handleDeleteConfirm}
+      />
+    </div>
+  );
+}
+
+export { WorkflowSchedulePanel };

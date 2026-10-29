@@ -1,0 +1,420 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import and_, asc, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql.elements import ColumnElement
+
+from skyvern.config import settings
+from skyvern.forge.sdk.db._error_handling import db_operation
+from skyvern.forge.sdk.db.base_repository import BaseRepository
+from skyvern.forge.sdk.db.datetime_utils import naive_utc_now, to_naive_utc
+from skyvern.forge.sdk.db.models import TOTPCodeModel
+from skyvern.forge.sdk.schemas.totp_codes import OTPType, RawTOTPCode, TOTPCode
+from skyvern.utils.email_validation import SAFE_EMAIL_ADDRESS_PATTERN, normalize_email_address
+from skyvern.utils.phone_validation import looks_like_phone_identifier, phone_identifier_candidates
+
+_EXTERNAL_MESSAGE_DEDUPE_INDEX = "uq_totp_codes_org_external_message_id"
+
+
+def _is_duplicate_external_message(error: IntegrityError) -> bool:
+    constraint_name = getattr(getattr(error.orig, "diag", None), "constraint_name", None)
+    if constraint_name == _EXTERNAL_MESSAGE_DEDUPE_INDEX:
+        return True
+    error_text = str(error.orig).lower()
+    return (
+        _EXTERNAL_MESSAGE_DEDUPE_INDEX in error_text
+        or "unique constraint failed: totp_codes.organization_id, totp_codes.external_message_id" in error_text
+    )
+
+
+def _identifier_filter(totp_identifier: str) -> ColumnElement[bool]:
+    stripped_identifier = totp_identifier.strip()
+    if SAFE_EMAIL_ADDRESS_PATTERN.fullmatch(stripped_identifier):
+        return func.lower(TOTPCodeModel.totp_identifier) == normalize_email_address(totp_identifier)
+    if looks_like_phone_identifier(stripped_identifier):
+        return TOTPCodeModel.totp_identifier.in_({totp_identifier, *phone_identifier_candidates(stripped_identifier)})
+    return TOTPCodeModel.totp_identifier == totp_identifier
+
+
+class OTPRepository(BaseRepository):
+    """Database operations for OTP/TOTP management."""
+
+    @db_operation("get_otp_codes")
+    async def get_otp_codes(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        valid_lifespan_minutes: int = settings.TOTP_LIFESPAN_MINUTES,
+        otp_type: OTPType | None = None,
+        workflow_run_id: str | None = None,
+        include_unscoped_workflow_run: bool = False,
+        created_after: datetime | None = None,
+        limit: int | None = None,
+    ) -> list[TOTPCode]:
+        """
+        1. filter by:
+        - organization_id
+        - totp_identifier
+        - workflow_run_id (optional); include unscoped rows too when requested
+        - created_after (optional): only codes created at/after this instant
+        2. make sure created_at is within the valid lifespan
+        3. sort by task_id/workflow_id/workflow_run_id nullslast and created_at desc
+        4. apply an optional limit at the DB layer
+        """
+        all_null = and_(
+            TOTPCodeModel.task_id.is_(None),
+            TOTPCodeModel.workflow_id.is_(None),
+            TOTPCodeModel.workflow_run_id.is_(None),
+        )
+        async with self.Session() as session:
+            query = (
+                select(TOTPCodeModel)
+                .filter_by(organization_id=organization_id)
+                .filter(_identifier_filter(totp_identifier))
+                .filter_by(parse_status="parsed")
+                .filter(
+                    TOTPCodeModel.created_at > datetime.now(timezone.utc) - timedelta(minutes=valid_lifespan_minutes)
+                )
+            )
+            if otp_type:
+                query = query.filter(TOTPCodeModel.otp_type == otp_type)
+            if workflow_run_id is not None and include_unscoped_workflow_run:
+                query = query.filter(
+                    or_(TOTPCodeModel.workflow_run_id == workflow_run_id, TOTPCodeModel.workflow_run_id.is_(None))
+                )
+            elif workflow_run_id is not None:
+                query = query.filter(TOTPCodeModel.workflow_run_id == workflow_run_id)
+            if created_after is not None:
+                query = query.filter(TOTPCodeModel.created_at >= created_after)
+            query = query.order_by(asc(all_null), TOTPCodeModel.created_at.desc())
+            if limit is not None:
+                query = query.limit(limit)
+            totp_codes = (await session.scalars(query)).all()
+            return [TOTPCode.model_validate(code) for code in totp_codes]
+
+    @db_operation("get_otp_codes_by_run")
+    async def get_otp_codes_by_run(
+        self,
+        organization_id: str,
+        task_id: str | None = None,
+        workflow_run_id: str | None = None,
+        valid_lifespan_minutes: int = settings.TOTP_LIFESPAN_MINUTES,
+        limit: int = 1,
+    ) -> list[TOTPCode]:
+        """Get OTP codes matching a specific task or workflow run (no totp_identifier required).
+
+        Used when the agent detects a 2FA page but no TOTP credentials are pre-configured.
+        The user submits codes manually via the UI, and this method finds them by run context.
+        """
+        if not workflow_run_id and not task_id:
+            return []
+        async with self.Session() as session:
+            query = (
+                select(TOTPCodeModel)
+                .filter_by(organization_id=organization_id)
+                .filter_by(parse_status="parsed")
+                .filter(
+                    TOTPCodeModel.created_at > datetime.now(timezone.utc) - timedelta(minutes=valid_lifespan_minutes)
+                )
+            )
+            if workflow_run_id:
+                query = query.filter(TOTPCodeModel.workflow_run_id == workflow_run_id)
+            elif task_id:
+                query = query.filter(TOTPCodeModel.task_id == task_id)
+            query = query.order_by(TOTPCodeModel.created_at.desc()).limit(limit)
+            results = (await session.scalars(query)).all()
+            return [TOTPCode.model_validate(r) for r in results]
+
+    @db_operation("get_recent_otp_codes")
+    async def get_recent_otp_codes(
+        self,
+        organization_id: str,
+        limit: int = 50,
+        offset: int = 0,
+        valid_lifespan_minutes: int | None = None,
+        otp_type: OTPType | None = None,
+        workflow_run_id: str | None = None,
+        totp_identifier: str | None = None,
+    ) -> list[TOTPCode]:
+        """
+        Return recent otp codes for an organization ordered by newest first with optional
+        workflow_run_id filtering.
+        """
+        async with self.Session() as session:
+            query = select(TOTPCodeModel).filter_by(organization_id=organization_id).filter_by(parse_status="parsed")
+
+            if valid_lifespan_minutes is not None:
+                query = query.filter(
+                    TOTPCodeModel.created_at > datetime.now(timezone.utc) - timedelta(minutes=valid_lifespan_minutes)
+                )
+
+            if otp_type:
+                query = query.filter(TOTPCodeModel.otp_type == otp_type)
+            if workflow_run_id is not None:
+                query = query.filter(TOTPCodeModel.workflow_run_id == workflow_run_id)
+            if totp_identifier:
+                query = query.filter(_identifier_filter(totp_identifier))
+            query = query.order_by(TOTPCodeModel.created_at.desc(), TOTPCodeModel.totp_code_id.desc())
+            query = query.offset(offset).limit(limit)
+            totp_codes = (await session.scalars(query)).all()
+            return [TOTPCode.model_validate(totp_code) for totp_code in totp_codes]
+
+    @db_operation("count_otp_codes_since")
+    async def count_otp_codes_since(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        created_after: datetime,
+        source: str | None = None,
+    ) -> int:
+        async with self.Session() as session:
+            query = (
+                select(func.count())
+                .select_from(TOTPCodeModel)
+                .where(
+                    TOTPCodeModel.organization_id == organization_id,
+                    _identifier_filter(totp_identifier),
+                    TOTPCodeModel.created_at >= to_naive_utc(created_after),
+                )
+            )
+            if source is not None:
+                query = query.where(TOTPCodeModel.source == source)
+            return int((await session.scalar(query)) or 0)
+
+    @db_operation("create_otp_code")
+    async def create_otp_code(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        content: str,
+        code: str,
+        otp_type: OTPType,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        workflow_run_id: str | None = None,
+        source: str | None = None,
+        expired_at: datetime | None = None,
+    ) -> TOTPCode:
+        async with self.Session() as session:
+            new_totp_code = TOTPCodeModel(
+                organization_id=organization_id,
+                totp_identifier=totp_identifier,
+                content=content,
+                code=code,
+                # These columns are FKs: a blank string from an API caller is "not set",
+                # but only NULL satisfies the constraint.
+                task_id=task_id or None,
+                workflow_id=workflow_id or None,
+                workflow_run_id=workflow_run_id or None,
+                source=source,
+                expired_at=to_naive_utc(expired_at),
+                otp_type=otp_type,
+            )
+            session.add(new_totp_code)
+            # The flush fills Python defaults and RETURNING brings back server defaults, so the row needs no
+            # re-read; validate it before commit expires it.
+            await session.flush()
+            totp_code = TOTPCode.model_validate(new_totp_code)
+            await session.commit()
+            return totp_code
+
+    @db_operation("create_otp_code_if_new", log_errors=False)
+    async def create_otp_code_if_new(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        content: str,
+        code: str,
+        otp_type: OTPType,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        workflow_run_id: str | None = None,
+        source: str | None = None,
+        external_message_id: str | None = None,
+        expired_at: datetime | None = None,
+    ) -> TOTPCode | None:
+        async with self.Session() as session:
+            if external_message_id is not None:
+                existing = await session.scalar(
+                    select(TOTPCodeModel).filter_by(
+                        organization_id=organization_id,
+                        external_message_id=external_message_id,
+                    )
+                )
+                if existing is not None:
+                    return None
+            row = TOTPCodeModel(
+                organization_id=organization_id,
+                totp_identifier=totp_identifier,
+                content=content,
+                code=code,
+                task_id=task_id or None,
+                workflow_id=workflow_id or None,
+                workflow_run_id=workflow_run_id or None,
+                source=source,
+                external_message_id=external_message_id,
+                expired_at=to_naive_utc(expired_at),
+                otp_type=otp_type,
+            )
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                error.hide_parameters = True
+                await session.rollback()
+                if _is_duplicate_external_message(error):
+                    return None
+                raise
+            await session.refresh(row)
+            return TOTPCode.model_validate(row)
+
+    @db_operation("create_raw_otp_code")
+    async def create_raw_otp_code(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        content: str,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        workflow_run_id: str | None = None,
+        source: str | None = None,
+        expired_at: datetime | None = None,
+    ) -> RawTOTPCode:
+        async with self.Session() as session:
+            row = TOTPCodeModel(
+                organization_id=organization_id,
+                totp_identifier=totp_identifier,
+                content=content,
+                code=None,
+                otp_type=None,
+                parse_status="raw",
+                task_id=task_id or None,
+                workflow_id=workflow_id or None,
+                workflow_run_id=workflow_run_id or None,
+                source=source,
+                expired_at=to_naive_utc(expired_at),
+            )
+            session.add(row)
+            await session.flush()
+            raw_code = RawTOTPCode.model_validate(row)
+            await session.commit()
+            return raw_code
+
+    @db_operation("create_raw_otp_code_if_new", log_errors=False)
+    async def create_raw_otp_code_if_new(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        content: str,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        workflow_run_id: str | None = None,
+        source: str | None = None,
+        external_message_id: str | None = None,
+        expired_at: datetime | None = None,
+    ) -> RawTOTPCode | None:
+        async with self.Session() as session:
+            if external_message_id is not None:
+                existing = await session.scalar(
+                    select(TOTPCodeModel).filter_by(
+                        organization_id=organization_id,
+                        external_message_id=external_message_id,
+                    )
+                )
+                if existing is not None:
+                    return None
+            row = TOTPCodeModel(
+                organization_id=organization_id,
+                totp_identifier=totp_identifier,
+                content=content,
+                code=None,
+                otp_type=None,
+                parse_status="raw",
+                task_id=task_id or None,
+                workflow_id=workflow_id or None,
+                workflow_run_id=workflow_run_id or None,
+                source=source,
+                external_message_id=external_message_id,
+                expired_at=to_naive_utc(expired_at),
+            )
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError as error:
+                error.hide_parameters = True
+                await session.rollback()
+                if _is_duplicate_external_message(error):
+                    return None
+                raise
+            await session.refresh(row)
+            return RawTOTPCode.model_validate(row)
+
+    @db_operation("get_raw_otp_codes")
+    async def get_raw_otp_codes(
+        self,
+        organization_id: str,
+        totp_identifier: str,
+        valid_lifespan_minutes: int = settings.TOTP_LIFESPAN_MINUTES,
+        workflow_run_id: str | None = None,
+        include_unscoped_workflow_run: bool = False,
+        created_after: datetime | None = None,
+        excluded_ids: set[str] | None = None,
+        limit: int | None = None,
+    ) -> list[RawTOTPCode]:
+        async with self.Session() as session:
+            query = (
+                select(TOTPCodeModel)
+                .filter_by(
+                    organization_id=organization_id,
+                    parse_status="raw",
+                )
+                .filter(_identifier_filter(totp_identifier))
+                .filter(
+                    TOTPCodeModel.created_at > datetime.now(timezone.utc) - timedelta(minutes=valid_lifespan_minutes)
+                )
+            )
+            if workflow_run_id is not None and include_unscoped_workflow_run:
+                query = query.filter(
+                    or_(TOTPCodeModel.workflow_run_id == workflow_run_id, TOTPCodeModel.workflow_run_id.is_(None))
+                )
+            elif workflow_run_id is not None:
+                query = query.filter(TOTPCodeModel.workflow_run_id == workflow_run_id)
+            if created_after is not None:
+                query = query.filter(TOTPCodeModel.created_at >= created_after)
+            if excluded_ids:
+                query = query.filter(TOTPCodeModel.totp_code_id.not_in(excluded_ids))
+            query = query.order_by(TOTPCodeModel.created_at.desc())
+            if limit is not None:
+                query = query.limit(limit)
+            rows = (await session.scalars(query)).all()
+            return [RawTOTPCode.model_validate(row) for row in rows]
+
+    @db_operation("promote_raw_otp_code")
+    async def promote_raw_otp_code(
+        self,
+        totp_code_id: str,
+        organization_id: str,
+        code: str,
+        otp_type: OTPType,
+    ) -> TOTPCode | None:
+        async with self.Session() as session:
+            query = (
+                update(TOTPCodeModel)
+                .where(
+                    TOTPCodeModel.totp_code_id == totp_code_id,
+                    TOTPCodeModel.organization_id == organization_id,
+                    TOTPCodeModel.parse_status == "raw",
+                )
+                .values(code=code, otp_type=otp_type, parse_status="parsed", modified_at=naive_utc_now())
+                .returning(TOTPCodeModel)
+            )
+            row = (await session.scalars(query)).one_or_none()
+            if row is None:
+                return None
+            # Read the row before committing: commit expires the instance, and the
+            # refetch it would trigger runs outside the async greenlet context.
+            promoted = TOTPCode.model_validate(row)
+            await session.commit()
+            return promoted

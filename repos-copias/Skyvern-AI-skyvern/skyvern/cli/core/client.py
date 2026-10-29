@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+from collections import OrderedDict
+from contextvars import ContextVar, Token
+from threading import RLock
+from typing import TYPE_CHECKING, Any
+
+import httpx
+import structlog
+
+from skyvern._cli_bootstrap import CLOUD_URL_OPT_IN_MESSAGE, is_cli_command, is_cli_runtime
+from skyvern.client import RunSdkActionResponse, SkyvernEnvironment
+from skyvern.client.core.request_options import RequestOptions
+from skyvern.config import settings
+from skyvern.constants import SKYVERN_CLI_USER_AGENT, SKYVERN_MCP_USER_AGENT
+from skyvern.library.skyvern import Skyvern
+
+from .api_key_hash import hash_api_key_for_cache
+from .hosted_driver import HostedDriver, owners
+
+if TYPE_CHECKING:
+    from playwright.async_api import Playwright
+
+# Fern applies a per-call timeout to the whole request (connect, read, write and pool), so only run_sdk_action gets it.
+# 115 s bounds one call below the 120 s ALB idle timeout; a tool that makes several calls can still run longer.
+LOOPBACK_SDK_ACTION_TIMEOUT_SECONDS = 115
+
+_skyvern_instance: ContextVar[Skyvern | None] = ContextVar("skyvern_instance", default=None)
+_api_key_override: ContextVar[str | None] = ContextVar("skyvern_api_key_override", default=None)
+_global_skyvern_instance: Skyvern | None = None
+_api_key_clients: OrderedDict[str, Skyvern] = OrderedDict()
+# Evicted loopback clients whose driver a running call still leases; the idle sweep closes them once it is released.
+_closing_clients: set[_LoopbackSkyvern] = set()
+_clients_lock = RLock()
+LOG = structlog.get_logger(__name__)
+
+
+def _resolve_api_key_cache_size() -> int:
+    raw = os.environ.get("SKYVERN_MCP_API_KEY_CLIENT_CACHE_SIZE", "128")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 128
+
+
+_API_KEY_CLIENT_CACHE_MAX = _resolve_api_key_cache_size()
+
+
+def _cache_key(api_key: str) -> str:
+    """Hash API key so raw secrets are never stored as dict keys."""
+    return hash_api_key_for_cache(api_key)
+
+
+def _resolve_api_key() -> str | None:
+    return settings.SKYVERN_API_KEY or os.environ.get("SKYVERN_API_KEY")
+
+
+def _resolve_base_url() -> str | None:
+    return settings.SKYVERN_BASE_URL or os.environ.get("SKYVERN_BASE_URL")
+
+
+def _resolve_self_base_url() -> str:
+    """Build the base URL for the current server process.
+
+    When the MCP server is hosted inside the FastAPI process (stateless HTTP
+    mode), tool handlers must call back to the *same* server rather than the
+    default ``SkyvernEnvironment.CLOUD`` URL.  This prevents staging API keys
+    from being sent to production (or vice-versa).
+
+    Always uses HTTP on localhost since TLS terminates at the load balancer.
+    """
+    return f"http://127.0.0.1:{settings.PORT}"
+
+
+class _LoopbackSkyvern(Skyvern):
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._hosted_driver = HostedDriver()
+
+    async def run_sdk_action(
+        self, *, request_options: RequestOptions | None = None, **kwargs: Any
+    ) -> RunSdkActionResponse:
+        options: RequestOptions = {"timeout_in_seconds": LOOPBACK_SDK_ACTION_TIMEOUT_SECONDS, **(request_options or {})}
+        return await super().run_sdk_action(request_options=options, **kwargs)
+
+    async def _get_playwright(self) -> Playwright:
+        from .session_manager import stateless_call_playwright  # noqa: PLC0415 — circular import
+
+        # Concurrent calls on this key share one driver; each call leases it, and the API's idle sweep stops it
+        # once no call has used it for a while, so a key served once does not keep a driver for the process life.
+        return await stateless_call_playwright(self._hosted_driver)
+
+    async def aclose(self) -> None:
+        await self._close()
+
+    async def _close(self) -> bool:
+        with _clients_lock:
+            if self._hosted_driver.leases:
+                # Evicted while a call still uses the driver and this HTTP client; closing now would break that call.
+                _closing_clients.add(self)
+                return False
+            _closing_clients.discard(self)
+        reclaimed = await self._hosted_driver.close()
+        await super().aclose()
+        return reclaimed
+
+
+def _build_cloud_client(api_key: str) -> Skyvern:
+    from .session_manager import is_stateless_http_mode  # noqa: PLC0415 — circular import
+
+    client_class: type[Skyvern] = Skyvern
+    if is_stateless_http_mode():
+        client_class = _LoopbackSkyvern
+        base_url: str | None = _resolve_self_base_url()
+    else:
+        # Guard is CLI-scoped on purpose: prod temporal workers run with SKYVERN_BASE_URL
+        # unset and reach this factory via copilot self-heal — refusing unconditionally
+        # here is a production outage, not a hardening.
+        if is_cli_runtime() and api_key != "PLACEHOLDER" and not settings.is_skyvern_base_url_explicitly_configured:
+            raise RuntimeError(CLOUD_URL_OPT_IN_MESSAGE)
+        base_url = _resolve_base_url()
+    # Generated SDK methods send "x-user-agent": None when no per-call user_agent is given,
+    # clobbering constructor-level headers in the merge; httpx client-level defaults survive
+    # because None-valued headers are stripped before the request is sent (SKY-13333).
+    user_agent = SKYVERN_CLI_USER_AGENT if is_cli_command() else SKYVERN_MCP_USER_AGENT
+    return client_class(
+        api_key=api_key,
+        environment=SkyvernEnvironment.CLOUD,
+        base_url=base_url,
+        headers={"x-user-agent": user_agent},
+        httpx_client=httpx.AsyncClient(
+            timeout=60,
+            follow_redirects=True,
+            headers={"x-user-agent": user_agent},
+        ),
+    )
+
+
+def _close_skyvern_instance_best_effort(instance: Skyvern) -> None:
+    """Close a Skyvern instance, regardless of whether an event loop is running."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            asyncio.run(instance.aclose())
+        except Exception:
+            LOG.debug("Failed to close evicted Skyvern client", exc_info=True)
+        return
+
+    task = loop.create_task(instance.aclose())
+
+    def _on_done(done: asyncio.Task[None]) -> None:
+        try:
+            done.result()
+        except Exception:
+            LOG.debug("Failed to close evicted Skyvern client", exc_info=True)
+
+    task.add_done_callback(_on_done)
+
+
+def get_active_api_key() -> str | None:
+    """Return the effective API key for this request/context."""
+    return _api_key_override.get() or _resolve_api_key()
+
+
+def has_api_key_override() -> bool:
+    """Return whether the current context carries a request-scoped API key."""
+    return _api_key_override.get() is not None
+
+
+def set_api_key_override(api_key: str | None) -> Token[str | None]:
+    """Set request-scoped API key override for MCP HTTP requests."""
+    _skyvern_instance.set(None)
+    return _api_key_override.set(api_key)
+
+
+def reset_api_key_override(token: Token[str | None]) -> None:
+    """Reset request-scoped API key override."""
+    _api_key_override.reset(token)
+    _skyvern_instance.set(None)
+
+
+def get_skyvern() -> Skyvern:
+    """Get or create a Skyvern client instance."""
+    global _global_skyvern_instance
+
+    override_api_key = _api_key_override.get()
+    if override_api_key:
+        instance = _skyvern_instance.get()
+        if instance is None:
+            key = _cache_key(override_api_key)
+            evicted_clients: list[Skyvern] = []
+            # Hold lock across lookup + build + insert to prevent two coroutines
+            # from both building a client for the same API key concurrently.
+            with _clients_lock:
+                instance = _api_key_clients.get(key)
+                if instance is not None:
+                    _api_key_clients.move_to_end(key)
+                else:
+                    instance = _build_cloud_client(override_api_key)
+                    _api_key_clients[key] = instance
+                    _api_key_clients.move_to_end(key)
+                    while len(_api_key_clients) > _API_KEY_CLIENT_CACHE_MAX:
+                        _, evicted = _api_key_clients.popitem(last=False)
+                        evicted_clients.append(evicted)
+            for evicted in evicted_clients:
+                _close_skyvern_instance_best_effort(evicted)
+        _skyvern_instance.set(instance)
+        return instance
+
+    instance = _skyvern_instance.get()
+    if instance is None:
+        with _clients_lock:
+            instance = _global_skyvern_instance
+            if instance is None:
+                api_key = _resolve_api_key()
+                if api_key:
+                    instance = _build_cloud_client(api_key)
+                else:
+                    instance = Skyvern.local()
+                _global_skyvern_instance = instance
+    _skyvern_instance.set(instance)
+    return instance
+
+
+async def sweep_idle_hosted_drivers(now: float | None = None) -> int:
+    """Stop hosted MCP drivers that no call has used for the idle threshold, and close released evicted clients."""
+    now = time.monotonic() if now is None else now
+    reclaimed = 0
+    # Driven by the owner registry, not the client cache: an evicted client's driver can start after eviction.
+    for owner in owners():
+        try:
+            reclaimed += await owner.reap(now, settings.HOSTED_MCP_DRIVER_IDLE_SECONDS)
+        except Exception:
+            LOG.warning("Failed to stop an idle hosted MCP browser driver", exc_info=True)
+    with _clients_lock:
+        released = [client for client in _closing_clients if not client._hosted_driver.leases]
+    for client in released:
+        try:
+            reclaimed += await client._close()
+        except Exception:
+            LOG.warning("Failed to close an evicted hosted MCP client", exc_info=True)
+    return reclaimed
+
+
+async def shutdown_hosted_drivers() -> None:
+    """Stop every hosted MCP driver, leased or not, as the process shuts down."""
+    for owner in owners():
+        try:
+            await owner.close()
+        except Exception:
+            LOG.warning("Failed to stop a hosted MCP browser driver at shutdown", exc_info=True)
+
+
+async def close_skyvern() -> None:
+    """Close active Skyvern client(s) and release Playwright resources."""
+    global _global_skyvern_instance
+
+    instances: list[Skyvern] = []
+    seen: set[int] = set()
+    with _clients_lock:
+        candidates = (_skyvern_instance.get(), _global_skyvern_instance, *_api_key_clients.values())
+        _api_key_clients.clear()
+        _global_skyvern_instance = None
+
+    for candidate in candidates:
+        if candidate is None or id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        instances.append(candidate)
+
+    for instance in instances:
+        try:
+            await instance.aclose()
+        except Exception:
+            LOG.warning("Failed to close Skyvern client", exc_info=True)
+
+    _skyvern_instance.set(None)

@@ -1,0 +1,322 @@
+export const baseHelpTooltipContent = {
+  url: "The URL Skyvern is navigating to. Leave this field blank to pick up from where the last block left off.",
+  navigationGoal:
+    "Give Skyvern an objective. Make sure to include when the block is complete, when it should self-terminate, and any guardrails. Use {{ parameter_name }} to reference an input value",
+  parameters:
+    'Define placeholder values using the "inputs" drop down that you predefine or redefine run-to-run.',
+  dataExtractionGoal:
+    "Tell Skyvern what data you would like to scrape at the end of your run.",
+  dataSchema: "Specify a format for extracted data in JSON.",
+  maxRetries:
+    "Specify how many times you would like a block to retry upon failure.",
+  maxStepsOverride:
+    "Specify the maximum number of steps a block can take in total.",
+  completeOnDownload:
+    "Allow Skyvern to auto-complete the block when it downloads a file.",
+  fileSuffix:
+    "The complete filename (without extension) for downloaded files. This replaces the entire filename instead of being appended to a random name. Use {{ original_filename }} to keep the name the site gave the file, e.g. {{ fund }}_{{ original_filename }} to prefix it.",
+  errorCodeMapping:
+    "Knowing about why a block terminated can be important, specify error messages here.",
+  totpVerificationUrl:
+    "If you do not have a TOTP Identifier at hand, but do have an internal system for storing TOTP codes, link the endpoint here.",
+  totpIdentifier:
+    "If you are running multiple workflows at once, you will need to give the block an identifier to know that this TOTP goes with this block.",
+  continueOnFailure:
+    "If this block fails, skip the failure and continue to the next block in the current iteration. The remaining blocks in the same iteration will still run.",
+  nextLoopOnFailure:
+    "If this block fails, skip the remaining blocks in the current iteration and jump to the next loop iteration.",
+  onBlockFailure:
+    "Choose what happens when this block fails. 'Continue to next block in this iteration' swallows the failure and runs the rest of the iteration. 'Skip to next iteration' abandons the iteration and starts the next one.",
+  includeActionHistoryInVerification:
+    "Include the action history in the completion verification.",
+  engine:
+    "Default lets Skyvern choose the engine. Choosing an engine pins this block to it.",
+} as const;
+
+export const basePlaceholderContent = {
+  url: "(optional) Navigate to this URL: https://...",
+  navigationGoal: "Tell Skyvern what to do.",
+  dataExtractionGoal: "What data do you need to extract?",
+  maxRetries: "Default: 3",
+  maxStepsOverride: "Default: 10",
+  downloadSuffix:
+    "Enter the complete filename (without extension), or prefix the site's own name with {{ original_filename }}",
+  totpVerificationUrl: "Provide your 2FA endpoint",
+  totpIdentifier: "Add an ID that links your TOTP to the block",
+};
+
+// The run's browser starts on about:blank, so the first browser block must navigate somewhere.
+export const firstBrowserBlockUrlPlaceholder =
+  "(required) Navigate to this URL: https://...";
+
+export const helpTooltips = {
+  task: baseHelpTooltipContent,
+  taskv2: {
+    ...baseHelpTooltipContent,
+    maxSteps:
+      "The maximum number of steps this task will take to achieve its goal.",
+  },
+  navigation: baseHelpTooltipContent,
+  extraction: {
+    ...baseHelpTooltipContent,
+    dataExtractionGoal:
+      "Tell Skyvern what data you would like to scrape. Use {{ parameter_name }} to specify inputs to use.",
+    exportEnabled:
+      "Also write the extracted data to a downloadable Parquet file. No separate Data Export block needed.",
+    exportRecords:
+      "Defaults to this block's own extracted data. Only set this if you want to export something else, using {{ parameter_name }} to reference it.",
+  },
+  action: {
+    ...baseHelpTooltipContent,
+    navigationGoal:
+      "Specify a single step or action you'd like Skyvern to complete. Actions are one-off tasks like filling a field or interacting with a specific element on the page.\n\nCurrently supported actions are click, input text, upload file, and select. Use {{ parameter_name }} to specify inputs to use.",
+  },
+  fileDownload: {
+    ...baseHelpTooltipContent,
+    navigationGoal:
+      "Give Skyvern an objective that describes how to download the file.",
+    download_target:
+      "Choose whether to keep downloaded files in Skyvern or send them to S3, Azure Blob Storage, Google Drive, or SFTP.",
+    path: "The path of the destination folder to send the files to.",
+    prompt:
+      "Optionally describe which downloaded files should be sent (e.g. only certain file names). Leave empty to send all files.",
+    s3_bucket: "The S3 bucket to send the file to.",
+    aws_access_key_id: "The AWS access key ID to use to send the file to S3.",
+    aws_secret_access_key:
+      "The AWS secret access key to use to send the file to S3.",
+    region_name: "The AWS region",
+    endpoint_url:
+      "Optional https:// endpoint for S3-compatible storage (e.g. MinIO). Leave empty to use AWS S3.",
+    azure_storage_account_name: "The Azure Storage Account Name.",
+    azure_storage_account_key: "The Azure Storage Account Key.",
+    azure_blob_container_name: "The Azure Blob Container Name.",
+  },
+  validation: baseHelpTooltipContent,
+  textPrompt: {
+    ...baseHelpTooltipContent,
+    prompt:
+      "Write a prompt you would like passed into the LLM and specify the output format, if applicable.",
+  },
+  pdf_fill: {
+    ...baseHelpTooltipContent,
+    fileUrl:
+      "The source PDF URL, S3 URI, or file path from an earlier block output.",
+    prompt:
+      "Describe how to fill the PDF fields. Use {{ parameter_name }} references when needed.",
+    payload:
+      "Structured JSON data sent to the field-mapping model. Supports the {{ parameter | json }} filter.",
+    llmKey: "Optional LLM key override for the field-mapping step.",
+  },
+  split_pdf: {
+    ...baseHelpTooltipContent,
+    fileUrl:
+      "The source PDF URL, S3 URI, or file path from an earlier block output.",
+    prompt:
+      "Describe how to split the PDF. Use {{ parameter_name }} references when needed.",
+    llmKey: "Optional LLM key override for the split-planning step.",
+  },
+  google_sheets_read: {
+    ...baseHelpTooltipContent,
+    spreadsheetUrl:
+      "Paste a Google Sheets URL or pick from your connected account. Click the </> button to pass in a custom value instead — for example {{ target_spreadsheet_url }}.",
+    sheetName:
+      "Pick a tab once a spreadsheet is selected, or type the name directly. Click the </> button to pass in a custom value like sheet_{{ current_index }}.",
+    range: "A1 notation range to read (optional, defaults to all data)",
+    credentialId: "The credential ID for Google OAuth authentication",
+    hasHeaderRow:
+      "If enabled, the first row is used as column headers for the output objects",
+  },
+  email_inbox: {
+    ...baseHelpTooltipContent,
+    emailClient: "Choose Gmail or Outlook as the inbox provider.",
+    credentialId: "The connected email account used to read inbox messages.",
+    folder: "Gmail label e.g. INBOX / Outlook folder e.g. inbox.",
+    prompt: "Describe which emails to keep. Leave blank to keep all.",
+    sender: "Only include emails from this sender.",
+    subject: "Only include emails matching this subject.",
+    newerThanDays: "Only include emails newer than this many days.",
+    maxResults: "Maximum number of emails to return.",
+    includeBody: "Include email body text in matching results.",
+    downloadAttachments:
+      "Download non-inline attachments from matched emails for downstream blocks.",
+  },
+  google_sheets_write: {
+    ...baseHelpTooltipContent,
+    spreadsheetUrl:
+      "The Google Sheet to write to. Pick from your connected account, or click the </> button to pass in a custom value instead — for example {{ target_spreadsheet_url }}.",
+    credentialId:
+      "The Google account used to authenticate with the spreadsheet.",
+    sheetName:
+      "The sheet tab to write to. Pick a tab or create a new one. Click the </> button to pass in a custom value like sheet_{{ current_index }}.",
+    writeMode:
+      "Append adds new rows below existing data. Update Range overwrites the exact cells in the range you specify.",
+    range:
+      "Update Range: the cells to overwrite, in A1 notation (e.g. A2:D5) or a named range; the data shape must match. Append: optional start column (e.g. D:D); rows are added below existing data from that column.",
+    values:
+      "Jinja2 template that resolves to a JSON array. Arrays of lists write left-to-right; arrays of objects require column mappings below.",
+    columnMapping:
+      "Map each source field to a sheet column. Use the column letter (A, B, C) or the header name if your sheet has a header row.",
+  },
+  login: baseHelpTooltipContent,
+  loop: {
+    ...baseHelpTooltipContent,
+    loopValue:
+      "Define the values to iterate over. Use an input reference or natural language (e.g., 'Extract links of the top 2 posts'). Natural language automatically creates an extraction block that generates a list of string values. Use {{ current_value }} in the loop to get the current iteration value.",
+    loopDataSchema:
+      "JSON shape for extracted items when the loop value is natural language that triggers extraction—not when you point at an existing list input.",
+    completeIfEmpty:
+      "If the list is empty, treat this loop as successful and continue the workflow instead of failing.",
+    nextLoopOnFailure:
+      "When an iteration fails, skip its remaining blocks and start the next iteration instead of stopping the entire loop.",
+    continueOnFailure:
+      "If this loop ends in failure, let the rest of the workflow continue running instead of stopping. Does not affect iteration behavior — use 'Skip Iterations that Fail' for that.",
+  },
+  while_loop: {
+    ...baseHelpTooltipContent,
+    condition:
+      "Define when to keep iterating. Use a Jinja expression or natural language. The condition is checked before each round—if it is false on the first check, the loop body never runs. Use {{ current_index }} inside the loop; while loops do not set {{ current_value }}.",
+    nextLoopOnFailure:
+      "When an iteration fails, skip its remaining blocks and start the next iteration instead of stopping the entire loop.",
+    continueOnFailure:
+      "If this loop ends in failure, let the rest of the workflow continue running instead of stopping. Does not affect iteration behavior — use 'Skip Iterations that Fail' for that.",
+  },
+  sendEmail: {
+    ...baseHelpTooltipContent,
+    fileAttachments:
+      "Since we're in beta this section isn't fully customizable yet, contact us if you'd like to integrate it into your workflow.",
+  },
+  upload: {
+    ...baseHelpTooltipContent,
+    path: "Since we're in beta this section isn't fully customizable yet, contact us if you'd like to integrate it into your workflow.",
+  },
+  fileUpload: {
+    ...baseHelpTooltipContent,
+    path: "The path of the folder to upload the files to.",
+    prompt:
+      "Optionally describe which downloaded files should be uploaded (e.g. only certain file names). Leave empty to upload all files.",
+    storage_type:
+      "The type of storage to upload the file to. S3, Azure Blob Storage, Google Drive, and SFTP are supported.",
+    s3_bucket: "The S3 bucket to upload the file to.",
+    aws_access_key_id: "The AWS access key ID to use to upload the file to S3.",
+    aws_secret_access_key:
+      "The AWS secret access key to use to upload the file to S3.",
+    region_name: "The AWS region",
+    endpoint_url:
+      "Optional https:// endpoint for S3-compatible storage (e.g. MinIO). Leave empty to use AWS S3.",
+    azure_storage_account_name: "The Azure Storage Account Name.",
+    azure_storage_account_key: "The Azure Storage Account Key.",
+    azure_blob_container_name: "The Azure Blob Container Name.",
+  },
+  download: {
+    ...baseHelpTooltipContent,
+    url: "Since we're in beta this section isn't fully customizable yet, contact us if you'd like to integrate it into your workflow.",
+  },
+  codeBlock: baseHelpTooltipContent,
+  fileParser: {
+    ...baseHelpTooltipContent,
+    fileUrl:
+      "Since we're in beta this section isn't fully customizable yet, contact us if you'd like to integrate it into your workflow.",
+    fileType:
+      "The format of the file to parse. Auto-detected from the URL extension when possible. ZIP archives are always unzipped, and the block outputs the extracted files as file_name, file_path, and file_size. Data Schema is ignored for ZIPs. To parse contained files, loop over the output and pass each file_path to another File Parser block.",
+    worksheet:
+      "Excel only: the exact name of the worksheet to read. Leave empty to read the first worksheet. The run fails if the named worksheet is not in the workbook.",
+    forceOcr:
+      "PDF only: ignore the PDF's embedded text layer and read the pages with vision OCR instead. Skyvern already does this when the text layer is empty or its characters are scrambled; turn this on when a PDF's text layer is unreadable in some other way. OCR is slower, costs more than reading the text layer, and reads at most the first 50 pages, so a longer PDF loses the rest.",
+  },
+  terminate: {
+    ...baseHelpTooltipContent,
+    reason:
+      "Why the run stops here. It is recorded in the run's failure reason. Other parameters and earlier block outputs can be referenced, e.g. {{ account_number }}. Credentials and secrets cannot be referenced; a template that references one is dropped.",
+    errorCode:
+      "Optional. A code recorded with the run, so a retry rule, the run list filter, or a webhook can tell this stop apart. Other parameters and earlier block outputs can be referenced. Credentials and secrets cannot be referenced; a template that references one is dropped. Leave empty for no code.",
+  },
+  wait: {
+    ...baseHelpTooltipContent,
+    waitInSeconds:
+      "Specify a number for how many seconds to wait. Value must be between 1 and 1800 seconds.",
+  },
+  pdfParser: {
+    ...baseHelpTooltipContent,
+    fileUrl: "The URL from which the file will be downloaded",
+    jsonSchema: "Specify a format for the extracted information from the file",
+  },
+  url: baseHelpTooltipContent,
+  webSearch: {
+    ...baseHelpTooltipContent,
+    errorCodeMapping:
+      "Describe when each error code applies. After the search, the block checks the results against these descriptions. A match ends the block with that code.",
+    continueOnFailure:
+      "Continue the workflow when this block fails or terminates. The next block can read the error code from the block output.",
+  },
+  httpRequest: {
+    ...baseHelpTooltipContent,
+    url: "The URL to send the HTTP request to. You can use {{ parameter_name }} to reference inputs.",
+    method: "The HTTP method to use for the request.",
+    headers: "HTTP headers to include with the request as JSON object.",
+    body: "Request body as JSON object. Only used for POST, PUT, PATCH methods.",
+    timeout: "Request timeout in seconds.",
+    followRedirects: "Whether to automatically follow HTTP redirects.",
+    continueOnFailure:
+      "Allow the workflow to continue if the HTTP request fails.",
+  },
+};
+
+export function buildWhileLoopConditionTooltip(): string {
+  return helpTooltips.while_loop.condition;
+}
+
+export const placeholders = {
+  task: basePlaceholderContent,
+  taskv2: {
+    ...basePlaceholderContent,
+    prompt: "Tell Skyvern what to do",
+  },
+  navigation: {
+    ...basePlaceholderContent,
+    navigationGoal:
+      "Navigate to the product page for product with id {{ product_id }}",
+  },
+  extraction: {
+    ...basePlaceholderContent,
+    dataExtractionGoal:
+      "Extract the price of the product with id {{ product_id }}",
+  },
+  action: {
+    ...basePlaceholderContent,
+    navigationGoal: 'Input {{ name }} into "Name" field.',
+  },
+  fileDownload: {
+    navigationGoal: "Tell Skyvern which file to download.",
+  },
+  validation: basePlaceholderContent,
+  textPrompt: basePlaceholderContent,
+  login: {
+    ...basePlaceholderContent,
+    navigationGoal: "Login to the website using the {{ credentials }}",
+  },
+  loop: basePlaceholderContent,
+  while_loop: basePlaceholderContent,
+  sendEmail: basePlaceholderContent,
+  upload: basePlaceholderContent,
+  fileUpload: basePlaceholderContent,
+  download: basePlaceholderContent,
+  codeBlock: basePlaceholderContent,
+  fileUrl: basePlaceholderContent,
+  wait: basePlaceholderContent,
+  pdfParser: basePlaceholderContent,
+  url: {
+    ...basePlaceholderContent,
+    url: "(required) Navigate to this URL: https://...",
+  },
+  httpRequest: {
+    ...basePlaceholderContent,
+    url: "https://api.example.com/endpoint",
+    headers:
+      '{\n  "Content-Type": "application/json",\n  "Authorization": "Bearer {{ token }}"\n}',
+    body: '{\n  "key": "value",\n  "parameter": "{{ parameter_name }}"\n}',
+  },
+  scripts: {
+    scriptKey: "my-{{param1}}-{{param2}}-key",
+  },
+  sequentialKey: "my-{{param1}}-{{param2}}-sequential",
+};

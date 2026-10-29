@@ -1,0 +1,291 @@
+import { WorkflowApiResponse } from "@/routes/workflows/types/workflowTypes";
+import { WorkflowRunStatusApiResponse } from "@/api/types";
+import {
+  isDisplayedInWorkflowEditor,
+  WorkflowEditorParameterTypes,
+  WorkflowParameterTypes,
+  WorkflowParameterValueType,
+} from "../types/workflowTypes";
+import {
+  CredentialParameterYAML,
+  WorkflowParameterYAML,
+} from "../types/workflowYamlTypes";
+import {
+  ParametersState,
+  parameterIsSkyvernCredential,
+  SkyvernCredential,
+} from "./types";
+
+/**
+ * A single credential serializes to an editable workflow `credential_id`
+ * parameter (overridable at run/rerun time); only a rotation pool (2+
+ * credentials) becomes a block-scoped credential parameter.
+ */
+function skyvernCredentialToParameterYAML(
+  parameter: SkyvernCredential,
+): WorkflowParameterYAML | CredentialParameterYAML {
+  const hasCredentialRotation = (parameter.credentialIds?.length ?? 0) >= 2;
+  const hasFallbackCredentials =
+    (parameter.fallbackCredentialIds?.length ?? 0) > 0;
+  // An at-will credential (no default selected) cannot rotate or fall back — the pool
+  // shape requires a non-empty credential_id, so it serializes as a workflow parameter
+  // with a null default_value (the backend treats a no-default credential as at-will).
+  const hasPrimaryCredential = parameter.credentialId !== "";
+  if (
+    !hasPrimaryCredential ||
+    (!hasCredentialRotation && !hasFallbackCredentials)
+  ) {
+    return {
+      parameter_type: WorkflowParameterTypes.Workflow,
+      workflow_parameter_type: WorkflowParameterValueType.CredentialId,
+      default_value: parameter.credentialId || null,
+      key: parameter.key,
+      description: parameter.description || null,
+    };
+  }
+  return {
+    parameter_type: WorkflowParameterTypes.Credential,
+    credential_id: parameter.credentialId,
+    credential_ids: parameter.credentialIds ?? null,
+    selection_strategy: parameter.selectionStrategy ?? null,
+    fallback_credential_ids: parameter.fallbackCredentialIds ?? null,
+    fallback_trigger: parameter.fallbackTrigger ?? null,
+    key: parameter.key,
+    description: parameter.description || null,
+  };
+}
+
+/**
+ * The parameter edit panel only exposes key/credential/description, so an edit
+ * must carry over the rotation pool and fallback config it can't see — a plain
+ * rebuild silently wipes them. When the primary credential changes it is
+ * removed from the fallback list (a credential may not be its own fallback)
+ * and swapped into the head of the rotation pool.
+ */
+function applySkyvernCredentialEdit(
+  previous: ParametersState[number] | null | undefined,
+  edit: {
+    key: string;
+    credentialId: string;
+    description?: string | null;
+  },
+): SkyvernCredential {
+  const base: SkyvernCredential = {
+    key: edit.key,
+    parameterType: "credential",
+    credentialId: edit.credentialId,
+    description: edit.description ?? null,
+  };
+  if (
+    !previous ||
+    previous.parameterType !== "credential" ||
+    !parameterIsSkyvernCredential(previous)
+  ) {
+    return base;
+  }
+  if (!edit.credentialId) {
+    // Clearing the credential (at-will, no default) drops rotation/fallback
+    // config — those shapes require a primary credential.
+    return base;
+  }
+
+  const previousPool = previous.credentialIds ?? [];
+  const rotationPool =
+    previousPool.length >= 2
+      ? [
+          edit.credentialId,
+          ...previousPool.filter(
+            (id) => id !== previous.credentialId && id !== edit.credentialId,
+          ),
+        ]
+      : [];
+  const credentialIds = rotationPool.length >= 2 ? rotationPool : null;
+
+  const fallbackCredentialIds = (previous.fallbackCredentialIds ?? []).filter(
+    (id) => id !== edit.credentialId,
+  );
+  const hasFallback = fallbackCredentialIds.length > 0;
+
+  return {
+    ...base,
+    credentialIds,
+    selectionStrategy: credentialIds
+      ? (previous.selectionStrategy ?? null)
+      : null,
+    fallbackCredentialIds: hasFallback ? fallbackCredentialIds : null,
+    fallbackTrigger: hasFallback ? (previous.fallbackTrigger ?? null) : null,
+    dataType: previous.dataType,
+  };
+}
+
+const getInitialParameters = (workflow: WorkflowApiResponse) => {
+  return workflow.workflow_definition.parameters
+    .filter((parameter) => isDisplayedInWorkflowEditor(parameter))
+    .map((parameter) => {
+      if (parameter.parameter_type === WorkflowParameterTypes.Workflow) {
+        if (
+          parameter.workflow_parameter_type ===
+          WorkflowParameterValueType.CredentialId
+        ) {
+          return {
+            key: parameter.key,
+            parameterType: WorkflowEditorParameterTypes.Credential,
+            credentialId: (parameter.default_value as string | null) ?? "",
+            dataType: WorkflowParameterValueType.CredentialId,
+            description: parameter.description,
+          };
+        }
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Workflow,
+          dataType: parameter.workflow_parameter_type,
+          defaultValue: parameter.default_value,
+          description: parameter.description,
+        };
+      } else if (parameter.parameter_type === WorkflowParameterTypes.Context) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Context,
+          sourceParameterKey: parameter.source.key,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type ===
+        WorkflowParameterTypes.Bitwarden_Sensitive_Information
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Secret,
+          collectionId: parameter.bitwarden_collection_id,
+          identityKey: parameter.bitwarden_identity_key,
+          identityFields: parameter.bitwarden_identity_fields,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type ===
+        WorkflowParameterTypes.Bitwarden_Credit_Card_Data
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.CreditCardData,
+          collectionId: parameter.bitwarden_collection_id,
+          itemId: parameter.bitwarden_item_id,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type === WorkflowParameterTypes.Credential
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Credential,
+          credentialId: parameter.credential_id,
+          credentialIds: parameter.credential_ids ?? null,
+          selectionStrategy: parameter.selection_strategy ?? null,
+          fallbackCredentialIds: parameter.fallback_credential_ids ?? null,
+          fallbackTrigger: parameter.fallback_trigger ?? null,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type === WorkflowParameterTypes.OnePassword
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.OnePassword,
+          vaultId: parameter.vault_id,
+          itemId: parameter.item_id,
+          totpFieldName: parameter.totp_field_name,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type ===
+        WorkflowParameterTypes.Azure_Vault_Credential
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Credential,
+          vaultName: parameter.vault_name,
+          usernameKey: parameter.username_key,
+          passwordKey: parameter.password_key,
+          totpSecretKey: parameter.totp_secret_key,
+          description: parameter.description,
+        };
+      } else if (
+        parameter.parameter_type ===
+        WorkflowParameterTypes.Bitwarden_Login_Credential
+      ) {
+        return {
+          key: parameter.key,
+          parameterType: WorkflowEditorParameterTypes.Credential,
+          collectionId: parameter.bitwarden_collection_id,
+          itemId: parameter.bitwarden_item_id,
+          urlParameterKey: parameter.url_parameter_key,
+          description: parameter.description,
+        };
+      }
+      return undefined;
+    })
+    .filter(Boolean) as ParametersState;
+};
+
+/**
+ * Attempt to construct a valid code key value from the workflow parameters.
+ */
+const constructCacheKeyValue = (opts: {
+  codeKey: string;
+  workflow?: WorkflowApiResponse;
+  workflowRun?: WorkflowRunStatusApiResponse;
+}) => {
+  const { workflow, workflowRun } = opts;
+  const codeKey = opts.codeKey;
+
+  if (!workflow) {
+    return "";
+  }
+
+  const workflowParameters = workflowRun
+    ? (workflowRun?.parameters ?? {})
+    : getInitialParameters(workflow)
+        .filter((p) => p.parameterType === "workflow")
+        .reduce(
+          (acc, parameter) => {
+            acc[parameter.key] = parameter.defaultValue;
+            return acc;
+          },
+          {} as Record<string, unknown>,
+        );
+
+  return constructCacheKeyValueFromParameters({
+    codeKey,
+    parameters: workflowParameters,
+  });
+};
+
+const constructCacheKeyValueFromParameters = (opts: {
+  codeKey: string;
+  parameters: Record<string, unknown>;
+}) => {
+  const parameters = opts.parameters;
+  let codeKey = opts.codeKey;
+
+  for (const [name, value] of Object.entries(parameters)) {
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+
+    codeKey = codeKey.replace(`{{${name}}}`, value.toString());
+  }
+
+  if (codeKey.includes("{") || codeKey.includes("}")) {
+    return "";
+  }
+
+  return codeKey;
+};
+
+export {
+  applySkyvernCredentialEdit,
+  constructCacheKeyValue,
+  constructCacheKeyValueFromParameters,
+  getInitialParameters,
+  skyvernCredentialToParameterYAML,
+};

@@ -1,0 +1,604 @@
+// @vitest-environment jsdom
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import type { Node } from "@xyflow/react";
+import type { ComponentType } from "react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { clearDeferredEdits } from "@/hooks/useDeferredLockedEdit";
+import { useWorkflowParametersStore } from "@/store/WorkflowParametersStore";
+import {
+  beginCopilotAcceptance,
+  finishCopilotAcceptance,
+  useWorkflowYamlEditorStore,
+} from "@/store/WorkflowYamlEditorStore";
+import { useSidebarSaveStateStore } from "@/store/SidebarSaveStateStore";
+import {
+  BLOCK_SIDEBAR_WIDTH_MAX,
+  useBlockSidebarWidthStore,
+} from "@/store/BlockSidebarWidthStore";
+import { useWorkflowPanelStore } from "@/store/WorkflowPanelStore";
+
+import { BLOCK_FORMS, type WorkflowBlockNodeType } from "./BlockConfigForm";
+import { BlockConfigSidebar } from "./BlockConfigSidebar";
+import { getContainedBlockSidebarWidth } from "../blockSidebar";
+
+// The BlockConfigSidebar imports the AppNode barrel and the icon module
+// from the editor `nodes/` tree, which transitively pulls every block-type
+// component. Stub the surface this test exercises: the type guard says
+// "yes this is a block node" so the sidebar body looks up a block type;
+// the icon renders a marker; and `workflowBlockTitle` resolves the
+// fallback label. These mocks keep the test scoped to the structural
+// invariant (mount-stable aside) rather than the body content.
+vi.mock("../nodes", () => ({
+  isWorkflowBlockNode: () => true,
+}));
+vi.mock("../nodes/WorkflowBlockIcon", () => ({
+  WorkflowBlockIcon: () => <div data-testid="block-icon" />,
+}));
+vi.mock("../nodes/types", () => ({
+  workflowBlockTitle: { task: "Task" },
+}));
+
+const xyflow = vi.hoisted(() => ({
+  nodes: [] as Node[],
+  setNodes: vi.fn(),
+}));
+
+vi.mock("@xyflow/react", async () => {
+  const actual =
+    await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
+  const nodeFor = (id: string) => ({
+    id,
+    type: id === "start-block" ? "start" : "task",
+    data: {
+      label:
+        id === "block-a"
+          ? "Alpha"
+          : id === "start-block"
+            ? "__start_block__"
+            : id === "block-readonly"
+              ? "ReadOnly"
+              : "Beta",
+      editable: id !== "block-readonly",
+    },
+  });
+  return {
+    ...actual,
+    useReactFlow: () => ({
+      getNode: (id: string) =>
+        xyflow.nodes.find((node) => node.id === id) ?? nodeFor(id),
+      getNodes: () => xyflow.nodes,
+      setNodes: xyflow.setNodes,
+    }),
+    useNodesData: (id: string) =>
+      xyflow.nodes.find((node) => node.id === id) ?? nodeFor(id),
+  };
+});
+
+// EditableNodeTitle (used by the editable block title) measures truncation
+// via ResizeObserver, which jsdom does not implement. Stubbed per-test in
+// beforeEach/afterEach so the global does not leak across test files.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+// The structural invariants this file pins are about the sidebar shell,
+// not the body content. Stub each entry to a marker component so per-form
+// tests handle routing.
+const BLOCK_FORM_KEYS = Object.keys(BLOCK_FORMS) as WorkflowBlockNodeType[];
+const ORIGINAL_BLOCK_FORMS = { ...BLOCK_FORMS };
+const StubFormForBlockType: (
+  blockType: WorkflowBlockNodeType,
+) => ComponentType<{ blockId: string }> = (blockType) =>
+  function Stub({ blockId }) {
+    return (
+      <div
+        data-testid="block-config-form-stub"
+        data-block-type={blockType}
+        data-block-id={blockId}
+      />
+    );
+  };
+
+beforeEach(() => {
+  clearDeferredEdits();
+  useWorkflowYamlEditorStore.setState(
+    useWorkflowYamlEditorStore.getInitialState(),
+  );
+  useWorkflowParametersStore.setState({ parameters: [] });
+  xyflow.nodes = [
+    {
+      id: "block-a",
+      type: "task",
+      position: { x: 0, y: 0 },
+      data: { label: "Alpha", editable: true },
+    },
+  ];
+  xyflow.setNodes
+    .mockReset()
+    .mockImplementation((nodes: typeof xyflow.nodes) => {
+      xyflow.nodes = nodes;
+    });
+  vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+  useWorkflowPanelStore.getState().setSelectedBlockId(null);
+  useWorkflowPanelStore.getState().setWorkflowPanelState({
+    active: false,
+    content: "parameters",
+  });
+  useBlockSidebarWidthStore.getState().reset();
+  for (const key of BLOCK_FORM_KEYS) {
+    BLOCK_FORMS[key] = StubFormForBlockType(key);
+  }
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  cleanup();
+  for (const key of BLOCK_FORM_KEYS) {
+    BLOCK_FORMS[key] = ORIGINAL_BLOCK_FORMS[key];
+  }
+});
+
+// In studio the embedded editor keeps block settings inline in the blocks, so
+// the sidebar only surfaces the block library there (never a block-config form).
+function renderEmbedded(initialPath = "/workflows/wpid_abc/edit") {
+  return render(
+    <MemoryRouter initialEntries={[initialPath]}>
+      <BlockConfigSidebar embedded />
+    </MemoryRouter>,
+  );
+}
+
+describe("BlockConfigSidebar mount stability (SKY-9360)", () => {
+  test("renders the aside with the slide-in animation when a block is selected", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const aside = screen.getByTestId("block-config-sidebar");
+    expect(aside.tagName).toBe("ASIDE");
+    // The slide-in animation classes are the load-bearing piece — assert
+    // their presence rather than the full className string so layout
+    // tweaks do not flake the test.
+    expect(aside.className).toContain("animate-in");
+    expect(aside.className).toContain("slide-in-from-right");
+  });
+
+  test("does NOT render anything when selectedBlockId is null", () => {
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("block-config-sidebar")).toBeNull();
+  });
+
+  test("preserves the same aside DOM node when selectedBlockId switches between blocks", () => {
+    // Architectural invariant for SKY-9360: switching blocks must not
+    // remount the sidebar shell, otherwise the slide-in animation re-fires
+    // and the user perceives a flicker. SKY-9359 implemented this by
+    // keeping `BlockConfigSidebarBody` *unkeyed* on `selectedBlockId` —
+    // React reconciles in place and the aside DOM node persists across
+    // the update. This test pins that contract via reference equality.
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const asideBefore = screen.getByTestId("block-config-sidebar");
+    expect(asideBefore).toBeDefined();
+
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-b");
+    });
+
+    const asideAfter = screen.getByTestId("block-config-sidebar");
+    // Reference equality — same DOM node, no remount, animation does not
+    // re-fire. If a future change adds `key={selectedBlockId}` to the
+    // aside (or to a wrapping ancestor), this assertion flips.
+    expect(asideAfter).toBe(asideBefore);
+  });
+
+  test("unmounts the aside when selectedBlockId becomes null", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("block-config-sidebar")).not.toBeNull();
+
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId(null);
+    });
+    expect(screen.queryByTestId("block-config-sidebar")).toBeNull();
+  });
+
+  test("renders the BlockConfigForm dispatcher in the body for the selected block (SKY-9361)", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const stub = screen.getByTestId("block-config-form-stub");
+    expect(stub.getAttribute("data-block-type")).toBe("task");
+    expect(stub.getAttribute("data-block-id")).toBe("block-a");
+  });
+
+  test("block-config body uses px-6 py-5 padding", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const body = screen.getByTestId("block-config-sidebar-body");
+
+    expect(body.className).toContain("px-6");
+    expect(body.className).toContain("py-5");
+  });
+});
+
+describe("BlockConfigSidebar footer label", () => {
+  test("footer reads 'updated N sec ago' (not 'saved') so users do not confuse it with a workflow save", () => {
+    useSidebarSaveStateStore.getState().setLastUpdatedAt("block-a", Date.now());
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByText(/saved \d+ sec ago/i)).toBeNull();
+    expect(screen.getByText(/updated \d+ sec ago/i)).toBeDefined();
+  });
+});
+
+describe("BlockConfigSidebar mode gating (SKY-9361)", () => {
+  test("does NOT render in build mode even when a block is selected", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    const { container } = render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/build"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  test("renders in edit mode when a block is selected", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("block-config-sidebar")).toBeDefined();
+  });
+});
+
+describe("BlockConfigSidebar block library layout (contained drawer)", () => {
+  test("constrains the persisted sidebar width to the editor canvas gutter with numeric resize bounds", () => {
+    const getBoundingClientRect = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.dataset.testid === "editor-shell") {
+          return {
+            width: 500,
+            height: 800,
+            top: 0,
+            right: 500,
+            bottom: 800,
+            left: 0,
+            x: 0,
+            y: 0,
+            toJSON: () => {},
+          };
+        }
+
+        return {
+          width: 0,
+          height: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => {},
+        };
+      });
+
+    try {
+      act(() => {
+        useBlockSidebarWidthStore.getState().setWidth(BLOCK_SIDEBAR_WIDTH_MAX);
+        useWorkflowPanelStore.getState().setWorkflowPanelState({
+          active: true,
+          content: "nodeLibrary",
+        });
+      });
+
+      render(
+        <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+          <div data-testid="editor-shell">
+            <BlockConfigSidebar />
+          </div>
+        </MemoryRouter>,
+      );
+
+      // aside → shell wrapper → Resizable root (the element carrying the width).
+      const sidebarRoot = screen.getByTestId("block-config-sidebar")
+        .parentElement?.parentElement;
+
+      expect(getContainedBlockSidebarWidth(BLOCK_SIDEBAR_WIDTH_MAX, 500)).toBe(
+        452,
+      );
+      expect(sidebarRoot?.style.width).toBe("452px");
+      expect(sidebarRoot?.style.minWidth).toBe("320px");
+      expect(sidebarRoot?.style.maxWidth).toBe("452px");
+      expect(sidebarRoot?.style.cssText).not.toContain("min(");
+      expect(useBlockSidebarWidthStore.getState().renderedWidth).toBe(452);
+    } finally {
+      getBoundingClientRect.mockRestore();
+    }
+  });
+
+  test("lets block-library item labels shrink inside the bounded drawer", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setWorkflowPanelState({
+        active: true,
+        content: "nodeLibrary",
+      });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const item = screen.getByTestId("block-library-item-login");
+    const title = screen.getByText("Login Block");
+
+    expect(item.className).toContain("min-w-0");
+    expect(title.parentElement?.className).toContain("min-w-0");
+    expect(title.className).toContain("min-w-0");
+  });
+
+  test("binds the search panel width to the drawer so it does not shrink to its content (SKY-11494)", () => {
+    // The search input + results column live in a flex *row* parent, so without
+    // w-full the panel sizes to its widest child — it shrinks as the query
+    // narrows (e.g. "No results found") and leaves dead space when the drawer
+    // widens. w-full ties it to the panel width instead.
+    act(() => {
+      useWorkflowPanelStore.getState().setWorkflowPanelState({
+        active: true,
+        content: "nodeLibrary",
+      });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const panel = screen
+      .getByPlaceholderText("Search blocks...")
+      .closest(".flex-col");
+
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("w-full");
+  });
+
+  test("block-library body uses px-6 py-5 padding", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setWorkflowPanelState({
+        active: true,
+        content: "nodeLibrary",
+      });
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const body = screen.getByTestId("block-library-sidebar-body");
+
+    expect(body.className).toContain("px-6");
+    expect(body.className).toContain("py-5");
+  });
+});
+
+describe("BlockConfigSidebar block title editing (SKY-10255)", () => {
+  test("clicking the block title reveals an input and committing a new value calls the label change handler", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const title = screen.getByText("Alpha");
+    fireEvent.click(title);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "renamed_block" } });
+    fireEvent.blur(input);
+
+    expect(xyflow.nodes[0]?.data.label).toBe("renamed_block");
+    expect(xyflow.setNodes).toHaveBeenCalledTimes(1);
+  });
+
+  test("applies a sidebar label draft once after an automatic recovery lock releases", () => {
+    useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByText("Alpha"));
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "renamed_block" },
+    });
+    let token: symbol;
+    act(() => {
+      token = beginCopilotAcceptance()!;
+    });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(xyflow.nodes[0]?.data.label).toBe("Alpha");
+    expect(xyflow.setNodes).not.toHaveBeenCalled();
+
+    act(() => finishCopilotAcceptance(token));
+
+    expect(xyflow.nodes[0]?.data.label).toBe("renamed_block");
+    expect(xyflow.setNodes).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("renamed_block")).toBeDefined();
+  });
+
+  test("keeps the start node title non-editable (no input on click)", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("start-block");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const title = screen.getByText("Agent Settings");
+    fireEvent.click(title);
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(xyflow.setNodes).not.toHaveBeenCalled();
+  });
+
+  test("keeps the title non-editable for a read-only block (no input on click)", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-readonly");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    const title = screen.getByText("ReadOnly");
+    fireEvent.click(title);
+
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(xyflow.setNodes).not.toHaveBeenCalled();
+  });
+});
+
+describe("BlockConfigSidebar block type visibility (SKY-11622)", () => {
+  test("shows the block type beneath the editable label so the selected block type is identifiable without reading the form", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    // The label (block name) and the human-readable block type render as
+    // distinct lines — the type is no longer inferable only from the icon.
+    expect(screen.getByText("Alpha")).toBeDefined();
+    expect(screen.getByText("Task")).toBeDefined();
+  });
+
+  test("does not render a block-type line for the start (Agent Settings) node, which is not a block", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("start-block");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("Agent Settings")).toBeDefined();
+    expect(screen.queryByText("Task")).toBeNull();
+  });
+});
+
+describe("BlockConfigSidebar in the studio shell (embedded)", () => {
+  test("renders nothing for a selected block — settings are inline in the blocks", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("start-block");
+    });
+    renderEmbedded();
+
+    expect(screen.queryByTestId("block-config-sidebar")).toBeNull();
+  });
+
+  test("still renders the block library so blocks can be inserted", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setWorkflowPanelState({
+        active: true,
+        content: "nodeLibrary",
+      });
+    });
+    renderEmbedded();
+
+    expect(screen.getByText("Block Library")).toBeDefined();
+    expect(screen.getByTestId("block-config-sidebar")).toBeDefined();
+  });
+
+  test("legacy (non-embedded) editor keeps the block-config panel and close button", () => {
+    act(() => {
+      useWorkflowPanelStore.getState().setSelectedBlockId("block-a");
+    });
+    render(
+      <MemoryRouter initialEntries={["/workflows/wpid_abc/edit"]}>
+        <BlockConfigSidebar />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("block-config-sidebar")).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: "Close block configuration" }),
+    ).toBeDefined();
+  });
+});

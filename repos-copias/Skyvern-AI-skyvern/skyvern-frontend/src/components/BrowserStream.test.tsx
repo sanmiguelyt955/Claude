@@ -1,0 +1,1138 @@
+import { type ComponentProps } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { AxiosError, type AxiosResponse } from "axios";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { BrowserStream } from "./BrowserStream";
+import { BrowserSession } from "@/routes/browserSessions/BrowserSession";
+import { useRecordingLauncherStore } from "@/store/useRecordingLauncherStore";
+
+const mocks = vi.hoisted(() => {
+  type RfbListener = (event: { detail?: unknown }) => void;
+
+  const rfbInstances: Array<{
+    clipboardPasteFrom: ReturnType<typeof vi.fn>;
+    sendKey: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+    focus: ReturnType<typeof vi.fn>;
+    _framebufferUpdate: () => boolean;
+  }> = [];
+  const autoConnect = { value: true };
+  const apiGet = vi.fn(async () => ({
+    data: {
+      browser_session_id: "pbs_test",
+      status: "running",
+      browser_address: "ws://browser.test",
+      started_at: "2026-01-01T00:00:00Z",
+      completed_at: null as string | null,
+      stream_transport: "vnc",
+      vnc_streaming_supported: true,
+    },
+  }));
+
+  class MockRFB {
+    scaleViewport = false;
+    clipboardPasteFrom = vi.fn();
+    sendKey = vi.fn();
+    disconnect = vi.fn();
+    focus = vi.fn();
+    _framebufferUpdate = vi.fn(() => true);
+
+    private listeners: Record<string, RfbListener[]> = {};
+
+    constructor(target: HTMLElement) {
+      rfbInstances.push(this);
+      target.appendChild(document.createElement("canvas"));
+      if (autoConnect.value) {
+        queueMicrotask(() => this.emit("connect"));
+      }
+    }
+
+    addEventListener(type: string, listener: RfbListener) {
+      this.listeners[type] = [...(this.listeners[type] ?? []), listener];
+    }
+
+    removeEventListener(type: string, listener: RfbListener) {
+      this.listeners[type] = (this.listeners[type] ?? []).filter(
+        (candidate) => candidate !== listener,
+      );
+    }
+
+    private emit(type: string, detail?: unknown) {
+      for (const listener of this.listeners[type] ?? []) {
+        listener({ detail });
+      }
+    }
+  }
+
+  const wsInstances: Array<{ send: ReturnType<typeof vi.fn> }> = [];
+
+  class MockWebSocket {
+    onopen: ((event: Event) => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    send = vi.fn();
+    close = vi.fn();
+
+    constructor() {
+      wsInstances.push(this);
+      queueMicrotask(() => this.onopen?.(new Event("open")));
+    }
+  }
+
+  const settingsStore = {
+    setBrowserSessionId: vi.fn(),
+    setIsUsingABrowser: vi.fn(),
+  };
+
+  return {
+    MockRFB,
+    MockWebSocket,
+    apiGet,
+    autoConnect,
+    rfbInstances,
+    wsInstances,
+    settingsStore,
+    toast: vi.fn(),
+  };
+});
+
+vi.mock("@novnc/novnc/lib/rfb.js", () => ({
+  default: mocks.MockRFB,
+}));
+
+vi.mock("@/api/AxiosClient", () => ({
+  getClient: vi.fn(async () => ({ get: mocks.apiGet })),
+}));
+
+vi.mock("@/hooks/useCredentialGetter", () => ({
+  useCredentialGetter: () => async () => null,
+}));
+
+vi.mock("@/hooks/useRuntimeConfig", () => ({
+  resolveStreamTransport: (
+    globalMode: string,
+    sessionTransport: string | null | undefined,
+  ) => sessionTransport ?? globalMode,
+  useBrowserStreamingMode: () => ({ browserStreamingMode: "vnc" }),
+}));
+
+vi.mock(
+  "@/routes/browserSessions/hooks/useCloseBrowserSessionMutation",
+  () => ({
+    useCloseBrowserSessionMutation: () => ({
+      isPending: false,
+      mutate: vi.fn(),
+    }),
+  }),
+);
+vi.mock(
+  "@/routes/browserProfiles/hooks/useBackgroundBrowserProfileCreate",
+  () => ({
+    useBackgroundBrowserProfileCreate: () => ({
+      startBackgroundCreate: vi.fn(),
+    }),
+  }),
+);
+vi.mock("@/routes/workflows/editor/Workspace", () => ({
+  CopyText: () => null,
+}));
+vi.mock("@/components/ui/toaster", () => ({ Toaster: () => null }));
+vi.mock("@/routes/browserProfiles/SaveSessionAsBrowserProfileDialog", () => ({
+  SaveSessionAsBrowserProfileDialog: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionDownloads", () => ({
+  BrowserSessionDownloads: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionOccupiedBy", () => ({
+  BrowserSessionOccupiedBy: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionVideo", () => ({
+  BrowserSessionVideo: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionTimeline", () => ({
+  BrowserSessionTimeline: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionWorkflowRuns", () => ({
+  BrowserSessionWorkflowRuns: () => null,
+}));
+vi.mock("@/routes/browserSessions/BrowserSessionStream", () => ({
+  BrowserSessionStream: ({ forceCdp }: { forceCdp?: boolean }) => (
+    <div
+      data-force-cdp={forceCdp ? "true" : "false"}
+      data-testid="cdp-screencast"
+    />
+  ),
+}));
+
+vi.mock("@/store/useClientIdStore", () => ({
+  useClientIdStore: (selector: (state: { clientId: string }) => unknown) =>
+    selector({ clientId: "client-test" }),
+}));
+
+vi.mock("@/store/SettingsStore", () => ({
+  useSettingsStore: () => mocks.settingsStore,
+}));
+
+vi.mock("@/components/ui/use-toast", () => ({
+  toast: mocks.toast,
+}));
+
+const respondWithRunningSession = mocks.apiGet.getMockImplementation()!;
+
+type SessionFields = {
+  status: string;
+  browser_address: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+async function sessionWith(fields: Partial<SessionFields>) {
+  return { ...(await respondWithRunningSession()).data, ...fields };
+}
+
+function respondWith(respond: () => Promise<{ data: unknown }>) {
+  mocks.apiGet.mockImplementation(respond as typeof respondWithRunningSession);
+}
+
+function failWith(status: number) {
+  respondWith(async () => {
+    throw new AxiosError("request failed", undefined, undefined, undefined, {
+      status,
+    } as AxiosResponse);
+  });
+}
+
+// Through act, so React settles the renders and effects each tick schedules.
+function advance(ms: number) {
+  return act(() => vi.advanceTimersByTimeAsync(ms));
+}
+
+// Retries until React commits the expected state, polling on the real event
+// loop (React's scheduler runs there, and fake time does not drive it).
+// Interval 0 keeps vi.waitFor from also advancing fake time on every check.
+function settled(assertion: () => void) {
+  return vi.waitFor(assertion, { interval: 0 });
+}
+
+function sessionRequestCount() {
+  return (mocks.apiGet.mock.calls as unknown[][]).filter(
+    ([url]) => url === "/browser_sessions/pbs_test",
+  ).length;
+}
+
+function renderBrowserStream(
+  props: Pick<
+    ComponentProps<typeof BrowserStream>,
+    "browserSession" | "onActivity" | "onStreamStateChange"
+  > = {},
+) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserStream
+        browserSessionId="pbs_test"
+        browserSession={props.browserSession}
+        interactive={false}
+        showControlButtons={true}
+        onActivity={props.onActivity}
+        onStreamStateChange={props.onStreamStateChange}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+function renderBrowserSession() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/browser-sessions/pbs_test/stream"]}>
+        <Routes>
+          <Route
+            path="/browser-sessions/:browserSessionId/*"
+            element={<BrowserSession />}
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("BrowserStream", () => {
+  beforeEach(() => {
+    useRecordingLauncherStore.setState(
+      useRecordingLauncherStore.getInitialState(),
+    );
+    mocks.autoConnect.value = true;
+    Object.defineProperty(globalThis, "WebSocket", {
+      configurable: true,
+      value: mocks.MockWebSocket,
+    });
+    Object.defineProperty(window, "WebSocket", {
+      configurable: true,
+      value: mocks.MockWebSocket,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        readText: vi.fn(async () => "https://example.test"),
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    mocks.apiGet.mockImplementation(respondWithRunningSession);
+    mocks.rfbInstances.length = 0;
+    mocks.wsInstances.length = 0;
+  });
+
+  it("releases and restores held left Cmd around VNC paste", async () => {
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream");
+    const canvas = container.querySelector("canvas");
+
+    expect(stream).toBeInstanceOf(HTMLElement);
+    expect(mocks.rfbInstances).toHaveLength(1);
+
+    fireEvent.keyDown(stream!, { key: "v", metaKey: true });
+    expect(mocks.rfbInstances[0]?.clipboardPasteFrom).not.toHaveBeenCalled();
+
+    fireEvent.click(takeControlButton);
+    fireEvent.keyDown(canvas!, { key: "Meta", code: "MetaLeft" });
+    fireEvent.keyDown(stream!, { key: "v", metaKey: true });
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.clipboardPasteFrom).toHaveBeenCalledWith(
+        "https://example.test",
+      );
+    });
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenCalledTimes(6);
+    });
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      1,
+      0xffeb,
+      "MetaLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      2,
+      0xffe3,
+      "ControlLeft",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      3,
+      0x0076,
+      "KeyV",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      4,
+      0x0076,
+      "KeyV",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      5,
+      0xffe3,
+      "ControlLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      6,
+      0xffeb,
+      "MetaLeft",
+      true,
+    );
+  });
+
+  it("sends Apple left Cmd as Super_L so the remote page sees Meta, not Alt", async () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const canvas = container.querySelector("canvas");
+
+    fireEvent.click(takeControlButton);
+    fireEvent.keyDown(canvas!, { key: "Meta", code: "MetaLeft" });
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenLastCalledWith(
+      0xffeb,
+      "MetaLeft",
+      true,
+    );
+
+    fireEvent.keyUp(window, { key: "Meta", code: "MetaLeft" });
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenLastCalledWith(
+      0xffeb,
+      "MetaLeft",
+      false,
+    );
+  });
+
+  it("clears a held Cmd side when Meta is released elsewhere in the window", async () => {
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream");
+    const canvas = container.querySelector("canvas");
+
+    expect(stream).toBeInstanceOf(HTMLElement);
+    expect(mocks.rfbInstances).toHaveLength(1);
+
+    fireEvent.click(takeControlButton);
+    fireEvent.keyDown(canvas!, { key: "Meta", code: "MetaLeft" });
+    fireEvent.keyUp(window, { key: "Meta", code: "MetaLeft" });
+    fireEvent.keyDown(stream!, { key: "v", metaKey: true });
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.clipboardPasteFrom).toHaveBeenCalledWith(
+        "https://example.test",
+      );
+    });
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenCalledTimes(8);
+    });
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      1,
+      0xffe9,
+      "AltLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      2,
+      0xffea,
+      "AltRight",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      3,
+      0xffeb,
+      "MetaLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      4,
+      0xffec,
+      "MetaRight",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      5,
+      0xffe3,
+      "ControlLeft",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      6,
+      0x0076,
+      "KeyV",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      7,
+      0x0076,
+      "KeyV",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      8,
+      0xffe3,
+      "ControlLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalledWith(
+      0xffeb,
+      "MetaLeft",
+      true,
+    );
+  });
+
+  it("does not restore a Cmd side whose keydown noVNC never received", async () => {
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream");
+
+    expect(stream).toBeInstanceOf(HTMLElement);
+    expect(mocks.rfbInstances).toHaveLength(1);
+
+    fireEvent.click(takeControlButton);
+    fireEvent.keyDown(stream!, { key: "Meta", code: "MetaLeft" });
+    fireEvent.keyDown(stream!, { key: "v", metaKey: true });
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.clipboardPasteFrom).toHaveBeenCalledWith(
+        "https://example.test",
+      );
+    });
+    await waitFor(() => {
+      expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenCalledTimes(8);
+    });
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      1,
+      0xffe9,
+      "AltLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      2,
+      0xffea,
+      "AltRight",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      3,
+      0xffeb,
+      "MetaLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      4,
+      0xffec,
+      "MetaRight",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      5,
+      0xffe3,
+      "ControlLeft",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      6,
+      0x0076,
+      "KeyV",
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      7,
+      0x0076,
+      "KeyV",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).toHaveBeenNthCalledWith(
+      8,
+      0xffe3,
+      "ControlLeft",
+      false,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalledWith(
+      0xffe9,
+      expect.any(String),
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalledWith(
+      0xffea,
+      expect.any(String),
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalledWith(
+      0xffeb,
+      expect.any(String),
+      true,
+    );
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalledWith(
+      0xffec,
+      expect.any(String),
+      true,
+    );
+  });
+
+  it("shows a destructive toast when browser clipboard access fails", async () => {
+    const error = new Error("denied");
+    vi.mocked(navigator.clipboard.readText).mockRejectedValueOnce(error);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream");
+
+    fireEvent.click(takeControlButton);
+    fireEvent.keyDown(stream!, { key: "v", metaKey: true });
+
+    await waitFor(() => {
+      expect(mocks.toast).toHaveBeenCalledWith({
+        title: "Paste failed",
+        description:
+          "Skyvern couldn't read your clipboard. Allow clipboard access for this site and try again.",
+        variant: "destructive",
+      });
+    });
+    expect(mocks.toast).toHaveBeenCalledTimes(1);
+    expect(mocks.rfbInstances[0]?.clipboardPasteFrom).not.toHaveBeenCalled();
+    expect(mocks.rfbInstances[0]?.sendKey).not.toHaveBeenCalled();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  it("pastes the local clipboard over VNC from the control bar and stops control from it", async () => {
+    renderBrowserStream();
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: /take control/i },
+        { timeout: 10000 },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^paste$/i }));
+
+    const rfb = mocks.rfbInstances[0]!;
+    await waitFor(() =>
+      expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith(
+        "https://example.test",
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "Sent 20 characters",
+      ),
+    );
+    expect(rfb.sendKey.mock.calls).toEqual([
+      [0xffe3, "ControlLeft", true],
+      [0x0076, "KeyV", true],
+      [0x0076, "KeyV", false],
+      [0xffe3, "ControlLeft", false],
+    ]);
+    expect(rfb.focus).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /stop controlling/i }));
+    expect(screen.queryByRole("button", { name: /^paste$/i })).toBeNull();
+    expect(
+      document
+        .querySelector(".browser-stream")
+        ?.classList.contains("user-is-controlling"),
+    ).toBe(false);
+  });
+
+  it("takes VNC control while a demonstration records and releases it when recording ends", async () => {
+    const { container } = renderBrowserStream();
+    await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream");
+    expect(stream?.classList.contains("user-is-controlling")).toBe(false);
+
+    act(() =>
+      useRecordingLauncherStore.setState({
+        demonstrationBrowserSessionId: "pbs_test",
+        demonstrationRecordingBrowserSessionId: "pbs_test",
+      }),
+    );
+    await waitFor(() =>
+      expect(stream?.classList.contains("user-is-controlling")).toBe(true),
+    );
+
+    act(() =>
+      useRecordingLauncherStore.setState({
+        demonstrationRecordingBrowserSessionId: null,
+      }),
+    );
+    await waitFor(() =>
+      expect(stream?.classList.contains("user-is-controlling")).toBe(false),
+    );
+  });
+
+  it("pastes an Edit-menu paste over VNC only while in control", async () => {
+    const { container } = renderBrowserStream();
+    const takeControlButton = await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const canvas = container.querySelector("canvas")!;
+    const menuPaste = () =>
+      fireEvent.paste(canvas, {
+        clipboardData: { getData: () => "from the menu" },
+      });
+    const rfb = mocks.rfbInstances[0]!;
+
+    menuPaste();
+    expect(rfb.clipboardPasteFrom).not.toHaveBeenCalled();
+
+    fireEvent.click(takeControlButton);
+    menuPaste();
+
+    await waitFor(() =>
+      expect(rfb.clipboardPasteFrom).toHaveBeenCalledWith("from the menu"),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "Sent 13 characters",
+      ),
+    );
+    expect(rfb.sendKey).toHaveBeenCalledWith(0x0076, "KeyV", true);
+  });
+
+  it("takes control on a click anywhere on the read-only picture, not just the button", async () => {
+    const { container } = renderBrowserStream();
+    await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    const stream = container.querySelector(".browser-stream")!;
+    expect(stream.classList.contains("user-is-controlling")).toBe(false);
+
+    fireEvent.click(screen.getByTestId("browser-stream-overlay"));
+
+    expect(stream.classList.contains("user-is-controlling")).toBe(true);
+    expect(
+      screen
+        .getByTestId("browser-stream-overlay")
+        .classList.contains("can-take-control"),
+    ).toBe(false);
+  });
+
+  it("re-sends take-control after VNC reconnects so the new VNC channel accepts input", async () => {
+    renderBrowserStream();
+    await screen.findByRole(
+      "button",
+      { name: /take control/i },
+      { timeout: 10000 },
+    );
+    fireEvent.click(screen.getByTestId("browser-stream-overlay"));
+
+    const takeControlCount = () =>
+      mocks.wsInstances
+        .flatMap((ws) => ws.send.mock.calls)
+        .filter(([data]) => JSON.parse(data as string).kind === "take-control")
+        .length;
+    await waitFor(() => expect(takeControlCount()).toBeGreaterThan(0));
+    const beforeReconnect = takeControlCount();
+
+    const rfb = mocks.rfbInstances[0] as unknown as {
+      emit: (type: string, detail?: unknown) => void;
+    };
+    rfb.emit("disconnect", { clean: false });
+
+    await waitFor(() => expect(mocks.rfbInstances).toHaveLength(2), {
+      timeout: 5000,
+    });
+    await waitFor(() => expect(takeControlCount()).toBe(beforeReconnect + 1));
+  });
+
+  it("notifies activity after a VNC framebuffer update completes", async () => {
+    const onActivity = vi.fn();
+
+    renderBrowserStream({ onActivity });
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances).toHaveLength(1);
+    });
+
+    mocks.rfbInstances[0]!._framebufferUpdate();
+
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the message socket only after VNC connects and keeps it through a VNC drop", async () => {
+    mocks.autoConnect.value = false;
+    renderBrowserStream();
+
+    await waitFor(() => expect(mocks.rfbInstances).toHaveLength(1));
+    // Give an ungated message socket every chance to open first.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(mocks.wsInstances).toHaveLength(0);
+
+    const rfb = mocks.rfbInstances[0] as unknown as {
+      emit: (type: string, detail?: unknown) => void;
+    };
+    rfb.emit("connect");
+    await waitFor(() => expect(mocks.wsInstances).toHaveLength(1));
+
+    rfb.emit("disconnect", { clean: false });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const messageSocket = mocks.wsInstances[0] as unknown as {
+      close: ReturnType<typeof vi.fn>;
+    };
+    expect(mocks.wsInstances).toHaveLength(1);
+    expect(messageSocket.close).not.toHaveBeenCalled();
+  });
+
+  it("falls back to CDP when VNC disconnects before the handshake", async () => {
+    mocks.autoConnect.value = false;
+
+    renderBrowserSession();
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances).toHaveLength(1);
+    });
+
+    const rfb = mocks.rfbInstances[0] as unknown as {
+      emit: (type: string, detail?: unknown) => void;
+    };
+    rfb.emit("disconnect", { clean: false });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("cdp-screencast").getAttribute("data-force-cdp"),
+      ).toBe("true");
+    });
+  });
+
+  it("opens no stream on the session page for a registered external browser", async () => {
+    respondWith(async () => ({
+      data: { ...(await respondWithRunningSession()).data, source: "external" },
+    }));
+
+    renderBrowserSession();
+
+    await screen.findByText(
+      "Live view is not available for a registered external browser.",
+    );
+    expect(mocks.rfbInstances).toHaveLength(0);
+    expect(mocks.wsInstances).toHaveLength(0);
+    expect(screen.queryByTestId("cdp-screencast")).toBeNull();
+  });
+
+  it("backs off VNC reconnects and reports stopped only after the cap", async () => {
+    vi.useFakeTimers();
+    try {
+      const onStreamStateChange = vi.fn();
+      renderBrowserStream({ onStreamStateChange });
+      await settled(() =>
+        expect(onStreamStateChange).toHaveBeenLastCalledWith(
+          "live",
+          "pbs_test",
+        ),
+      );
+      expect(mocks.rfbInstances).toHaveLength(1);
+      mocks.autoConnect.value = false;
+
+      // Each disconnect schedules exactly one delayed redial, up to the cap.
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const instanceCount = mocks.rfbInstances.length;
+        const rfb = mocks.rfbInstances[
+          mocks.rfbInstances.length - 1
+        ] as unknown as {
+          emit: (type: string, detail?: unknown) => void;
+        };
+        act(() => rfb.emit("disconnect", { clean: false }));
+        // No immediate redial: the retry waits out its backoff delay.
+        // This absence check settles on act's trailing macrotask, which drains
+        // only microtask-only chains (the mocked async getClient and
+        // useCredentialGetter); if the dial path ever awaits real macrotasks,
+        // it false-passes silently.
+        await advance(0);
+        expect(mocks.rfbInstances).toHaveLength(instanceCount);
+        // Max delay 15s plus up to 50% jitter.
+        await advance(30000);
+        await settled(() =>
+          expect(mocks.rfbInstances).toHaveLength(instanceCount + 1),
+        );
+      }
+      expect(onStreamStateChange).toHaveBeenLastCalledWith(
+        "connecting",
+        "pbs_test",
+      );
+
+      const instanceCount = mocks.rfbInstances.length;
+      const rfb = mocks.rfbInstances[
+        mocks.rfbInstances.length - 1
+      ] as unknown as {
+        emit: (type: string, detail?: unknown) => void;
+      };
+      act(() => rfb.emit("disconnect", { clean: false }));
+      await advance(120000);
+      expect(mocks.rfbInstances).toHaveLength(instanceCount);
+      await settled(() =>
+        expect(onStreamStateChange).toHaveBeenLastCalledWith(
+          "stopped",
+          "pbs_test",
+        ),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports stopped once the browser session has completed", async () => {
+    const runningSession = mocks.apiGet.getMockImplementation()!;
+    mocks.apiGet.mockImplementation(async () => {
+      const response = await runningSession();
+      return {
+        data: { ...response.data, completed_at: "2026-01-01T01:00:00Z" },
+      };
+    });
+    try {
+      const onStreamStateChange = vi.fn();
+      renderBrowserStream({ onStreamStateChange });
+
+      await waitFor(() =>
+        expect(onStreamStateChange).toHaveBeenLastCalledWith(
+          "stopped",
+          "pbs_test",
+        ),
+      );
+      expect(mocks.rfbInstances).toHaveLength(0);
+    } finally {
+      mocks.apiGet.mockImplementation(runningSession);
+    }
+  });
+
+  it("shows a two-sentence message on an unclean VNC disconnect", async () => {
+    renderBrowserStream();
+
+    await waitFor(() => {
+      expect(mocks.rfbInstances).toHaveLength(1);
+    });
+
+    const rfb = mocks.rfbInstances[0] as unknown as {
+      emit: (type: string, detail?: unknown) => void;
+    };
+    await waitFor(() => {
+      expect(mocks.settingsStore.setIsUsingABrowser).toHaveBeenCalledWith(true);
+    });
+    mocks.autoConnect.value = false;
+    rfb.emit("disconnect", { clean: false });
+
+    // The component reconnects after a disconnect, which flips isReady back
+    // quickly -- assert everything about this one render in a single atomic
+    // callback so a reconnect between separate awaits can't hide a failure.
+    await waitFor(() => {
+      expect(screen.getByText("The browser stream slipped away")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Refresh the page or switch to local browser streaming.",
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(
+          "The browser stream dropped before everything wrapped up.",
+        ),
+      ).toBeNull();
+    });
+  });
+
+  describe("session polling", () => {
+    const WINDOW_MS = 30_000;
+    const STARTED = {};
+    const NOT_STARTED = {
+      status: "created",
+      browser_address: null,
+      started_at: null,
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each([
+      {
+        mount: "the session page",
+        render: renderBrowserSession,
+        phase: "a started",
+        fields: STARTED,
+        intervalMs: 5000,
+      },
+      {
+        mount: "the session page",
+        render: renderBrowserSession,
+        phase: "a not-yet-started",
+        fields: NOT_STARTED,
+        intervalMs: 1000,
+      },
+      {
+        mount: "a mount with no parent session",
+        render: () => renderBrowserStream(),
+        phase: "a started",
+        fields: STARTED,
+        intervalMs: 5000,
+      },
+      {
+        mount: "a mount with no parent session",
+        render: () => renderBrowserStream(),
+        phase: "a not-yet-started",
+        fields: NOT_STARTED,
+        intervalMs: 1000,
+      },
+    ])(
+      "requests $phase session once per interval from $mount",
+      async ({ render: renderMount, fields, intervalMs }) => {
+        const session = await sessionWith(fields);
+        respondWith(async () => ({ data: session }));
+        renderMount();
+        await advance(500);
+        mocks.apiGet.mockClear();
+
+        await advance(WINDOW_MS);
+
+        expect(sessionRequestCount()).toBe(WINDOW_MS / intervalMs);
+      },
+    );
+
+    it("dials VNC from the session page once the page's poll reports the session started", async () => {
+      const notStarted = await sessionWith(NOT_STARTED);
+      respondWith(async () => ({ data: notStarted }));
+      renderBrowserSession();
+      await advance(3000);
+      expect(screen.getByText(/warming up your browser/i)).toBeTruthy();
+      expect(mocks.rfbInstances).toHaveLength(0);
+
+      mocks.apiGet.mockImplementation(respondWithRunningSession);
+      await advance(1500);
+
+      expect(mocks.rfbInstances).toHaveLength(1);
+    });
+
+    describe.each(["its own poll", "the parent's session"] as const)(
+      "reading the session from %s",
+      (source) => {
+        it.each([
+          {
+            state: "completed",
+            fields: { completed_at: "2026-01-01T01:00:00Z" },
+            panel: /wandered off/i,
+            vncDials: 0,
+            streamState: "stopped",
+          },
+          {
+            state: "started, by started_at alone",
+            fields: { browser_address: null },
+            panel: null,
+            vncDials: 1,
+            streamState: "live",
+          },
+          {
+            state: "started, by browser_address alone",
+            fields: { started_at: null },
+            panel: null,
+            vncDials: 1,
+            streamState: "live",
+          },
+          {
+            state: "not yet started",
+            fields: NOT_STARTED,
+            panel: /warming up your browser/i,
+            vncDials: 0,
+            streamState: "connecting",
+          },
+        ])(
+          "a $state session",
+          async ({ fields, panel, vncDials, streamState }) => {
+            const session = await sessionWith(fields);
+            const onStreamStateChange = vi.fn();
+            if (source === "its own poll") {
+              respondWith(async () => ({ data: session }));
+              renderBrowserStream({ onStreamStateChange });
+            } else {
+              renderBrowserStream({
+                onStreamStateChange,
+                browserSession: session,
+              });
+            }
+
+            await advance(1000);
+
+            expect(mocks.rfbInstances).toHaveLength(vncDials);
+            expect(onStreamStateChange).toHaveBeenLastCalledWith(
+              streamState,
+              "pbs_test",
+            );
+            if (panel) {
+              expect(screen.getByText(panel)).toBeTruthy();
+            }
+            expect(sessionRequestCount() > 0).toBe(source === "its own poll");
+          },
+        );
+      },
+    );
+
+    it("treats a missing session as ended", async () => {
+      respondWith(async () => ({ data: null }));
+      const onStreamStateChange = vi.fn();
+      renderBrowserStream({ onStreamStateChange });
+
+      await advance(1000);
+
+      expect(screen.getByText(/wandered off/i)).toBeTruthy();
+      expect(mocks.rfbInstances).toHaveLength(0);
+      expect(onStreamStateChange).toHaveBeenLastCalledWith(
+        "stopped",
+        "pbs_test",
+      );
+    });
+
+    it("keeps polling through a failed request without calling the session ended", async () => {
+      failWith(500);
+      const onStreamStateChange = vi.fn();
+      renderBrowserStream({ onStreamStateChange });
+      await advance(500);
+      mocks.apiGet.mockClear();
+
+      await advance(WINDOW_MS);
+
+      expect(sessionRequestCount()).toBe(WINDOW_MS / 1000);
+      expect(screen.getByText(/wandered off/i)).toBeTruthy();
+      expect(mocks.rfbInstances).toHaveLength(0);
+      expect(onStreamStateChange).toHaveBeenLastCalledWith(
+        "connecting",
+        "pbs_test",
+      );
+    });
+
+    it("stops polling a forbidden session and reports it ended", async () => {
+      failWith(403);
+      const onStreamStateChange = vi.fn();
+      renderBrowserStream({ onStreamStateChange });
+
+      await advance(WINDOW_MS);
+
+      expect(sessionRequestCount()).toBe(1);
+      expect(screen.getByText(/wandered off/i)).toBeTruthy();
+      expect(mocks.rfbInstances).toHaveLength(0);
+      expect(onStreamStateChange).toHaveBeenLastCalledWith(
+        "stopped",
+        "pbs_test",
+      );
+    });
+  });
+});

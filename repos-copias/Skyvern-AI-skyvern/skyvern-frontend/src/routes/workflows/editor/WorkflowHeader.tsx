@@ -1,0 +1,397 @@
+import { WorkflowFindingsButton } from "@/components/WorkflowFindingsSlot";
+import { runIsLogicallyActive } from "@/routes/workflows/workflowRun/runRetryState";
+import {
+  CalendarIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  InputIcon,
+  PlayIcon,
+  ReloadIcon,
+} from "@radix-ui/react-icons";
+import { type ReactNode, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useWorkflowPermanentId } from "@/routes/workflows/WorkflowPermanentIdContext";
+
+import { BrowserIcon } from "@/components/icons/BrowserIcon";
+import { SaveIcon } from "@/components/icons/SaveIcon";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+import { useDeferredTitleEdit } from "../hooks/useDeferredTitleEdit";
+import { useGlobalWorkflowsQuery } from "../hooks/useGlobalWorkflowsQuery";
+import { useIsGlobalWorkflow } from "../hooks/useIsGlobalWorkflow";
+import { MakeACopyButton } from "./MakeACopyButton";
+import { useWorkflowQuery } from "@/routes/workflows/hooks/useWorkflowQuery";
+import { useWorkflowRunQuery } from "@/routes/workflows/hooks/useWorkflowRunQuery";
+import { useCacheKeyValueStore } from "@/store/CacheKeyValueStore";
+import { useDebugStore } from "@/store/useDebugStore";
+import { useShowAllCodeStore } from "@/store/ShowAllCodeStore";
+import {
+  SaveRefusedError,
+  SaveStaleError,
+  useWorkflowHasChangesStore,
+} from "@/store/WorkflowHasChangesStore";
+import { useWorkflowPanelStore } from "@/store/WorkflowPanelStore";
+import { useWorkflowParametersStore } from "@/store/WorkflowParametersStore";
+import { useWorkflowTitleStore } from "@/store/WorkflowTitleStore";
+import { ControlTooltip } from "../studio/ControlTooltip";
+import {
+  selectSaveLockReason,
+  useWorkflowYamlEditorStore,
+} from "@/store/WorkflowYamlEditorStore";
+import { cn } from "@/util/utils";
+import { EditableNodeTitle } from "./nodes/components/EditableNodeTitle";
+import { EditorOverflowMenu } from "./header/EditorOverflowMenu";
+import { InputsCountBadge } from "./WorkflowInputs";
+import { useIsGeneratingCode } from "./hooks/useIsGeneratingCode";
+import { SaveFailedError, useSaveWorkflow } from "./hooks/useSaveWorkflow";
+import { PendingGoalChangesDialog } from "./PendingGoalChangesDialog";
+import { useCopilotActionStore } from "@/store/useCopilotActionStore";
+import { useToggleCodeView } from "./hooks/useToggleCodeView";
+import { getRunBlockingTooltipText } from "./runValidation/runBlockingCopy";
+import { useRunValidationStore } from "./runValidation/useRunValidationStore";
+import { useWorkflowHeaderCollapseStore } from "./useWorkflowHeaderCollapseStore";
+import { WorkflowHeaderCollapseTab } from "./WorkflowHeaderCollapseTab";
+
+function GeneratingCodeButton() {
+  const showAllCode = useShowAllCodeStore((s) => s.showAllCode);
+  const toggleCodeView = useToggleCodeView();
+  return (
+    <Button
+      className="size-10 min-w-[6rem]"
+      variant={showAllCode ? "default" : "tertiary"}
+      onClick={toggleCodeView}
+    >
+      <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
+      Code
+    </Button>
+  );
+}
+
+function BrowserModeButton() {
+  const navigate = useNavigate();
+  const workflowPermanentId = useWorkflowPermanentId();
+  const debugStore = useDebugStore();
+  const { data: workflowRun } = useWorkflowRunQuery();
+  const workflowRunIsRunningOrQueued = Boolean(
+    workflowRun && runIsLogicallyActive(workflowRun),
+  );
+
+  const handleClick = () => {
+    const target = debugStore.isDebugMode ? "edit" : "build";
+    navigate(`/agents/${workflowPermanentId}/${target}`);
+  };
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="icon"
+            variant={debugStore.isDebugMode ? "default" : "tertiary"}
+            className="size-10 min-w-[2.5rem]"
+            disabled={workflowRunIsRunningOrQueued}
+            onClick={handleClick}
+          >
+            <BrowserIcon className="h-6 w-6" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {debugStore.isDebugMode ? "Turn off Browser" : "Turn on Browser"}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function SaveButton() {
+  const saving = useWorkflowHasChangesStore((s) => s.saveIsPending);
+  const saveLockReason = useWorkflowYamlEditorStore(selectSaveLockReason);
+  const isGlobalWorkflow = useIsGlobalWorkflow();
+  const onSave = useSaveWorkflow();
+  const pendingGoalChangeCount = useCopilotActionStore(
+    (state) => state.pendingGoalChanges.length,
+  );
+  const [goalDialogOpen, setGoalDialogOpen] = useState(false);
+  const save = () => {
+    void onSave().catch((error: unknown) => {
+      if (
+        error instanceof SaveRefusedError ||
+        error instanceof SaveStaleError ||
+        error instanceof SaveFailedError
+      ) {
+        return;
+      }
+      console.error("Failed to save workflow:", error);
+    });
+  };
+
+  return (
+    <TooltipProvider>
+      <ControlTooltip
+        content="Save"
+        reason={saveLockReason}
+        blocked={saveLockReason !== null}
+      >
+        <Button
+          size="icon"
+          variant="tertiary"
+          className="size-10 min-w-[2.5rem] disabled:pointer-events-none"
+          disabled={isGlobalWorkflow || saveLockReason !== null}
+          onClick={() => {
+            if (pendingGoalChangeCount > 0) {
+              setGoalDialogOpen(true);
+              return;
+            }
+            save();
+          }}
+        >
+          {saving ? (
+            <ReloadIcon className="size-6 animate-spin" />
+          ) : (
+            <SaveIcon className="size-6" />
+          )}
+        </Button>
+      </ControlTooltip>
+      <PendingGoalChangesDialog
+        open={goalDialogOpen}
+        onOpenChange={setGoalDialogOpen}
+        onSave={save}
+      />
+    </TooltipProvider>
+  );
+}
+
+type PanelToggleContent = "schedules" | "parameters";
+
+type PanelToggleButtonProps = {
+  content: PanelToggleContent;
+  label: string;
+  leadingIcon?: ReactNode;
+  iconOnly?: boolean;
+  count?: number;
+};
+
+function PanelToggleButton({
+  content,
+  label,
+  leadingIcon,
+  iconOnly = false,
+  count,
+}: PanelToggleButtonProps) {
+  const workflowPanelState = useWorkflowPanelStore((s) => s.workflowPanelState);
+  const setWorkflowPanelState = useWorkflowPanelStore(
+    (s) => s.setWorkflowPanelState,
+  );
+  const closeWorkflowPanel = useWorkflowPanelStore((s) => s.closeWorkflowPanel);
+  const isOpen =
+    workflowPanelState.active && workflowPanelState.content === content;
+
+  const handleClick = () => {
+    if (isOpen) {
+      closeWorkflowPanel();
+    } else {
+      setWorkflowPanelState({ active: true, content });
+    }
+  };
+
+  if (iconOnly) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="tertiary"
+              size="icon"
+              className="size-10 min-w-[2.5rem]"
+              onClick={handleClick}
+              aria-label={label}
+            >
+              {leadingIcon}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return (
+    <Button
+      variant="tertiary"
+      size="lg"
+      onClick={handleClick}
+      aria-label={count && count > 0 ? `${label} (${count})` : label}
+    >
+      {leadingIcon}
+      <span className="mr-2">{label}</span>
+      {count === undefined ? null : (
+        <InputsCountBadge count={count} className="mr-2" />
+      )}
+      {isOpen ? (
+        <ChevronUpIcon className="h-6 w-6" />
+      ) : (
+        <ChevronDownIcon className="h-6 w-6" />
+      )}
+    </Button>
+  );
+}
+
+function RunButton() {
+  const navigate = useNavigate();
+  const workflowPermanentId = useWorkflowPermanentId();
+  const closeWorkflowPanel = useWorkflowPanelStore((s) => s.closeWorkflowPanel);
+  const blockingBlocks = useRunValidationStore((s) => s.blockingBlocks);
+  const hasBlockingBlocks = blockingBlocks.length > 0;
+
+  const handleClick = () => {
+    closeWorkflowPanel();
+    navigate(`/agents/${workflowPermanentId}/run`);
+  };
+
+  const button = (
+    <Button disabled={hasBlockingBlocks} size="lg" onClick={handleClick}>
+      <PlayIcon className="mr-2 h-6 w-6" />
+      Run
+    </Button>
+  );
+
+  if (!hasBlockingBlocks) {
+    return button;
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        {/* Disabled buttons swallow pointer events; the focusable span keeps the tooltip reachable. */}
+        <TooltipTrigger asChild>
+          <span tabIndex={0} className="inline-flex">
+            {button}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">
+          {getRunBlockingTooltipText(blockingBlocks)}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// Icon-led and count-carrying so the header says whether the agent takes any
+// inputs at all, matching the studio top bar's control (SKY-14866).
+function InputsToggleButton() {
+  const count = useWorkflowParametersStore((s) => s.parameters.length);
+  return (
+    <PanelToggleButton
+      content="parameters"
+      label="Inputs"
+      leadingIcon={<InputIcon className="mr-2 h-5 w-5" aria-hidden />}
+      count={count}
+    />
+  );
+}
+
+function EditorActionToolbar() {
+  return (
+    <div data-tour="editor-actions" className="flex items-center gap-2">
+      <BrowserModeButton />
+      <SaveButton />
+      <PanelToggleButton
+        content="schedules"
+        label="Schedule"
+        leadingIcon={<CalendarIcon className="h-5 w-5" />}
+        iconOnly
+      />
+      <EditorOverflowMenu />
+      <div
+        className="mx-1 h-6 w-px bg-muted dark:bg-slate-700"
+        aria-hidden="true"
+      />
+      <InputsToggleButton />
+      <RunButton />
+    </div>
+  );
+}
+
+function TitleSection() {
+  const title = useWorkflowTitleStore((state) => state.title);
+  const { mutationLocked, onTitleChange } = useDeferredTitleEdit();
+  return (
+    <div className="flex h-full min-w-0 flex-1 items-center">
+      <EditableNodeTitle
+        editable={!mutationLocked}
+        mutationLocked={mutationLocked}
+        onChange={onTitleChange}
+        value={title}
+        titleClassName="text-xl"
+        inputClassName="text-xl"
+      />
+    </div>
+  );
+}
+
+function WorkflowHeader() {
+  const workflowTitle = useWorkflowTitleStore((state) => state.title);
+  const workflowPermanentId = useWorkflowPermanentId();
+  const { data: globalWorkflows } = useGlobalWorkflowsQuery();
+  const { data: workflow } = useWorkflowQuery({ workflowPermanentId });
+  const cacheKey = workflow?.cache_key ?? "";
+
+  const collapsed = useWorkflowHeaderCollapseStore((s) => s.collapsed);
+  const toggleCollapsed = useWorkflowHeaderCollapseStore((s) => s.toggle);
+  const cacheKeyValue = useCacheKeyValueStore((s) => s.cacheKeyValue);
+
+  const isGeneratingCode = useIsGeneratingCode({
+    cacheKey,
+    cacheKeyValue,
+    workflowPermanentId,
+  });
+
+  if (!globalWorkflows) {
+    return null; // this should be loaded already by some other components
+  }
+
+  const isGlobalWorkflow = globalWorkflows.some(
+    (w) => w.workflow_permanent_id === workflowPermanentId,
+  );
+
+  return (
+    <div
+      className={cn(
+        "relative flex h-full w-full rounded-xl bg-slate-elevation2 px-6 py-5",
+      )}
+    >
+      <div
+        className="flex h-full w-full justify-between"
+        aria-hidden={collapsed}
+        {...(collapsed ? { inert: "" } : {})}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <TitleSection />
+          {!isGlobalWorkflow && !workflow?.deleted_at && workflowPermanentId ? (
+            <WorkflowFindingsButton
+              workflowPermanentId={workflowPermanentId}
+              title={workflowTitle}
+              surface="editor"
+            />
+          ) : null}
+        </div>
+        <div className="flex h-full shrink-0 items-center justify-end gap-4">
+          {isGeneratingCode && <GeneratingCodeButton />}
+          {isGlobalWorkflow ? <MakeACopyButton /> : <EditorActionToolbar />}
+        </div>
+      </div>
+      <WorkflowHeaderCollapseTab
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+      />
+    </div>
+  );
+}
+
+export { SaveButton, WorkflowHeader };

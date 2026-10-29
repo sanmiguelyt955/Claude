@@ -1,0 +1,557 @@
+"""Tests for skyvern.cli.core shared modules (guards, browser_ops, session_ops)."""
+
+from __future__ import annotations
+
+import asyncio
+import io
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from PIL import Image
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright
+
+from skyvern.cli.core import browser_ops
+from skyvern.cli.core.browser_ops import do_act, do_extract, do_navigate, do_screenshot, parse_extract_schema
+from skyvern.cli.core.guards import (
+    GuardError,
+    check_js_password,
+    check_password_prompt,
+    resolve_ai_mode,
+    validate_button,
+    validate_wait_until,
+)
+from skyvern.cli.core.session_ops import do_session_close, do_session_create, do_session_list
+from skyvern.client.types.extensions import Extensions
+from tests.unit.copilot_test_helpers import skip_no_browser
+
+CAPTCHA_SOLVER_EXTENSION: Extensions = "captcha-solver"
+LOCALHOST_RECOVERY_HINT = (
+    "Run `pip install skyvern && skyvern browser serve --tunnel` to bridge "
+    "your local dev server to a cloud browser via ngrok. "
+    "Or use `local=true` in skyvern_browser_session_create for a local browser."
+)
+
+# ---------------------------------------------------------------------------
+# guards.py
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "enter your password",
+        "use credential to login",
+        "type the secret",
+        "enter passphrase",
+        "enter passcode",
+        "enter your pin code",
+        "type pwd here",
+        "enter passwd",
+    ],
+)
+def test_password_guard_blocks_sensitive_text(text: str) -> None:
+    with pytest.raises(GuardError) as exc_info:
+        check_password_prompt(text)
+    assert exc_info.value.hint  # hint should always be populated
+
+
+@pytest.mark.parametrize("text", ["click the submit button", "fill in the email field", ""])
+def test_password_guard_allows_normal_text(text: str) -> None:
+    check_password_prompt(text)  # should not raise
+
+
+def test_js_password_guard() -> None:
+    with pytest.raises(GuardError):
+        check_js_password('input[type=password].value = "secret"')
+    with pytest.raises(GuardError):
+        check_js_password('.type === "password"; el.value = "x"')
+    check_js_password("document.title")  # allowed
+
+
+@pytest.mark.parametrize("value", ["load", "domcontentloaded", "networkidle", "commit", None])
+def test_wait_until_accepts_valid(value: str | None) -> None:
+    validate_wait_until(value)
+
+
+def test_wait_until_rejects_invalid() -> None:
+    with pytest.raises(GuardError, match="Invalid wait_until"):
+        validate_wait_until("badvalue")
+
+
+@pytest.mark.parametrize("value", ["left", "right", "middle", None])
+def test_button_accepts_valid(value: str | None) -> None:
+    validate_button(value)
+
+
+def test_button_rejects_invalid() -> None:
+    with pytest.raises(GuardError, match="Invalid button"):
+        validate_button("double")
+
+
+@pytest.mark.parametrize(
+    "selector,intent,expected",
+    [
+        (None, "click it", ("proactive", None)),
+        ("#btn", "click it", ("fallback", None)),
+        ("#btn", None, (None, None)),
+        (None, None, (None, "INVALID_INPUT")),
+    ],
+)
+def test_resolve_ai_mode(selector: str | None, intent: str | None, expected: tuple) -> None:
+    assert resolve_ai_mode(selector, intent) == expected
+
+
+# ---------------------------------------------------------------------------
+# browser_ops.py
+# ---------------------------------------------------------------------------
+
+
+def _navigable_page(url: str = "https://example.com/final", title: str = "Example") -> MagicMock:
+    page = MagicMock()
+    page.goto = AsyncMock()
+    page.wait_for_load_state = AsyncMock()
+    page.url = url
+    page.title = AsyncMock(return_value=title)
+    return page
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = _navigable_page()
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    result = await do_navigate(page, "https://example.com")
+    assert result.url == "https://example.com/final"
+    assert result.title == "Example"
+    assert result.load_state == "load"
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_commits_before_waiting_for_the_requested_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _navigable_page()
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    await do_navigate(page, "https://example.com", wait_until="networkidle")
+
+    page.goto.assert_awaited_once_with("https://example.com", timeout=30000, wait_until="commit")
+    assert page.wait_for_load_state.await_args.args[0] == "networkidle"
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_skips_the_lifecycle_wait_when_commit_is_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _navigable_page()
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    result = await do_navigate(page, "https://example.com", wait_until="commit")
+
+    assert result.load_state == "commit"
+    page.wait_for_load_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_rejects_invalid_wait_until() -> None:
+    page = _navigable_page()
+
+    with pytest.raises(GuardError):
+        await do_navigate(page, "https://example.com", wait_until="badvalue")
+
+    page.goto.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_reports_the_weaker_state_when_load_never_fires(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def only_domcontentloaded_fires(state: str, timeout: int) -> None:
+        if state != "domcontentloaded":
+            raise PlaywrightTimeoutError(f"{state} never fired")
+
+    page = _navigable_page()
+    page.wait_for_load_state = AsyncMock(side_effect=only_domcontentloaded_fires)
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    result = await do_navigate(page, "https://example.com")
+
+    assert result.load_state == "domcontentloaded"
+    assert result.url == "https://example.com/final"
+    assert result.title == "Example"
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_reports_commit_when_no_lifecycle_state_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _navigable_page()
+    page.wait_for_load_state = AsyncMock(side_effect=PlaywrightTimeoutError("nothing fired"))
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    result = await do_navigate(page, "https://example.com")
+
+    assert result.load_state == "commit"
+    assert result.url == "https://example.com/final"
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_still_fails_when_the_document_never_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = _navigable_page()
+    page.goto = AsyncMock(side_effect=PlaywrightTimeoutError("never committed"))
+    monkeypatch.setattr(browser_ops, "validate_fetch_url", lambda url: url)
+
+    with pytest.raises(PlaywrightTimeoutError):
+        await do_navigate(page, "https://example.com")
+
+    page.wait_for_load_state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param("http://169.254.169.254/", id="metadata"),
+        pytest.param("http://10.20.30.40/", id="private"),
+        pytest.param("http://127.0.0.2/", id="alternate-loopback"),
+        pytest.param("http://2130706433/", id="integer-loopback"),
+    ],
+)
+async def test_do_navigate_rejects_unsafe_url(url: str) -> None:
+    page = MagicMock()
+    page.goto = AsyncMock()
+
+    with pytest.raises(GuardError):
+        await do_navigate(page, url)
+
+    page.goto.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["http://localhost:3000/", "http://127.0.0.1:8000/"])
+async def test_do_navigate_allows_local_url_when_context_permits(url: str) -> None:
+    page = _navigable_page(url=url, title="Local")
+
+    result = await do_navigate(
+        page,
+        url,
+        can_access_localhost=True,
+        is_localhost_destination=True,
+    )
+
+    assert result.url == url
+    page.goto.assert_awaited_once_with(url, timeout=30000, wait_until="commit")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["http://169.254.169.254/", "http://10.20.30.40/"])
+async def test_do_navigate_rejects_non_loopback_internal_url_when_context_permits(url: str) -> None:
+    page = MagicMock()
+    page.goto = AsyncMock()
+
+    with pytest.raises(GuardError):
+        await do_navigate(page, url, can_access_localhost=True)
+
+    page.goto.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_do_navigate_rejects_local_url_when_context_does_not_permit() -> None:
+    page = MagicMock()
+    page.goto = AsyncMock()
+
+    with pytest.raises(GuardError) as exc_info:
+        await do_navigate(page, "http://127.0.0.1:8000/", is_localhost_destination=True)
+
+    assert exc_info.value.hint == LOCALHOST_RECOVERY_HINT
+    page.goto.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_do_screenshot_full_page() -> None:
+    page = MagicMock()
+    page.screenshot = AsyncMock(return_value=b"png-data")
+
+    result = await do_screenshot(page, full_page=True)
+    assert result.data == b"png-data"
+    assert result.full_page is True
+
+
+@pytest.mark.asyncio
+async def test_do_screenshot_returns_the_capture_when_the_viewport_probe_never_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def wedged_renderer(*_: object) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(browser_ops, "_VIEWPORT_PROBE_TIMEOUT_SECONDS", 0.05)
+    page = MagicMock()
+    page.screenshot = AsyncMock(return_value=b"png-data")
+    page.evaluate = wedged_renderer
+
+    result = await do_screenshot(page)
+
+    assert result.data == b"png-data"
+    assert result.viewport_css_px is None
+
+
+@skip_no_browser
+@pytest.mark.asyncio
+async def test_do_screenshot_reports_the_css_viewport_only_for_a_viewport_capture() -> None:
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        try:
+            page = await browser.new_page(viewport={"width": 800, "height": 600}, device_scale_factor=2)
+            await page.set_content("<body style='height: 3000px'>tall</body>")
+            viewport = await do_screenshot(page)
+            full_page = await do_screenshot(page, full_page=True)
+        finally:
+            await browser.close()
+
+    assert Image.open(io.BytesIO(viewport.data)).size == (1600, 1200)
+    assert viewport.viewport_css_px == (800, 600)
+    assert full_page.viewport_css_px is None
+
+
+@pytest.mark.asyncio
+async def test_do_screenshot_with_selector() -> None:
+    page = MagicMock()
+    element = MagicMock()
+    element.screenshot = AsyncMock(return_value=b"element-data")
+    page.locator.return_value = element
+
+    result = await do_screenshot(page, selector="#header")
+    assert result.data == b"element-data"
+
+
+@pytest.mark.asyncio
+async def test_do_act_success() -> None:
+    page = MagicMock()
+    page.act = AsyncMock()
+    result = await do_act(page, "enter the password")
+    assert result.prompt == "enter the password"
+    assert result.completed is True
+
+
+@pytest.mark.asyncio
+async def test_do_extract_rejects_bad_schema() -> None:
+    with pytest.raises(GuardError, match="Invalid JSON schema"):
+        await do_extract(MagicMock(), "get data", schema="not-json")
+
+
+@pytest.mark.asyncio
+async def test_do_extract_success() -> None:
+    page = MagicMock()
+    page.extract = AsyncMock(return_value={"title": "Example"})
+
+    result = await do_extract(page, "get the title")
+    assert result.extracted == {"title": "Example"}
+
+
+def test_parse_extract_schema_accepts_preparsed_dict() -> None:
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+    parsed = parse_extract_schema(schema)
+    assert parsed is schema
+
+
+@pytest.mark.asyncio
+async def test_do_extract_accepts_preparsed_dict() -> None:
+    page = MagicMock()
+    page.extract = AsyncMock(return_value={"title": "Example"})
+    schema = {"type": "object", "properties": {"title": {"type": "string"}}}
+
+    result = await do_extract(page, "get the title", schema=schema)
+    assert result.extracted == {"title": "Example"}
+    page.extract.assert_awaited_once_with(prompt="get the title", schema=schema, skip_refresh=False)
+
+
+# ---------------------------------------------------------------------------
+# session_ops.py
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_local() -> None:
+    skyvern = MagicMock()
+    skyvern.launch_local_browser = AsyncMock(return_value=MagicMock())
+
+    browser, result = await do_session_create(skyvern, local=True, headless=True)
+    assert result.local is True
+    assert result.session_id is None
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_local_rejects_browser_profile_options() -> None:
+    skyvern = MagicMock()
+    skyvern.launch_local_browser = AsyncMock(return_value=MagicMock())
+
+    with pytest.raises(ValueError, match="only supported for cloud sessions"):
+        await do_session_create(skyvern, local=True, browser_profile_id="bp_123")
+    with pytest.raises(ValueError, match="only supported for cloud sessions"):
+        await do_session_create(skyvern, local=True, generate_browser_profile=True)
+
+    skyvern.launch_local_browser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_cloud() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_123"
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+
+    browser, result = await do_session_create(skyvern, timeout=30)
+    assert result.session_id == "pbs_123"
+    assert result.timeout_minutes == 30
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_cloud_forwards_extensions() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_ext"
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+
+    browser, result = await do_session_create(
+        skyvern,
+        timeout=30,
+        extensions=[CAPTCHA_SOLVER_EXTENSION],
+    )
+
+    assert browser is browser_mock
+    assert result.session_id == "pbs_ext"
+    skyvern.launch_cloud_browser.assert_awaited_once_with(
+        timeout=30,
+        proxy_location=None,
+        extensions=[CAPTCHA_SOLVER_EXTENSION],
+    )
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_cloud_forwards_browser_profile_id() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_profile"
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+
+    browser, result = await do_session_create(
+        skyvern,
+        timeout=30,
+        browser_profile_id="bp_123",
+    )
+
+    assert browser is browser_mock
+    assert result.session_id == "pbs_profile"
+    skyvern.launch_cloud_browser.assert_awaited_once_with(
+        timeout=30,
+        proxy_location=None,
+        browser_profile_id="bp_123",
+    )
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_cloud_enables_browser_profile_export() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_profile"
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+    skyvern._client_wrapper.httpx_client.request = AsyncMock(
+        return_value=MagicMock(status_code=200, text="", json=lambda: {})
+    )
+
+    browser, result = await do_session_create(
+        skyvern,
+        timeout=30,
+        generate_browser_profile=True,
+    )
+
+    assert browser is browser_mock
+    assert result.session_id == "pbs_profile"
+    skyvern._client_wrapper.httpx_client.request.assert_awaited_once_with(
+        "v1/browser_sessions/pbs_profile",
+        method="PATCH",
+        json={"generate_browser_profile": True},
+        headers={"content-type": "application/json"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_cloud_rolls_back_when_browser_profile_export_patch_fails() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_profile"
+    browser_mock.close = AsyncMock()
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+    skyvern.close_browser_session = AsyncMock()
+    skyvern._client_wrapper.httpx_client.request = AsyncMock(
+        return_value=MagicMock(status_code=500, text="patch failed", json=lambda: {"detail": "patch failed"})
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to update browser session pbs_profile"):
+        await do_session_create(
+            skyvern,
+            timeout=30,
+            generate_browser_profile=True,
+        )
+
+    skyvern.close_browser_session.assert_awaited_once_with("pbs_profile")
+    browser_mock.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_do_session_create_preserves_patch_failure_when_rollback_fails() -> None:
+    skyvern = MagicMock()
+    browser_mock = MagicMock()
+    browser_mock.browser_session_id = "pbs_profile"
+    browser_mock.close = AsyncMock()
+    skyvern.launch_cloud_browser = AsyncMock(return_value=browser_mock)
+    skyvern.close_browser_session = AsyncMock(side_effect=RuntimeError("close failed"))
+    skyvern._client_wrapper.httpx_client.request = AsyncMock(
+        return_value=MagicMock(status_code=500, text="patch failed", json=lambda: {"detail": "patch failed"})
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await do_session_create(
+            skyvern,
+            timeout=30,
+            generate_browser_profile=True,
+        )
+
+    assert "Failed to update browser session pbs_profile" in str(exc_info.value)
+    assert "close failed" in str(exc_info.value)
+    skyvern.close_browser_session.assert_awaited_once_with("pbs_profile")
+
+
+@pytest.mark.asyncio
+async def test_do_session_close() -> None:
+    skyvern = MagicMock()
+    skyvern.close_browser_session = AsyncMock()
+
+    result = await do_session_close(skyvern, "pbs_123")
+    assert result.session_id == "pbs_123"
+    assert result.closed is True
+
+
+@pytest.mark.asyncio
+async def test_do_session_list() -> None:
+    session = MagicMock()
+    session.browser_session_id = "pbs_1"
+    session.status = "active"
+    # Set together with the address by the session worker; an address alone can be minted before
+    # the browser exists, so availability needs both.
+    session.started_at = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+    session.timeout = 60
+    session.runnable_id = None
+    session.browser_address = "ws://localhost:1234"
+
+    skyvern = MagicMock()
+    skyvern.get_browser_sessions = AsyncMock(return_value=[session])
+
+    result = await do_session_list(skyvern)
+    assert len(result) == 1
+    assert result[0].session_id == "pbs_1"
+    assert result[0].available is True

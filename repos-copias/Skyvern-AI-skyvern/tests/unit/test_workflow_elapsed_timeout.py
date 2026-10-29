@@ -1,0 +1,1252 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+from pydantic import ValidationError
+
+from skyvern.forge.sdk.routes.agent_protocol import _workflow_run_request_to_legacy_request
+from skyvern.forge.sdk.workflow import service as service_module
+from skyvern.forge.sdk.workflow.models.block import BlockType
+from skyvern.forge.sdk.workflow.models.run_limits import (
+    WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES,
+    WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES,
+    get_effective_workflow_run_max_elapsed_time_minutes,
+)
+from skyvern.forge.sdk.workflow.models.workflow import (
+    Workflow,
+    WorkflowDefinition,
+    WorkflowRequestBody,
+    WorkflowRun,
+    WorkflowRunStatus,
+)
+from skyvern.forge.sdk.workflow.service import WorkflowService
+from skyvern.schemas.runs import WorkflowRunRequest
+from skyvern.schemas.workflows import WorkflowCreateYAMLRequest, WorkflowDefinitionYAML
+from tests.unit.force_stub_app import make_workflow_run_attempts_fake
+
+
+def _workflow_run(
+    status: WorkflowRunStatus,
+    *,
+    started_at: datetime,
+    max_elapsed_time_minutes: int | None = 1,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        workflow_run_id="wr_1",
+        workflow_id="wf_1",
+        workflow_permanent_id="wp_1",
+        organization_id="org_1",
+        browser_session_id=None,
+        browser_profile_id="bp_1",
+        browser_address=None,
+        start_fresh_browser=None,
+        reuse_browser_session=None,
+        reuse_bound_key=None,
+        status=status,
+        failure_reason=None,
+        ignore_inherited_workflow_system_prompt=False,
+        parent_workflow_run_id=None,
+        proxy_location=None,
+        max_elapsed_time_minutes=max_elapsed_time_minutes,
+        started_at=started_at,
+        created_at=started_at,
+        finished_at=None,
+        code_gen=False,
+        run_with="agent",
+    )
+
+
+def test_workflow_request_accepts_max_elapsed_time_above_legacy_four_hour_runtime() -> None:
+    with pytest.warns(DeprecationWarning):
+        request = WorkflowRequestBody(max_elapsed_time_minutes=300)
+
+    assert request.max_elapsed_time_minutes == 300
+    assert get_effective_workflow_run_max_elapsed_time_minutes(None) == WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES
+    assert get_effective_workflow_run_max_elapsed_time_minutes(0) == WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES
+    assert get_effective_workflow_run_max_elapsed_time_minutes(-1) == WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES
+    assert get_effective_workflow_run_max_elapsed_time_minutes(cast(int, "bad")) == (
+        WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES
+    )
+    assert get_effective_workflow_run_max_elapsed_time_minutes(300) == 300
+    assert get_effective_workflow_run_max_elapsed_time_minutes(600) == WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES
+
+
+def test_elapsed_timeout_failure_reason_falls_back_when_invariant_is_missing() -> None:
+    assert (
+        service_module._require_elapsed_timeout_failure_reason(None)
+        == "Workflow run exceeded max elapsed runtime limit."
+    )
+
+
+def test_workflow_run_elapsed_timeout_uses_platform_default_when_max_elapsed_time_is_none() -> None:
+    workflow_run = cast(
+        WorkflowRun,
+        _workflow_run(
+            WorkflowRunStatus.running,
+            started_at=datetime.now(timezone.utc),
+            max_elapsed_time_minutes=None,
+        ),
+    )
+
+    timeout_seconds = service_module._get_workflow_run_max_elapsed_timeout_seconds(workflow_run)
+    assert timeout_seconds is not None
+    assert (WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES * 60) - 1 <= timeout_seconds
+    assert timeout_seconds <= WORKFLOW_RUN_DEFAULT_MAX_ELAPSED_TIME_MINUTES * 60
+
+
+def test_workflow_request_rejects_bool_max_elapsed_time() -> None:
+    with pytest.warns(DeprecationWarning), pytest.raises(ValidationError):
+        WorkflowRequestBody(max_elapsed_time_minutes=True)
+
+
+def test_workflow_request_rejects_max_elapsed_time_above_platform_cap() -> None:
+    with pytest.warns(DeprecationWarning), pytest.raises(ValidationError):
+        WorkflowRequestBody(max_elapsed_time_minutes=WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES + 1)
+
+
+def test_workflow_run_request_accepts_max_elapsed_time() -> None:
+    request = WorkflowRunRequest(workflow_id="wpid_test", max_elapsed_time_minutes=300)
+
+    assert request.max_elapsed_time_minutes == 300
+
+
+def test_workflow_run_request_rejects_invalid_max_elapsed_time() -> None:
+    with pytest.raises(ValidationError):
+        WorkflowRunRequest(workflow_id="wpid_test", max_elapsed_time_minutes=0)
+
+    with pytest.raises(ValidationError):
+        WorkflowRunRequest(workflow_id="wpid_test", max_elapsed_time_minutes=True)
+
+    with pytest.raises(ValidationError):
+        WorkflowRunRequest(
+            workflow_id="wpid_test",
+            max_elapsed_time_minutes=WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES + 1,
+        )
+
+
+def test_public_workflow_run_request_preserves_max_elapsed_time_for_legacy_runner() -> None:
+    request = WorkflowRunRequest(workflow_id="wpid_test", max_elapsed_time_minutes=10)
+
+    with pytest.warns(DeprecationWarning):
+        legacy_request = _workflow_run_request_to_legacy_request(request)
+
+    assert legacy_request.max_elapsed_time_minutes == 10
+
+
+def test_workflow_create_yaml_request_rejects_bool_max_elapsed_time() -> None:
+    with pytest.raises(ValidationError):
+        WorkflowCreateYAMLRequest(
+            title="test",
+            workflow_definition=WorkflowDefinitionYAML(parameters=[], blocks=[]),
+            max_elapsed_time_minutes=True,
+        )
+
+
+def test_workflow_create_yaml_request_rejects_max_elapsed_time_above_platform_cap() -> None:
+    with pytest.raises(ValidationError):
+        WorkflowCreateYAMLRequest(
+            title="test",
+            workflow_definition=WorkflowDefinitionYAML(parameters=[], blocks=[]),
+            max_elapsed_time_minutes=WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES + 1,
+        )
+
+
+def test_workflow_domain_models_accept_long_elapsed_timeout_values() -> None:
+    now = datetime.now(timezone.utc)
+    max_elapsed_time_minutes = 300
+
+    workflow = Workflow(
+        workflow_id="wf_1",
+        organization_id="org_1",
+        title="test",
+        workflow_permanent_id="wp_1",
+        version=1,
+        is_saved_task=False,
+        workflow_definition=WorkflowDefinition(parameters=[], blocks=[]),
+        max_elapsed_time_minutes=max_elapsed_time_minutes,
+        created_at=now,
+        modified_at=now,
+    )
+    workflow_run = WorkflowRun(
+        workflow_run_id="wr_1",
+        workflow_id="wf_1",
+        workflow_permanent_id="wp_1",
+        organization_id="org_1",
+        status=WorkflowRunStatus.running,
+        max_elapsed_time_minutes=max_elapsed_time_minutes,
+        created_at=now,
+        modified_at=now,
+    )
+
+    assert workflow.max_elapsed_time_minutes == max_elapsed_time_minutes
+    assert workflow_run.max_elapsed_time_minutes == max_elapsed_time_minutes
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_returns_after_elapsed_timeout_without_finally(monkeypatch: pytest.MonkeyPatch) -> None:
+    started_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    timed_out_run.failure_reason = "Workflow run exceeded max elapsed runtime limit of 1 minute."
+    timed_out_run.copilot_session_id = "copilot_1"
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_run_context = SimpleNamespace(browser_session_id=None, secrets={"runtime_otp": "654321"})
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: workflow_run_context,
+    )
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    mark_failed_if_not_final = AsyncMock(return_value=None)
+    execute_workflow_blocks = AsyncMock()
+    generate_script_if_needed = AsyncMock()
+    execute_finally_block_if_configured = AsyncMock()
+    finalization_order: list[str] = []
+
+    async def publish_runtime_secrets(**kwargs: object) -> bool:
+        assert kwargs["workflow_run_context"] is workflow_run_context
+        finalization_order.append("publish")
+        return True
+
+    async def clean_up_workflow(**_kwargs: object) -> None:
+        finalization_order.append("cleanup")
+
+    monkeypatch.setattr(service_module, "publish_copilot_runtime_secret_values", publish_runtime_secrets)
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "mark_workflow_run_as_failed_if_not_final", mark_failed_if_not_final)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", execute_workflow_blocks)
+    monkeypatch.setattr(svc, "generate_script_if_needed", generate_script_if_needed)
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is timed_out_run
+    mark_workflow_run_as_timed_out.assert_awaited_once()
+    assert mark_workflow_run_as_timed_out.await_args is not None
+    assert (
+        mark_workflow_run_as_timed_out.await_args.kwargs["failure_reason"]
+        == "Workflow run exceeded max elapsed runtime limit of 1 minute."
+    )
+    execute_workflow_blocks.assert_not_awaited()
+    generate_script_if_needed.assert_not_awaited()
+    execute_finally_block_if_configured.assert_not_awaited()
+    mark_failed_if_not_final.assert_not_awaited()
+    assert finalization_order == ["publish", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_times_out_slow_pre_block_script_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    timed_out_run.failure_reason = "Workflow run exceeded max elapsed runtime limit of 1 minute."
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+
+    async def slow_script_lookup(*_args: object, **_kwargs: object) -> tuple[None, None, bool]:
+        await asyncio.sleep(0.05)
+        return None, None, False
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(side_effect=slow_script_lookup),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "_get_workflow_run_max_elapsed_timeout_seconds", lambda _workflow_run: 0.01)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    mark_failed_if_not_final = AsyncMock(return_value=None)
+    execute_workflow_blocks = AsyncMock()
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "mark_workflow_run_as_failed_if_not_final", mark_failed_if_not_final)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", execute_workflow_blocks)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is timed_out_run
+    mark_workflow_run_as_timed_out.assert_awaited_once()
+    execute_workflow_blocks.assert_not_awaited()
+    mark_failed_if_not_final.assert_not_awaited()
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_preserves_completed_status_after_post_run_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    completed_run = _workflow_run(WorkflowRunStatus.completed, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(return_value=completed_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    timeout_seconds = iter([10.0, 0.01])
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(
+        service_module,
+        "_get_workflow_run_max_elapsed_timeout_seconds",
+        lambda _workflow_run: next(timeout_seconds),
+    )
+
+    async def slow_finally(**_kwargs: object) -> None:
+        await asyncio.sleep(0.05)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    execute_finally_block_if_configured = AsyncMock(side_effect=slow_finally)
+    finalize_workflow_run_status = AsyncMock(return_value=completed_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(completed_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is completed_run
+    execute_finally_block_if_configured.assert_awaited_once()
+    mark_workflow_run_as_timed_out.assert_not_awaited()
+    finalize_workflow_run_status.assert_awaited_once()
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_preserves_timed_out_status_after_non_terminal_post_run_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    timed_out_run.failure_reason = "Workflow run exceeded max elapsed runtime limit of 1 minute."
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(return_value=running_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    timeout_seconds = iter([10.0, 0.01])
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(
+        service_module,
+        "_get_workflow_run_max_elapsed_timeout_seconds",
+        lambda _workflow_run: next(timeout_seconds),
+    )
+
+    async def slow_finally(**_kwargs: object) -> None:
+        await asyncio.sleep(0.05)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    execute_finally_block_if_configured = AsyncMock(side_effect=slow_finally)
+    finalize_workflow_run_status = AsyncMock(return_value=timed_out_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(running_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is timed_out_run
+    mark_workflow_run_as_timed_out.assert_awaited_once()
+    execute_finally_block_if_configured.assert_awaited_once()
+    finalize_workflow_run_status.assert_awaited_once()
+    assert finalize_workflow_run_status.await_args is not None
+    assert finalize_workflow_run_status.await_args.kwargs["pre_finally_status"] == WorkflowRunStatus.timed_out
+    assert (
+        finalize_workflow_run_status.await_args.kwargs["pre_finally_failure_reason"]
+        == "Workflow run exceeded max elapsed runtime limit of 1 minute."
+    )
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_marks_timed_out_when_post_run_budget_is_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    timed_out_run.failure_reason = "Workflow run exceeded max elapsed runtime limit of 1 minute."
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(return_value=running_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    timeout_seconds = iter([10.0, 0.0001])
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(
+        service_module,
+        "_get_workflow_run_max_elapsed_timeout_seconds",
+        lambda _workflow_run: next(timeout_seconds),
+    )
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    generate_script_if_needed = AsyncMock()
+    execute_finally_block_if_configured = AsyncMock()
+    finalize_workflow_run_status = AsyncMock(return_value=timed_out_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(running_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", generate_script_if_needed)
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is timed_out_run
+    mark_workflow_run_as_timed_out.assert_awaited_once()
+    generate_script_if_needed.assert_not_awaited()
+    execute_finally_block_if_configured.assert_not_awaited()
+    finalize_workflow_run_status.assert_awaited_once()
+    assert finalize_workflow_run_status.await_args is not None
+    assert finalize_workflow_run_status.await_args.kwargs["pre_finally_status"] == WorkflowRunStatus.timed_out
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shield_post_run_elapsed_timeout_waits_for_status_write_after_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    outer_task = asyncio.current_task()
+    assert outer_task is not None
+
+    async def refresh_workflow_run(**_kwargs: object) -> SimpleNamespace:
+        outer_task.cancel()
+        await asyncio.sleep(0)
+        return running_run
+
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(side_effect=refresh_workflow_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+
+    result_run, pre_finally_status, pre_finally_failure_reason = await svc._shield_post_run_elapsed_timeout(
+        workflow_run_id="wr_1",
+        organization_id="org_1",
+        workflow_run=cast(WorkflowRun, running_run),
+        pre_finally_status=None,
+        pre_finally_failure_reason=None,
+        timeout_failure_reason="timed out",
+    )
+
+    assert result_run is timed_out_run
+    assert pre_finally_status == WorkflowRunStatus.timed_out
+    assert pre_finally_failure_reason == "timed out"
+    mark_workflow_run_as_timed_out.assert_awaited_once_with(
+        workflow_run_id="wr_1",
+        failure_reason="timed out",
+        fallback_workflow_run=running_run,
+    )
+
+
+@pytest.mark.asyncio
+async def test_shield_post_run_elapsed_timeout_falls_back_when_handler_fails_after_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+    outer_task = asyncio.current_task()
+    assert outer_task is not None
+
+    async def fail_after_cancellation(**_kwargs: object) -> WorkflowRun:
+        outer_task.cancel()
+        await asyncio.sleep(0)
+        raise RuntimeError("status write failed")
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    monkeypatch.setattr(svc, "_handle_post_run_elapsed_timeout", fail_after_cancellation)
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+
+    result_run, pre_finally_status, pre_finally_failure_reason = await svc._shield_post_run_elapsed_timeout(
+        workflow_run_id="wr_1",
+        organization_id="org_1",
+        workflow_run=cast(WorkflowRun, running_run),
+        pre_finally_status=None,
+        pre_finally_failure_reason=None,
+        timeout_failure_reason="timed out",
+    )
+
+    assert result_run is timed_out_run
+    assert pre_finally_status == WorkflowRunStatus.timed_out
+    assert pre_finally_failure_reason == "timed out"
+    mark_workflow_run_as_timed_out.assert_awaited_once_with(
+        workflow_run_id="wr_1",
+        failure_reason="timed out",
+        fallback_workflow_run=running_run,
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_refreshes_terminal_status_after_immediate_post_run_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    completed_run = _workflow_run(WorkflowRunStatus.completed, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+
+    async def refresh_workflow_run(**_kwargs: object) -> SimpleNamespace:
+        await asyncio.sleep(0.01)
+        return completed_run
+
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(side_effect=refresh_workflow_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    timeout_seconds = iter([10.0, 0.0])
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(
+        service_module,
+        "_get_workflow_run_max_elapsed_timeout_seconds",
+        lambda _workflow_run: next(timeout_seconds),
+    )
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    finalize_workflow_run_status = AsyncMock(return_value=completed_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(completed_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", AsyncMock())
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", AsyncMock())
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is completed_run
+    mark_workflow_run_as_timed_out.assert_not_awaited()
+    finalize_workflow_run_status.assert_awaited_once()
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_refreshes_failed_status_after_finally_write_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    failed_run = _workflow_run(WorkflowRunStatus.failed, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(side_effect=[running_run, failed_run]),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+    timeout_seconds = iter([10.0, 0.01])
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(
+        service_module,
+        "_get_workflow_run_max_elapsed_timeout_seconds",
+        lambda _workflow_run: next(timeout_seconds),
+    )
+
+    async def slow_finally(**_kwargs: object) -> None:
+        await asyncio.sleep(0.05)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    update_workflow_run_status = AsyncMock(return_value=running_run)
+    execute_finally_block_if_configured = AsyncMock(side_effect=slow_finally)
+    finalize_workflow_run_status = AsyncMock(return_value=failed_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(running_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", AsyncMock())
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_update_workflow_run_status", update_workflow_run_status)
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is failed_run
+    mark_workflow_run_as_timed_out.assert_not_awaited()
+    update_workflow_run_status.assert_not_awaited()
+    execute_finally_block_if_configured.assert_awaited_once()
+    finalize_workflow_run_status.assert_awaited_once()
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_runs_finally_for_existing_timed_out_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    timed_out_run = _workflow_run(WorkflowRunStatus.timed_out, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Timeout workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label="cleanup",
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    database = SimpleNamespace(
+        workflow_runs=SimpleNamespace(
+            get_workflow_run=AsyncMock(return_value=timed_out_run),
+        ),
+        workflow_run_attempts=make_workflow_run_attempts_fake(),
+    )
+
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.app, "DATABASE", database)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+    monkeypatch.setattr(service_module, "is_adaptive_caching", lambda _workflow, _workflow_run: False)
+    monkeypatch.setattr(service_module, "_get_workflow_run_max_elapsed_timeout_seconds", lambda _workflow_run: 10.0)
+
+    svc = WorkflowService()
+    mark_workflow_run_as_timed_out = AsyncMock(return_value=timed_out_run)
+    update_workflow_run_status = AsyncMock(return_value=running_run)
+    execute_finally_block_if_configured = AsyncMock(return_value=None)
+    finalize_workflow_run_status = AsyncMock(return_value=timed_out_run)
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_timed_out", mark_workflow_run_as_timed_out)
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(return_value=(timed_out_run, set())))
+    monkeypatch.setattr(svc, "generate_script_if_needed", AsyncMock())
+    monkeypatch.setattr(svc, "should_run_script", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_update_workflow_run_status", update_workflow_run_status)
+    monkeypatch.setattr(svc, "_execute_finally_block_if_configured", execute_finally_block_if_configured)
+    monkeypatch.setattr(svc, "_finalize_workflow_run_status", finalize_workflow_run_status)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    result = await svc.execute_workflow(
+        workflow_run_id="wr_1",
+        api_key=None,
+        organization=organization,
+    )
+
+    assert result is timed_out_run
+    mark_workflow_run_as_timed_out.assert_not_awaited()
+    update_workflow_run_status.assert_awaited_once_with(
+        workflow_run_id="wr_1",
+        status=WorkflowRunStatus.running,
+        failure_reason=None,
+    )
+    execute_finally_block_if_configured.assert_awaited_once()
+    finalize_workflow_run_status.assert_awaited_once()
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_preserves_escaped_failure_cause_before_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A non-cancellation exception before terminal intent must not be labeled as an
+    # interruption. The run still needs terminalization and cleanup.
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    failed_run = _workflow_run(WorkflowRunStatus.failed, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Interrupted workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label=None,
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+
+    svc = WorkflowService()
+    interrupted_blocks = AsyncMock(side_effect=TimeoutError("blocks timed out"))
+    mark_failed_if_not_final = AsyncMock(return_value=failed_run)
+    clean_up_workflow = AsyncMock()
+    failure_log = Mock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", interrupted_blocks)
+    monkeypatch.setattr(svc, "mark_workflow_run_as_failed_if_not_final", mark_failed_if_not_final)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+    monkeypatch.setattr(service_module.LOG, "warning", failure_log)
+
+    with pytest.raises(TimeoutError, match="blocks timed out"):
+        await svc.execute_workflow(
+            workflow_run_id="wr_1",
+            api_key=None,
+            organization=organization,
+        )
+
+    mark_failed_if_not_final.assert_awaited_once()
+    assert mark_failed_if_not_final.await_args is not None
+    assert mark_failed_if_not_final.await_args.kwargs["workflow_run_id"] == "wr_1"
+    failure_reason = mark_failed_if_not_final.await_args.kwargs["failure_reason"]
+    assert "TimeoutError" in failure_reason
+    assert "interrupted" not in failure_reason.lower()
+    assert mark_failed_if_not_final.await_args.kwargs["failure_category"] == [
+        {
+            "category": "UNKNOWN",
+            "confidence_float": 0.5,
+            "reasoning": "No keyword match found",
+        }
+    ]
+    assert mark_failed_if_not_final.await_args.kwargs["cascade_children"] is True
+    assert any(call.kwargs.get("exc_info") is True for call in failure_log.call_args_list)
+    clean_up_workflow.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_finalize_completed_noops_when_backstop_already_failed_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Backstop-wins-first ordering: the interrupted-activity backstop already finalized the
+    # run as failed (children cascaded). The in-band finalize with a completed intent must
+    # lose the conditional write and leave the terminal status (and children) untouched.
+    started_at = datetime.now(timezone.utc)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    failed_run = _workflow_run(WorkflowRunStatus.failed, started_at=started_at)
+
+    svc = WorkflowService()
+    conditional = AsyncMock(return_value=None)  # lost the race: row already terminal
+    unconditional = AsyncMock(side_effect=AssertionError("unconditional terminal write must not run"))
+    cascade = AsyncMock()
+    monkeypatch.setattr(svc, "_update_workflow_run_status_if_not_final", conditional)
+    monkeypatch.setattr(svc, "_update_workflow_run_status", unconditional)
+    monkeypatch.setattr(svc, "_cascade_child_entities_on_terminal", cascade)
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=failed_run))
+
+    result = await svc._finalize_workflow_run_status(
+        workflow_run_id="wr_1",
+        workflow_run=running_run,
+        pre_finally_status=WorkflowRunStatus.completed,
+        pre_finally_failure_reason=None,
+    )
+
+    assert result.status == WorkflowRunStatus.failed
+    conditional.assert_awaited_once()
+    assert conditional.await_args is not None
+    assert conditional.await_args.kwargs["status"] == WorkflowRunStatus.completed
+    cascade.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finalize_timed_out_loss_skips_cascade(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Terminal-intent arm: a timed_out intent that loses the conditional write must not
+    # cascade children on top of the winner's cascade.
+    started_at = datetime.now(timezone.utc)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    failed_run = _workflow_run(WorkflowRunStatus.failed, started_at=started_at)
+
+    svc = WorkflowService()
+    monkeypatch.setattr(svc, "_update_workflow_run_status_if_not_final", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        svc, "_update_workflow_run_status", AsyncMock(side_effect=AssertionError("must stay conditional"))
+    )
+    cascade = AsyncMock()
+    monkeypatch.setattr(svc, "_cascade_child_entities_on_terminal", cascade)
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=failed_run))
+
+    result = await svc._finalize_workflow_run_status(
+        workflow_run_id="wr_1",
+        workflow_run=running_run,
+        pre_finally_status=WorkflowRunStatus.timed_out,
+        pre_finally_failure_reason="elapsed",
+    )
+
+    assert result.status == WorkflowRunStatus.failed
+    cascade.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finalize_completed_wins_when_row_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Win path unchanged: row still running -> conditional write lands completed.
+    started_at = datetime.now(timezone.utc)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+    completed_run = _workflow_run(WorkflowRunStatus.completed, started_at=started_at)
+
+    svc = WorkflowService()
+    conditional = AsyncMock(return_value=completed_run)
+    monkeypatch.setattr(svc, "_update_workflow_run_status_if_not_final", conditional)
+    monkeypatch.setattr(
+        svc, "_update_workflow_run_status", AsyncMock(side_effect=AssertionError("must stay conditional"))
+    )
+
+    result = await svc._finalize_workflow_run_status(
+        workflow_run_id="wr_1",
+        workflow_run=running_run,
+        pre_finally_status=WorkflowRunStatus.completed,
+        pre_finally_failure_reason=None,
+    )
+
+    assert result.status == WorkflowRunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_execute_workflow_skips_interrupted_finalize_for_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Cancellation ownership lives at the activity layer (server timeout/cancel finalizers,
+    # interrupted-activity backstop with cancellation-details discrimination). The in-band
+    # pre_finally-None finalize must not race them with a generic failed.
+    started_at = datetime.now(timezone.utc)
+    created_run = _workflow_run(WorkflowRunStatus.created, started_at=started_at)
+    running_run = _workflow_run(WorkflowRunStatus.running, started_at=started_at)
+
+    workflow = SimpleNamespace(
+        workflow_id="wf_1",
+        persist_browser_session=False,
+        reuse_browser_session=False,
+        workflow_permanent_id="wp_1",
+        title="Cancelled workflow",
+        organization_id="org_1",
+        generate_script_on_terminal=False,
+        model=None,
+        workflow_definition=SimpleNamespace(
+            parameters=[],
+            finally_block_label=None,
+            blocks=[SimpleNamespace(block_type=BlockType.TASK)],
+        ),
+    )
+    organization = SimpleNamespace(organization_id="org_1")
+
+    workflow_context_manager = SimpleNamespace(
+        initialize_workflow_run_context=AsyncMock(),
+        get_workflow_run_context=lambda _workflow_run_id: SimpleNamespace(browser_session_id=None),
+    )
+    monkeypatch.setattr(service_module.app, "WORKFLOW_CONTEXT_MANAGER", workflow_context_manager)
+    monkeypatch.setattr(service_module.workflow_script_service, "workflow_has_conditionals", lambda _workflow: False)
+    monkeypatch.setattr(
+        service_module.workflow_script_service,
+        "get_workflow_script",
+        AsyncMock(return_value=(None, None, False)),
+    )
+    monkeypatch.setattr(service_module.skyvern_context, "current", lambda: None)
+
+    svc = WorkflowService()
+    mark_failed_if_not_final = AsyncMock()
+    clean_up_workflow = AsyncMock()
+
+    monkeypatch.setattr(svc, "get_workflow_run", AsyncMock(return_value=created_run))
+    monkeypatch.setattr(svc, "get_workflow_by_workflow_run_id", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(svc, "bind_browser_action_policy", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_running", AsyncMock(return_value=running_run))
+    monkeypatch.setattr(svc, "get_workflow_run_parameter_tuples", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "get_workflow_output_parameters", AsyncMock(return_value=[]))
+    monkeypatch.setattr(svc, "_collect_inherited_workflow_system_prompt", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "auto_create_browser_session_if_needed", AsyncMock(return_value=None))
+    monkeypatch.setattr(svc, "_browser_profile_is_managed", AsyncMock(return_value=False))
+    monkeypatch.setattr(svc, "_execute_workflow_blocks", AsyncMock(side_effect=asyncio.CancelledError()))
+    monkeypatch.setattr(svc, "mark_workflow_run_as_failed_if_not_final", mark_failed_if_not_final)
+    monkeypatch.setattr(svc, "clean_up_workflow", clean_up_workflow)
+
+    with pytest.raises(asyncio.CancelledError):
+        await svc.execute_workflow(
+            workflow_run_id="wr_1",
+            api_key=None,
+            organization=organization,
+        )
+
+    mark_failed_if_not_final.assert_not_awaited()

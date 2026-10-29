@@ -1,0 +1,1007 @@
+// @novnc/novnc is CJS with __esModule marker. Vite 8 (Rollup 5) changed
+// CJS interop so the default import may be the namespace object instead of
+// exports.default.  This guard works across bundler versions.
+import _RFB, { type RfbEvent } from "@novnc/novnc/lib/rfb.js";
+type RFB = _RFB;
+const RFB = (_RFB as typeof _RFB & { default?: typeof _RFB }).default ?? _RFB;
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+import { getClient } from "@/api/AxiosClient";
+import { isForbiddenError } from "@/api/forbidden";
+import {
+  Status,
+  type TaskApiResponse,
+  type WorkflowRunStatusApiResponse,
+} from "@/api/types";
+import { toast } from "@/components/ui/use-toast";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+import { useLogging } from "@/hooks/useLogging";
+import { statusIsNotFinalized } from "@/routes/tasks/types";
+import { useSettingsStore } from "@/store/SettingsStore";
+import {
+  useDemonstrationControl,
+  useManualSignInControl,
+} from "@/store/useManualSignInStore";
+import { useRecordingLauncherStore } from "@/store/useRecordingLauncherStore";
+import { wssBaseUrl, newWssBaseUrl } from "@/util/env";
+import { installNoVncGestureCrashGuard } from "@/util/novncGestureCrashGuard";
+import { cn } from "@/util/utils";
+import {
+  StreamStatusPanel,
+  type StreamDiagnostic,
+} from "@/routes/streaming/StreamDiagnostics";
+import { streamReconnectDelayMs } from "@/routes/streaming/streamLifecycle";
+import type {
+  StreamState,
+  StreamStateChangeHandler,
+} from "@/routes/streaming/streamState";
+import {
+  VNC_SUPER_L_KEYSYM,
+  handleVncClipboardPasteShortcut,
+  pasteTextIntoVnc,
+  type HeldMetaSides,
+} from "@/components/browserStreamClipboard";
+import {
+  STREAM_CONTAINER_CLASS,
+  toastClipboardReadFailed,
+  toastNothingToPaste,
+  usePastedNotice,
+} from "@/routes/streaming/pasteFeedback";
+import {
+  PastedNotice,
+  StreamControlBar,
+  TakeControlButton,
+} from "@/routes/streaming/StreamControlBar";
+import { useRecordingMessageChannel } from "@/routes/streaming/useRecordingMessageChannel";
+import { useWebSocketParams } from "@/routes/streaming/webSocketParams";
+
+import "./browser-stream.css";
+
+installNoVncGestureCrashGuard();
+
+const MESSAGE_RECONNECT_DELAY_MS = 1000;
+const MESSAGE_MAX_RECONNECT_ATTEMPTS = 20;
+const VNC_MAX_RECONNECT_ATTEMPTS = 8;
+const STREAM_GAVE_UP_DIAGNOSTIC: StreamDiagnostic = {
+  title: "Browser stream connection lost",
+  detail:
+    "The browser session stopped responding after several reconnect attempts.",
+  hint: "Refresh the page to try again.",
+};
+
+interface BrowserSession {
+  browser_session_id: string;
+  status?: string | null;
+  browser_address?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+type BrowserSessionLiveness = Pick<
+  BrowserSession,
+  "browser_address" | "started_at" | "completed_at"
+>;
+
+function getBrowserSessionState(browserSession: BrowserSessionLiveness | null) {
+  const hasBrowserSession = Boolean(
+    browserSession && !browserSession.completed_at,
+  );
+  return {
+    hasBrowserSession,
+    isBrowserSessionStarted:
+      hasBrowserSession &&
+      Boolean(browserSession?.started_at || browserSession?.browser_address),
+    isBrowserSessionEnded: !hasBrowserSession,
+  };
+}
+
+type Props = {
+  browserSessionId?: string;
+  // The session behind browserSessionId, from a parent that already polls it.
+  // The stream then reads this instead of polling the session a second time.
+  browserSession?: BrowserSessionLiveness;
+  interactive?: boolean;
+  showControlButtons?: boolean;
+  task?: {
+    run: TaskApiResponse;
+  };
+  workflow?: {
+    run: WorkflowRunStatusApiResponse;
+  };
+  resizeTrigger?: number;
+  isVisible?: boolean;
+  isExecuting?: boolean;
+  onReadyChange?: (isReady: boolean, browserSessionId: string | null) => void;
+  onStreamStateChange?: StreamStateChangeHandler;
+  onActivity?: () => void;
+  // --
+  onClose?: () => void;
+};
+
+type RfbWithFrameUpdates = RFB & {
+  _framebufferUpdate?: () => boolean;
+};
+
+function BrowserStream({
+  browserSessionId = undefined,
+  browserSession: parentBrowserSession = undefined,
+  interactive = true,
+  showControlButtons = undefined,
+  task = undefined,
+  workflow = undefined,
+  resizeTrigger,
+  isVisible = true,
+  isExecuting = false,
+  onReadyChange,
+  onStreamStateChange,
+  onActivity,
+  // --
+  onClose,
+}: Props) {
+  let showStream: boolean = false;
+  let runId: string | null;
+  let entity: "browserSession" | "task" | "workflow" | null;
+
+  if (browserSessionId) {
+    runId = browserSessionId;
+    entity = "browserSession";
+    showStream = true;
+  } else if (task) {
+    runId = task.run.task_id;
+    showStream = statusIsNotFinalized(task.run);
+    entity = "task";
+  } else if (workflow) {
+    runId = workflow.run.workflow_run_id;
+    browserSessionId = workflow.run.browser_session_id ?? undefined;
+    showStream = statusIsNotFinalized(workflow.run);
+    entity = "workflow";
+  } else {
+    entity = null;
+    runId = null;
+  }
+
+  const parentSessionState = parentBrowserSession
+    ? getBrowserSessionState(parentBrowserSession)
+    : null;
+
+  useQuery({
+    queryKey: ["hasBrowserSession", browserSessionId],
+    queryFn: async () => {
+      const client = await getClient(credentialGetter, "sans-api-v1");
+
+      try {
+        const response = await client.get<BrowserSession | null>(
+          `/browser_sessions/${browserSessionId}`,
+        );
+        const sessionState = getBrowserSessionState(response.data);
+
+        setHasBrowserSession(sessionState.hasBrowserSession);
+        setIsBrowserSessionStarted(sessionState.isBrowserSessionStarted);
+        setIsBrowserSessionEnded(sessionState.isBrowserSessionEnded);
+        return sessionState.isBrowserSessionStarted;
+      } catch (error) {
+        setHasBrowserSession(false);
+        setIsBrowserSessionStarted(false);
+        // A forbidden session (expired, or owned by another org) never becomes
+        // allowed, so surface it as an error and stop the poll instead of
+        // swallowing it into the 1/s "not started yet" branch below.
+        if (isForbiddenError(error)) {
+          setIsBrowserSessionEnded(true);
+          throw error;
+        }
+        return false;
+      }
+    },
+    enabled:
+      entity === "browserSession" && !!browserSessionId && !parentSessionState,
+    refetchInterval: (query) =>
+      query.state.status === "error" && isForbiddenError(query.state.error)
+        ? false
+        : query.state.data
+          ? 5000
+          : 1000,
+  });
+
+  const [polledHasBrowserSession, setHasBrowserSession] = useState(true); // be optimistic
+  const [polledIsBrowserSessionStarted, setIsBrowserSessionStarted] =
+    useState(false);
+  const [polledIsBrowserSessionEnded, setIsBrowserSessionEnded] =
+    useState(false);
+  const hasBrowserSession =
+    parentSessionState?.hasBrowserSession ?? polledHasBrowserSession;
+  const isBrowserSessionStarted =
+    parentSessionState?.isBrowserSessionStarted ??
+    polledIsBrowserSessionStarted;
+  const isBrowserSessionEnded =
+    parentSessionState?.isBrowserSessionEnded ?? polledIsBrowserSessionEnded;
+  const [hasGivenUp, setHasGivenUp] = useState(false);
+  const [userIsControlling, setUserIsControlling] = useState(false);
+  useManualSignInControl(
+    showControlButtons ? browserSessionId : undefined,
+    setUserIsControlling,
+  );
+  const demonstrating = useRecordingLauncherStore(
+    (state) => state.demonstrationBrowserSessionId === browserSessionId,
+  );
+  const recordingDemonstration = useRecordingLauncherStore(
+    (state) =>
+      state.demonstrationRecordingBrowserSessionId === browserSessionId,
+  );
+  const [vncDisconnectedTrigger, setVncDisconnectedTrigger] = useState(0);
+  const [isVncConnected, setIsVncConnected] = useState<boolean>(false);
+  // The message socket must open after VNC's handshake has set the ALB
+  // stickiness cookie, or the two sockets can land on different API tasks and
+  // lose their client_id pairing. Latched so a VNC blip doesn't close it.
+  const [hasVncConnected, setHasVncConnected] = useState(false);
+  const [isCanvasReady, setIsCanvasReady] = useState<boolean>(false);
+  const [terminalDiagnostic, setTerminalDiagnostic] =
+    useState<StreamDiagnostic | null>(null);
+  const [isReady, setIsReady] = useState(false);
+  const [messagesDisconnectedTrigger, setMessagesDisconnectedTrigger] =
+    useState(0);
+  const prevMessageConnectedRef = useRef<boolean>(false);
+  const messageDroppedRef = useRef(false);
+  const [canvasContainer, setCanvasContainer] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const setCanvasContainerRef = useCallback((node: HTMLDivElement | null) => {
+    setCanvasContainer(node);
+  }, []);
+  const rfbRef = useRef<RFB | null>(null);
+  const onActivityRef = useRef(onActivity);
+  const userCanSendVncInputRef = useRef(false);
+  const heldMetaSidesRef = useRef<HeldMetaSides>({
+    left: false,
+    right: false,
+  });
+  const leftCmdSentAsSuperRef = useRef(false);
+  const observerRef = useRef<MutationObserver | null>(null);
+  const vncReconnectAttemptsRef = useRef(0);
+  const vncReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const messageReconnectAttemptsRef = useRef(0);
+  const messageReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const gaveUpLoggedRef = useRef(false);
+  const streamLogFieldsRef = useRef({ browserSessionId, entity, runId });
+  streamLogFieldsRef.current = { browserSessionId, entity, runId };
+  const settingsStore = useSettingsStore();
+  const credentialGetter = useCredentialGetter();
+  const logging = useLogging();
+  const getWebSocketParams = useWebSocketParams();
+  const isBrowserSessionAvailable =
+    entity !== "browserSession" || hasBrowserSession;
+  const isBrowserSessionBackendReady =
+    entity !== "browserSession" || isBrowserSessionStarted;
+  const handleMessageConnectionChange = useCallback(
+    (connected: boolean, event?: CloseEvent) => {
+      if (connected) {
+        setTerminalDiagnostic(null);
+        return;
+      }
+      if (!event) {
+        return;
+      }
+      const { code, reason } = event;
+      setTerminalDiagnostic(
+        (prev) =>
+          prev ??
+          (code === 1006
+            ? {
+                title: "The messages channel slipped away",
+                detail: "The messages channel dropped before sending a frame.",
+                hint: "Check that the API server is reachable from the UI.",
+              }
+            : {
+                title: "The messages channel packed up and left",
+                detail: `Messages channel closed with code ${code}${reason ? ` (${reason})` : ""}.`,
+              }),
+      );
+    },
+    [],
+  );
+  const legacyMessageSocketUrl =
+    entity === "task" && runId
+      ? `${wssBaseUrl}/stream/messages/task/${runId}`
+      : entity === "workflow" && runId
+        ? `${wssBaseUrl}/stream/messages/workflow_run/${runId}`
+        : undefined;
+  const { isMessageConnected, sendCommand } = useRecordingMessageChannel({
+    browserSessionId: runId,
+    enabled:
+      showStream &&
+      Boolean(canvasContainer) &&
+      Boolean(runId) &&
+      isBrowserSessionAvailable &&
+      isBrowserSessionBackendReady &&
+      hasVncConnected,
+    clipboard: "vnc",
+    socketUrl: legacyMessageSocketUrl,
+    reconnectTrigger: messagesDisconnectedTrigger,
+    onConnectionChange: handleMessageConnectionChange,
+  });
+
+  useEffect(() => {
+    onActivityRef.current = onActivity;
+  }, [onActivity]);
+
+  useEffect(() => {
+    setIsBrowserSessionStarted(false);
+    setIsReady(false);
+    setIsVncConnected(false);
+    setHasVncConnected(false);
+    messageDroppedRef.current = false;
+    setIsCanvasReady(false);
+    setHasBrowserSession(true);
+    setIsBrowserSessionEnded(false);
+    setHasGivenUp(false);
+    setTerminalDiagnostic(null);
+    gaveUpLoggedRef.current = false;
+    messageReconnectAttemptsRef.current = 0;
+    if (messageReconnectTimerRef.current) {
+      clearTimeout(messageReconnectTimerRef.current);
+      messageReconnectTimerRef.current = null;
+    }
+    vncReconnectAttemptsRef.current = 0;
+    if (vncReconnectTimerRef.current) {
+      clearTimeout(vncReconnectTimerRef.current);
+      vncReconnectTimerRef.current = null;
+    }
+    if (rfbRef.current) {
+      rfbRef.current.disconnect();
+      rfbRef.current = null;
+    }
+  }, [browserSessionId]);
+
+  // browser is ready
+  useEffect(() => {
+    setIsReady(
+      isVncConnected &&
+        isCanvasReady &&
+        isBrowserSessionAvailable &&
+        isBrowserSessionBackendReady,
+    );
+  }, [
+    isBrowserSessionAvailable,
+    isBrowserSessionBackendReady,
+    isCanvasReady,
+    isVncConnected,
+  ]);
+
+  useEffect(() => {
+    // browserSessionId intentionally not a dep: re-firing on prop change
+    // before isReady resets would spuriously report (true, newSessionId).
+    onReadyChange?.(isReady, isReady ? (browserSessionId ?? null) : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady, onReadyChange]);
+
+  useEffect(() => {
+    return () => {
+      onReadyChange?.(false, null);
+    };
+  }, [onReadyChange]);
+
+  const runEnded = (entity === "task" || entity === "workflow") && !showStream;
+  const streamState: StreamState = isReady
+    ? "live"
+    : hasGivenUp || isBrowserSessionEnded || runEnded
+      ? "stopped"
+      : "connecting";
+
+  useEffect(() => {
+    // Same reason as onReadyChange: browserSessionId is read, not a dep.
+    onStreamStateChange?.(streamState, browserSessionId ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamState, onStreamStateChange]);
+
+  useEffect(() => {
+    return () => {
+      onStreamStateChange?.("connecting", null);
+    };
+  }, [onStreamStateChange]);
+
+  // `isUsingABrowser` is tied to local `isReady`, so this component owns it.
+  // `isLoadingABrowser` is owned by the route instead (SKY-9777).
+  useEffect(() => {
+    settingsStore.setIsUsingABrowser(isReady);
+    settingsStore.setBrowserSessionId(
+      isReady ? (browserSessionId ?? null) : null,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReady, browserSessionId]);
+
+  // message channel reconnect policy
+  useEffect(() => {
+    const messageJustClosed =
+      prevMessageConnectedRef.current && !isMessageConnected;
+    prevMessageConnectedRef.current = isMessageConnected;
+    if (messageJustClosed) {
+      messageDroppedRef.current = true;
+    }
+
+    if (isMessageConnected) {
+      messageDroppedRef.current = false;
+      return;
+    }
+
+    // A live VNC stream proves the session is real: reconnect now and drop the cap (also recovers a late VNC connect).
+    // Skipped for a socket still opening, which the first VNC connect enables.
+    if (isVncConnected && messageDroppedRef.current) {
+      messageReconnectAttemptsRef.current = 0;
+      if (messageReconnectTimerRef.current) {
+        clearTimeout(messageReconnectTimerRef.current);
+        messageReconnectTimerRef.current = null;
+      }
+      setMessagesDisconnectedTrigger((x) => x + 1);
+      return;
+    }
+
+    if (!messageJustClosed) {
+      return;
+    }
+
+    // No stream is live; a session the backend can't find would respin forever, so cap it.
+    if (messageReconnectAttemptsRef.current >= MESSAGE_MAX_RECONNECT_ATTEMPTS) {
+      setTerminalDiagnostic((prev) => prev ?? STREAM_GAVE_UP_DIAGNOSTIC);
+      setHasGivenUp(true);
+      if (!gaveUpLoggedRef.current) {
+        gaveUpLoggedRef.current = true;
+        logging.warn("Stream gave up", {
+          stream: "vnc",
+          browser_session_id:
+            streamLogFieldsRef.current.browserSessionId ?? null,
+          workflow_run_id:
+            streamLogFieldsRef.current.entity === "workflow"
+              ? streamLogFieldsRef.current.runId
+              : null,
+          reason: "message_reconnect_exhausted",
+          reconnect_attempts: messageReconnectAttemptsRef.current,
+        });
+      }
+      return;
+    }
+
+    messageReconnectAttemptsRef.current += 1;
+    if (messageReconnectTimerRef.current) {
+      clearTimeout(messageReconnectTimerRef.current);
+    }
+    messageReconnectTimerRef.current = setTimeout(() => {
+      messageReconnectTimerRef.current = null;
+      setMessagesDisconnectedTrigger((x) => x + 1);
+    }, MESSAGE_RECONNECT_DELAY_MS);
+  }, [isMessageConnected, isVncConnected, logging]);
+
+  useEffect(() => {
+    return () => {
+      if (messageReconnectTimerRef.current) {
+        clearTimeout(messageReconnectTimerRef.current);
+      }
+    };
+  }, []);
+
+  // vnc socket
+  useEffect(
+    () => {
+      if (!showStream || !canvasContainer || !runId) {
+        if (rfbRef.current) {
+          rfbRef.current.disconnect();
+          rfbRef.current = null;
+          setIsVncConnected(false);
+        }
+        return;
+      }
+
+      let cancelled = false;
+      let didDisconnect = false;
+
+      async function setupVnc() {
+        if (rfbRef.current && isVncConnected) {
+          return;
+        }
+
+        const wsParams = await getWebSocketParams();
+        if (cancelled) {
+          return;
+        }
+        const vncUrl =
+          entity === "browserSession"
+            ? `${newWssBaseUrl}/stream/vnc/browser_session/${runId}?${wsParams}`
+            : entity === "task"
+              ? `${wssBaseUrl}/stream/vnc/task/${runId}?${wsParams}`
+              : entity === "workflow"
+                ? `${wssBaseUrl}/stream/vnc/workflow_run/${runId}?${wsParams}`
+                : null;
+
+        if (!vncUrl) {
+          throw new Error("No vnc url");
+        }
+
+        if (rfbRef.current) {
+          rfbRef.current.disconnect();
+        }
+
+        if (!isBrowserSessionAvailable || !isBrowserSessionBackendReady) {
+          setIsVncConnected(false);
+          return;
+        }
+
+        const canvas = canvasContainer;
+
+        if (!canvas) {
+          throw new Error("Canvas element not found");
+        }
+
+        observerRef.current = new MutationObserver(() => {
+          const canvasElement = canvasContainer.querySelector("canvas");
+          if (canvasElement) {
+            setIsCanvasReady(true);
+            observerRef.current?.disconnect();
+          }
+        });
+
+        observerRef.current.observe(canvasContainer, {
+          childList: true,
+          subtree: true,
+        });
+
+        const rfb = new RFB(canvas, vncUrl);
+
+        rfb.scaleViewport = true;
+        rfb.compressionLevel = 2;
+        rfb.qualityLevel = 6;
+
+        const frameUpdateRfb = rfb as RfbWithFrameUpdates;
+        // noVNC does not expose a public framebuffer-update event in 1.5.x.
+        // Hook the internal method defensively so activity tracking degrades
+        // to no-op if the private API changes.
+        const originalFrameUpdate =
+          frameUpdateRfb._framebufferUpdate?.bind(rfb);
+        if (originalFrameUpdate) {
+          frameUpdateRfb._framebufferUpdate = () => {
+            const didCompleteFrameUpdate = originalFrameUpdate();
+            if (didCompleteFrameUpdate) {
+              onActivityRef.current?.();
+            }
+            return didCompleteFrameUpdate;
+          };
+        }
+
+        rfbRef.current = rfb;
+
+        const canvasElement = canvasContainer.querySelector("canvas");
+
+        if (canvasElement) {
+          setIsCanvasReady(true);
+          observerRef.current?.disconnect();
+        }
+
+        rfb.addEventListener("connect", () => {
+          setIsVncConnected(true);
+          setHasVncConnected(true);
+          setHasGivenUp(false);
+          setTerminalDiagnostic(null);
+          messageReconnectAttemptsRef.current = 0;
+          vncReconnectAttemptsRef.current = 0;
+        });
+
+        rfb.addEventListener("disconnect", (e: RfbEvent) => {
+          if (cancelled || didDisconnect) return;
+          didDisconnect = true;
+          setIsVncConnected(false);
+          setIsCanvasReady(false);
+          // Exponential backoff with jitter, capped attempts: a session with no
+          // reachable VNC endpoint dies in ~150ms per dial, and an immediate
+          // retrigger hammered the API at ~4 dials/second.
+          if (vncReconnectAttemptsRef.current < VNC_MAX_RECONNECT_ATTEMPTS) {
+            const delay = streamReconnectDelayMs(
+              vncReconnectAttemptsRef.current,
+            );
+            vncReconnectAttemptsRef.current += 1;
+            vncReconnectTimerRef.current = setTimeout(
+              () => {
+                vncReconnectTimerRef.current = null;
+                setVncDisconnectedTrigger((x) => x + 1);
+              },
+              delay + Math.random() * delay * 0.5,
+            );
+          } else {
+            setHasGivenUp(true);
+            if (!gaveUpLoggedRef.current) {
+              gaveUpLoggedRef.current = true;
+              logging.warn("Stream gave up", {
+                stream: "vnc",
+                browser_session_id:
+                  streamLogFieldsRef.current.browserSessionId ?? null,
+                workflow_run_id:
+                  streamLogFieldsRef.current.entity === "workflow"
+                    ? streamLogFieldsRef.current.runId
+                    : null,
+                reason: "reconnect_exhausted",
+                reconnect_attempts: vncReconnectAttemptsRef.current,
+              });
+            }
+          }
+          onClose?.();
+          const clean = Boolean(e.detail?.clean);
+          setTerminalDiagnostic(
+            (prev) =>
+              prev ??
+              (clean
+                ? {
+                    title: "The browser stream packed up and left",
+                    detail: "The browser stream closed cleanly.",
+                  }
+                : {
+                    title: "The browser stream slipped away",
+                    hint: "Refresh the page or switch to local browser streaming.",
+                  }),
+          );
+        });
+      }
+
+      setupVnc();
+
+      return () => {
+        cancelled = true;
+        // Every re-run redials via setupVnc, so a pending retry is redundant.
+        if (vncReconnectTimerRef.current) {
+          clearTimeout(vncReconnectTimerRef.current);
+          vncReconnectTimerRef.current = null;
+        }
+        if (observerRef.current) {
+          observerRef.current.disconnect();
+          observerRef.current = null;
+        }
+        if (rfbRef.current) {
+          rfbRef.current.disconnect();
+          rfbRef.current = null;
+        }
+        setIsVncConnected(false);
+        setIsCanvasReady(false);
+      };
+    },
+    // cannot include isVncConnected in deps as it will cause infinite loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      browserSessionId,
+      entity,
+      canvasContainer,
+      isBrowserSessionAvailable,
+      isBrowserSessionBackendReady,
+      runId,
+      showStream,
+      vncDisconnectedTrigger, // will re-run on disconnects
+      logging,
+    ],
+  );
+
+  // effect to send a message when the user is controlling, vs not controlling.
+  // Waits for VNC: the backend drops control messages until its VNC channel
+  // exists, and every VNC (re)connect starts that channel agent-controlled.
+  useEffect(() => {
+    if (!isMessageConnected || !isVncConnected) {
+      return;
+    }
+
+    if (interactive || userIsControlling) {
+      sendCommand({ kind: "take-control" });
+    } else {
+      sendCommand({ kind: "cede-control" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interactive, isMessageConnected, isVncConnected, userIsControlling]);
+
+  // noVNC (1.5.0) only rescales via its own observer, which gets swallowed on
+  // re-parent; re-asserting scaleViewport on resize forces a recompute (skip 0×0).
+  useEffect(() => {
+    if (!canvasContainer || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const rescale = () => {
+      const rect = canvasContainer.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && rfbRef.current) {
+        rfbRef.current.scaleViewport = true;
+      }
+    };
+    rescale();
+    const observer = new ResizeObserver(rescale);
+    observer.observe(canvasContainer);
+    return () => observer.disconnect();
+  }, [canvasContainer, resizeTrigger]);
+
+  // Effect to show toast when task or workflow reaches a final state based on hook updates
+  useEffect(() => {
+    const run = task ? task.run : workflow ? workflow.run : null;
+
+    if (!run) {
+      return;
+    }
+
+    const name = task ? "task" : workflow ? "agent" : null;
+
+    if (!name) {
+      return;
+    }
+
+    if (run.status === Status.Failed || run.status === Status.Terminated) {
+      // Only show toast if VNC is not connected or was never connected,
+      // to avoid double toasting if disconnect handler also triggers similar logic.
+      // However, the disconnect handler now primarily invalidates queries.
+      toast({
+        title: "Run Ended",
+        description: `The ${name} run has ${run.status}.`,
+        variant: "destructive",
+      });
+    } else if (run.status === Status.Completed) {
+      toast({
+        title: "Run Completed",
+        description: `The ${name} run has been completed.`,
+        variant: "success",
+      });
+    }
+  }, [task, workflow]);
+
+  useEffect(() => {
+    if (!interactive) {
+      setUserIsControlling(false);
+    }
+  }, [interactive]);
+
+  // When control can no longer be offered (buttons hidden and not inherently
+  // interactive), a prior grab must be released or its input keeps flowing.
+  // Recording and demonstration modes hold control while their control buttons are hidden.
+  useEffect(() => {
+    if (!interactive && !showControlButtons && !demonstrating) {
+      setUserIsControlling(false);
+    }
+  }, [interactive, showControlButtons, demonstrating]);
+
+  useDemonstrationControl(recordingDemonstration, true, setUserIsControlling);
+
+  const theUserIsControlling =
+    userIsControlling || (interactive && !showControlButtons);
+
+  const [pastedCharacters, showPasted] = usePastedNotice();
+
+  const sendTextToVnc = useCallback(
+    async (text: string) => {
+      if (!text) {
+        toastNothingToPaste();
+        return;
+      }
+      // The clipboard read can wait on a permission prompt; the stream or the
+      // user's control may have changed by the time it resolves.
+      const rfb = rfbRef.current;
+      if (!rfb || !userCanSendVncInputRef.current) {
+        return;
+      }
+      await pasteTextIntoVnc(rfb, text);
+      if (rfbRef.current !== rfb) {
+        return;
+      }
+      showPasted(text);
+      // Keystrokes after a paste belong to the page, not the button.
+      rfb.focus({ preventScroll: true });
+    },
+    [showPasted],
+  );
+
+  const pasteIntoVnc = useCallback(async () => {
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (err) {
+      console.error("Failed to read the clipboard for VNC:", err);
+      toastClipboardReadFailed();
+      return;
+    }
+    await sendTextToVnc(text);
+  }, [sendTextToVnc]);
+
+  useEffect(() => {
+    userCanSendVncInputRef.current = theUserIsControlling;
+  }, [theUserIsControlling]);
+
+  useEffect(() => {
+    if (!canvasContainer) {
+      return;
+    }
+
+    // Same platform test noVNC uses for its Cmd/Alt keysym swap.
+    const isApplePlatform = /mac|iphone|ipad|ipod/i.test(navigator.platform);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Track only Meta keydowns noVNC's canvas receives: restoring a side noVNC never tracked would strand the modifier remotely, since noVNC drops keyups for keys it never saw down.
+      if (event.key === "Meta" && event.target instanceof HTMLCanvasElement) {
+        if (event.code === "MetaLeft") {
+          heldMetaSidesRef.current = {
+            ...heldMetaSidesRef.current,
+            left: true,
+          };
+          // noVNC sends Apple left Cmd as Alt_L, so the remote page saw Cmd+P as Alt+P. Send Super_L, as noVNC already does for right Cmd.
+          if (isApplePlatform && userCanSendVncInputRef.current) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            rfbRef.current?.sendKey(VNC_SUPER_L_KEYSYM, "MetaLeft", true);
+            leftCmdSentAsSuperRef.current = true;
+            return;
+          }
+        } else if (event.code === "MetaRight") {
+          heldMetaSidesRef.current = {
+            ...heldMetaSidesRef.current,
+            right: true,
+          };
+        }
+      }
+
+      if (!userCanSendVncInputRef.current) {
+        return;
+      }
+
+      void handleVncClipboardPasteShortcut(event, rfbRef.current, {
+        getHeldMetaSides: () => heldMetaSidesRef.current,
+        onPasteError: toastClipboardReadFailed,
+        onPasted: showPasted,
+        onEmptyClipboard: toastNothingToPaste,
+      });
+    };
+
+    const releaseLeftCmd = () => {
+      if (leftCmdSentAsSuperRef.current) {
+        rfbRef.current?.sendKey(VNC_SUPER_L_KEYSYM, "MetaLeft", false);
+        leftCmdSentAsSuperRef.current = false;
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Meta" && event.code === "MetaLeft") {
+        heldMetaSidesRef.current = {
+          ...heldMetaSidesRef.current,
+          left: false,
+        };
+        releaseLeftCmd();
+      } else if (event.key === "Meta" && event.code === "MetaRight") {
+        heldMetaSidesRef.current = {
+          ...heldMetaSidesRef.current,
+          right: false,
+        };
+      }
+    };
+
+    const handleBlur = () => {
+      heldMetaSidesRef.current = { left: false, right: false };
+      releaseLeftCmd();
+    };
+
+    // Edit-menu paste arrives only as a paste event; Cmd/Ctrl+V never does,
+    // because the shortcut handler prevents its default.
+    const handlePaste = (event: ClipboardEvent) => {
+      if (!userCanSendVncInputRef.current) {
+        return;
+      }
+      event.preventDefault();
+      void sendTextToVnc(event.clipboardData?.getData("text/plain") ?? "");
+    };
+
+    canvasContainer.addEventListener("keydown", handleKeyDown, true);
+    canvasContainer.addEventListener("paste", handlePaste);
+    window.addEventListener("keyup", handleKeyUp, true);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      canvasContainer.removeEventListener("keydown", handleKeyDown, true);
+      canvasContainer.removeEventListener("paste", handlePaste);
+      window.removeEventListener("keyup", handleKeyUp, true);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [canvasContainer, showPasted, sendTextToVnc]);
+
+  const streamDiagnostic: StreamDiagnostic =
+    !showStream || !runId
+      ? {
+          title: "Starting browser session",
+          detail: "Waiting for a live browser session to attach.",
+        }
+      : entity === "browserSession" && browserSessionId && !hasBrowserSession
+        ? {
+            title: "This browser session has wandered off",
+            detail: "Looks like it slipped away mid-stream.",
+            hint: "Refresh the page or spin up a fresh browser session.",
+          }
+        : terminalDiagnostic
+          ? terminalDiagnostic
+          : !isBrowserSessionBackendReady
+            ? {
+                title: "Warming up your browser",
+                detail:
+                  "The session is here — we're just waiting for the backend to give the green light.",
+                pending: true,
+              }
+            : !isVncConnected
+              ? {
+                  title: "Reaching out to your browser",
+                  detail: "Opening up the live stream and message channels...",
+                  hint: "If this sticks around, check VNC support for the session or switch to local browser streaming.",
+                  pending: true,
+                }
+              : !isCanvasReady
+                ? {
+                    title: "Setting the stage",
+                    detail:
+                      "The connection is open — now we're waiting for the browser to paint its first frame.",
+                    pending: true,
+                  }
+                : {
+                    title: "Tuning in to your browser...",
+                    pending: true,
+                  };
+
+  return (
+    <>
+      <div
+        className={cn(
+          "browser-stream relative flex flex-col items-center justify-center",
+          STREAM_CONTAINER_CLASS,
+          {
+            "user-is-controlling": theUserIsControlling,
+          },
+        )}
+        ref={setCanvasContainerRef}
+      >
+        {isReady && isVisible && (
+          // Same as InteractiveStreamView: while the take-control button is
+          // offered, a click anywhere on the picture takes control instead of
+          // being swallowed by this layer.
+          <div
+            data-testid="browser-stream-overlay"
+            className={cn(
+              "overlay z-10 flex items-center justify-center overflow-hidden",
+              { "can-take-control": showControlButtons && !userIsControlling },
+            )}
+            onClick={
+              showControlButtons && !userIsControlling
+                ? () => setUserIsControlling(true)
+                : undefined
+            }
+          >
+            <PastedNotice characters={pastedCharacters} />
+            {showControlButtons && (
+              <div className="control-buttons pointer-events-none relative flex h-full w-full items-center justify-center">
+                <TakeControlButton
+                  onClick={() => setUserIsControlling(true)}
+                  className={cn("control-button pointer-events-auto", {
+                    hide: userIsControlling,
+                  })}
+                />
+                {userIsControlling && !demonstrating && (
+                  <StreamControlBar
+                    onStop={() => setUserIsControlling(false)}
+                    onPaste={pasteIntoVnc}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {isExecuting && (
+          <div className="pointer-events-none absolute flex aspect-video w-full animate-glow items-center justify-center rounded-xl p-2 outline outline-8 outline-offset-[-2px] outline-yellow-500">
+            <div className="relative h-full w-full">
+              <div className="pointer-events-auto absolute top-[-3rem] flex w-full items-center justify-start gap-2 text-yellow-500">
+                <div className="truncate">Agent is working</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {!isReady && (
+          <div className="absolute left-0 top-1/2 flex aspect-video max-h-full w-full -translate-y-1/2 flex-col items-center justify-center gap-2 rounded-md border border-neutral-200 bg-white text-sm text-neutral-600 dark:border-slate-800 dark:bg-transparent dark:text-slate-400">
+            <StreamStatusPanel diagnostic={streamDiagnostic} />
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+export { BrowserStream };

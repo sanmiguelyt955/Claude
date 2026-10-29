@@ -1,0 +1,193 @@
+import { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { ClearCredentialDialog } from "@/components/ClearCredentialDialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useOnePasswordToken } from "@/hooks/useOnePasswordToken";
+import { OnePasswordSetupGuide } from "@/components/OnePasswordSetupGuide";
+import { EyeOpenIcon, EyeClosedIcon } from "@radix-ui/react-icons";
+
+const formSchema = z.object({
+  token: z.string().min(1, "1Password token is required"),
+});
+
+type FormData = z.infer<typeof formSchema>;
+
+type Props = {
+  onSuccess?: () => void;
+};
+
+export function OnePasswordTokenForm({ onSuccess }: Props = {}) {
+  const [showToken, setShowToken] = useState(false);
+  const {
+    onePasswordStatus,
+    isLoading,
+    isError,
+    createOrUpdateToken,
+    isUpdating,
+    createOrUpdateTokenError,
+    clearToken,
+    isClearing,
+  } = useOnePasswordToken();
+
+  const form = useForm<FormData>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      token: "",
+    },
+  });
+  const isMutating = isUpdating || isClearing;
+  const isOrganizationSource =
+    !isError && onePasswordStatus?.source === "organization";
+  const isInstanceDefaultSource =
+    !isError && onePasswordStatus?.source === "instance_default";
+  const isNotConfigured =
+    !isError &&
+    onePasswordStatus?.configured === false &&
+    onePasswordStatus.source === null;
+
+  const onSubmit = (data: FormData) => {
+    createOrUpdateToken(data, {
+      onSuccess: () => {
+        form.reset({ token: "" });
+        onSuccess?.();
+      },
+    });
+  };
+
+  const toggleTokenVisibility = () => {
+    setShowToken(!showToken);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-medium">
+            1Password Service Account Token
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Skyvern reads login items from the vaults this token can access.
+          </p>
+        </div>
+        {isOrganizationSource && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Status:</span>
+            <span className="text-sm text-green-600">Active</span>
+            {onePasswordStatus.modified_at ? (
+              <span className="text-sm text-muted-foreground">
+                Last modified{" "}
+                {new Date(onePasswordStatus.modified_at).toLocaleDateString()}
+              </span>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      {/* Mounted only once the status query settles, and remounted when the org
+          flips between configured and not, so defaultOpen reads a settled value
+          rather than the always-undefined first render. The placeholder holds
+          the collapsed height meanwhile so the panel does not jump. */}
+      {isLoading ? (
+        <Skeleton className="h-[38px] w-full rounded-md" />
+      ) : isError ? (
+        <p className="text-sm text-muted-foreground">
+          Could not load the 1Password status.
+        </p>
+      ) : (
+        <OnePasswordSetupGuide
+          key={onePasswordStatus?.source ?? "not_configured"}
+          defaultOpen={isNotConfigured}
+        />
+      )}
+
+      {isInstanceDefaultSource && (
+        <p className="text-sm text-muted-foreground">
+          Using the instance default 1Password account. Add your own service
+          account token to override it.
+        </p>
+      )}
+
+      <Form {...form}>
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="token"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Service Account Token</FormLabel>
+                <div className="relative">
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type={showToken ? "text" : "password"}
+                      placeholder="ops_eyJlbWFpbCI6..."
+                      disabled={isLoading || isMutating}
+                    />
+                  </FormControl>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                    onClick={toggleTokenVisibility}
+                    disabled={isLoading || isMutating}
+                  >
+                    {showToken ? (
+                      <EyeClosedIcon className="h-4 w-4" />
+                    ) : (
+                      <EyeOpenIcon className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                <FormMessage>{createOrUpdateTokenError}</FormMessage>
+              </FormItem>
+            )}
+          />
+
+          <div className="flex items-center gap-4">
+            <Button type="submit" disabled={isLoading || isMutating}>
+              {isUpdating ? "Updating..." : "Update Token"}
+            </Button>
+            {isOrganizationSource && (
+              <div className="space-y-1">
+                <ClearCredentialDialog
+                  label="Clear Token"
+                  title="Clear 1Password token?"
+                  description={
+                    onePasswordStatus.instance_default_available
+                      ? "Workflows will use the instance default 1Password account after the token is cleared."
+                      : "Workflows that use 1Password credentials will no longer be able to resolve them until a new service account token is added."
+                  }
+                  disabled={isLoading || isMutating}
+                  isPending={isClearing}
+                  onConfirm={() =>
+                    clearToken(undefined, {
+                      onSuccess: () => form.reset({ token: "" }),
+                    })
+                  }
+                />
+                <div className="text-sm text-muted-foreground">
+                  {onePasswordStatus.instance_default_available
+                    ? "Clearing this token returns this organization to the instance default 1Password account."
+                    : "Clearing this token disables 1Password for this organization."}
+                </div>
+              </div>
+            )}
+          </div>
+        </form>
+      </Form>
+    </div>
+  );
+}

@@ -1,0 +1,819 @@
+"""Skyvern MCP block tools — discover block types and schemas for workflow definitions.
+
+Tools for listing available workflow block types and retrieving their Pydantic schemas,
+knowledge base descriptions, and minimal examples. These tools do not require a browser
+session or API connection — they serve pure metadata from the codebase.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Annotated, Any
+
+import structlog
+from pydantic import Field, TypeAdapter, ValidationError
+
+from skyvern.schemas.workflows import (
+    BLOCK_YAML_TYPES,
+    ActionBlockYAML,
+    BlockType,
+    BlockYAML,
+    CodeBlockYAML,
+    ConditionalBlockYAML,
+    DataExportBlockYAML,
+    DownloadToS3BlockYAML,
+    EmailInboxBlockYAML,
+    ExtractionBlockYAML,
+    FileDownloadBlockYAML,
+    FileParserBlockYAML,
+    FileUploadBlockYAML,
+    ForLoopBlockYAML,
+    GoogleSheetsReadBlockYAML,
+    GoogleSheetsWriteBlockYAML,
+    HttpRequestBlockYAML,
+    HumanInteractionBlockYAML,
+    LoginBlockYAML,
+    NavigationBlockYAML,
+    PdfFillBlockYAML,
+    PDFParserBlockYAML,
+    PrintPageBlockYAML,
+    SendEmailBlockYAML,
+    SplitPdfBlockYAML,
+    TaskBlockYAML,
+    TaskV2BlockYAML,
+    TerminateBlockYAML,
+    TextPromptBlockYAML,
+    UploadToS3BlockYAML,
+    UrlBlockYAML,
+    ValidationBlockYAML,
+    WaitBlockYAML,
+    WebSearchBlockYAML,
+    WhileLoopBlockYAML,
+    WorkflowTriggerBlockYAML,
+)
+
+from ._common import CODE_ONLY_FIELD_DESCRIPTION, CODE_ONLY_POLICY_HINT, ErrorCode, make_error, make_result
+
+LOG = structlog.get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Block type → YAML class mapping
+# ---------------------------------------------------------------------------
+
+BLOCK_TYPE_MAP: dict[str, type[BlockYAML]] = {
+    BlockType.TASK.value: TaskBlockYAML,
+    BlockType.TaskV2.value: TaskV2BlockYAML,
+    BlockType.FOR_LOOP.value: ForLoopBlockYAML,
+    BlockType.WHILE_LOOP.value: WhileLoopBlockYAML,
+    BlockType.CONDITIONAL.value: ConditionalBlockYAML,
+    BlockType.CODE.value: CodeBlockYAML,
+    BlockType.TEXT_PROMPT.value: TextPromptBlockYAML,
+    BlockType.EXTRACTION.value: ExtractionBlockYAML,
+    BlockType.ACTION.value: ActionBlockYAML,
+    BlockType.NAVIGATION.value: NavigationBlockYAML,
+    BlockType.LOGIN.value: LoginBlockYAML,
+    BlockType.WAIT.value: WaitBlockYAML,
+    BlockType.VALIDATION.value: ValidationBlockYAML,
+    BlockType.HTTP_REQUEST.value: HttpRequestBlockYAML,
+    BlockType.WEB_SEARCH.value: WebSearchBlockYAML,
+    BlockType.SEND_EMAIL.value: SendEmailBlockYAML,
+    BlockType.FILE_DOWNLOAD.value: FileDownloadBlockYAML,
+    BlockType.FILE_UPLOAD.value: FileUploadBlockYAML,
+    BlockType.GOTO_URL.value: UrlBlockYAML,
+    BlockType.DOWNLOAD_TO_S3.value: DownloadToS3BlockYAML,
+    BlockType.DATA_EXPORT.value: DataExportBlockYAML,
+    BlockType.TERMINATE.value: TerminateBlockYAML,
+    BlockType.UPLOAD_TO_S3.value: UploadToS3BlockYAML,
+    BlockType.FILE_URL_PARSER.value: FileParserBlockYAML,
+    BlockType.PDF_PARSER.value: PDFParserBlockYAML,
+    BlockType.HUMAN_INTERACTION.value: HumanInteractionBlockYAML,
+    BlockType.PRINT_PAGE.value: PrintPageBlockYAML,
+    BlockType.PDF_FILL.value: PdfFillBlockYAML,
+    BlockType.SPLIT_PDF.value: SplitPdfBlockYAML,
+    BlockType.WORKFLOW_TRIGGER.value: WorkflowTriggerBlockYAML,
+    BlockType.GOOGLE_SHEETS_READ.value: GoogleSheetsReadBlockYAML,
+    BlockType.EMAIL_INBOX.value: EmailInboxBlockYAML,
+    BlockType.GOOGLE_SHEETS_WRITE.value: GoogleSheetsWriteBlockYAML,
+}
+
+# ---------------------------------------------------------------------------
+# One-line summaries
+# ---------------------------------------------------------------------------
+
+BLOCK_SUMMARIES: dict[str, str] = {
+    "navigation": "Take actions on a page: fill forms, click buttons, navigate multi-step flows (most common)",
+    "extraction": "Extract structured data from the current page",
+    "for_loop": "Iterate over a list, executing nested blocks for each item",
+    "while_loop": "Repeat a sequence of blocks while a condition stays true (pagination, polling, retry-until)",
+    "conditional": "Branch based on Jinja2 expressions or AI prompts",
+    "code": "Run Python code for data transformation",
+    "text_prompt": "LLM text generation without a browser",
+    "action": "Perform a single focused action on the current page",
+    "login": "Handle authentication flows including username/password and TOTP/2FA",
+    "wait": "Pause workflow execution for a specified duration",
+    "terminate": "End the workflow run as terminated with a reason and an optional error code, e.g. as a conditional branch target",
+    "validation": "Validate page state with complete/terminate criteria",
+    "http_request": "Call an external HTTP API",
+    "web_search": "Search Google or Exa and optionally process the results with a prompt",
+    "send_email": "Send an email via SMTP or from a connected Gmail account",
+    "file_download": "Download a file from a page",
+    "file_upload": "Upload a file from S3/Azure to a page element",
+    "goto_url": "Navigate directly to a URL without additional instructions",
+    "download_to_s3": "Download a URL directly to S3 storage",
+    "data_export": "Write schema-defined workflow records to a Parquet file",
+    "upload_to_s3": "Upload local content to S3",
+    "file_url_parser": "Parse a file (CSV/Excel/PDF/image/DOCX) from a URL; ZIP archives are unzipped to a file list",
+    "pdf_parser": "Extract structured data from a PDF document",
+    "human_interaction": "Pause workflow for human approval via email",
+    "print_page": "Print the current page to PDF",
+    "pdf_fill": "Fill a PDF form (AcroForm fields, or flat PDFs via OCR overlay) from a prompt and structured payload",
+    "split_pdf": "Split one PDF into multiple PDFs by prompt and save each to S3",
+    "workflow_trigger": "Trigger another workflow by permanent ID, with optional payload and wait-for-completion",
+    "google_sheets_read": "Read rows from a Google Sheet as structured data (list of dicts)",
+    "email_inbox": "Read matching messages from a Gmail or Outlook inbox",
+    "google_sheets_write": "Write rows to a Google Sheet (append new rows or update existing cells)",
+}
+
+# ---------------------------------------------------------------------------
+# Minimal examples for common block types
+# ---------------------------------------------------------------------------
+
+BLOCK_EXAMPLES: dict[str, dict[str, Any]] = {
+    "navigation": {
+        "block_type": "navigation",
+        "label": "search_and_open",
+        "url": "https://example.com/search",
+        "title": "Search and Open Result",
+        "navigation_goal": "Search for {{ query }} and click the first result",
+        "parameter_keys": ["query"],
+    },
+    "extraction": {
+        "block_type": "extraction",
+        "label": "extract_products",
+        "title": "Extract Product List",
+        "data_extraction_goal": "Extract all products with name, price, and stock status",
+        "data_schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "price": {"type": "number"},
+                    "in_stock": {"type": "boolean"},
+                },
+            },
+        },
+    },
+    "data_export": {
+        "block_type": "data_export",
+        "label": "export_records",
+        "data": "{{ extract_records_output.extracted_information }}",
+        "data_schema": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "price": {"type": "number"},
+                },
+            },
+        },
+        "file_name": "records",
+    },
+    "for_loop": {
+        "block_type": "for_loop",
+        "label": "process_each_url",
+        "loop_over_parameter_key": "urls",
+        "loop_blocks": [
+            {
+                "block_type": "goto_url",
+                "label": "open_url",
+                "url": "{{ current_value }}",
+            }
+        ],
+    },
+    "while_loop": {
+        "block_type": "while_loop",
+        "label": "paginate_results",
+        # Bootstrap idiom: ``current_index == 0`` short-circuits the OR on the first
+        # iteration, before ``extract_page`` exists. From iteration 1 onward, the previous
+        # extraction's ``has_next_page`` flag drives the loop.
+        "condition": {
+            "criteria_type": "jinja2_template",
+            "expression": "{{ current_index == 0 or extract_page.has_next_page }}",
+        },
+        "loop_blocks": [
+            {
+                "block_type": "extraction",
+                "label": "extract_page",
+                "data_extraction_goal": "Extract all rows on the current page and whether a 'Next' button is enabled",
+                "data_schema": {
+                    "type": "object",
+                    "properties": {
+                        "rows": {"type": "array", "items": {"type": "object"}},
+                        "has_next_page": {"type": "boolean"},
+                    },
+                },
+            },
+            {
+                "block_type": "action",
+                "label": "click_next",
+                "navigation_goal": "Click the 'Next' button to advance to the next page",
+            },
+        ],
+    },
+    "conditional": {
+        "block_type": "conditional",
+        "label": "route_by_status",
+        "branch_conditions": [
+            {
+                "criteria": {
+                    "criteria_type": "jinja2_template",
+                    "expression": "{{ status == 'active' }}",
+                },
+                "next_block_label": "handle_active",
+                "is_default": False,
+            },
+            {"is_default": True, "next_block_label": "handle_inactive"},
+        ],
+    },
+    "login": {
+        "block_type": "login",
+        "label": "login_to_portal",
+        "url": "https://portal.example.com/login",
+        "parameter_keys": ["my_credentials"],
+        "complete_criterion": "URL contains '/dashboard'",
+    },
+    "action": {
+        "block_type": "action",
+        "label": "accept_terms",
+        "url": "https://example.com/checkout",
+        "navigation_goal": "Check the terms checkbox",
+    },
+    "wait": {
+        "block_type": "wait",
+        "label": "wait_for_processing",
+        "wait_sec": 30,
+    },
+    "terminate": {
+        "block_type": "terminate",
+        "label": "stop_account_not_found",
+        "reason": "No account matches {{ account_number }}",
+        "error_code": "ACCOUNT_NOT_FOUND",
+    },
+    "text_prompt": {
+        "block_type": "text_prompt",
+        "label": "summarize_results",
+        "prompt": "Summarize {{ raw_results }} into a short customer-facing update",
+        "parameter_keys": ["raw_results"],
+        "json_schema": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+            },
+        },
+    },
+    "code": {
+        "block_type": "code",
+        "label": "collect_post_titles",
+        "prompt": "Open the news page and collect the top post titles",
+        "code": (
+            'await page.goto("https://example.com/news")\n'
+            'titles = await page.locator("h2.title").all_text_contents()\n'
+            'return {"titles": titles}'
+        ),
+    },
+    "goto_url": {
+        "block_type": "goto_url",
+        "label": "open_cart",
+        "url": "https://example.com/cart",
+    },
+    "workflow_trigger": {
+        "block_type": "workflow_trigger",
+        "label": "trigger_sub_workflow",
+        "workflow_permanent_id": "wpid_xxx",
+        "payload": {"url": "{{ some_parameter }}"},
+        "wait_for_completion": True,
+    },
+    "pdf_fill": {
+        "block_type": "pdf_fill",
+        "label": "fill_application_pdf",
+        "file_url": "{{ source_pdf_output }}",
+        "prompt": "Fill the application using the applicant payload.",
+        "payload": "{{ applicant | json }}",
+        "parameter_keys": ["source_pdf_output", "applicant"],
+    },
+    "split_pdf": {
+        "block_type": "split_pdf",
+        "label": "split_combined_pdf",
+        "file_url": "{{ source_pdf_output }}",
+        "prompt": "Split this combined PDF into one file per document; name each by document type.",
+        "parameter_keys": ["source_pdf_output"],
+    },
+    "human_interaction": {
+        "block_type": "human_interaction",
+        "label": "approve_order",
+        "timeout_seconds": 3600,
+        "recipients": ["ops@example.com"],
+        "subject": "Approval needed before the order is submitted",
+        "body": "A workflow run is paused and needs someone to approve the order before it is submitted.",
+        "instructions": "Review the order total and line items, then approve to submit or reject to cancel the run.",
+        "positive_descriptor": "Approve order",
+        "negative_descriptor": "Cancel",
+    },
+    "google_sheets_read": {
+        "block_type": "google_sheets_read",
+        "label": "read_sheet_data",
+        "spreadsheet_url": "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit",
+        "sheet_name": "Sheet1",
+        "range": "A1:D100",
+        "credential_id": "{{ google_credential_id }}",
+        "has_header_row": True,
+    },
+    "email_inbox": {
+        "block_type": "email_inbox",
+        "label": "find_invoice_email",
+        "email_client": "gmail",
+        "credential_id": "{{ gmail_credential_id }}",
+        "folder": "INBOX",
+        "prompt": "Find invoice approval emails that need a reply.",
+    },
+    "google_sheets_write": {
+        "block_type": "google_sheets_write",
+        "label": "write_sheet_data",
+        "spreadsheet_url": "https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit",
+        "sheet_name": "Sheet1",
+        "range": "A1",
+        "credential_id": "{{ google_credential_id }}",
+        "write_mode": "append",
+        "values": "[[{{ extract_metric.output.metric | tojson }}]]",
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Knowledge base parsing (lazy, cached)
+# ---------------------------------------------------------------------------
+
+_KB_PATH = Path(__file__).resolve().parents[2] / "forge" / "prompts" / "skyvern" / "workflow_knowledge_base.txt"
+
+_HEADER_RE = re.compile(r"^\*\*\s+(.+?)\s+\((\w+)\)\s+\*\*$")
+
+WORKFLOW_KNOWLEDGE_TOPIC_HEADERS: dict[str, str] = {
+    "workflow_structure_overview": "** WORKFLOW STRUCTURE OVERVIEW **",
+    "workflow_parameters": "** WORKFLOW PARAMETERS **",
+    "common_block_fields": "** COMMON BLOCK FIELDS **",
+    "choosing_a_block": "** CHOOSING A BLOCK (use the most specific block that fits the step) **",
+    "navigation_block": "** NAVIGATION BLOCK (navigation) **",
+    "url_block": "** URL BLOCK (goto_url) **",
+    "action_block": "** ACTION BLOCK (action) **",
+    "task_block_task_not_available_in_workflow_copilot": (
+        "** TASK BLOCK (task) — NOT AVAILABLE IN WORKFLOW COPILOT **"
+    ),
+    "task_v2_block_task_v2_deprecated": "** TASK V2 BLOCK (task_v2) — DEPRECATED **",
+    "for_loop_block": "** FOR LOOP BLOCK (for_loop) **",
+    "while_loop_block": "** WHILE LOOP BLOCK (while_loop) **",
+    "conditional_block": "** CONDITIONAL BLOCK (conditional) **",
+    "login_block": "** LOGIN BLOCK (login) **",
+    "validation_block": "** VALIDATION BLOCK (validation) **",
+    "wait_block": "** WAIT BLOCK (wait) **",
+    "extraction_block": "** EXTRACTION BLOCK (extraction) **",
+    "file_download_block": "** FILE DOWNLOAD BLOCK (file_download) **",
+    "cloud_storage_block": "** CLOUD STORAGE BLOCK (file_upload) **",
+    "file_parser_block": "** FILE PARSER BLOCK (file_url_parser) **",
+    "send_email_block": "** SEND EMAIL BLOCK (send_email) **",
+    "human_interaction_block": "** HUMAN INTERACTION BLOCK (human_interaction) **",
+    "captcha_solver": "** CAPTCHA SOLVER (captcha_solver) **",
+    "proxy_location": "** PROXY LOCATION AND BROWSER PROFILE (proxy_location) **",
+    "text_prompt_block": "** TEXT PROMPT BLOCK (text_prompt) **",
+    "http_request_block": "** HTTP REQUEST BLOCK (http_request) **",
+    "google_sheets_write_block": "** GOOGLE SHEETS WRITE BLOCK (google_sheets_write) **",
+    "parameter_templating": "** PARAMETER TEMPLATING **",
+    "error_handling_and_retries": "** ERROR HANDLING AND RETRIES **",
+    "workflow_execution_flow": "** WORKFLOW EXECUTION FLOW **",
+    "best_practices": "** BEST PRACTICES **",
+    "common_patterns": "** COMMON PATTERNS **",
+    "validation_rules": "** VALIDATION RULES **",
+    "complete_workflow_example": "** COMPLETE WORKFLOW EXAMPLE **",
+}
+
+_kb_cache: dict[str, dict[str, Any]] | None = None
+_knowledge_topic_cache: dict[str, dict[str, str]] | None = None
+
+CODE_BLOCK_RUNTIME_TOPIC = "code_block_runtime"
+
+
+def _code_block_runtime_topic() -> dict[str, str]:
+    """Render the names a CodeBlock may use from the executor's own namespace declaration."""
+    # Keep workflow model imports deferred for the lightweight-install import contract.
+    from skyvern.forge.sdk.workflow.models.block import CodeBlock  # noqa: PLC0415
+
+    safe_vars = CodeBlock.build_safe_vars()
+    builtin_names = sorted(name for name in safe_vars["__builtins__"] if not name.startswith("__"))
+    shims = {name: sorted(vars(value)) for name, value in safe_vars.items() if isinstance(value, SimpleNamespace)}
+    helpers = sorted(name for name in safe_vars if not name.startswith("__") and name not in shims)
+    lines = [
+        "Names a code block's Python may use. The runtime binds everything listed here. The only importable "
+        "modules are the shims below; `import re` binds the shim, and any other import is rejected.",
+        "",
+        "Builtins: " + ", ".join(builtin_names),
+        "",
+        "Module shims (only the listed attributes exist, e.g. datetime.datetime.now(), not datetime.now()):",
+        *(f"- {name}: {', '.join(attrs)}" for name, attrs in sorted(shims.items())),
+        "",
+        "Helpers: page, " + ", ".join(helpers),
+        "",
+        "For a date in a template field use {{current_date}}; inside code use datetime.date.today() "
+        "or datetime.datetime.now(datetime.UTC).",
+    ]
+    return {"topic": CODE_BLOCK_RUNTIME_TOPIC, "title": "CODE BLOCK RUNTIME", "content": "\n".join(lines)}
+
+
+def _parse_knowledge_topics() -> dict[str, dict[str, str]]:
+    """Index the knowledge document by its authored top-level sections."""
+    global _knowledge_topic_cache
+    if _knowledge_topic_cache is not None:
+        return _knowledge_topic_cache
+
+    try:
+        text = _KB_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        LOG.warning("workflow_knowledge_base_not_found", path=str(_KB_PATH))
+        _knowledge_topic_cache = {}
+        return _knowledge_topic_cache
+
+    topics: dict[str, dict[str, str]] = {}
+    header_to_topic = {header: topic for topic, header in WORKFLOW_KNOWLEDGE_TOPIC_HEADERS.items()}
+    current_topic: str | None = None
+    current_lines: list[str] = []
+
+    def store_current() -> None:
+        if current_topic is None:
+            return
+        header = WORKFLOW_KNOWLEDGE_TOPIC_HEADERS[current_topic]
+        topics[current_topic] = {
+            "topic": current_topic,
+            "title": header.removeprefix("** ").removesuffix(" **"),
+            "content": "\n".join(current_lines).strip(),
+        }
+
+    for line in text.splitlines():
+        next_topic = header_to_topic.get(line.strip())
+        if next_topic is not None:
+            store_current()
+            current_topic = next_topic
+            current_lines = [line]
+        elif current_topic is not None:
+            current_lines.append(line)
+    store_current()
+
+    missing_topics = set(WORKFLOW_KNOWLEDGE_TOPIC_HEADERS).difference(topics)
+    if missing_topics:
+        LOG.error("workflow_knowledge_topics_missing", topics=sorted(missing_topics), path=str(_KB_PATH))
+        topics = {}
+
+    _knowledge_topic_cache = topics
+    return topics
+
+
+def _parse_knowledge_base() -> dict[str, dict[str, Any]]:
+    """Parse the knowledge base file into per-block-type sections.
+
+    Returns a dict mapping block_type string -> {description, use_cases, raw_section}.
+    Results are cached in the module-level ``_kb_cache`` variable.
+    """
+    global _kb_cache
+    if _kb_cache is not None:
+        return _kb_cache
+
+    result: dict[str, dict[str, Any]] = {}
+
+    try:
+        text = _KB_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        LOG.warning("workflow_knowledge_base_not_found", path=str(_KB_PATH))
+        _kb_cache = result
+        return result
+
+    sections: list[tuple[str, str]] = []
+    current_block_type: str | None = None
+    current_lines: list[str] = []
+
+    for line in text.splitlines():
+        match = _HEADER_RE.match(line.strip())
+        if match:
+            if current_block_type is not None:
+                sections.append((current_block_type, "\n".join(current_lines)))
+            current_block_type = match.group(2).lower()
+            current_lines = []
+        elif current_block_type is not None:
+            current_lines.append(line)
+
+    if current_block_type is not None:
+        sections.append((current_block_type, "\n".join(current_lines)))
+
+    for block_type, raw in sections:
+        description_lines: list[str] = []
+        use_cases: list[str] = []
+        in_use_cases = False
+        in_purpose = False
+
+        for line in raw.splitlines():
+            stripped = line.strip()
+
+            if stripped.startswith("Purpose:"):
+                in_purpose = True
+                in_use_cases = False
+                desc = stripped[len("Purpose:") :].strip()
+                if desc:
+                    description_lines.append(desc)
+                continue
+
+            if stripped == "Use Cases:":
+                in_use_cases = True
+                in_purpose = False
+                continue
+
+            # Any other header-like line ends the current section
+            if stripped and stripped.endswith(":") and not stripped.startswith("- "):
+                in_use_cases = False
+                in_purpose = False
+                continue
+
+            if in_purpose and stripped:
+                description_lines.append(stripped)
+
+            if in_use_cases and stripped.startswith("- "):
+                use_cases.append(stripped[2:].strip())
+
+        result[block_type] = {
+            "description": " ".join(description_lines) if description_lines else None,
+            "use_cases": use_cases if use_cases else None,
+        }
+
+    _kb_cache = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tool
+# ---------------------------------------------------------------------------
+
+
+async def skyvern_workflow_knowledge(
+    topics: Annotated[
+        list[str] | None,
+        Field(
+            description=(
+                "Knowledge topic IDs to retrieve. Omit to list every topic. Common IDs include "
+                "workflow_parameters, parameter_templating, workflow_execution_flow, choosing_a_block, "
+                "common_patterns, best_practices, captcha_solver, proxy_location, and code_block_runtime "
+                "(the builtins, module shims, and helpers a code block's Python may use)."
+            )
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Read authoritative Skyvern workflow concepts and authoring guidance.
+
+    Use this before answering questions about workflow structure, parameters, execution,
+    authoring patterns, or block selection. Omit topics to discover every available topic ID.
+    For exact fields of a specific block type, use skyvern_block_schema instead.
+    """
+
+    action = "skyvern_workflow_knowledge"
+    knowledge = _parse_knowledge_topics()
+    if not knowledge:
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.SDK_ERROR,
+                "Workflow knowledge is unavailable.",
+                "Use get_block_schema for exact block fields and retry workflow knowledge later.",
+            ),
+        )
+    knowledge = {**knowledge, CODE_BLOCK_RUNTIME_TOPIC: _code_block_runtime_topic()}
+    catalog = list(knowledge)
+
+    if topics is None:
+        return make_result(action, data={"topics": catalog, "count": len(catalog)})
+
+    if not topics:
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                "At least one workflow knowledge topic is required.",
+                "Omit topics to list the available catalog.",
+            ),
+        )
+
+    requested = list(dict.fromkeys(topic.strip().lower() for topic in topics))
+    unknown = [topic for topic in requested if topic not in knowledge]
+    if unknown:
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                f"Unknown workflow knowledge topic(s): {', '.join(unknown)}",
+                f"Available topics: {', '.join(catalog)}",
+            ),
+        )
+
+    return make_result(
+        action,
+        data={"sections": {topic: knowledge[topic] for topic in requested}},
+    )
+
+
+async def skyvern_block_schema(
+    block_type: Annotated[
+        str | None,
+        Field(
+            description="Block type to get schema for (e.g., 'navigation', 'extraction', 'for_loop'). Omit to list all available types."
+        ),
+    ] = None,
+) -> dict[str, Any]:
+    """Get the schema for a workflow block type, or list all available types if block_type is omitted.
+
+    Accepts ONLY a block_type string (e.g. 'navigation'); it does NOT accept a block definition or a
+    format argument. To check a full block definition you have authored, use skyvern_block_validate
+    (block_json=...) instead."""
+
+    action = "skyvern_block_schema"
+
+    if block_type is None:
+        return make_result(
+            action,
+            data={
+                "block_types": BLOCK_SUMMARIES,
+                "count": len(BLOCK_SUMMARIES),
+                "hint": "Call skyvern_block_schema(block_type='navigation') for the full schema of a specific type",
+            },
+        )
+
+    normalized = block_type.strip().lower()
+
+    task_redirect = normalized in ("task", "task_v2")
+    if task_redirect:
+        normalized = "navigation"
+
+    cls = BLOCK_TYPE_MAP.get(normalized)
+    if cls is None:
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                f"Unknown block type: {block_type!r}",
+                f"Available types: {', '.join(sorted(BLOCK_SUMMARIES.keys()))}. Note: 'task' is also accepted (deprecated alias for 'navigation')",
+            ),
+        )
+
+    kb = _parse_knowledge_base()
+    kb_entry = kb.get(normalized, {})
+
+    warnings = (
+        [
+            f"'{block_type}' is deprecated. Showing 'navigation' schema instead. Use 'navigation' for actions (requires navigation_goal) and 'extraction' for data extraction (requires data_extraction_goal + data_schema)."
+        ]
+        if task_redirect
+        else []
+    )
+
+    return make_result(
+        action,
+        data={
+            "block_type": normalized,
+            "summary": BLOCK_SUMMARIES.get(normalized, ""),
+            "description": kb_entry.get("description"),
+            "use_cases": kb_entry.get("use_cases"),
+            "schema": cls.model_json_schema(),
+            "example": BLOCK_EXAMPLES.get(normalized),
+        },
+        warnings=warnings,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Block validation adapter (lazy)
+# ---------------------------------------------------------------------------
+
+# BLOCK_YAML_TYPES is a large Union of ~23 block models; mypy/pyright cannot resolve it as a TypeAdapter generic argument
+_block_adapter: TypeAdapter[BLOCK_YAML_TYPES] | None = None  # type: ignore[type-arg]
+
+
+def _get_block_adapter() -> TypeAdapter[BLOCK_YAML_TYPES]:  # type: ignore[type-arg]
+    global _block_adapter
+    if _block_adapter is None:
+        _block_adapter = TypeAdapter(BLOCK_YAML_TYPES)
+    return _block_adapter
+
+
+# ---------------------------------------------------------------------------
+# Validate tool
+# ---------------------------------------------------------------------------
+
+
+async def skyvern_block_validate(
+    block_json: Annotated[
+        str,
+        Field(description="JSON string of a single block definition to validate"),
+    ],
+    code_only: Annotated[
+        bool | None,
+        Field(description=CODE_ONLY_FIELD_DESCRIPTION),
+    ] = None,
+) -> dict[str, Any]:
+    """Validate a single workflow block definition (pass it as a JSON string in block_json) before using
+    it in skyvern_workflow_create. Returns field-level errors. To look up the schema or fields for a
+    block type first, use skyvern_block_schema(block_type=...)."""
+    action = "skyvern_block_validate"
+
+    try:
+        raw = json.loads(block_json)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                f"Invalid JSON: {exc}",
+                "Provide a valid JSON string representing a block definition",
+            ),
+        )
+
+    if not isinstance(raw, dict):
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                f"Expected a JSON object, got {type(raw).__name__}",
+                "Provide a JSON object with at least block_type and label fields",
+            ),
+        )
+
+    if code_only:
+        # Preserve the lightweight-install constraint; copilot helpers require server-only deps.
+        from skyvern.forge.sdk.copilot.tools.banned_blocks import (  # noqa: PLC0415
+            collect_code_only_banned_items,
+        )
+
+        banned_items = collect_code_only_banned_items([raw])
+        if banned_items:
+            labels = ", ".join(sorted({label for label, _ in banned_items}))
+            types = ", ".join(sorted({block_type for _, block_type in banned_items}))
+            return make_result(
+                action,
+                ok=False,
+                error=make_error(
+                    ErrorCode.INVALID_INPUT,
+                    f"Block type(s) {types} are not allowed in code-only mode (offending labels: {labels})",
+                    "In code-only mode, use a `code` block for durable browser/page work instead of "
+                    "task/navigation/extraction/etc. " + CODE_ONLY_POLICY_HINT,
+                ),
+            )
+
+    adapter = _get_block_adapter()
+    try:
+        block = adapter.validate_python(raw)
+        warnings = []
+        if block.block_type in ("task", "task_v2"):
+            warnings.append(
+                f"'{block.block_type}' block type is deprecated. Use 'navigation' for actions and 'extraction' for data extraction."
+            )
+        if raw.get("block_type") == "code" and "prompt" not in raw:
+            warnings.append(
+                "Code block omits 'prompt'. Workflow create, or workflow update when adding this code block under a "
+                'new label, will inject the missing default `prompt: ""`; existing code block labels are not migrated.'
+            )
+        return make_result(
+            action,
+            data={
+                "valid": True,
+                "block_type": block.block_type,
+                "label": block.label,
+                "field_count": len([f for f in block.model_fields_set if f != "block_type"]),
+            },
+            warnings=warnings,
+        )
+    except ValidationError as exc:
+        errors = []
+        for err in exc.errors():
+            loc = " → ".join(str(p) for p in err["loc"]) if err["loc"] else "(root)"
+            errors.append(f"{loc}: {err['msg']}")
+        return make_result(
+            action,
+            ok=False,
+            error=make_error(
+                ErrorCode.INVALID_INPUT,
+                f"Block validation failed ({len(exc.errors())} error{'s' if len(exc.errors()) != 1 else ''}): "
+                + "; ".join(errors[:5]),
+                "Fix the fields listed above. Call skyvern_block_schema(block_type='navigation') to see the correct schema. Use 'navigation' for actions and 'extraction' for data extraction — do NOT use the deprecated 'task' type.",
+            ),
+        )

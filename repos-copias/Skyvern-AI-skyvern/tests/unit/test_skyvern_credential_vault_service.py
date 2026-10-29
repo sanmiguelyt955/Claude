@@ -1,0 +1,492 @@
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from cryptography.fernet import Fernet
+from fastapi import HTTPException
+
+from skyvern.config import settings
+from skyvern.exceptions import CredentialVaultShapeMismatchError
+from skyvern.forge import app
+from skyvern.forge.sdk.schemas.credentials import (
+    CreateCredentialRequest,
+    Credential,
+    CredentialItem,
+    CredentialType,
+    CredentialVaultType,
+    CreditCardCredential,
+    NonEmptyPasswordCredential,
+)
+from skyvern.forge.sdk.services.credential.skyvern_credential_vault_service import (
+    SkyvernCredentialVaultService,
+)
+
+_UNSET = object()
+
+
+class _FakeCredentialRepository:
+    def __init__(self) -> None:
+        self.deleted: tuple[str, str] | None = None
+
+    async def create_credential(self, **kwargs: object) -> Credential:
+        return self._credential(
+            credential_id="cred_test",
+            organization_id=str(kwargs["organization_id"]),
+            name=str(kwargs["name"]),
+            vault_type=kwargs["vault_type"],
+            item_id=str(kwargs["item_id"]),
+            credential_type=kwargs["credential_type"],
+            username=kwargs["username"],
+        )
+
+    async def update_credential_vault_data(self, **kwargs: object) -> Credential:
+        return self._credential(
+            credential_id=str(kwargs["credential_id"]),
+            organization_id=str(kwargs["organization_id"]),
+            name=str(kwargs["name"]),
+            vault_type=CredentialVaultType.SKYVERN,
+            item_id=str(kwargs["item_id"]),
+            credential_type=kwargs["credential_type"],
+            username=kwargs["username"],
+        )
+
+    async def delete_credential(self, credential_id: str, organization_id: str) -> None:
+        self.deleted = (credential_id, organization_id)
+
+    @staticmethod
+    def _credential(
+        *,
+        credential_id: str,
+        organization_id: str,
+        name: str,
+        vault_type: object,
+        item_id: str,
+        credential_type: object,
+        username: object,
+    ) -> Credential:
+        return Credential(
+            credential_id=credential_id,
+            organization_id=organization_id,
+            name=name,
+            vault_type=vault_type,
+            item_id=item_id,
+            credential_type=credential_type,
+            username=username,
+            totp_type="none",
+            totp_identifier=None,
+            card_last4=None,
+            card_brand=None,
+            secret_label=None,
+            browser_profile_id=None,
+            tested_url=None,
+            user_context=None,
+            save_browser_session_intent=False,
+            folder_id=None,
+            created_at=datetime(2026, 1, 1),
+            modified_at=datetime(2026, 1, 1),
+            deleted_at=None,
+        )
+
+
+class _FailingCreateCredentialRepository(_FakeCredentialRepository):
+    async def create_credential(self, **kwargs: object) -> Credential:
+        raise RuntimeError("database unavailable")
+
+
+class _FailingUpdateCredentialRepository(_FakeCredentialRepository):
+    async def update_credential_vault_data(self, **kwargs: object) -> Credential:
+        raise RuntimeError("database unavailable")
+
+
+class _CancelledUpdateCredentialRepository(_FakeCredentialRepository):
+    async def update_credential_vault_data(self, **kwargs: object) -> Credential:
+        raise asyncio.CancelledError()
+
+
+class _CapturingCreateCredentialRepository(_FakeCredentialRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_kwargs: dict[str, object] | None = None
+
+    async def create_credential(self, **kwargs: object) -> Credential:
+        self.create_kwargs = kwargs
+        return await super().create_credential(**kwargs)
+
+
+def _password_request(
+    name: str = "Login",
+    password: str | object = "secret-password",
+    metadata: dict[str, str] | None | object = _UNSET,
+) -> CreateCredentialRequest:
+    credential_data: dict[str, object] = {"username": "user@example.com"}
+    if password is not _UNSET:
+        credential_data["password"] = password
+    if metadata is not _UNSET:
+        credential_data["metadata"] = metadata
+    return CreateCredentialRequest(
+        name=name,
+        credential_type=CredentialType.PASSWORD,
+        credential=NonEmptyPasswordCredential.model_validate(credential_data),
+    )
+
+
+_PASSWORD_METADATA = {"tenant": "north"}
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_round_trips_encrypted_password(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+
+    repository = _FakeCredentialRepository()
+    monkeypatch.setattr(app.DATABASE, "credentials", repository)
+
+    service = SkyvernCredentialVaultService()
+    request = _password_request()
+
+    credential = await service.create_credential("org_test", request)
+
+    assert credential.vault_type == CredentialVaultType.SKYVERN
+    item_path = tmp_path / f"{credential.item_id}.bin"
+    assert item_path.exists()
+    assert b"secret-password" not in item_path.read_bytes()
+
+    item = await service.get_credential_item(credential)
+    assert item.name == "Login"
+    assert item.credential_type == CredentialType.PASSWORD
+    assert item.credential.username == "user@example.com"
+    assert item.credential.password == "secret-password"
+
+    await service.delete_credential(credential)
+    assert repository.deleted == ("cred_test", "org_test")
+    assert not item_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_round_trips_password_metadata(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+
+    item = await service.get_credential_item(
+        await service.create_credential(
+            "org_test",
+            _password_request(name="Metadata Login", metadata=_PASSWORD_METADATA),
+        )
+    )
+
+    assert item.credential.metadata == _PASSWORD_METADATA
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_update_creates_new_item_and_cleans_old(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    request = _password_request(password="old-password", metadata=_PASSWORD_METADATA)
+    credential = await service.create_credential("org_test", request)
+    old_item_id = credential.item_id
+
+    update_request = _password_request(name="Login Updated", password="new-password")
+    updated = await service.update_credential(credential, update_request)
+
+    assert updated.item_id != old_item_id
+    assert (tmp_path / f"{old_item_id}.bin").exists()
+
+    await service.post_delete_credential_item(old_item_id)
+    assert not (tmp_path / f"{old_item_id}.bin").exists()
+
+    item = await service.get_credential_item(updated)
+    assert item.name == "Login Updated"
+    assert item.credential.password == "new-password"
+    assert item.credential.metadata == _PASSWORD_METADATA
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_update_preserves_omitted_password(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential(
+        "org_test", _password_request(password="old-password", metadata=_PASSWORD_METADATA)
+    )
+
+    updated = await service.update_credential(credential, _password_request(name="Login Renamed", password=_UNSET))
+
+    item = await service.get_credential_item(updated)
+    assert item.credential.password == "old-password"
+    assert item.credential.metadata == _PASSWORD_METADATA
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_update_blanks_explicitly_empty_password(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+
+    updated = await service.update_credential(credential, _password_request(password=""))
+
+    item = await service.get_credential_item(updated)
+    assert item.credential.password == ""
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_update_rejects_non_password_vault_item(tmp_path, monkeypatch) -> None:
+    """A row/vault type disagreement must fail the update, not blank the stored secret.
+
+    The relaxed schema defaults `password` to "", so an omitted password on a credential whose
+    vault item is not password-shaped would otherwise overwrite the real secret with "".
+    """
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+
+    card = CreditCardCredential(
+        card_number="4242424242424242",
+        card_cvv="123",
+        card_exp_month="12",
+        card_exp_year="2030",
+        card_brand="visa",
+        card_holder_name="Test Person",
+    )
+    monkeypatch.setattr(
+        service,
+        "get_credential_item",
+        AsyncMock(
+            return_value=CredentialItem(
+                item_id="i",
+                name="Login",
+                credential_type=CredentialType.CREDIT_CARD,
+                credential=card,
+            )
+        ),
+    )
+
+    with pytest.raises(CredentialVaultShapeMismatchError):
+        await service.update_credential(credential, _password_request(name="Renamed", password=_UNSET))
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_create_stores_omitted_password_as_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password=_UNSET))
+
+    item = await service.get_credential_item(credential)
+    assert item.credential.password == ""
+    assert item.credential.username == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_cleans_item_when_create_db_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FailingCreateCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.create_credential("org_test", _password_request())
+
+    assert list(tmp_path.glob("*.bin")) == []
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_cleans_new_item_when_update_db_fails(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _FailingUpdateCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+    old_item_path = tmp_path / f"{credential.item_id}.bin"
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        await service.update_credential(
+            credential,
+            _password_request(name="Login Updated", password="new-password"),
+        )
+
+    assert old_item_path.exists()
+    assert list(tmp_path.glob("*.bin")) == [old_item_path]
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_cleans_new_item_when_update_db_is_cancelled(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _CancelledUpdateCredentialRepository())
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+    old_item_path = tmp_path / f"{credential.item_id}.bin"
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.update_credential(
+            credential,
+            _password_request(name="Login Updated", password="new-password"),
+        )
+
+    assert old_item_path.exists()
+    assert list(tmp_path.glob("*.bin")) == [old_item_path]
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_enqueues_durable_cleanup_when_inline_unlink_fails(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _CancelledUpdateCredentialRepository())
+
+    orphaned_hook = AsyncMock()
+    monkeypatch.setattr(app.AGENT_FUNCTION, "on_credential_item_orphaned", orphaned_hook)
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+    old_item_path = tmp_path / f"{credential.item_id}.bin"
+
+    unlink = MagicMock(side_effect=OSError("unlink blew up"))
+    monkeypatch.setattr(service, "_unlink_item_file", unlink)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.update_credential(
+            credential,
+            _password_request(name="Login Updated", password="new-password"),
+        )
+
+    orphaned_hook.assert_awaited_once()
+    _, kwargs = orphaned_hook.await_args
+    assert kwargs["organization_id"] == "org_test"
+    assert kwargs["vault_type"] == CredentialVaultType.SKYVERN
+    new_item_id = kwargs["item_id"]
+    assert new_item_id != credential.item_id
+    unlink.assert_called_once_with(new_item_id)
+    assert old_item_path.exists()
+    assert (tmp_path / f"{new_item_id}.bin").exists()
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_reclaim_cancellation_survives_durable_enqueue_failure(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    monkeypatch.setattr(app.DATABASE, "credentials", _CancelledUpdateCredentialRepository())
+
+    orphaned_hook = AsyncMock(side_effect=RuntimeError("enqueue backend down"))
+    monkeypatch.setattr(app.AGENT_FUNCTION, "on_credential_item_orphaned", orphaned_hook)
+
+    service = SkyvernCredentialVaultService()
+    credential = await service.create_credential("org_test", _password_request(password="old-password"))
+    old_item_path = tmp_path / f"{credential.item_id}.bin"
+
+    unlink = MagicMock(side_effect=OSError("unlink blew up"))
+    monkeypatch.setattr(service, "_unlink_item_file", unlink)
+
+    # Inline cleanup failed and the durable enqueue then failed too; the reclaim must still complete without
+    # replacing the in-flight CancelledError (write-lease cancellation) with the enqueue's RuntimeError.
+    with pytest.raises(asyncio.CancelledError):
+        await service.update_credential(
+            credential,
+            _password_request(name="Login Updated", password="new-password"),
+        )
+
+    orphaned_hook.assert_awaited_once()
+    assert old_item_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_post_delete_reports_unlink_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+
+    service = SkyvernCredentialVaultService()
+    monkeypatch.setattr(service, "_unlink_item_file", MagicMock(side_effect=OSError("unlink blew up")))
+
+    assert await service.post_delete_credential_item("creditem_missing") is False
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_rejects_invalid_item_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    credential = _FakeCredentialRepository._credential(
+        credential_id="cred_test",
+        organization_id="org_test",
+        name="Login",
+        vault_type=CredentialVaultType.SKYVERN,
+        item_id="../outside",
+        credential_type=CredentialType.PASSWORD,
+        username="user@example.com",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await SkyvernCredentialVaultService().get_credential_item(credential)
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_wrong_key_cannot_decrypt_item(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", Fernet.generate_key().decode("utf-8"))
+    monkeypatch.setattr(app.DATABASE, "credentials", _FakeCredentialRepository())
+
+    credential = await SkyvernCredentialVaultService().create_credential("org_test", _password_request())
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", Fernet.generate_key().decode("utf-8"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await SkyvernCredentialVaultService().get_credential_item(credential)
+
+    assert exc_info.value.status_code == 500
+
+
+def test_skyvern_credential_vault_key_file_creation_is_single_winner(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    key_path = tmp_path / ".fernet_key"
+
+    def create_key_file() -> bytes:
+        return SkyvernCredentialVaultService()._create_or_read_key_file(key_path)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        returned_keys = list(executor.map(lambda _: create_key_file(), range(8)))
+
+    stored_key = key_path.read_bytes().strip()
+    assert len(set(returned_keys)) == 1
+    assert returned_keys[0] == stored_key
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.asyncio
+async def test_skyvern_credential_vault_create_threads_tested_url(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_PATH", str(tmp_path))
+    monkeypatch.setattr(settings, "LOCAL_CREDENTIAL_VAULT_KEY", None)
+    repository = _CapturingCreateCredentialRepository()
+    monkeypatch.setattr(app.DATABASE, "credentials", repository)
+
+    request = _password_request()
+    request = request.model_copy(update={"tested_url": "https://example.com/login"})
+    await SkyvernCredentialVaultService().create_credential("org_test", request)
+
+    assert repository.create_kwargs is not None
+    assert repository.create_kwargs["tested_url"] == "https://example.com/login"

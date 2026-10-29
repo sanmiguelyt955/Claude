@@ -1,0 +1,290 @@
+import posthog, { type Properties } from "posthog-js";
+import type {
+  QuestionnaireAnswersV1,
+  QuestionnaireStatusV1,
+  QuestionnaireUserIntentV1,
+  ProjectOwnerReportV1,
+} from "@/store/onboarding/types";
+
+type Surface =
+  | "dashboard"
+  | "discover"
+  | "editor"
+  | "studio"
+  | "runs"
+  | "settings"
+  | "api_docs";
+
+type TourLayer = 1 | 2;
+
+const QUESTIONNAIRE_SURFACE = "welcome_page";
+
+type QuestionnaireShownInput = {
+  primaryIntent: QuestionnaireUserIntentV1 | null;
+  promptReason: "initial" | "resume";
+  organizationId: string | null;
+};
+
+type QuestionnaireResponseInput = {
+  responseId: string;
+  revision: number;
+  organizationId?: string | null;
+};
+
+type QuestionnaireAnswerInput = QuestionnaireResponseInput & {
+  primaryIntent: QuestionnaireUserIntentV1;
+  answers: QuestionnaireAnswersV1;
+  projectOwner?: ProjectOwnerReportV1 | null;
+};
+
+type QuestionnaireSkippedInput = QuestionnaireResponseInput & {
+  disposition: "skip";
+  statusAfter: "skipped";
+};
+
+type QuestionnaireUpdatedInput = QuestionnaireAnswerInput & {
+  previousStatus: QuestionnaireStatusV1;
+};
+
+const ONBOARDING_STEP_VERSION = "v1";
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+// The org group registers after GET /organizations/ resolves and can lose the race
+// against a fresh signup's first onboarding event, so a caller-provided org wins.
+function capture(event: string, properties: Properties): boolean {
+  let organizationId = nonEmptyString(properties.organization_id);
+  if (organizationId === undefined) {
+    try {
+      organizationId = nonEmptyString(posthog.getGroups().organization);
+    } catch {
+      organizationId = undefined;
+    }
+  }
+
+  try {
+    const stepName =
+      typeof properties.step === "string" ? properties.step : event;
+    const captureResult = posthog.capture(event, {
+      ...properties,
+      organization_id: organizationId,
+      step_id: `${stepName}:${ONBOARDING_STEP_VERSION}`,
+    });
+    return captureResult !== undefined;
+  } catch {
+    // PostHog may be unavailable in tests or before init.
+    return false;
+  }
+}
+
+// -- Flow events --
+
+function flowCompleted(surface: Surface): void {
+  capture("onboarding.flow_completed", { surface });
+}
+
+function dropOff(surface: Surface, step: string): void {
+  capture("onboarding.drop_off", { surface, step });
+}
+
+// -- Tour events --
+
+function tourStarted(surface: Surface): void {
+  capture("onboarding.tour_started", { surface });
+}
+
+function tourStepViewed(
+  surface: Surface,
+  stepName: string,
+  stepIndex: number,
+  layer: TourLayer,
+): void {
+  capture("onboarding.tour_step_viewed", {
+    surface,
+    step_name: stepName,
+    step_index: stepIndex,
+    layer,
+  });
+}
+
+function tourCompleted(surface: Surface): void {
+  capture("onboarding.tour_completed", { surface });
+}
+
+function tourSkipped(surface: Surface, atStep: string): void {
+  capture("onboarding.tour_skipped", { surface, at_step: atStep });
+}
+
+function stepCompleted(surface: Surface, step: string): void {
+  capture("onboarding.step_completed", { surface, step });
+}
+
+function tourDismissed(surface: Surface, lastStep: string): void {
+  capture("onboarding.tour_dismissed", { surface, last_step: lastStep });
+}
+
+function questionnaireResponseProperties(input: QuestionnaireResponseInput) {
+  return {
+    questionnaire_version: 1,
+    "$feature/onboarding_questionnaire_v1": true,
+    surface: QUESTIONNAIRE_SURFACE,
+    response_id: input.responseId,
+    revision: input.revision,
+    ...(input.organizationId ? { organization_id: input.organizationId } : {}),
+  };
+}
+
+function questionnaireAnswerProperties(answers: QuestionnaireAnswersV1) {
+  return {
+    role: answers.role,
+    company_context: answers.company_context ?? null,
+    scale_intent: answers.scale_intent ?? null,
+    referral_source: answers.referral_source,
+    referral_source_detail: answers.referral_source_detail ?? null,
+    audience: answers.audience ?? null,
+    weekly_run_volume: answers.weekly_run_volume ?? null,
+    // Free text never leaves the app; only whether it was given.
+    organization_name_present: Boolean(answers.organization_name),
+  };
+}
+
+function questionnaireShown(input: QuestionnaireShownInput): boolean {
+  return capture("onboarding_questionnaire_shown", {
+    questionnaire_version: 1,
+    "$feature/onboarding_questionnaire_v1": true,
+    surface: QUESTIONNAIRE_SURFACE,
+    primary_intent: input.primaryIntent,
+    prompt_reason: input.promptReason,
+    ...(input.organizationId ? { organization_id: input.organizationId } : {}),
+  });
+}
+
+function projectOwnerProperties(input: QuestionnaireAnswerInput) {
+  const owner =
+    input.projectOwner?.organization_id === input.organizationId
+      ? input.projectOwner
+      : null;
+  return {
+    project_owner_reported: !!owner,
+    project_owner_name_present: !!owner?.name,
+    project_owner_email_present: !!owner?.professional_email,
+    project_owner_role_present: !!owner?.role,
+    ...(owner ? { project_owner_source: "signup_user_reported" } : {}),
+  };
+}
+
+function questionnaireCompleted(input: QuestionnaireAnswerInput): void {
+  capture("onboarding_questionnaire_completed", {
+    ...questionnaireResponseProperties(input),
+    primary_intent: input.primaryIntent,
+    ...questionnaireAnswerProperties(input.answers),
+    ...projectOwnerProperties(input),
+  });
+}
+
+function questionnaireSkipped(input: QuestionnaireSkippedInput): void {
+  capture("onboarding_questionnaire_skipped", {
+    ...questionnaireResponseProperties(input),
+    disposition: input.disposition,
+    status_after: input.statusAfter,
+  });
+}
+
+function questionnaireUpdated(input: QuestionnaireUpdatedInput): void {
+  capture("onboarding_questionnaire_updated", {
+    ...questionnaireResponseProperties(input),
+    primary_intent: input.primaryIntent,
+    previous_status: input.previousStatus,
+    ...questionnaireAnswerProperties(input.answers),
+    ...projectOwnerProperties(input),
+  });
+}
+
+// -- Activation milestones --
+
+function firstWorkflowCreated(surface: Surface): void {
+  capture("onboarding.first_workflow_created", { surface });
+}
+
+function firstRunCompleted(surface: Surface): void {
+  capture("onboarding.first_run_completed", { surface });
+}
+
+function firstApiCall(surface: Surface): void {
+  capture("onboarding.first_api_call", { surface });
+}
+
+// -- Empty state events --
+
+function emptyStateViewed(surface: Surface): void {
+  capture("onboarding.empty_state_viewed", { surface });
+}
+
+function emptyStateCTAClicked(surface: Surface, action: string): void {
+  capture("onboarding.empty_state_cta_clicked", { surface, action });
+}
+
+// -- Experiment --
+
+function abVariantAssigned(surface: Surface, variant: string): void {
+  capture("onboarding.ab_variant_assigned", { surface, variant });
+}
+
+function registerVariant(variant: string): void {
+  try {
+    // Super property "variant" so every onboarding event can be split by arm (matches the dashboard breakdowns).
+    posthog.register({ variant });
+  } catch {
+    // PostHog may be unavailable in tests or before init.
+  }
+}
+
+// -- Error events (rollback guardrails) --
+
+function error(surface: Surface): void {
+  capture("onboarding.error", { surface });
+}
+
+function tourError(surface: Surface): void {
+  capture("onboarding.tour_error", { surface });
+}
+
+// -- Contextual hint events (Layer 2) --
+
+function hintShown(surface: Surface, hintId: string): void {
+  capture("onboarding.hint_shown", { surface, hint_id: hintId, layer: 2 });
+}
+
+function hintDismissed(surface: Surface, hintId: string): void {
+  capture("onboarding.hint_dismissed", { surface, hint_id: hintId, layer: 2 });
+}
+
+export const OnboardingTelemetry = {
+  flowCompleted,
+  dropOff,
+  tourStarted,
+  tourStepViewed,
+  tourCompleted,
+  tourSkipped,
+  stepCompleted,
+  tourDismissed,
+  questionnaireShown,
+  questionnaireCompleted,
+  questionnaireSkipped,
+  questionnaireUpdated,
+  emptyStateViewed,
+  emptyStateCTAClicked,
+  firstWorkflowCreated,
+  firstRunCompleted,
+  firstApiCall,
+  abVariantAssigned,
+  registerVariant,
+  error,
+  tourError,
+  hintShown,
+  hintDismissed,
+} as const;
+
+export type { Surface, TourLayer };

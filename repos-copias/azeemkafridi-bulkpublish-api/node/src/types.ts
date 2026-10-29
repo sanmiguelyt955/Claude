@@ -1,0 +1,2054 @@
+// ============================================================
+// BulkPublish SDK — TypeScript Type Definitions
+// ============================================================
+
+// ---------- Enums ----------
+
+/** Supported social media platforms. */
+export type Platform =
+  | 'facebook'
+  | 'instagram'
+  | 'x'
+  | 'tiktok'
+  | 'youtube'
+  | 'threads'
+  | 'bluesky'
+  | 'pinterest'
+  | 'gmb'
+  | 'linkedin'
+  | 'mastodon'
+  | 'discord'
+  | 'telegram'
+  | 'tumblr'
+  | 'snapchat';
+
+/**
+ * Availability of a platform, controlled server-side.
+ *
+ * - `on` — fully available.
+ * - `connect_off` — new channels cannot be connected, but channels already
+ *   connected keep publishing (used while a platform app review is pending).
+ * - `off` — kill switch: posts targeting the platform are **held**, not failed,
+ *   and publish automatically once it is re-enabled.
+ */
+export type PlatformState = 'on' | 'connect_off' | 'off';
+
+/** Why a platform is in its current state. */
+export type PlatformStateReason =
+  | 'enabled'
+  | 'flag_connect_off'
+  | 'flag_off'
+  /** The server has no OAuth app credentials for this platform yet. */
+  | 'unconfigured';
+
+/**
+ * Availability of one social platform. Disabled platforms are always included in
+ * responses with `enabled: false` — never omitted — so clients can distinguish
+ * "switched off right now" from "not supported".
+ */
+export interface PlatformAvailability {
+  platform: Platform;
+  displayName: string;
+  /** Brand colour hex, for UI rendering. */
+  color: string | null;
+  /** Convenience flag; equivalent to `state === 'on'`. */
+  enabled: boolean;
+  state: PlatformState;
+  reason: PlatformStateReason;
+  /** Whether a NEW channel can be connected right now. */
+  canConnect: boolean;
+  /** Whether already-connected channels can publish right now. */
+  canPublish: boolean;
+  /** User-facing explanation. `null` when the platform is fully enabled. */
+  message: string | null;
+  /** Server env var controlling this platform. Only returned to org owners/admins. */
+  envVar?: string;
+  /**
+   * Sub-platforms gated independently of their parent, keyed by the channel
+   * `accountType` they cover. Present only for platforms that have one — today
+   * `linkedin.organization` (company pages), which run on a separate LinkedIn
+   * app reviewed separately from personal profiles, so pages can be paused
+   * while personal-profile posting stays live.
+   *
+   * A variant is never more permissive than its parent: a platform in state
+   * `off` means every variant is off too. When a variant blocks a write, the
+   * 403 `PLATFORM_DISABLED` error carries an `accountType` naming it.
+   */
+  variants?: Record<string, PlatformVariantAvailability>;
+}
+
+/** Availability of one sub-platform variant (e.g. LinkedIn company pages). */
+export interface PlatformVariantAvailability {
+  /** User-facing name, e.g. "LinkedIn Company Pages". */
+  label: string;
+  /** Convenience flag; equivalent to `state === 'on'`. */
+  enabled: boolean;
+  state: PlatformState;
+  reason: PlatformStateReason;
+  /** Whether a NEW channel of this account type can be connected right now. */
+  canConnect: boolean;
+  /** Whether already-connected channels of this account type can publish right now. */
+  canPublish: boolean;
+  /** User-facing explanation. `null` when the variant is fully enabled. */
+  message: string | null;
+  /** Server env var controlling this variant. Only returned to org owners/admins. */
+  envVar?: string;
+}
+
+/** Response from listing platforms. */
+export interface ListPlatformsResponse {
+  platforms: PlatformAvailability[];
+}
+
+/** Supported post formats. */
+export type PostFormat = 'post' | 'video' | 'reel' | 'story' | 'carousel' | 'thread';
+
+/** Possible post statuses. */
+export type PostStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'publishing'
+  | 'published'
+  /** All platform entries are published or still processing asynchronously (e.g. TikTok/Instagram video). */
+  | 'processing'
+  | 'failed'
+  | 'partial';
+
+/**
+ * Team approval state of a post, orthogonal to {@link PostStatus}.
+ * 'pending' and 'rejected' posts do not publish, even when scheduled and
+ * overdue; approving releases them. An overdue post publishes
+ * immediately on approval if its time passed less than 15 minutes ago;
+ * later than that it publishes immediately only when the post has
+ * `publishWhenApproved: true` or the approver sends `whenLate: 'publish'`,
+ * and is otherwise approved but returned to 'draft' for a new time.
+ */
+export type PostApprovalStatus = 'none' | 'pending' | 'approved' | 'rejected';
+
+/** Possible per-platform statuses on a post. */
+export type PlatformStatus =
+  | 'pending'
+  | 'publishing'
+  | 'published'
+  | 'failed'
+  | 'processing'
+  /**
+   * Terminal: the publish request may have reached the platform but its
+   * response was lost — the post may already be live. Never auto-retried;
+   * check the account, then retry with `republish: true` if the post is not
+   * live (this can duplicate the post).
+   */
+  | 'unconfirmed';
+
+/** Token health status for a channel. */
+export type TokenStatus = 'valid' | 'expiring_soon' | 'expired';
+
+/** Recurring schedule frequency. */
+export type RecurringFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly';
+
+/** Notification types. */
+export type NotificationType =
+  | 'post_published'
+  | 'post_failed'
+  | 'post_scheduled_reminder'
+  | 'token_expiring'
+  | 'token_expired'
+  | 'daily_digest'
+  | 'system';
+
+/** Label type — either for posts or media. */
+export type LabelType = 'post' | 'media';
+
+/** Bulk action types for posts. */
+export type BulkAction = 'delete' | 'retry' | 'reschedule';
+
+// ---------- Client Options ----------
+
+/** Configuration for the BulkPublish client. */
+export interface BulkPublishOptions {
+  /** Your API key (starts with `bp_`). */
+  apiKey: string;
+  /** Override the base URL (default: `https://app.bulkpublish.com`). */
+  baseUrl?: string;
+  /** Request timeout in milliseconds (default: 30000). */
+  timeout?: number;
+}
+
+// ---------- Pagination ----------
+
+/** Standard pagination parameters accepted by list endpoints. */
+export interface PaginationParams {
+  /** Page number (1-based). Default: 1. */
+  page?: number;
+  /** Items per page. Default: 20. */
+  limit?: number;
+}
+
+/** Pagination metadata returned by list endpoints. */
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+// ---------- API Error ----------
+
+/** Structured error returned by the API. */
+export interface ApiError {
+  message: string;
+  code?: string;
+  hint?: string;
+}
+
+// ---------- Media ----------
+
+/** A media file reference as returned by the API. */
+export interface MediaFile {
+  id: number;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  isOriginalDeleted?: boolean;
+  originalUrl: string;
+  /** 160x160 square crop (webp). For videos, from an extracted poster frame. Always null for documents (PDF, Word, PowerPoint). */
+  thumbnailUrl: string | null;
+  /** 400px-wide derivative (webp) for grids. For videos, from the poster frame. */
+  previewUrl?: string | null;
+  /**
+   * 1200px-wide derivative (webp) for lightboxes and large preview panes. For
+   * videos, generated from the poster frame. Null on media uploaded before this
+   * derivative existed, until the backfill runs.
+   */
+  largeUrl?: string | null;
+  createdAt: string;
+  labels?: MediaLabel[];
+}
+
+/** A label attached to a media file. */
+export interface MediaLabel {
+  id: number;
+  name: string;
+  color: string;
+}
+
+/** Parameters for listing media files. */
+export interface ListMediaParams extends PaginationParams {
+  /** Search by file name. */
+  search?: string;
+  /** Comma-separated label IDs to filter by. */
+  labelIds?: string;
+  /** Filter by media kind: `image`, `video` or `document` (PDF, Word and PowerPoint files). Omit for all files. */
+  type?: 'image' | 'video' | 'document';
+}
+
+/** Response from listing media files. */
+export interface ListMediaResponse {
+  files: MediaFile[];
+  page: number;
+  limit: number;
+  /** Files matching the filters across ALL pages (the page itself holds at most `limit`). */
+  total: number;
+}
+
+/** Response from uploading a media file. */
+export interface UploadMediaResponse {
+  file: MediaFile;
+}
+
+/** Response from getting a single media file. */
+export interface GetMediaResponse {
+  file: MediaFile;
+}
+
+// ---------- Channels ----------
+
+/** A connected social media channel/account. */
+export interface Channel {
+  id: number;
+  platform: Platform;
+  accountName: string;
+  accountId: string;
+  accountType: string | null;
+  profileImage: string | null;
+  isActive: boolean | null;
+  /**
+   * `true` once a live request has proved the stored access token dead.
+   * Publishing fails until the account is reconnected; clears on reconnect.
+   */
+  needsReconnect: boolean;
+  /**
+   * Whether the access token renews on its own. `false` means it has a fixed
+   * lifetime and the account must be reconnected when `tokenStatus` reaches
+   * `expired`.
+   */
+  autoRenews: boolean;
+  tokenStatus: TokenStatus;
+  tokenExpiresAt: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * Whether this channel can publish right now. `false` means it is disabled
+   * server-side — the channel itself is healthy, but its scheduled posts are
+   * being held until it is re-enabled.
+   *
+   * Resolved for THIS channel: the platform flag narrowed by any variant
+   * matching its `accountType`. LinkedIn company pages
+   * (`accountType: 'organization'`) are gated separately from personal
+   * profiles, so two LinkedIn channels in one response can differ here.
+   */
+  platformAvailable?: boolean;
+  /** Current availability of this channel, variant included (see `platformAvailable`). */
+  platformState?: PlatformState;
+  /** User-facing explanation when the platform is not fully available. */
+  platformMessage?: string | null;
+}
+
+/** Response from listing channels. */
+export interface ListChannelsResponse {
+  channels: Channel[];
+  /**
+   * What the CALLING member may do in this organization, resolved from their
+   * team role. Returned alongside the list so a client does not have to
+   * re-derive permissions from a role string.
+   */
+  capabilities: MemberCapabilities;
+}
+
+/** Permissions of the member whose key made the request. */
+export interface MemberCapabilities {
+  canCreatePosts: boolean;
+  canPublishPosts: boolean;
+  canApprovePosts: boolean;
+}
+
+/** Parameters for listing channels. */
+export interface ListChannelsParams {
+  /** Set to `false` to include inactive channels. Default: true (active only). */
+  active?: boolean;
+}
+
+/** Response from getting a single channel. */
+export interface GetChannelResponse {
+  channel: Channel;
+}
+
+/** Response from a channel health check. */
+export interface ChannelHealthResponse {
+  healthy: boolean;
+  tokenStatus: TokenStatus | 'error';
+  message?: string;
+}
+
+/** Response from deleting a channel. */
+/** Body for `channels.update()` — per-channel opt-ins, X only today. */
+export interface UpdateChannelParams {
+  /** Turn on analytics sync and post likers for this channel (X bills per read; synced at most once every 7 days). Does not read replies. */
+  metricsSyncEnabled?: boolean;
+  /** Turn on direct messages and replies to this channel's posts, together. A value set before 2026-10-06 is not carried over. */
+  inboxSyncEnabled?: boolean;
+}
+
+export interface UpdateChannelResponse {
+  success: boolean;
+}
+
+export interface DeleteChannelResponse {
+  success: boolean;
+  deletedId: number;
+}
+
+// ---------- Posts ----------
+
+/** A channel target for a post. */
+export interface PostChannelEntry {
+  channelId: number;
+  platform: Platform;
+}
+
+/** A thread part for multi-part thread posts. */
+export interface ThreadPart {
+  content: string;
+  mediaFileIds?: number[];
+}
+
+/** A per-platform record of a published post. */
+export interface PostPlatform {
+  id: number;
+  postId: number;
+  channelId: number;
+  platform: Platform;
+  status: PlatformStatus;
+  platformPostId: string | null;
+  platformUrl: string | null;
+  threadPostIds: ThreadPostRecord[] | null;
+  errorMessage: string | null;
+  retryCount: number | null;
+  maxRetries: number | null;
+  publishedAt: string | null;
+  createdAt: string;
+}
+
+/** A record of a single post within a thread. */
+export interface ThreadPostRecord {
+  sequence: number;
+  postId: string;
+  url: string;
+  parentId?: string;
+}
+
+/** Repeat/recurring schedule configuration when creating a post. */
+export interface RepeatScheduleConfig {
+  frequency: RecurringFrequency;
+  daysOfWeek?: number[];
+  dayOfMonth?: number;
+  timeOfDay?: string;
+  timezone?: string;
+}
+
+/** A label attached to a post. */
+export interface Label {
+  id: number;
+  userId: string;
+  organizationId: number;
+  name: string;
+  color: string;
+  type: string;
+  createdAt: string;
+}
+
+/** Inline metrics summary for a post in list view. */
+export interface PostMetricsSummary {
+  impressions: number;
+  likes: number;
+  comments: number;
+  shares: number;
+}
+
+/** Recurring schedule info embedded in a post. */
+export interface PostRecurringSchedule {
+  id?: number;
+  name?: string;
+  frequency: string;
+  dayOfWeek: number | null;
+  dayOfMonth: number | null;
+  timeOfDay: string;
+  timezone: string | null;
+  nextRunAt: string | null;
+  isActive: boolean | null;
+  channelIds?: number[];
+  mediaFileIds?: number[];
+  contentTemplate?: string;
+  postTypeOverrides?: Record<string, string>;
+  platformSpecific?: Record<string, Record<string, unknown>>;
+}
+
+/** A post as returned by the API. */
+export interface Post {
+  id: number;
+  userId: string;
+  organizationId: number;
+  content: string;
+  platformContent: Record<string, string>;
+  mediaFiles: MediaFile[] | number[];
+  status: PostStatus | null;
+  scheduledAt: string | null;
+  publishedAt: string | null;
+  timezone: string | null;
+  postFormat: string | null;
+  postTypeOverrides: Record<string, string>;
+  platformSpecific: Record<string, Record<string, unknown>>;
+  threadParts: ThreadPart[] | null;
+  /**
+   * Media referenced by `threadParts[].mediaFileIds`, resolved to full objects
+   * and de-duplicated across parts.
+   *
+   * Distinct from `mediaFiles`, which is the media on the post itself. A thread
+   * post can carry both, so a client that reads only `mediaFiles` renders a
+   * thread without its images.
+   */
+  threadMediaFiles: MediaFile[];
+  platformThreadParts: Record<string, ThreadPart[]>;
+  recurringScheduleId: number | null;
+  deleteMediaAfterPublish: boolean | null;
+  autoPlugEnabled: boolean | null;
+  autoPlugText: string | null;
+  autoPlugThreshold: number | null;
+  autoPlugFired: boolean | null;
+  autoRepostEnabled: boolean | null;
+  autoRepostThreshold: number | null;
+  autoRepostFired: boolean | null;
+  /**
+   * Per-post override for link tracking (bulkpubli.sh). `true` forces links in
+   * this post to be shortened and their clicks counted, `false` forces them to
+   * publish as written, and `null` (the default) inherits the organization's
+   * Link Tracking setting.
+   */
+  linkTrackingOverride: boolean | null;
+  /**
+   * Team approval state, orthogonal to status. 'pending' and 'rejected' posts
+   * do not publish, even when scheduled and overdue. Members whose
+   * role lacks post:publish (contributors) always get 'pending' when
+   * scheduling; others can opt in with `requestApproval`. Default: 'none'.
+   */
+  approvalStatus: PostApprovalStatus;
+  /** User ID of the approver (set when approvalStatus is 'approved'). */
+  approvedBy: string | null;
+  approvedAt: string | null;
+  /** Reviewer's reason when approvalStatus is 'rejected'. */
+  rejectionReason: string | null;
+  /**
+   * True when the author asked for the post to go out as soon as it is
+   * approved, even if that is after its scheduled time. Only ever true while
+   * approvalStatus is 'pending': approving or rejecting clears it, and a post
+   * entering review again starts from false. Decides what
+   * `posts.approve()` does when it arrives more than 15 minutes late and no
+   * `whenLate` is sent.
+   */
+  publishWhenApproved: boolean;
+  createdAt: string;
+  updatedAt: string;
+  postPlatforms: PostPlatform[];
+  labels: Label[];
+  recurringSchedule?: PostRecurringSchedule | null;
+  metrics?: PostMetricsSummary | null;
+  /** The member who wrote the post; null when that account no longer exists. */
+  author: TeamActor | null;
+  /** The member who approved it; null unless approvalStatus is 'approved'. */
+  approver: TeamActor | null;
+  /** The member expected to act on it next, or null when nobody is. */
+  assignee: TeamActor | null;
+  assignedUserId: string | null;
+  assignedAt: string | null;
+  /** The reviewer who rejected it, alongside rejectionReason. */
+  rejectedBy: string | null;
+}
+
+/** A teammate, as posts and other records identify one. */
+export interface TeamActor {
+  id: string;
+  name: string;
+  image: string | null;
+}
+
+/** Parameters for listing posts. */
+export interface ListPostsParams extends PaginationParams {
+  /** Filter by post status. */
+  status?: PostStatus;
+  /**
+   * Filter by assignee: a user id, `'me'` for the caller, or `'unassigned'`.
+   * Orthogonal to `status` — a post can be scheduled AND assigned.
+   */
+  assignedTo?: string;
+  /** Filter by channel ID. */
+  channelId?: string;
+  /** Filter by a single label ID. */
+  labelId?: string;
+  /** Comma-separated label IDs for multi-label filtering. */
+  labelIds?: string;
+  /** How to combine multiple labels: 'or' (any) or 'and' (all). Default: 'or'. */
+  labelMode?: 'or' | 'and';
+  /** Filter posts created on or after this date (ISO 8601). */
+  from?: string;
+  /** Filter posts created on or before this date (ISO 8601). */
+  to?: string;
+  /** Filter posts scheduled on or after this date (ISO 8601). */
+  scheduledFrom?: string;
+  /** Filter posts scheduled on or before this date (ISO 8601). */
+  scheduledTo?: string;
+  /** Search post content. */
+  search?: string;
+  /** Set to 'true' to only return recurring posts. */
+  recurring?: string;
+  /** Filter by team approval state (e.g. 'pending' for the approval queue). */
+  approvalStatus?: PostApprovalStatus;
+  /**
+   * Direction of the timeline sort — posts are ordered by the timestamp that
+   * matters for each one (published, else due, else created).
+   *
+   * `'desc'` (the default) is most-recent-first. Use `'asc'` when you want what
+   * is coming next: with a limit, `'desc'` returns the posts scheduled
+   * FURTHEST out, not the soonest.
+   */
+  order?: 'asc' | 'desc';
+}
+
+/** Response from listing posts. */
+export interface ListPostsResponse {
+  posts: Post[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+/** Parameters for creating a new post. */
+export interface CreatePostParams {
+  /**
+   * The post text content.
+   *
+   * LinkedIn mentions: `@[Display Name](urn:li:organization:ID)` (Page) or `@[Display Name](urn:li:person:ID)`
+   * publish as real mentions on LinkedIn and as plain `@Display Name` everywhere else.
+   * `GET /api/channels/{id}/mentions?q=<vanity-name>` on a LinkedIn channel returns ready-made Page tokens.
+   */
+  content?: string;
+  /** Array of media file IDs to attach. */
+  mediaFiles?: number[];
+  /** Post status: 'draft' or 'scheduled'. */
+  status?: 'draft' | 'scheduled';
+  /** ISO 8601 datetime for scheduled publishing. Required when status is 'scheduled'. */
+  scheduledAt?: string;
+  /** IANA timezone string (e.g. 'America/New_York'). Default: 'UTC'. */
+  timezone?: string;
+  /** Target channels. At least one is required. */
+  channels: PostChannelEntry[];
+  /** Array of label IDs to attach. */
+  labels?: number[];
+  /** Post format. Default: 'post'. */
+  postFormat?: PostFormat;
+  /**
+   * Per-platform post type overrides.
+   *
+   * Valid types per platform:
+   * - facebook: `post`, `reel`, `story`
+   * - instagram: `feed_photo`, `feed_video`, `reel`, `story`, `carousel`
+   * - x: `tweet`, `video`, `thread`, `repost`
+   * - youtube: `video`, `short` (video file required)
+   * - tiktok: `video`, `photo_slideshow`
+   * - linkedin: `post`, `multi_image`, `pdf_carousel`, `article`, `document` (one PDF, Word or PowerPoint file, from
+   *   `platformSpecific.linkedin.documentTitle`), `poll` (from `platformSpecific.linkedin.poll`; needs text, no media),
+   *   `reshare` (from `platformSpecific.linkedin.reshareId`; text optional, no media)
+   * - pinterest: `pin`, `video_pin`, `carousel`
+   * - threads: `text`, `image`, `video`, `carousel`, `repost`
+   * - bluesky: `post`
+   * - mastodon: `post`, `repost`
+   * - gmb: `standard`, `event`, `offer`
+   * - snapchat: `story` (default), `saved_story`, `spotlight` (video only)
+   *
+   * Video length is checked per type when the post is scheduled or published; a video outside the range is
+   * rejected with a 400 `VALIDATION_ERROR`: instagram `reel`/`feed_video` 3s–15min, `story` 3–60s; facebook
+   * `reel` 3–90s, `story` 3–60s; threads `video`/`carousel` up to 5min; linkedin 3s–30min; pinterest
+   * `video_pin` at least 4s; snapchat `story` 5–60s, `spotlight` 6–60s (`saved_story` is not checked).
+   *
+   * @example { instagram: 'reel', facebook: 'story' }
+   */
+  postTypeOverrides?: Record<string, string>;
+  /**
+   * Per-platform specific settings.
+   *
+   * Required fields by platform:
+   * - **youtube**: `{ title }` (required, 1-100 chars). Optional: `privacyStatus`, `categoryId`, `tags`, `playlistId`, `thumbnailUrl`, `madeForKids`.
+   *   Also (post types `video` and `short`, sent to YouTube only when set): `containsSyntheticMedia` (boolean, discloses realistic
+   *   altered or synthetic content), `notifySubscribers` (only an explicit `false` changes anything), `license` (`'youtube'|'creativeCommon'`),
+   *   `embeddable`, `publicStatsViewable` (booleans; `false` restricts), `defaultLanguage` (title/description language) and
+   *   `defaultAudioLanguage` (language codes such as `'en'`, `'pt-BR'`), `recordingDate` (`YYYY-MM-DD` or an ISO 8601 date-time)
+   * - **pinterest**: `{ title }` (required, 1-100 chars). Optional: `boardId` (or falls back to channel default), `description`, `link`, `dominantColor` (hex e.g. #FF5733), `coverImageUrl` (video pins; when omitted the server falls back to an attached image, then the video's auto-extracted poster frame),
+   *   `boardSectionId` (numeric section of the chosen board, for `pin`, `video_pin` and `carousel`; list sections with
+   *   `GET /api/channels/{id}/options?boardId=<boardId>`; ignored when no board was chosen), `coverKeyFrameTime` (`video_pin` only: whole seconds, 0 or more, used as the cover frame; `coverImageUrl` wins when both are sent)
+   * - **instagram**: Optional: `collaborators`, `shareToStory`, `trialReel`, `graduationStrategy`
+   *   (`'manual'|'auto'`), `thumbnailTimestamp`, `coverUrl`, `userTags`, `shareToFeed`, `locationId`. `collaborators` is a comma-separated
+   *   list of usernames (no leading @) tagged as co-authors; it applies to post types
+   *   `feed_photo`, `feed_video`, `reel` and `carousel` — on a carousel the co-authors go on the
+   *   carousel itself, not on its individual items — and is ignored on `story`, which has no
+   *   co-author concept. `thumbnailTimestamp` and `coverUrl` both set the still shown
+   *   before a video or Reel plays (post types `feed_video` and `reel`); `coverUrl` wins when both
+   *   are sent, because Instagram rejects a request carrying both. `userTags` is an array of
+   *   `{ username, x?, y?, mediaIndex? }` (up to 20 per photo or video; `x`/`y` are 0 to 1 from the top left, given together; `mediaIndex`
+   *   counts from 0 in attachment order, default 0). On a photo, and each photo of a carousel, a tag needs `x` and `y` or it is left out; on a
+   *   Reel or video post people are tagged by username only. Carousel videos and Stories carry no tags. `shareToFeed` (Reels only): `false`
+   *   shows the Reel only in the Reels tab, `true` also in the main feed; omitted keeps Instagram's default. `locationId` (digits) is the numeric
+   *   ID of a Facebook Page that has a location (photos, videos, Reels, carousels; not Stories).
+   * - **facebook**: Optional: `shareToStory`, `thumbnailUrl`, `textFormatPresetId`. `textFormatPresetId` (digits, a Facebook background ID) shows a short
+   *   text post on a coloured background; used only on a Page feed post with no photo, video or link card and at most 130 characters,
+   *   otherwise left out, and dropped (published as plain text) if Facebook refuses it. `thumbnailUrl` is the cover for a video
+   *   or Reel; Facebook only accepts one once the video exists, so it is applied after the video
+   *   publishes and lands a moment after the post. A cover that cannot be fetched, or that Facebook
+   *   rejects, leaves the video published with Facebook's own chosen frame rather than failing the post.
+   * - **tiktok**: Optional: `privacyLevel` (SELF_ONLY|PUBLIC|FRIENDS), `disableDuet`, `disableStitch`, `disableComment`, `isAigc`, `autoAddMusic` (photo posts), `sendToDrafts`, `photoCoverIndex`.
+   *   `sendToDrafts: true` sends a `video` or `photo_slideshow` post to the creator's TikTok drafts instead of publishing it:
+   *   `privacyLevel` is then not required and the direct-post settings (`privacyLevel`, `disableDuet`, `disableStitch`, `disableComment`, `isAigc`,
+   *   brand toggles, `autoAddMusic`, `thumbnailTimestamp`) are ignored; a video draft carries no caption, a photo draft does. Once delivered the
+   *   destination is `published` with no `platformUrl`; if the creator posts it within about a week, `platformPostId` becomes the video id,
+   *   `platformUrl` is filled in and analytics are collected. `photoCoverIndex` (whole number 0 to 34, default 0)
+   *   picks the cover image of a `photo_slideshow` (past the last image falls back to the first).
+   * - **x**: Optional: `replySettings` (single post and first post of a thread), `repostId` (with post type `repost`: status URL or ID to repost),
+   *   `poll` (`{ options: 2-4 strings of 1-25 chars, durationMinutes: 5-10080 }`; not with media or `quoteId`), `quoteId` (numeric ID or x.com
+   *   status URL; not with `poll`), `communityId` (numeric ID or `https://x.com/i/communities/<id>`; the account must be a member),
+   *   `shareWithFollowers` (boolean, default `false`; with `communityId`). On a thread, `poll`, `quoteId` and `communityId` apply to the first post only; none applies to a repost
+   * - **bluesky**: Optional: `repostId` (with post type `repost`: bsky.app post URL or at:// URI), `replyAllow` (array: omitted or `[]` = everyone,
+   *   else `['nobody']` or any mix of `'mention'`, `'following'`, `'follower'`), `allowQuotes` (default `true`), `quoteId` (bsky.app link or at:// URI),
+   *   `langs` (up to 3 language codes), `contentLabel` (`'sexual'|'nudity'|'porn'|'graphic-media'`). `replyAllow`, `allowQuotes` and `quoteId` apply to the
+   *   first post of a thread; `langs` and `contentLabel` to every part
+   * - **linkedin**: Optional: `title`, `description`, `url` (required for article type), `carouselTitle`, `documentTitle` (`document` posts; defaults to the
+   *   file's name), `poll` (`{ question: up to 140 chars, options: 2-4 strings of up to 30 chars, duration: 'ONE_DAY'|'THREE_DAYS'|'SEVEN_DAYS'|'FOURTEEN_DAYS' }`,
+   *   default `THREE_DAYS`; required for `poll` posts), `reshareId` (LinkedIn post link or `urn:li:share:`/`urn:li:ugcPost:` ID; required for `reshare` posts;
+   *   activity links are rejected), `thumbnailUrl` (public image URL up to 10MB, cover for a `post` with a video; skipped if it cannot be fetched),
+   *   `visibility` (`'PUBLIC'|'CONNECTIONS'|'LOGGED_IN'`, default `PUBLIC`; `CONNECTIONS` on a Page is published as `PUBLIC`), `disableReshare` (boolean, default `false`).
+   *   A `document` post needs exactly one PDF, Word or PowerPoint file in `mediaIds`; documents can be published only to LinkedIn
+   * - **gmb**: Optional: `ctaType`, `ctaUrl`, `eventTitle`, `startDate`, `endDate`, `startTime`, `endTime`, `couponCode`, `redeemOnlineUrl`
+   * - **mastodon**: Optional: `visibility` (public|unlisted|private|direct), `spoilerText`, `language`, `repostId` (with post type `repost`: status URL or ID to boost),
+   *   `poll` (`{ options: 2-4 strings of 1-50 chars, expiresIn: 300-2629746 seconds, multiple?, hideTotals? }`; not with media), `sensitive` (hides attached media), `quoteId`
+   *   (URL or status ID on your own server; needs a server running Mastodon 4.5 or later). `poll` and `quoteId` apply to the first post of a thread; `sensitive` to every part
+   * - **threads**: Optional: `repostId` (with post type `repost`: the numeric Threads post ID to repost), `quotePostId`, `topicTag` (one topic, no leading '#', no periods or ampersands), `locationId` (numeric place ID from `GET /api/channels/{id}/options?q=<place>`; needs location tagging granted on the channel),
+   *   `replyControl` (`'everyone'|'accounts_you_follow'|'mentioned_only'|'parent_post_author_only'|'followers_only'`; default `everyone`; the post itself and the first part of a thread, never later replies),
+   *   `pollOptions` (2-4 strings of 1-25 chars; text-only posts, left out on image/video/carousel), `linkAttachment` (public http(s) URL shown as the preview card on a text post; Threads refuses more than 5 links in total)
+   * - **discord**: Optional: `silent`, `buttons` (up to 5 `{ label, url }`), `startThread`, `threadName`, `embed` (`{ title, color }`), `poll` (`{ question, answers: 2-10, durationHours?, multiselect? }`), `pin`, `tags` (up to 5 forum tag IDs). Polls and pins need the Send Polls and Pin Messages permissions. `{ channelId }` (required) — the target Discord *text channel* snowflake inside the connected
+   *   server, which is not the BulkPublish channel id. Publishing uses a global bot token, so failures are
+   *   permission problems rather than a reconnect issue.
+   * - **telegram**: Optional: `silent`, `protectContent`, `pin`, `threadId` (forum topic, digits), `buttons` (up to 3 `{ label, url }`), `spoiler`, `disablePreview`,
+   *   `poll` (`{ question, options: 2-12, anonymous?, multipleAnswers?, quiz?, correctOption? }`; `correctOption` is the 0-based answer and required when `quiz` is true;
+   *   `multipleAnswers` cannot be combined with `quiz`). The destination chat is fixed when the channel is connected.
+   * - **tumblr**: Optional: `state` (`'published'|'queue'|'draft'|'private'`; `draft` and `private` override scheduling), `slug` (up to 200 chars), `reblogInteraction` (`'everyone'|'noone'`), `reblogUrl` (a Tumblr post link: publishes a reblog with your text as the comment), `blogName` (defaults to the blog the channel was connected as), `title`, `tags` (array of strings, or one comma-separated string; leading '#' and blank entries are dropped)
+   *   (string[], no leading `#`), `link`, `sourceUrl`
+   * - **snapchat**: Optional: `title` (Saved Story title, max 45 chars — defaults to the caption's first
+   *   line, truncated), `locale` (Spotlight locale, default `'en_US'`), `saveToProfile` (Spotlight only,
+   *   default `true`; `false` sends skip_save_to_profile). Every Snapchat post requires exactly ONE image or
+   *   video (vertical; images jpg/png, videos mp4/mov, max 1GB; story video 5–60s). The caption is NOT sent for plain
+   *   stories — it is used only as the Spotlight description (max 160 chars, truncated) and as the Saved
+   *   Story title fallback. Spotlight is video-only (6–60s). A video outside its range is rejected with a 400
+   *   `VALIDATION_ERROR` when the post is scheduled or published (drafts may be saved with it). First
+   *   comments are not supported on Snapchat.
+   *
+   * `discord`, `telegram`, `tumblr` and `snapchat` nest their options under the **BulkPublish channel id**, because each
+   * connected account commonly targets a different Discord channel / blog. A flat object is also
+   * accepted and applies to every channel of that platform on the post.
+   *
+   * @example { youtube: { title: 'My Video' }, pinterest: { title: 'My Pin', boardId: '123' } }
+   * @example { discord: { 13: { channelId: '1090123456789012345' } } }
+   */
+  platformSpecific?: Record<string, Record<string, unknown>>;
+  /**
+   * Per-platform content overrides for different character limits.
+   * Use for platforms with lower limits (bluesky: 300, pinterest/threads/mastodon: 500).
+   *
+   * @example { bluesky: 'Short version', linkedin: 'Longer professional version' }
+   */
+  platformContent?: Record<string, string>;
+  /**
+   * Whether to delete uploaded media right after publishing. Default: false —
+   * media is kept and reclaimed by the server's 3-month retention sweep.
+   * Forced to false by the server when the post has a repeatSchedule.
+   *
+   * When true, the original is removed once every channel on the post has
+   * published, freeing the storage it counted against (`usage.mediaStorageMB`
+   * from `quotas.usage()`). The media record survives with `isOriginalDeleted`
+   * set and its original `sizeBytes` still reported, so it stays listed but
+   * cannot be attached to a new post.
+   */
+  deleteMediaAfterPublish?: boolean;
+  /** Recurring schedule configuration. */
+  repeatSchedule?: RepeatScheduleConfig;
+  /**
+   * Thread parts for thread format. Requires at least 2 parts.
+   *
+   * Every part is measured against the character limit of every platform the
+   * post targets, not only the first one: an over-long part is rejected with
+   * 400 VALIDATION_ERROR naming the part number, the platform and its limit.
+   * URLs count as 23 characters on X and Mastodon, their real length elsewhere.
+   */
+  threadParts?: ThreadPart[];
+  /**
+   * Per-platform thread part overrides.
+   *
+   * A platform's own list replaces `threadParts` for that platform when it has
+   * entries, and those are the parts measured against that platform's limit; a
+   * platform absent from here uses `threadParts`.
+   */
+  platformThreadParts?: Record<string, ThreadPart[]>;
+  /** Enable auto-plug (reply with promo after engagement threshold). */
+  autoPlugEnabled?: boolean;
+  /** Text for auto-plug reply. */
+  autoPlugText?: string;
+  /** Engagement threshold (likes) to trigger auto-plug. Default: 50. Whole number, 0 to 2147483647. */
+  autoPlugThreshold?: number;
+  /** Enable auto-repost. */
+  autoRepostEnabled?: boolean;
+  /** Engagement threshold (likes) to trigger auto-repost. Default: 100. Whole number, 0 to 2147483647. */
+  autoRepostThreshold?: number;
+  /**
+   * Optional. Set true to hold a scheduled post for team approval
+   * (approvalStatus becomes 'pending'). Forced on server-side for roles
+   * without post:publish (contributors), regardless of this flag.
+   * Default: false.
+   */
+  requestApproval?: boolean;
+  /**
+   * Optional. Set true on a post that waits for approval when it should go
+   * out as soon as it is approved, even if that is after its scheduled time
+   * (the "publish now" of someone who needs approval: schedule it for now,
+   * with `requestApproval` or a contributor role, and send this). An approval
+   * that arrives more than 15 minutes late then publishes immediately; with
+   * false (the default) it is approved but returned to draft for a new time.
+   * An approver can override either way with `whenLate` on `posts.approve()`.
+   * Stored only when the post ends up with approvalStatus 'pending';
+   * otherwise saved as false. Must be a boolean (400 VALIDATION_ERROR).
+   */
+  publishWhenApproved?: boolean;
+  /**
+   * Per-post override for link tracking (bulkpubli.sh). `true` forces links in
+   * this post to be shortened and their clicks counted, `false` forces them to
+   * publish as written, and `null`/omitted (the default) inherits the
+   * organization's Link Tracking setting.
+   *
+   * Shortening happens at publish time, per channel, so two accounts on the
+   * same platform get distinct codes. It is skipped for a channel when the
+   * rewrite would push the post past that platform's character limit — a short
+   * URL is 28 characters and can be longer than the link it replaces.
+   *
+   * Short links are part of the Pro and Business plans: on Free, links always
+   * publish as written and `true` has no effect.
+   */
+  linkTrackingOverride?: boolean | null;
+}
+
+/** Parameters for updating an existing post. All fields are optional. */
+export interface UpdatePostParams {
+  /**
+   * Optional precondition: the post's `updatedAt` exactly as you last read it.
+   * The update is refused with 409 CONFLICT if a teammate changed the post
+   * since, instead of overwriting their version. Omit for the previous
+   * last-write-wins behaviour.
+   *
+   * Send the value the API gave you rather than a time you computed: it is
+   * compared to the millisecond, which is the point — two edits inside the same
+   * second are distinct.
+   */
+  ifUnmodifiedSince?: string;
+  content?: string;
+  mediaFiles?: number[];
+  /**
+   * Move the post between draft and scheduled. Setting 'scheduled' requires a
+   * future scheduledAt (in this request or already stored) and at least one
+   * channel; setting 'draft' unschedules it. Any other value is rejected. Omit
+   * to leave the status unchanged (a failed post still auto-resets to draft
+   * on edit; a partial post stays partial). Setting 'scheduled' on a partial
+   * post re-queues its failed channels only; published channels are not
+   * re-sent. To publish immediately, use posts.publish() instead.
+   */
+  status?: 'draft' | 'scheduled';
+  scheduledAt?: string | null;
+  timezone?: string;
+  channels?: PostChannelEntry[];
+  labels?: number[];
+  postFormat?: PostFormat;
+  postTypeOverrides?: Record<string, string>;
+  platformSpecific?: Record<string, Record<string, unknown>>;
+  platformContent?: Record<string, string>;
+  deleteMediaAfterPublish?: boolean;
+  repeatSchedule?: RepeatScheduleConfig;
+  threadParts?: ThreadPart[];
+  platformThreadParts?: Record<string, ThreadPart[]>;
+  autoPlugEnabled?: boolean;
+  autoPlugText?: string;
+  autoPlugThreshold?: number;
+  autoRepostEnabled?: boolean;
+  autoRepostThreshold?: number;
+  /**
+   * Optional. Set true to hold a scheduled post for team approval
+   * (approvalStatus becomes 'pending'). Forced on server-side for roles
+   * without post:publish (contributors), regardless of this flag.
+   * Default: false.
+   */
+  requestApproval?: boolean;
+  /**
+   * Optional. See {@link CreatePostParams.publishWhenApproved}. An explicit
+   * value is stored while the post waits for approval. When omitted it is
+   * kept, except that a different `scheduledAt` clears it to false, and it is
+   * always false once the post no longer has approvalStatus 'pending'. An
+   * approved post sent back for review starts from false unless you set it.
+   */
+  publishWhenApproved?: boolean;
+  /**
+   * Per-post override for link tracking (bulkpubli.sh). `true` forces links in
+   * this post to be shortened and their clicks counted, `false` forces them to
+   * publish as written, and `null` clears the override so the post inherits the
+   * organization's Link Tracking setting again.
+   *
+   * Short links are part of the Pro and Business plans: on Free, links always
+   * publish as written and `true` has no effect.
+   */
+  linkTrackingOverride?: boolean | null;
+}
+
+/** Parameters for rejecting a pending post. */
+export interface RejectPostParams {
+  /** Optional reason, max 2000 chars. Shown to the author (in-app notification + on the post). */
+  reason?: string;
+  /**
+   * The post's `updatedAt` as you last loaded it. When sent, the call only
+   * succeeds if the post has not changed since; otherwise nothing is written
+   * and you get 409 CONFLICT (`error.updatedAt` carries the current value).
+   * Must be an ISO 8601 timestamp (400 otherwise).
+   */
+  ifUnmodifiedSince?: string;
+}
+
+/** Parameters for approving a pending post. */
+export interface ApprovePostParams {
+  /**
+   * What to do if the post's scheduled time passed more than 15 minutes ago:
+   * 'publish' publishes it now (status 'publishing'); 'hold' approves it but
+   * returns it to draft for the author to pick a new time. Defaults to
+   * 'publish' when the post's `publishWhenApproved` is true, otherwise
+   * 'hold'. No effect when the time is ahead or passed less than 15 minutes
+   * ago. Any other value is rejected with 400 VALIDATION_ERROR.
+   */
+  whenLate?: 'publish' | 'hold';
+  /**
+   * The post's `updatedAt` as you last loaded it. When sent, the approval
+   * only lands if the post has not changed since; otherwise nothing is written
+   * and you get 409 CONFLICT (`error.updatedAt` carries the current value).
+   * Must be an ISO 8601 timestamp (400 otherwise).
+   */
+  ifUnmodifiedSince?: string;
+}
+
+/** Response from publishing a post. */
+export interface PublishPostResponse extends Post {}
+
+/** Parameters for retrying a post's failed platforms. */
+export interface RetryPostParams {
+  /**
+   * Explicit opt-in to also retry platforms in status 'unconfirmed' (the
+   * publish request may have reached the platform but its response was lost).
+   * Their publish may have already gone through; retrying can create a
+   * duplicate post — check the account first. Defaults to false; without it,
+   * a post with unconfirmed platforms and no failed ones fails with a 400 and
+   * code UNCONFIRMED_REQUIRES_REPUBLISH.
+   */
+  republish?: boolean;
+}
+
+/** Response from retrying failed platforms on a post. */
+export interface RetryPostResponse extends Post {
+  retriedCount: number;
+  skippedMaxRetries: number;
+}
+
+/** Parameters for publishing a story from a post. */
+export interface PublishStoryParams {
+  /** Platform to publish the story on. Must be 'facebook' or 'instagram'. */
+  platform: 'facebook' | 'instagram';
+}
+
+/** Response from publishing a story. */
+export interface PublishStoryResponse {
+  success: boolean;
+  postId?: string;
+  url?: string;
+  error?: string;
+}
+
+/** Parameters for bulk post actions. */
+export interface BulkPostParams {
+  /** The bulk action to perform. */
+  action: BulkAction;
+  /** Array of post IDs to act on. */
+  postIds: number[];
+  /** New scheduled time (required for 'reschedule' action). */
+  scheduledAt?: string;
+}
+
+/** Response from a bulk post action. */
+export interface BulkPostResponse {
+  success: boolean;
+  action: BulkAction;
+  affected: number;
+  scheduledAt?: string;
+}
+
+/** Response from getting the next queue slot. */
+export interface QueueSlotResponse {
+  suggestedTime: string;
+  timezone: string;
+}
+
+// ---------- Post Metrics ----------
+
+/** Latest metrics snapshot for a single platform. */
+export interface MetricsSnapshot {
+  impressions: number | null;
+  reach: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
+  clicks: number | null;
+  videoViews: number | null;
+  engagementRate: number | null;
+  platformSpecificMetrics: Record<string, number>;
+  fetchedAt: string;
+}
+
+/** Historical metrics data point. */
+export interface MetricsHistoryPoint {
+  impressions: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  fetchedAt: string;
+}
+
+/** Per-platform metrics for a post. */
+export interface PostPlatformMetrics {
+  platform: Platform;
+  platformPostId: string | null;
+  platformUrl: string | null;
+  status: PlatformStatus;
+  latest: MetricsSnapshot | null;
+  history: MetricsHistoryPoint[];
+  /**
+   * Clicks on bulkpubli.sh short links in this post on this platform, measured
+   * by BulkPublish rather than reported by the platform.
+   *
+   * Deliberately OUTSIDE `latest`: it is not a platform snapshot, so a platform
+   * that reports no metrics at all still has link clicks. It is also distinct
+   * from `latest.clicks` (the platform's own click figure) — one visit can
+   * register in both, so never add them together. Bot and link-preview traffic
+   * is excluded. Zero for organizations without Link Tracking enabled.
+   */
+  linkClicks: number;
+}
+
+/** Response from getting post metrics. */
+export interface PostMetricsResponse {
+  postId: number;
+  platforms: PostPlatformMetrics[];
+  totals: {
+    impressions: number;
+    likes: number;
+    comments: number;
+    shares: number;
+    clicks: number;
+    videoViews: number;
+    /** Sum of `platforms[].linkClicks`. Not folded into `clicks`. */
+    linkClicks: number;
+  };
+}
+
+// ---------- Analytics ----------
+
+/** Parameters for analytics endpoints that require a date range. */
+export interface AnalyticsDateParams {
+  /** Start date (ISO 8601 date string, e.g. '2026-01-01'). */
+  from: string;
+  /** End date (ISO 8601 date string, e.g. '2026-01-31'). */
+  to: string;
+}
+
+/** Per-platform breakdown in analytics summary. */
+export interface AnalyticsPlatformBreakdown {
+  total: number;
+  published: number;
+  failed: number;
+}
+
+/** Daily post count in analytics summary. */
+export interface AnalyticsDayCount {
+  date: string;
+  count: number;
+  platforms: Record<string, number>;
+}
+
+/** The equal-length window before `from`, returned with `compare=1`. */
+export interface AnalyticsPreviousWindow {
+  from: string;
+  to: string;
+  /** Days in the current window. */
+  days: number;
+  /** False when the earlier window would reach past the 30-day retention floor; `previous` is then null. */
+  available: boolean;
+}
+
+/** Response from the analytics summary endpoint. */
+export interface AnalyticsSummaryResponse {
+  totalPosts: number;
+  published: number;
+  failed: number;
+  scheduled: number;
+  partial: number;
+  byPlatform: Record<string, AnalyticsPlatformBreakdown>;
+  byDay: AnalyticsDayCount[];
+  from: string;
+  to: string;
+  /** Counts for the previous window when `compare=1` and it is available. */
+  previous?: Pick<AnalyticsSummaryResponse, 'totalPosts' | 'published' | 'failed' | 'scheduled' | 'partial' | 'from' | 'to'> | null;
+  previousWindow?: AnalyticsPreviousWindow | null;
+}
+
+/** Filters shared by every analytics endpoint. A post must match every filter that is set. */
+export interface AnalyticsFilterParams {
+  /** Comma-separated channel ids. */
+  channelIds?: string;
+  /** Comma-separated platform keys. */
+  platforms?: string;
+  /** Comma-separated label ids (ANY match). */
+  labelIds?: string;
+  postFormat?: 'post' | 'thread';
+  /** By the post's first media file. */
+  mediaType?: 'text' | 'image' | 'video';
+  /** `'1'` to also compute the previous equal-length window. */
+  compare?: '1';
+}
+
+export type AnalyticsRankField =
+  | 'impressions' | 'reach' | 'likes' | 'comments' | 'shares' | 'saves'
+  | 'clicks' | 'videoViews' | 'linkClicks' | 'engagements' | 'engagementRate';
+
+/** Parameters for the engagement analytics endpoint. */
+export interface AnalyticsEngagementParams extends AnalyticsDateParams, AnalyticsFilterParams {
+  /** Legacy single-channel filter; equivalent to `channelIds`. */
+  channelId?: string;
+  /** Metric `topPosts` is ranked by. Default `impressions`. */
+  topBy?: AnalyticsRankField;
+  /** `desc` (default) for the best posts, `asc` for the worst. */
+  topOrder?: 'asc' | 'desc';
+  /** `'1'` to include `postTimes` for best-time-to-post views. */
+  heatmap?: '1';
+  /**
+   * Set to `'1'` to return only the ranked `topPosts` leaderboard; `allPosts`
+   * comes back empty. Use it when you render a short list and don't want to
+   * download every post in the window.
+   */
+  top?: '1';
+  /**
+   * Sort field for `allPosts`. `linkClicks` sorts by bulkpubli.sh click count.
+   * Default: `'date'`.
+   */
+  sort?: 'date' | AnalyticsRankField;
+  /** Sort direction for `allPosts`. Default: `'desc'`. */
+  order?: 'asc' | 'desc';
+}
+
+/** One bucket of engagement metrics — used per platform, per channel and per day. */
+export interface EngagementBucket {
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  videoViews: number;
+  /** bulkpubli.sh short-link clicks. Measured by BulkPublish, not the platform. */
+  linkClicks: number;
+  /** likes + comments + shares + clicks. Never includes linkClicks. */
+  engagements: number;
+  /** Published post_platform rows in the bucket. */
+  posts: number;
+}
+
+/** Per-platform engagement breakdown. */
+export type EngagementPlatformBreakdown = EngagementBucket;
+
+/** Per-channel engagement breakdown. */
+export interface EngagementChannelBreakdown extends EngagementBucket {
+  channelId: number;
+  platform: string;
+  accountName: string | null;
+}
+
+/** Daily engagement data point. */
+export interface EngagementDayData extends EngagementBucket {
+  date: string;
+  /** The same bucket per platform for this day. */
+  platforms: Record<string, EngagementBucket>;
+}
+
+/** A post in `topPosts` / `allPosts`. */
+export interface TopPost {
+  postId: number;
+  content: string;
+  thumbnail?: string;
+  publishedAt: string;
+  postFormat: 'post' | 'thread' | string;
+  mediaType: 'text' | 'image' | 'video';
+  labels: Array<{ id: number; name: string; color: string | null }>;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  videoViews: number;
+  /** bulkpubli.sh short-link clicks for this post. */
+  linkClicks: number;
+  engagements: number;
+  /** Basis points (325 = 3.25%), averaged over the post's measurable channels. */
+  engagementRate: number;
+  platforms: Array<{ platform: string; platformUrl: string | null }>;
+  platformMetrics: Array<EngagementBucket & {
+    platform: string;
+    platformUrl: string | null;
+    channelId: number | null;
+    accountName: string | null;
+    /** This channel's own rate, basis points. */
+    engagementRate: number;
+    metricsSupported: boolean;
+    supportedMetrics: string[];
+    fetchedAt: string | null;
+  }>;
+}
+
+/** Response from the engagement analytics endpoint. */
+export interface AnalyticsEngagementResponse {
+  totalImpressions: number;
+  totalEngagements: number;
+  totalLikes: number;
+  totalComments: number;
+  totalShares: number;
+  totalClicks: number;
+  totalSaves: number;
+  totalVideoViews: number;
+  totalReach: number;
+  /**
+   * Clicks on bulkpubli.sh short links across the window, measured by
+   * BulkPublish rather than reported by the platform.
+   *
+   * Deliberately NOT folded into `totalClicks`, which is the platforms' own
+   * click figure: one visit can register in both, so adding them double-counts.
+   * Because we measure it ourselves it is available on every platform,
+   * including those that report no per-post metrics at all. Bot and
+   * link-preview traffic is excluded. Zero for organizations that have not
+   * enabled Link Tracking.
+   */
+  totalLinkClicks: number;
+  /** Average engagement rate in basis points (325 = 3.25%). */
+  avgEngagementRate: number;
+  /** Published post_platform rows in the window. */
+  publishedCount: number;
+  from: string;
+  to: string;
+  byPlatform: Record<string, EngagementPlatformBreakdown>;
+  byChannel: EngagementChannelBreakdown[];
+  byDay: EngagementDayData[];
+  topPosts: TopPost[];
+  allPosts: TopPost[];
+  /** `{t, e, i}` per published post_platform when `heatmap=1`; empty otherwise. */
+  postTimes: Array<{ t: string; e: number; i: number }>;
+  /** Totals (and `byDay`) for the previous window when `compare=1` and it is available. */
+  previous?: (Pick<AnalyticsEngagementResponse,
+    'totalImpressions' | 'totalEngagements' | 'totalLikes' | 'totalComments' | 'totalShares' | 'totalClicks' |
+    'totalSaves' | 'totalVideoViews' | 'totalReach' | 'totalLinkClicks' | 'avgEngagementRate' | 'publishedCount' | 'from' | 'to'
+  > & { byDay: EngagementDayData[] }) | null;
+  previousWindow?: AnalyticsPreviousWindow | null;
+}
+
+/** One stored metrics snapshot for a post_platform (GET /api/analytics/post-history). */
+export interface PostHistoryPoint {
+  fetchedAt: string;
+  impressions: number;
+  reach: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  clicks: number;
+  videoViews: number;
+  /** Basis points. */
+  engagementRate: number;
+}
+
+export interface PostHistorySeries {
+  postPlatformId: number;
+  platform: string;
+  channelId: number | null;
+  accountName: string | null;
+  supportedMetrics: string[];
+  /** False => every point is a stored 0, not a measurement. */
+  metricsSupported: boolean;
+  points: PostHistoryPoint[];
+}
+
+export interface AnalyticsPostHistoryResponse {
+  postId: number;
+  publishedAt: string | null;
+  series: PostHistorySeries[];
+}
+
+/** One tracked bulkpubli.sh link (GET /api/analytics/links). */
+export interface TrackedLink {
+  id: number;
+  shortUrl: string;
+  code: string;
+  originalUrl: string;
+  finalUrl: string;
+  destinationHost: string;
+  clicks: number;
+  lastClickAt: string | null;
+  createdAt: string | null;
+  platform: string;
+  channelId: number | null;
+  accountName: string | null;
+  postId: number;
+  postContent: string;
+  publishedAt: string | null;
+}
+
+export interface AnalyticsLinksResponse {
+  from: string;
+  to: string;
+  totalClicks: number;
+  totalLinks: number;
+  links: TrackedLink[];
+}
+
+/** Response from refreshing analytics. */
+export interface AnalyticsRefreshResponse {
+  queued: boolean;
+}
+
+/** Parameters for account-level analytics. */
+export interface AnalyticsAccountParams {
+  /** Legacy single-channel filter; equivalent to `channelIds`. */
+  channelId?: string;
+  /** Comma-separated channel ids. */
+  channelIds?: string;
+  /** Comma-separated platform keys. */
+  platforms?: string;
+  /** Start date. Default: 30 days ago. */
+  from?: string;
+  /** End date. Default: today. */
+  to?: string;
+}
+
+/** Account metrics data point. */
+export interface AccountMetricsDataPoint {
+  date: string;
+  channelId: number;
+  platform: string;
+  followers: number | null;
+  following: number | null;
+  impressions: number | null;
+  reach: number | null;
+  /** Facebook only (`page_views_total`); null/0 elsewhere — not measured. */
+  profileViews: number | null;
+  /** Google Business only; null/0 elsewhere — not measured. */
+  websiteClicks: number | null;
+  /**
+   * ALWAYS null. No platform handler computes an account-level engagement rate,
+   * so the server returns null rather than a 0 that would look like a measured
+   * 0%. For a real rate use `platformMetrics[].engagementRate` from
+   * `analytics.engagement()`.
+   */
+  engagementRate: number | null;
+}
+
+/** Channel reference in account analytics. */
+export interface AccountChannel {
+  id: number;
+  platform: Platform;
+  accountName: string;
+}
+
+/** Response from account-level analytics. */
+export interface AnalyticsAccountResponse {
+  metrics: AccountMetricsDataPoint[];
+  channels: AccountChannel[];
+}
+
+// ---------- Labels ----------
+
+/** Parameters for listing labels. */
+export interface ListLabelsParams {
+  /** Filter by label type: 'post' or 'media'. */
+  type?: LabelType;
+}
+
+/** Parameters for creating a label. */
+export interface CreateLabelParams {
+  /** Label name. */
+  name: string;
+  /** Hex color (e.g. '#6366f1'). Default: '#6366f1'. */
+  color?: string;
+  /** Label type: 'post' or 'media'. Default: 'post'. */
+  type?: LabelType;
+}
+
+/** Parameters for updating a label. */
+export interface UpdateLabelParams {
+  /** New label name. */
+  name?: string;
+  /** New hex color. */
+  color?: string;
+}
+
+// ---------- Schedules ----------
+
+/** A recurring schedule. */
+export interface RecurringSchedule {
+  id: number;
+  userId: string;
+  organizationId: number;
+  name: string;
+  frequency: RecurringFrequency;
+  dayOfWeek: number | null;
+  dayOfMonth: number | null;
+  timeOfDay: string;
+  timezone: string | null;
+  channelIds: number[];
+  mediaFileIds: number[];
+  contentTemplate: string;
+  postTypeOverrides: Record<string, string>;
+  platformSpecific: Record<string, Record<string, unknown>>;
+  postFormat: string | null;
+  threadParts: ThreadPart[] | null;
+  isActive: boolean | null;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  /**
+   * Whether every occurrence this schedule generates is held for team approval.
+   */
+  requireApproval?: boolean;
+  createdAt: string;
+}
+
+/** Parameters for creating a recurring schedule. */
+export interface CreateScheduleParams {
+  /** Schedule name. */
+  name: string;
+  /** Recurrence frequency. */
+  frequency: RecurringFrequency;
+  /** Day of week (0=Sunday, 6=Saturday). Required for weekly/biweekly. */
+  dayOfWeek?: number;
+  /** Day of month (1-31). Required for monthly. */
+  dayOfMonth?: number;
+  /** Time of day in HH:MM format (24h). */
+  timeOfDay: string;
+  /** IANA timezone. Default: 'UTC'. */
+  timezone?: string;
+  /** Channel IDs to publish to. At least one required. */
+  channelIds: number[];
+  /** Media file IDs to attach. */
+  mediaFileIds?: number[];
+  /** Post content template. */
+  contentTemplate?: string;
+  /** Per-platform post type overrides. */
+  postTypeOverrides?: Record<string, string>;
+  /** Per-platform specific settings. */
+  platformSpecific?: Record<string, Record<string, unknown>>;
+  /** Whether the schedule is active. Default: true. */
+  isActive?: boolean;
+  /**
+   * Hold every occurrence this schedule generates for team approval — each
+   * generated post lands with `approvalStatus: 'pending'` and does not
+   * publish until an approver releases it via `posts.approve(id)`.
+   * Default: false.
+   *
+   * Forced to true server-side for roles without publish rights
+   * (contributors), regardless of this flag — on create and on every
+   * update, including one that does not send it.
+   */
+  requireApproval?: boolean;
+}
+
+/** Parameters for updating a recurring schedule. All fields are optional. */
+export interface UpdateScheduleParams {
+  name?: string;
+  frequency?: RecurringFrequency;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  timeOfDay?: string;
+  timezone?: string;
+  channelIds?: number[];
+  mediaFileIds?: number[];
+  contentTemplate?: string;
+  postTypeOverrides?: Record<string, string>;
+  platformSpecific?: Record<string, Record<string, unknown>>;
+  isActive?: boolean;
+  /**
+   * Hold every occurrence this schedule generates for team approval — each
+   * generated post lands with `approvalStatus: 'pending'` and does not
+   * publish until an approver releases it via `posts.approve(id)`.
+   * Default: false.
+   *
+   * Forced to true server-side for roles without publish rights
+   * (contributors), regardless of this flag — on create and on every
+   * update, including one that does not send it.
+   */
+  requireApproval?: boolean;
+}
+
+// ---------- API Keys ----------
+
+/** An API key (listing view — does not include the full key). */
+export interface ApiKeyInfo {
+  id: number;
+  name: string;
+  keyPreview: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  isActive: boolean | null;
+  createdAt: string;
+}
+
+/** Parameters for creating an API key. */
+export interface CreateApiKeyParams {
+  /** A descriptive name for the key. */
+  name: string;
+  /** Optional expiration date (ISO 8601). */
+  expiresAt?: string;
+  /** Optional: number of days until expiration. */
+  expires_in_days?: number;
+}
+
+/** Response from creating an API key — includes the full key (shown only once). */
+export interface CreateApiKeyResponse {
+  id: number;
+  name: string;
+  /** The full API key. Store this securely — it is only shown once. */
+  key: string;
+  keyPrefix: string;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+/** Today's request count for one API key, as returned in `ApiKeyUsage.perKey`. */
+export interface ApiKeyPerKeyUsage {
+  id: number;
+  name: string;
+  /** Requests made with this key so far today (UTC). */
+  today: number;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+}
+
+/**
+ * Response from `GET /api/api-keys/usage` — today's API request usage against
+ * the plan's daily cap. `today` is the ORGANIZATION-wide total across every
+ * key (not just the key authenticating the call) and pairs with `limit`
+ * (the same value as `QuotasPlanLimits.apiRequestsPerDay`); `-1` = unlimited.
+ */
+export interface ApiKeyUsage {
+  today: number;
+  limit: number;
+  plan: 'free' | 'ltd' | 'pro' | 'business';
+  perKey: ApiKeyPerKeyUsage[];
+}
+
+/** One day's request count, as returned by `GET /api/api-keys/usage/history`. */
+export interface ApiKeyUsageHistoryEntry {
+  /** Calendar day, `YYYY-MM-DD` (UTC). */
+  date: string;
+  count: number;
+}
+
+/**
+ * Notification preferences for the authenticated user.
+ *
+ * Email categories are OPT-IN (default `false`) so no email is ever sent that
+ * the user did not ask for; in-app categories cost nothing and default to
+ * `true`.
+ */
+export interface NotificationPreferences {
+  id: number;
+  userId: string;
+  emailOnFailure: boolean | null;
+  emailOnTokenExpiry: boolean | null;
+  inAppPublished: boolean | null;
+  inAppFailed: boolean | null;
+  inAppScheduleReminder: boolean | null;
+  inAppTokenExpiry: boolean | null;
+  /** Billing notices for the channel-slot add-on. Opt-out: default `true`. */
+  emailOnChannelSlots: boolean | null;
+  /** A new direct message or review on a connected channel. */
+  inAppInbox: boolean | null;
+  /** A teammate assigned you a post. */
+  inAppAssignments: boolean | null;
+  /** A post needs your approval, or one of yours was approved or rejected. */
+  inAppApprovals: boolean | null;
+  /** A teammate mentioned you in a note. */
+  inAppMentions: boolean | null;
+  /** A teammate left a note on a post you wrote or are assigned to. */
+  inAppNotes: boolean | null;
+  /** Email as well as an in-app notification when a post needs your approval. Opt-in. */
+  emailOnApprovalRequest: boolean | null;
+}
+
+/** The subset of {@link NotificationPreferences} a caller may change. */
+export type UpdateNotificationPreferencesParams = Partial<
+  Omit<NotificationPreferences, 'id' | 'userId'>
+>;
+
+/**
+ * An organization the authenticated user belongs to.
+ *
+ * `role` is the CALLER's role in this organization, not the organization's own
+ * property: one of `owner`, `admin`, `approver`, `contributor` or `viewer`.
+ */
+export interface Organization {
+  id: number;
+  name: string;
+  slug: string;
+  plan: 'free' | 'ltd' | 'pro' | 'business';
+  ownerId: string;
+  role: 'owner' | 'admin' | 'member' | 'approver' | 'contributor' | 'viewer';
+  createdAt: string;
+}
+
+/** Open Graph preview data for a URL, from `GET /api/link-preview`. */
+export interface LinkPreview {
+  title: string;
+  description: string;
+  image: string;
+  siteName: string;
+  /** Hostname with a leading `www.` stripped, e.g. `example.com`. */
+  domain: string;
+  url: string;
+}
+
+// ---------- Quotas ----------
+
+/**
+ * The plan's configured limits, as returned in `QuotasUsageResponse.limits`.
+ * `-1` = unlimited for that resource, `0` = disabled / not available on this plan.
+ */
+export interface QuotasPlanLimits {
+  channels: number;
+  channelsPerPlatform: number;
+  postsPerDay: number;
+  postsPerMonth: number;
+  maxPendingScheduled: number;
+  scheduledPerDay: number;
+  mediaStorageMB: number;
+  apiKeys: number;
+  apiRequestsPerDay: number;
+  recurringSchedules: number;
+  maxLabels: number;
+  maxOrgMembers: number;
+  /** Platform keys not available on this plan. */
+  excludedPlatforms: string[];
+  /** Monthly budget for X (Twitter) external API costs, in tenths of a cent. */
+  xMonthlyBudgetDcents: number;
+  /** Plan-included AI caption generations per month, in run-units. 0 = none, -1 = unlimited. */
+  aiMonthlyRuns: number;
+  rssFeeds: number;
+  rssAutoPublish: boolean;
+  rssPollIntervalMinutes: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Response from `GET /api/quotas/usage`.
+ * Usage counters and plan limits are parallel objects: e.g. `usage.postsToday`
+ * pairs with `limits.postsPerDay`, `usage.scheduledToday` with
+ * `limits.scheduledPerDay`, `usage.pendingScheduled` with
+ * `limits.maxPendingScheduled`.
+ */
+export interface QuotasUsageResponse {
+  organizationId: number;
+  plan: 'free' | 'ltd' | 'pro' | 'business';
+  limits: QuotasPlanLimits;
+  subscription: {
+    status: string | null;
+    /** ISO timestamp, null when there is no active subscription. */
+    currentPeriodEnd: string | null;
+    cancelAtPeriodEnd: boolean;
+  };
+  usage: {
+    channels: number;
+    /** Posts *created* today (pairs with `limits.postsPerDay`). */
+    postsToday: number;
+    postsThisMonth: number;
+    /** All pending scheduled posts regardless of date (pairs with `limits.maxPendingScheduled`). */
+    pendingScheduled: number;
+    /** Posts scheduled FOR today, excluding drafts/failed (pairs with `limits.scheduledPerDay`). */
+    scheduledToday: number;
+    apiKeys: number;
+    recurringSchedules: number;
+    mediaStorageMB: number;
+    labels: number;
+    orgMembers: number;
+    /** X (Twitter) API spend this month, in tenths of a cent. */
+    xApiSpendDcents: number;
+    /** Purchased X credit balance, in tenths of a cent. */
+    xCreditDcents: number;
+    /** AI caption run-units consumed this month. */
+    aiRunsUsed: number;
+    /** Plan AI allowance (mirrors `limits.aiMonthlyRuns`). 0 = none, -1 = unlimited. */
+    aiRunsLimit: number;
+    /** Purchased AI credit balance, in tenths of a cent. */
+    aiCreditDcents: number;
+    /** Lifetime count of refunded subscription orders (support visibility, not enforced). */
+    subscriptionRefundCount: number;
+    [key: string]: unknown;
+  };
+  /**
+   * Purchased extra channel slots (the $2.99/month add-on, available on every plan — a
+   * seat-based subscription; unused slots are auto-canceled before renewal).
+   * Each active slot raises the effective total channel limit by one and allows
+   * one channel above the per-platform cap (shared across platforms).
+   * `effectiveChannelLimit` = base plan limit + active slots (`-1` stays `-1`)
+   * and is what channel-connect quota checks actually enforce. Each slot's
+   * `autoRenews` says whether it renews with the subscription (`expiresAt` then
+   * rolls forward each cycle) or lapses at `expiresAt`.
+   */
+  channelSlots: {
+    active: number;
+    slots: Array<{ id: number; expiresAt: string; autoRenews: boolean }>;
+    baseChannelLimit: number;
+    effectiveChannelLimit: number;
+  };
+  [key: string]: unknown;
+}
+
+// ---------- Notifications ----------
+
+/** A notification. */
+export interface Notification {
+  id: number;
+  userId: string;
+  organizationId: number | null;
+  organizationName: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  data: Record<string, unknown> | null;
+  isRead: boolean | null;
+  createdAt: string;
+}
+
+/** Parameters for listing notifications. */
+export interface ListNotificationsParams extends PaginationParams {
+  /** Only return unread notifications. */
+  unreadOnly?: boolean;
+}
+
+/** Response from listing notifications. */
+export interface ListNotificationsResponse {
+  notifications: Notification[];
+  /**
+   * Unread notifications for the whole account, counted independently of
+   * `unreadOnly` and of the page size — so it means the same thing on every
+   * tab, and is not `notifications.filter(n => !n.isRead).length`.
+   */
+  unreadTotal: number;
+  pagination: PaginationMeta;
+}
+
+// ---------- Activity ----------
+
+/** An activity log entry. */
+export interface ActivityLog {
+  id: number;
+  userId: string | null;
+  organizationId: number | null;
+  action: string;
+  resource: string | null;
+  resourceId: string | null;
+  details: Record<string, unknown> | null;
+  level: string | null;
+  ipAddress: string | null;
+  createdAt: string;
+  thumbnail?: { url: string; mimeType: string };
+}
+
+/** Parameters for listing activity logs. */
+export interface ListActivityParams extends PaginationParams {
+  /** Filter by action (e.g. 'post.published'). */
+  action?: string;
+  /** Filter by resource type (e.g. 'post', 'channel'). */
+  resource?: string;
+}
+
+/** Response from listing activity logs. */
+export interface ListActivityResponse {
+  activities: ActivityLog[];
+  pagination: PaginationMeta;
+}
+
+// ---------- Channel Sets ----------
+
+/** A saved channel grouping for one-click multi-channel targeting. */
+export interface ChannelSet {
+  id: number;
+  userId: string;
+  organizationId: number;
+  name: string;
+  channelIds: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Parameters for creating a channel set. */
+export interface CreateChannelSetParams {
+  /** Set name (max 100 chars, unique per organization). */
+  name: string;
+  /** IDs of channels in your organization (at least 1). */
+  channelIds: number[];
+}
+
+/** Parameters for updating a channel set. At least one field is required. */
+export interface UpdateChannelSetParams {
+  /** New set name (max 100 chars, unique per organization). */
+  name?: string;
+  /** Replacement channel IDs (at least 1). */
+  channelIds?: number[];
+}
+
+// ---------- RSS Autopost ----------
+
+/**
+ * Per-channel override inside an RSS field mapping. Text-only — media
+ * selection (`mediaField`) cannot be overridden per channel, and channels on
+ * the same platform share one rendered text (it is written to the post's
+ * per-platform content, like composer overrides).
+ */
+export interface RssMappingChannelOverride {
+  /** Caption template for this channel (max 2000 chars). */
+  template?: string;
+  /** Hashtags appended for this channel (max 500 chars). */
+  hashtags?: string;
+  stripHtml?: boolean;
+  truncate?: 'smart' | 'hard' | 'skip';
+}
+
+/**
+ * How an RSS/Atom item becomes post content. `null` on a feed means the
+ * built-in default: template `"{title}\n\n{link}"`, no enclosure attached,
+ * an article image taken when a channel needs one, stripHtml true, smart
+ * truncation, no hashtags.
+ */
+export interface RssFieldMapping {
+  /**
+   * Caption template (max 2000 chars). Tokens: {title} {link} {description}
+   * {content} {author} {categories} {feedName}, plus any extra leaf field on
+   * the feed item as {fieldName} (lowercased localName). A line whose tokens
+   * all render empty is dropped. Default "{title}\n\n{link}".
+   */
+  template: string;
+  /**
+   * Which item enclosure to import and attach to the post: 'none' (default),
+   * 'image', 'video', or 'auto' (video if present, else image). The file is
+   * re-hosted to your media library; if the import fails the post is created
+   * without media. An item with no usable enclosure falls back to an image
+   * from its article unless `articleImage` is 'never'; channels whose platform
+   * requires media are skipped only when that finds nothing too (and always
+   * for the video-only platforms, TikTok and YouTube).
+   */
+  mediaField?: 'none' | 'image' | 'video' | 'auto';
+  /**
+   * Where to get a picture when the item has no usable enclosure of its own.
+   * 'when_needed' (default) takes one from the article the item links to, but
+   * only when a channel on the feed is on a platform that cannot publish
+   * without an image; 'always' takes one whenever the item has none; 'never'
+   * leaves those items without media, so image-required channels are skipped.
+   *
+   * Candidates in order: the article's share image, a picture embedded in the
+   * item itself, then the largest pictures on the page. The first that imports
+   * cleanly and measures at least 200x200 wins, at most four are tried.
+   * Post-level like mediaField: the picture attaches to the post, so every
+   * channel of the feed receives it.
+   */
+  articleImage?: 'when_needed' | 'always' | 'never';
+  /** Strip HTML tags/entities from {title}/{description}/{content}. Default true. */
+  stripHtml?: boolean;
+  /**
+   * When rendered text exceeds the platform character limit: 'smart' (default)
+   * trims at a word boundary keeping a trailing link line; 'hard' cuts at the
+   * limit; 'skip' drops that channel for the item.
+   */
+  truncate?: 'smart' | 'hard' | 'skip';
+  /** Hashtags appended after the rendered template (max 500 chars). Default "". */
+  hashtags?: string;
+  /** Per-channel text overrides keyed by channel id (as a string). */
+  channelOverrides?: Record<string, RssMappingChannelOverride>;
+}
+
+/** An RSS/Atom feed polled every 15 minutes; new items become posts. */
+export interface RssFeed {
+  id: number;
+  userId: string;
+  organizationId: number;
+  name: string;
+  feedUrl: string;
+  channelIds: number[];
+  /** 'draft' = new items become drafts for review; 'publish' = auto-published. */
+  mode: 'draft' | 'publish';
+  /** Field mapping controlling item → post rendering; null = built-in default. */
+  fieldMapping: RssFieldMapping | null;
+  enabled: boolean;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Parameters for adding an RSS feed. */
+export interface CreateRssFeedParams {
+  /** Feed name (max 100 chars). */
+  name: string;
+  /** Public RSS 2.0 or Atom feed URL (validated as reachable). */
+  feedUrl: string;
+  /** IDs of channels new items are posted to (at least 1). */
+  channelIds: number[];
+  /**
+   * 'draft' = new items land as draft posts for review; 'publish' = auto-published.
+   * Defaults to 'draft'.
+   */
+  mode?: 'draft' | 'publish';
+  /**
+   * Field mapping controlling how each item becomes a post (caption template,
+   * media selection, truncation, hashtags, per-channel overrides). Omit for
+   * the built-in default ("{title}\n\n{link}", no media).
+   */
+  fieldMapping?: RssFieldMapping;
+  /**
+   * Hold items auto-published from this feed for team approval — each generated
+   * post lands with `approvalStatus: 'pending'` and waits for
+   * `posts.approve(id)`. Only meaningful when `mode` is 'publish' (draft items
+   * never publish on their own, and a feed force-demoted to draft by the plan
+   * gate stays ungated). Default: false.
+   *
+   * Forced to true server-side for roles without publish rights
+   * (contributors), regardless of this flag — on create and on every
+   * update, including one that does not send it.
+   */
+  requireApproval?: boolean;
+}
+
+/** Parameters for updating an RSS feed (partial update). */
+export interface UpdateRssFeedParams {
+  name?: string;
+  /**
+   * New feed URL. Note: changing feedUrl re-baselines the feed — only items
+   * published after the change are posted (the backlog is not flooded).
+   */
+  feedUrl?: string;
+  channelIds?: number[];
+  mode?: 'draft' | 'publish';
+  /** New field mapping; pass null to clear back to the built-in default. */
+  fieldMapping?: RssFieldMapping | null;
+  enabled?: boolean;
+  /**
+   * Hold items auto-published from this feed for team approval — each generated
+   * post lands with `approvalStatus: 'pending'` and waits for
+   * `posts.approve(id)`. Only meaningful when `mode` is 'publish' (draft items
+   * never publish on their own, and a feed force-demoted to draft by the plan
+   * gate stays ungated). Default: false.
+   *
+   * Forced to true server-side for roles without publish rights
+   * (contributors), regardless of this flag — on create and on every
+   * update, including one that does not send it.
+   */
+  requireApproval?: boolean;
+}
+
+// ---------- Media multipart upload ----------
+
+/** Parameters for starting a chunked (multipart) upload. */
+export interface CreateMultipartUploadParams {
+  /** One of the allowed media MIME types. */
+  contentType: string;
+  /** Exact file size in bytes. Videos up to 1GB; images up to 100MB. */
+  sizeBytes: number;
+}
+
+/** Response from starting a multipart upload. */
+export interface CreateMultipartUploadResponse {
+  r2Key: string;
+  uploadId: string;
+  /** Fixed part size: 10485760 bytes (10MB). Every part except the last is exactly this size. */
+  partSize: number;
+  /** One presigned PUT URL per part, in order. */
+  partUrls: string[];
+  /** Seconds until the part URLs expire (3600). */
+  expiresIn: number;
+}
+
+/** One uploaded part: its 1-based number and the ETag response header from its PUT. */
+export interface MultipartUploadPart {
+  partNumber: number;
+  etag: string;
+}
+
+/** Parameters for completing a multipart upload. */
+export interface CompleteMultipartUploadParams {
+  r2Key: string;
+  uploadId: string;
+  /** All uploaded parts with their ETags (at least 1). */
+  parts: MultipartUploadPart[];
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  width?: number;
+  height?: number;
+  duration?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Post comments (engagement read, reply, moderate)
+// ---------------------------------------------------------------------------
+
+export type CommentModerationAction = 'like' | 'unlike' | 'hide' | 'unhide' | 'delete';
+
+export interface PostComment {
+  id: string;
+  text: string;
+  createdAt: string;
+  likeCount?: number;
+  actor?: { id?: string; name?: string; handle?: string; headline?: string; profileImage?: string; profileUrl?: string };
+  /** Set when this comment is a reply: the id of the comment it replies to. */
+  parentId?: string;
+  /** True when the account hid this comment (Threads and Facebook). */
+  hidden?: boolean;
+}
+
+export interface PostEngagementPlatform {
+  /** What `replyToComment` / `moderateComment` address. Absent when the read failed. */
+  postPlatformId?: number;
+  platform: string;
+  accountName: string | null;
+  platformPostId: string | null;
+  platformUrl: string | null;
+  engagement: {
+    comments: PostComment[];
+    reactions: Array<{ id: string; type?: string; createdAt?: string; actor?: Record<string, unknown> }>;
+    hasMoreComments?: boolean;
+    hasMoreReactions?: boolean;
+    unsupported?: boolean;
+    notice?: string;
+    reactionsUnsupported?: boolean;
+    commentsNotice?: string;
+    /** True when this channel cannot reply to comments; `replyNotice` says why. */
+    replyUnsupported?: boolean;
+    replyNotice?: string;
+    /** Which `moderateComment` actions this channel supports (Threads: `hide`/`unhide`; Facebook: `hide`/`unhide`/`delete`). */
+    commentActions?: CommentModerationAction[];
+  } | null;
+  error?: string;
+}
+
+export interface PostEngagementResponse {
+  postId: number;
+  platforms: PostEngagementPlatform[];
+}
+
+export interface ReplyToCommentParams {
+  /** From the post's `engagement` entry for that channel. */
+  postPlatformId: number;
+  /** The comment's `id`. */
+  commentId: string;
+  /** Up to 2,000 characters. */
+  text: string;
+  /** When replying to a reply: the thread's top-level comment id (Instagram, YouTube). */
+  rootCommentId?: string;
+}
+
+export interface ReplyToCommentResponse {
+  success: boolean;
+  replyId: string | null;
+  accountName: string | null;
+}
+
+export interface ModerateCommentParams {
+  postPlatformId: number;
+  commentId: string;
+  /** `delete` is permanent on the platform and needs a role that can publish. */
+  action: CommentModerationAction;
+}

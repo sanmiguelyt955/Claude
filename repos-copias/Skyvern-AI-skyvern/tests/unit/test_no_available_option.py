@@ -1,0 +1,2733 @@
+"""Unit tests for the custom-select no-match path."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import UTC, datetime
+from itertools import chain, count, repeat
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call
+
+import pytest
+
+from skyvern.exceptions import (
+    NoAvailableOptionFoundForCustomSelection,
+    NoElementMatchedForTargetOption,
+    NoIncrementalElementFoundForCustomSelection,
+)
+from skyvern.forge.agent_functions import AgentFunction
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
+from skyvern.forge.sdk.schemas.tasks import TaskStatus
+from skyvern.webeye.actions import handler
+from skyvern.webeye.actions.actions import ActionType, InputOrSelectContext, SelectOption, SelectOptionAction
+from skyvern.webeye.actions.handler import (
+    _collect_option_texts,
+    _custom_select_candidates_from_elements,
+    _no_match_exception_for_dropdown,
+    _select_deterministic_custom_option,
+    _verify_custom_select_option,
+)
+from skyvern.webeye.utils.page import ElementScrollMetrics
+from tests.unit.helpers import make_organization, make_task
+
+
+class _FakeCustomElement:
+    def __init__(self, *, role: str | None = None, tag_name: str = "div") -> None:
+        self.get_attr = AsyncMock(return_value=role)
+        self.get_tag_name = MagicMock(return_value=tag_name)
+        self.get_frame = MagicMock(return_value=MagicMock())
+        self.get_element_handler = AsyncMock(return_value=MagicMock())
+        self.scroll_into_view = AsyncMock()
+        self.click = AsyncMock()
+        self._locator = MagicMock()
+
+    def get_locator(self) -> MagicMock:
+        return self._locator
+
+
+class _FakeAnchorElement:
+    def __init__(self, *, tag_name: str = "button") -> None:
+        self._locator = MagicMock()
+        self._locator.evaluate = AsyncMock(return_value=False)
+        self._locator.fill = AsyncMock()
+        self.get_attr = AsyncMock(return_value=None)
+        self.get_tag_name = MagicMock(return_value=tag_name)
+        self.get_id = MagicMock(return_value="field-control")
+        self.get_frame = MagicMock(return_value=MagicMock())
+        self.get_element_handler = AsyncMock(return_value=MagicMock())
+        self.is_custom_option = AsyncMock(return_value=False)
+        self.is_selectable = AsyncMock(return_value=True)
+        self.is_disabled = AsyncMock(return_value=False)
+        self.is_checkbox = AsyncMock(return_value=False)
+        self.is_radio = AsyncMock(return_value=False)
+        self.is_btn_input = AsyncMock(return_value=False)
+        self.is_visible = AsyncMock(return_value=False)
+        self.scroll_into_view = AsyncMock()
+        self.click = AsyncMock()
+        self.coordinate_click = AsyncMock()
+        self.press_key = AsyncMock()
+        self.blur = AsyncMock()
+        self.input_sequentially = AsyncMock()
+        self.input_clear = AsyncMock()
+        self.is_readonly = AsyncMock(return_value=False)
+
+    def get_locator(self) -> MagicMock:
+        return self._locator
+
+
+def _stub_evaluate(
+    *,
+    matched_state: dict | list[dict | None] | None = None,
+    committed: bool | None = None,
+) -> AsyncMock:
+    """Stub handler.SkyvernFrame.evaluate, dispatching by which PR JS body is being run.
+
+    matched_state may be a single value (repeated) or a list consumed one entry per call, so a
+    test can distinguish the pre-click idempotence read from the post-click verification read.
+    """
+    matched_states = list(matched_state) if isinstance(matched_state, list) else None
+
+    def _matched_state_with_defaults(state: dict | None) -> dict | None:
+        if state is None:
+            return None
+        return {"role": "", "nestedChoice": False, "inMultiselectable": False, **state}
+
+    async def _evaluate(*, frame: object, expression: str, arg: object = None) -> object:
+        if "const nestedChoice =" in expression:
+            if matched_states is not None:
+                return _matched_state_with_defaults(matched_states.pop(0)) if matched_states else None
+            return _matched_state_with_defaults(matched_state)
+        if "anchorIsComboboxInput" in expression:
+            return committed
+        return None
+
+    return AsyncMock(side_effect=_evaluate)
+
+
+class _FakeIncrementalScrapePage:
+    def __init__(self, element_trees: list[list[dict]]) -> None:
+        self._element_trees = list(element_trees)
+        self.start_listen_dom_increment = AsyncMock()
+        self.stop_listen_dom_increment = AsyncMock()
+        self.set_element_tree_trimmed = MagicMock()
+        self.build_element_tree = MagicMock(return_value="<div></div>")
+
+    async def get_incremental_element_tree(self, *_args: object, **_kwargs: object) -> list[dict]:
+        return self._element_trees.pop(0)
+
+
+class _FakeValueFallbackScrapePage:
+    def __init__(self) -> None:
+        self.get_incremental_element_tree = AsyncMock(return_value=[])
+        self.select_one_element_by_value = AsyncMock(return_value=None)
+
+
+class _FakeDropdownMenuElement:
+    def __init__(self) -> None:
+        self.get_element_handler = AsyncMock(return_value=MagicMock())
+
+
+def _task() -> object:
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    return make_task(now, organization)
+
+
+def _select_action(label: str = "Choice") -> SelectOptionAction:
+    return SelectOptionAction(
+        element_id="field-control",
+        option=SelectOption(label=label),
+        input_or_select_context=InputOrSelectContext(field="Field", is_required=True),
+    )
+
+
+class TestCollectOptionTexts:
+    def test_extracts_li_option_texts(self) -> None:
+        tree = [
+            {
+                "tagName": "ul",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {"tagName": "li", "attributes": {"role": "option"}, "text": "Alpha"},
+                    {"tagName": "li", "attributes": {"role": "option"}, "text": "Bravo"},
+                    {"tagName": "li", "attributes": {"role": "option"}, "text": "Charlie"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo", "Charlie"]
+
+    def test_extracts_native_option_elements(self) -> None:
+        tree = [
+            {
+                "tagName": "select",
+                "children": [
+                    {"tagName": "option", "text": "First"},
+                    {"tagName": "option", "text": "Second"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["First", "Second"]
+
+    def test_ignores_non_option_nodes(self) -> None:
+        tree = [
+            {"tagName": "div", "text": "header copy"},
+            {"tagName": "button", "text": "Submit"},
+            {"tagName": "span", "text": "label"},
+        ]
+        assert _collect_option_texts(tree) == []
+
+    def test_returns_empty_for_empty_tree(self) -> None:
+        assert _collect_option_texts([]) == []
+
+    def test_handles_missing_optional_fields(self) -> None:
+        tree = [
+            {"tagName": "li"},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": ""},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "  "},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Real"},
+        ]
+        assert _collect_option_texts(tree) == ["Real"]
+
+    def test_dedupes_repeated_option_text(self) -> None:
+        tree = [
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Alpha"},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Bravo"},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Alpha"},
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo"]
+
+    def test_walks_nested_children(self) -> None:
+        tree = [
+            {
+                "tagName": "div",
+                "children": [
+                    {
+                        "tagName": "ul",
+                        "attributes": {"role": "listbox"},
+                        "children": [
+                            {"tagName": "li", "attributes": {"role": "option"}, "text": "Inner"},
+                        ],
+                    }
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Inner"]
+
+    def test_extracts_div_role_option(self) -> None:
+        tree = [
+            {
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {"tagName": "div", "attributes": {"role": "option"}, "text": "Alpha"},
+                    {"tagName": "div", "attributes": {"role": "option"}, "text": "Bravo"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo"]
+
+    def test_extracts_native_select_from_options_field(self) -> None:
+        # Scraper stores native <select> options on the element itself and
+        # skips child <option> nodes.
+        tree = [
+            {
+                "tagName": "select",
+                "options": [
+                    {"optionIndex": 0, "text": "January", "value": "1"},
+                    {"optionIndex": 1, "text": "February", "value": "2"},
+                    {"optionIndex": 2, "text": "March", "value": "3"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["January", "February", "March"]
+
+    def test_falls_back_to_value_when_options_text_is_empty(self) -> None:
+        tree = [
+            {
+                "tagName": "select",
+                "options": [
+                    {"optionIndex": 0, "text": "", "value": "Q1"},
+                    {"optionIndex": 1, "text": "Two", "value": "2"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Q1", "Two"]
+
+    def test_falls_back_to_value_when_options_text_is_whitespace_only(self) -> None:
+        tree = [
+            {
+                "tagName": "select",
+                "options": [
+                    {"optionIndex": 0, "text": "   ", "value": "Q1"},
+                    {"optionIndex": 1, "text": "\t\n", "value": "Q2"},
+                    {"optionIndex": 2, "text": "Real", "value": "x"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Q1", "Q2", "Real"]
+
+    def test_dedupes_across_li_and_options_field(self) -> None:
+        tree = [
+            {
+                "tagName": "select",
+                "options": [{"optionIndex": 0, "text": "Alpha", "value": "a"}],
+            },
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Alpha"},
+            {"tagName": "li", "attributes": {"role": "option"}, "text": "Bravo"},
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo"]
+
+    def test_extracts_radiogroup_options_from_label_wrapped_inputs(self) -> None:
+        # SKY-14346: a radiogroup custom-select has no <option>/<li> nodes, so
+        # this must not report zero observed options when radio choices exist.
+        tree = [
+            {
+                "tagName": "div",
+                "attributes": {"role": "radiogroup"},
+                "children": [
+                    {
+                        "tagName": "label",
+                        "text": "Group A",
+                        "children": [
+                            {"tagName": "input", "attributes": {"type": "radio", "value": "a"}, "id": "radio-a"}
+                        ],
+                    },
+                    {
+                        "tagName": "label",
+                        "text": "Group B",
+                        "children": [
+                            {"tagName": "input", "attributes": {"type": "radio", "value": "b"}, "id": "radio-b"}
+                        ],
+                    },
+                ],
+            }
+        ]
+        # A label-wrapped input's own `value` attribute must not surface as a second,
+        # unrelated entry alongside the label's text (regression: ["Group A", "Group B", "a", "b"]).
+        assert _collect_option_texts(tree) == ["Group A", "Group B"]
+
+    def test_extracts_bare_radio_and_checkbox_inputs_via_aria_label(self) -> None:
+        tree = [
+            {"tagName": "input", "attributes": {"type": "radio", "aria-label": "Yes"}},
+            {"tagName": "input", "attributes": {"type": "checkbox", "aria-label": "I agree"}},
+        ]
+        assert _collect_option_texts(tree) == ["Yes", "I agree"]
+
+    def test_extracts_menuitem_and_treeitem_options(self) -> None:
+        tree = [
+            {
+                "tagName": "div",
+                "attributes": {"role": "menu"},
+                "children": [
+                    {"tagName": "div", "attributes": {"role": "menuitem"}, "text": "Alpha"},
+                    {"tagName": "div", "attributes": {"role": "treeitem"}, "text": "Bravo"},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo"]
+
+    def test_menuitem_label_wrapping_an_unlabeled_radio_uses_its_aria_label(self) -> None:
+        # The label has no text of its own, so a text-only read of the menuitem role
+        # reports zero options and turns OPTION_NOT_AVAILABLE into a transient miss.
+        tree = [
+            {
+                "tagName": "label",
+                "attributes": {"role": "menuitem", "aria-label": "Alpha"},
+                "children": [{"id": "r1", "tagName": "input", "attributes": {"type": "radio"}}],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Alpha"]
+
+    def test_extracts_interactable_rows_inside_a_choice_surface(self) -> None:
+        # SKY-17693: a listbox whose rows carry no role at all is the common div-based
+        # dropdown; reporting zero options here reroutes a real OPTION_NOT_AVAILABLE
+        # into the transient "try again later" miss.
+        tree = [
+            {
+                "id": "listbox",
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {"id": "row-1", "tagName": "div", "text": "Bachelor's Degree", "interactable": True},
+                    {"id": "row-2", "tagName": "div", "text": "Doctorate", "interactable": True},
+                ],
+            }
+        ]
+        assert _collect_option_texts(tree) == ["Bachelor's Degree", "Doctorate"]
+
+    def test_ignores_interactable_nodes_outside_a_choice_surface(self) -> None:
+        tree = [
+            {"id": "btn", "tagName": "button", "text": "Submit", "interactable": True},
+            {"id": "link", "tagName": "a", "attributes": {"href": "/x"}, "text": "Help", "interactable": True},
+            {"id": "plain", "tagName": "div", "text": "header copy", "interactable": True},
+        ]
+        assert _collect_option_texts(tree) == []
+
+    def test_agrees_with_candidate_walker_on_a_div_based_dropdown(self) -> None:
+        # The transient/permanent split is driven by this walker while the deterministic
+        # matcher and the LLM both work from the candidate walker, so an option the
+        # candidate walker sees must never be counted as zero observed options.
+        tree = [
+            {
+                "id": "listbox",
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {"id": "row-1", "tagName": "div", "text": "Alpha", "interactable": True},
+                    {"id": "row-2", "tagName": "span", "attributes": {"role": "menuitem"}, "text": "Bravo"},
+                ],
+            }
+        ]
+        assert [candidate["label"] for candidate in _custom_select_candidates_from_elements(tree)] == [
+            "Alpha",
+            "Bravo",
+        ]
+        assert _collect_option_texts(tree) == ["Alpha", "Bravo"]
+
+
+class TestCustomSelectCandidates:
+    def test_extracts_role_option_dedupes_checkbox_and_skips_listbox_container(self) -> None:
+        tree = [
+            {
+                "id": "source-panel",
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "text": "Job Board Referral",
+                "interactable": True,
+                "children": [
+                    {
+                        "id": "source-job-board",
+                        "tagName": "div",
+                        "attributes": {"role": "option", "value": "job-board"},
+                        "text": "Job Board",
+                        "interactable": True,
+                    },
+                    {
+                        "id": "source-help-link",
+                        "tagName": "a",
+                        "attributes": {"href": "/help"},
+                        "text": "Job Board",
+                        "interactable": True,
+                    },
+                ],
+            },
+            {
+                "id": "county-panel",
+                "tagName": "div",
+                "children": [
+                    {
+                        "id": "county-a-label",
+                        "tagName": "label",
+                        "text": "County A",
+                        "interactable": True,
+                        "children": [
+                            {
+                                "id": "county-a-input",
+                                "tagName": "input",
+                                "attributes": {"type": "checkbox", "value": "County A"},
+                                "interactable": True,
+                            }
+                        ],
+                    }
+                ],
+            },
+            {
+                "id": "nav-job-board",
+                "tagName": "a",
+                "attributes": {"href": "/jobs"},
+                "text": "Job Board",
+                "interactable": True,
+            },
+            {
+                "id": "nav-list",
+                "tagName": "ul",
+                "children": [
+                    {
+                        "id": "nav-list-job-board",
+                        "tagName": "li",
+                        "text": "Job Board",
+                        "interactable": True,
+                    }
+                ],
+            },
+        ]
+
+        assert _custom_select_candidates_from_elements(tree) == [
+            {"label": "Job Board", "element_id": "source-job-board", "value": "job-board", "is_choice_input": False},
+            {"label": "County A", "element_id": "county-a-label", "value": "County A", "is_choice_input": True},
+        ]
+
+    def test_extracts_menuitemradio_with_aria_checked_state(self) -> None:
+        tree = [
+            {
+                "id": "choice-menu",
+                "tagName": "div",
+                "attributes": {"role": "menu"},
+                "children": [
+                    {
+                        "id": "choice-radio",
+                        "tagName": "div",
+                        "attributes": {"role": "menuitemradio", "aria-checked": "false"},
+                        "text": "Choice",
+                        "interactable": True,
+                    }
+                ],
+            }
+        ]
+
+        assert _custom_select_candidates_from_elements(tree) == [
+            {"label": "Choice", "element_id": "choice-radio", "value": None, "is_choice_input": True}
+        ]
+
+    def test_role_option_wrapping_checkbox_is_choice_input_shaped(self) -> None:
+        tree = [
+            {
+                "id": "opt-panel",
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {
+                        "id": "opt-choice",
+                        "tagName": "div",
+                        "attributes": {"role": "option"},
+                        "text": "Choice",
+                        "interactable": True,
+                        "children": [
+                            {
+                                "id": "opt-choice-input",
+                                "tagName": "input",
+                                "attributes": {"type": "checkbox"},
+                                "interactable": True,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        assert _custom_select_candidates_from_elements(tree) == [
+            {"label": "Choice", "element_id": "opt-choice", "value": None, "is_choice_input": True}
+        ]
+
+    @pytest.mark.parametrize(
+        ("role", "aria_multiselectable", "expected"),
+        [
+            ("option", "true", True),
+            ("treeitem", "TRUE", True),
+            ("option", None, False),
+            ("treeitem", "false", False),
+            ("option", True, False),
+        ],
+    )
+    def test_multiselectable_container_marks_option_shapes_as_choice_inputs(
+        self,
+        role: str,
+        aria_multiselectable: str | bool | None,
+        expected: bool,
+    ) -> None:
+        container_attributes: dict[str, object] = {"role": "tree" if role == "treeitem" else "listbox"}
+        if aria_multiselectable is not None:
+            container_attributes["aria-multiselectable"] = aria_multiselectable
+        tree = [
+            {
+                "id": "choice-panel",
+                "tagName": "div",
+                "attributes": container_attributes,
+                "children": [
+                    {
+                        "id": "choice-alpha",
+                        "tagName": "div",
+                        "attributes": {"role": role, "aria-selected": "false"},
+                        "text": "Alpha",
+                        "interactable": True,
+                    }
+                ],
+            }
+        ]
+
+        assert _custom_select_candidates_from_elements(tree) == [
+            {"label": "Alpha", "element_id": "choice-alpha", "value": None, "is_choice_input": expected}
+        ]
+
+    def test_label_wrapping_idless_checkbox_is_choice_input_shaped(self) -> None:
+        tree = [
+            {
+                "id": "choice-label",
+                "tagName": "label",
+                "text": "Alpha",
+                "interactable": True,
+                "children": [
+                    {
+                        "tagName": "input",
+                        "attributes": {"type": "checkbox"},
+                        "interactable": True,
+                    }
+                ],
+            }
+        ]
+
+        assert _custom_select_candidates_from_elements(tree) == [
+            {"label": "Alpha", "element_id": "choice-label", "value": None, "is_choice_input": True}
+        ]
+
+    def test_every_candidate_includes_is_choice_input(self) -> None:
+        candidates = _custom_select_candidates_from_elements(
+            [
+                {
+                    "id": "choice-panel",
+                    "tagName": "div",
+                    "attributes": {"role": "listbox"},
+                    "children": [
+                        {
+                            "id": "choice-alpha",
+                            "tagName": "div",
+                            "attributes": {"role": "option"},
+                            "text": "Alpha",
+                            "interactable": True,
+                        }
+                    ],
+                },
+                {
+                    "id": "choice-radio",
+                    "tagName": "div",
+                    "attributes": {"role": "radio"},
+                    "text": "Beta",
+                    "interactable": True,
+                },
+            ]
+        )
+
+        assert candidates
+        assert all(isinstance(candidate["is_choice_input"], bool) for candidate in candidates)
+
+
+class TestDeterministicCustomSelect:
+    @pytest.mark.asyncio
+    async def test_ambiguous_match_returns_none_for_llm_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        get_skyvern_element = AsyncMock()
+        get_readback_scope_element = AsyncMock()
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="United States",
+            get_option_candidates=lambda: [
+                {"label": "United States", "element_id": "us-1", "value": "US", "is_choice_input": False},
+                {"label": "United States", "element_id": "us-2", "value": "USA", "is_choice_input": False},
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=get_skyvern_element,
+            get_readback_scope_element=get_readback_scope_element,
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        get_skyvern_element.assert_not_awaited()
+        get_readback_scope_element.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_feature_flag_off_does_not_resolve_readback_scope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=False),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=False),
+            ),
+        )
+        get_skyvern_element = AsyncMock()
+        get_readback_scope_element = AsyncMock()
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Job Board",
+            get_option_candidates=lambda: [
+                {"label": "Job Board", "element_id": "source-job-board", "value": None, "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=get_skyvern_element,
+            get_readback_scope_element=get_readback_scope_element,
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        get_skyvern_element.assert_not_awaited()
+        get_readback_scope_element.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_date_related_context_skips_deterministic_path(self) -> None:
+        get_skyvern_element = AsyncMock()
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="15",
+            get_option_candidates=lambda: [
+                {"label": "15", "element_id": "day-15", "value": None, "is_choice_input": False}
+            ],
+            field_context={"is_date_related": True},
+            page=MagicMock(),
+            get_skyvern_element=get_skyvern_element,
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        get_skyvern_element.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_listbox_container_candidate_returns_none_without_clicking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        selected_element = _FakeCustomElement(role="listbox")
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Job Board",
+            get_option_candidates=lambda: [
+                {"label": "Job Board", "element_id": "source-panel", "value": None, "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        selected_element.scroll_into_view.assert_not_awaited()
+        selected_element.click.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_aria_checked_menuitemradio_returns_success_without_clicking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={
+                    "label": "Choice",
+                    "role": "menuitemradio",
+                    "ariaSelected": False,
+                    "ariaChecked": True,
+                    "selectedAttr": False,
+                    "checked": False,
+                }
+            ),
+        )
+        selected_element = _FakeCustomElement(role="menuitemradio")
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Choice",
+            get_option_candidates=lambda: [
+                {"label": "Choice", "element_id": "choice-radio", "value": None, "is_choice_input": True}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "Choice"
+        selected_element.click.assert_not_awaited()
+        selected_element.scroll_into_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_already_selected_multiselectable_option_returns_success_without_clicking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={
+                    "label": "Choice",
+                    "role": "option",
+                    "inMultiselectable": True,
+                    "ariaSelected": True,
+                    "ariaChecked": False,
+                    "selectedAttr": False,
+                    "checked": False,
+                }
+            ),
+        )
+        selected_element = _FakeCustomElement(role="option")
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Choice",
+            get_option_candidates=lambda: [
+                {"label": "Choice", "element_id": "choice-option", "value": None, "is_choice_input": True}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "Choice"
+        selected_element.click.assert_not_awaited()
+        selected_element.scroll_into_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_already_selected_target_returns_success_without_clicking(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={"label": "WAKE", "ariaChecked": False, "selectedAttr": False, "checked": True}
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="WAKE",
+            get_option_candidates=lambda: [
+                {"label": "WAKE", "element_id": "county-wake", "value": "WAKE", "is_choice_input": True}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "WAKE"
+        selected_element.click.assert_not_awaited()
+        selected_element.scroll_into_view.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_highlighted_role_option_with_bare_aria_selected_proceeds_to_click(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        matched_states = [
+            {
+                "label": "Job Board",
+                "role": "option",
+                "nestedChoice": False,
+                "inMultiselectable": False,
+                "ariaSelected": True,
+                "ariaChecked": False,
+                "selectedAttr": False,
+                "checked": False,
+            },
+            {
+                "label": "Job Board",
+                "role": "option",
+                "nestedChoice": False,
+                "inMultiselectable": False,
+                "ariaSelected": True,
+                "ariaChecked": False,
+                "selectedAttr": False,
+                "checked": False,
+            },
+        ]
+        scope_args: list[dict[str, object]] = []
+
+        async def evaluate(*, frame: object, expression: str, arg: object = None) -> object:
+            if "const nestedChoice =" in expression:
+                return matched_states.pop(0)
+            if "anchorIsComboboxInput" in expression:
+                assert isinstance(arg, list)
+                assert isinstance(arg[1], dict)
+                scope_args.append(arg[1])
+                return False
+            return None
+
+        monkeypatch.setattr(handler.SkyvernFrame, "evaluate", AsyncMock(side_effect=evaluate))
+        selected_element = _FakeCustomElement(role="option")
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        readback_scope_element = _FakeAnchorElement()
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Job Board",
+            get_option_candidates=lambda: [
+                {"label": "Job Board", "element_id": "source-job-board", "value": None, "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=readback_scope_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "Job Board"
+        selected_element.click.assert_awaited_once()
+        assert scope_args[0]["allowAriaSelectedOptionTokens"] is False
+
+    @pytest.mark.asyncio
+    async def test_unchecked_target_proceeds_to_click(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state=[
+                    {"label": "WAKE", "ariaChecked": False, "selectedAttr": False, "checked": False},
+                    {"label": "WAKE", "ariaChecked": False, "selectedAttr": False, "checked": True},
+                ]
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="WAKE",
+            get_option_candidates=lambda: [
+                {"label": "WAKE", "element_id": "county-wake", "value": "WAKE", "is_choice_input": True}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "WAKE"
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_readback_scope_resolution_failure_still_verifies_matched_element(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state=[
+                    {"label": "Job Board", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                    {"label": "Job Board", "ariaSelected": True, "selectedAttr": False, "checked": False},
+                ]
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Job Board",
+            get_option_candidates=lambda: [
+                {"label": "Job Board", "element_id": "source-job-board", "value": None, "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(side_effect=RuntimeError("anchor disappeared")),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert action_result.success
+        assert matched_label == "Job Board"
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clicked_but_unverified_checkbox_returns_failure_without_llm_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={"label": "Job Board", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                committed=False,
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        # A checkbox-panel anchor (button) is non-resettable, so an unverified click hard-fails.
+        readback_scope_element = _FakeAnchorElement(tag_name="button")
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Job Board",
+            get_option_candidates=lambda: [
+                {"label": "Job Board", "element_id": "source-job-board", "value": None, "is_choice_input": True}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=readback_scope_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert not action_result.success
+        assert action_result.skip_remaining_actions is True
+        assert matched_label == "Job Board"
+        assert action_result.exception_message is not None
+        assert "could not be verified" in action_result.exception_message
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_live_multiselectable_option_hard_fails_when_trimmed_tree_loses_ancestor_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={
+                    "label": "Alpha",
+                    "role": "option",
+                    "inMultiselectable": True,
+                    "ariaSelected": False,
+                    "selectedAttr": False,
+                    "checked": False,
+                },
+                committed=False,
+            ),
+        )
+        selected_element = _FakeCustomElement(role="option")
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        readback_scope_element = _FakeAnchorElement(tag_name="button")
+        candidates = _custom_select_candidates_from_elements(
+            [
+                {
+                    "id": "choice-panel",
+                    "tagName": "div",
+                    "children": [
+                        {
+                            "id": "choice-alpha",
+                            "tagName": "div",
+                            "attributes": {"role": "option", "aria-selected": "false"},
+                            "text": "Alpha",
+                            "interactable": True,
+                        }
+                    ],
+                }
+            ]
+        )
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Alpha",
+            get_option_candidates=lambda: candidates,
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=readback_scope_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert candidates[0]["is_choice_input"] is False
+        assert result is not None
+        action_result, matched_label = result
+        assert not action_result.success
+        assert action_result.skip_remaining_actions is True
+        assert matched_label == "Alpha"
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("walk_is_choice_input", [True, False])
+    async def test_missing_live_matched_state_falls_back_to_walk_classification(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        walk_is_choice_input: bool,
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(matched_state=None, committed=False),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Alpha",
+            get_option_candidates=lambda: [
+                {
+                    "label": "Alpha",
+                    "element_id": "choice-alpha",
+                    "value": None,
+                    "is_choice_input": walk_is_choice_input,
+                }
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=_FakeAnchorElement()),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert not action_result.success
+        assert action_result.skip_remaining_actions is True
+        assert matched_label == "Alpha"
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_clicked_but_unverified_non_choice_option_is_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={"label": "Choice", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                committed=False,
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        readback_scope_element = _FakeAnchorElement(tag_name="button")
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="Choice",
+            get_option_candidates=lambda: [
+                {"label": "Choice", "element_id": "choice-option", "value": None, "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=readback_scope_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is not None
+        action_result, matched_label = result
+        assert not action_result.success
+        assert action_result.skip_remaining_actions is True
+        assert matched_label == "Choice"
+        selected_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_inconclusive_combobox_routes_to_llm_fallback_after_reset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={"label": "WAKE", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                committed=False,
+            ),
+        )
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        # A text-input combobox anchor is resettable, so an inconclusive read-back must NOT hard-fail.
+        readback_scope_element = _FakeAnchorElement(tag_name="input")
+        monkeypatch.setattr(handler, "get_input_value", AsyncMock(side_effect=[""]))
+
+        result = await _select_deterministic_custom_option(
+            execute=True,
+            target_value="WAKE",
+            get_option_candidates=lambda: [
+                {"label": "WAKE", "element_id": "source-wake", "value": "WAKE", "is_choice_input": False}
+            ],
+            field_context={},
+            page=MagicMock(),
+            get_skyvern_element=AsyncMock(return_value=selected_element),
+            get_readback_scope_element=AsyncMock(return_value=readback_scope_element),
+            task=_task(),  # type: ignore[arg-type]
+        )
+
+        assert result is None
+        selected_element.click.assert_awaited_once()
+        assert readback_scope_element.get_locator().fill.await_args_list == [call("")]
+        readback_scope_element.click.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_readback_accepts_aria_checked_matched_menuitemradio(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        matched_element = _FakeCustomElement()
+        matched_element.get_locator().count = AsyncMock(return_value=1)
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={
+                    "label": "Choice",
+                    "ariaSelected": False,
+                    "ariaChecked": True,
+                    "selectedAttr": False,
+                    "checked": False,
+                },
+                committed=False,
+            ),
+        )
+        readback_scope_element = _FakeAnchorElement()
+
+        verified, _ = await _verify_custom_select_option(
+            matched_element=matched_element,  # type: ignore[arg-type]
+            readback_scope_element=readback_scope_element,  # type: ignore[arg-type]
+            anchor_is_combobox_input=False,
+            matched_element_id="choice-radio",
+            matched_label="Choice",
+            use_strict_verification=False,
+        )
+
+        assert verified is True
+
+    @pytest.mark.asyncio
+    async def test_readback_accepts_scoped_trigger_reflection_without_synthetic_token(self) -> None:
+        matched_element = _FakeCustomElement()
+        matched_element.get_locator().count = AsyncMock(return_value=0)
+        captured: dict[str, object] = {}
+
+        async def evaluate(*, frame: object, expression: str, arg: object = None) -> object:
+            captured["expression"] = expression
+            captured["arg"] = arg
+            if "const nestedChoice =" in expression:
+                return None
+            return {"matched": True, "branch": "scope_trigger_text"}
+
+        readback_scope_element = _FakeAnchorElement()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(handler.SkyvernFrame, "evaluate", AsyncMock(side_effect=evaluate))
+            verified, _ = await _verify_custom_select_option(
+                matched_element=matched_element,  # type: ignore[arg-type]
+                readback_scope_element=readback_scope_element,  # type: ignore[arg-type]
+                anchor_is_combobox_input=False,
+                matched_element_id="choice-radio",
+                matched_label="Choice",
+                use_strict_verification=False,
+            )
+
+        assert verified is True
+        script = str(captured["expression"])
+        assert "document.querySelectorAll" not in script
+        assert "data-selected-option-id" not in script
+        assert "data-selected-element-id" not in script
+        assert "data-skyvern-selected-id" not in script
+        assert "unique_id" not in script
+        assert "scopeRoot.querySelectorAll(triggerSelector)" in script
+        assert "aria-valuetext" in script
+        assert "aria-activedescendant" in script
+
+    @pytest.mark.asyncio
+    async def test_combobox_filter_text_value_is_not_a_committed_signal(self) -> None:
+        # A combobox <input> whose .value still holds the typed filter text must NOT be accepted as
+        # committed; the JS returns False so the caller routes to the safe LLM fallback.
+        matched_element = _FakeCustomElement()
+        matched_element.get_locator().count = AsyncMock(return_value=0)
+        readback_scope_element = _FakeAnchorElement(tag_name="input")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                handler.SkyvernFrame,
+                "evaluate",
+                _stub_evaluate(matched_state=None, committed=False),
+            )
+            verified, _ = await _verify_custom_select_option(
+                matched_element=matched_element,  # type: ignore[arg-type]
+                readback_scope_element=readback_scope_element,  # type: ignore[arg-type]
+                anchor_is_combobox_input=True,
+                matched_element_id="source-wake",
+                matched_label="WAKE",
+                use_strict_verification=False,
+            )
+
+        assert verified is False
+
+    @pytest.mark.asyncio
+    async def test_handle_select_option_action_does_not_value_fallback_after_deterministic_readback_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={"label": "Choice", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                committed=False,
+            ),
+        )
+
+        anchor_element = _FakeAnchorElement()
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        fake_frame = MagicMock()
+        fake_frame.safe_wait_for_animation_end = AsyncMock()
+        # A checkbox-shaped option is required here: only checkbox/radio panels hard-fail on an
+        # unverified click (see SKY-11527), and this test asserts hard-fail behavior propagates
+        # through handle_select_option_action without falling back to a value-based re-select.
+        fake_incremental = _FakeIncrementalScrapePage(
+            [
+                [{"id": "opened-option"}],
+                [
+                    {
+                        "id": "choice-option",
+                        "tagName": "input",
+                        "attributes": {"type": "checkbox"},
+                        "text": "Choice",
+                        "interactable": True,
+                    }
+                ],
+            ]
+        )
+
+        class FakeDomUtil:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            async def get_skyvern_element_by_id(self, _element_id: str) -> _FakeAnchorElement:
+                return anchor_element
+
+        select_from_dropdown_by_value = AsyncMock(return_value=handler.ActionSuccess())
+        monkeypatch.setattr(handler, "DomUtil", FakeDomUtil)
+        monkeypatch.setattr(handler.SkyvernFrame, "create_instance", AsyncMock(return_value=fake_frame))
+        monkeypatch.setattr(handler, "IncrementalScrapePage", MagicMock(return_value=fake_incremental))
+        monkeypatch.setattr(
+            handler,
+            "_get_input_or_select_context",
+            AsyncMock(return_value=InputOrSelectContext(field="Field", is_required=True)),
+        )
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=None))
+        monkeypatch.setattr(handler.SkyvernElement, "create_from_incremental", AsyncMock(return_value=selected_element))
+        monkeypatch.setattr(handler, "select_from_dropdown_by_value", select_from_dropdown_by_value)
+
+        results = await handler.handle_select_option_action(
+            action=_select_action(),
+            page=MagicMock(),
+            scraped_page=SimpleNamespace(
+                id_to_element_dict={"field-control": {"id": "field-control"}},
+                id_to_css_dict={},
+            ),
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert len(results) == 1
+        assert not results[0].success
+        assert results[0].skip_remaining_actions is True
+        selected_element.click.assert_awaited_once()
+        select_from_dropdown_by_value.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handle_select_option_action_multiselectable_option_hard_fails_via_live_dom(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state={
+                    "label": "Choice",
+                    "role": "option",
+                    "inMultiselectable": True,
+                    "ariaSelected": False,
+                    "selectedAttr": False,
+                    "checked": False,
+                },
+                committed=False,
+            ),
+        )
+
+        anchor_element = _FakeAnchorElement()
+        selected_element = _FakeCustomElement(role="option")
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        fake_frame = MagicMock()
+        fake_frame.safe_wait_for_animation_end = AsyncMock()
+        # Trimmed-shape option node: role=option survives trimming, but the container's
+        # aria-multiselectable does not — the walk classifies False and only the live-DOM
+        # pre-click read (stubbed above) can catch the toggle hazard.
+        fake_incremental = _FakeIncrementalScrapePage(
+            [
+                [{"id": "opened-option"}],
+                [
+                    {
+                        "id": "choice-option",
+                        "tagName": "div",
+                        "attributes": {"role": "option"},
+                        "text": "Choice",
+                        "interactable": True,
+                    }
+                ],
+            ]
+        )
+
+        class FakeDomUtil:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            async def get_skyvern_element_by_id(self, _element_id: str) -> _FakeAnchorElement:
+                return anchor_element
+
+        select_from_dropdown_by_value = AsyncMock(return_value=handler.ActionSuccess())
+        monkeypatch.setattr(handler, "DomUtil", FakeDomUtil)
+        monkeypatch.setattr(handler.SkyvernFrame, "create_instance", AsyncMock(return_value=fake_frame))
+        monkeypatch.setattr(handler, "IncrementalScrapePage", MagicMock(return_value=fake_incremental))
+        monkeypatch.setattr(
+            handler,
+            "_get_input_or_select_context",
+            AsyncMock(return_value=InputOrSelectContext(field="Field", is_required=True)),
+        )
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=None))
+        monkeypatch.setattr(handler.SkyvernElement, "create_from_incremental", AsyncMock(return_value=selected_element))
+        monkeypatch.setattr(handler, "select_from_dropdown_by_value", select_from_dropdown_by_value)
+
+        results = await handler.handle_select_option_action(
+            action=_select_action(),
+            page=MagicMock(),
+            scraped_page=SimpleNamespace(
+                id_to_element_dict={"field-control": {"id": "field-control"}},
+                id_to_css_dict={},
+            ),
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert len(results) == 1
+        assert not results[0].success
+        assert results[0].skip_remaining_actions is True
+        selected_element.click.assert_awaited_once()
+        select_from_dropdown_by_value.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_select_from_dropdown_deterministic_success_skips_custom_select_prompt_and_llm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            handler.app,
+            "EXPERIMENTATION_PROVIDER",
+            SimpleNamespace(
+                is_feature_enabled_cached=AsyncMock(return_value=True),
+                resolve_feature_enabled_unrecorded=AsyncMock(return_value=True),
+            ),
+        )
+        monkeypatch.setattr(handler.app, "AGENT_FUNCTION", AgentFunction())
+        monkeypatch.setattr(
+            handler.SkyvernFrame,
+            "evaluate",
+            _stub_evaluate(
+                matched_state=[
+                    {"label": "Choice", "ariaSelected": False, "selectedAttr": False, "checked": False},
+                    {"label": "Choice", "ariaSelected": True, "selectedAttr": False, "checked": False},
+                ]
+            ),
+        )
+        load_prompt = MagicMock(return_value="prompt")
+        custom_select_llm = AsyncMock(return_value={})
+        monkeypatch.setattr(handler.prompt_engine, "load_prompt", load_prompt)
+        monkeypatch.setattr(handler.app, "CUSTOM_SELECT_AGENT_LLM_API_HANDLER", custom_select_llm)
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=None))
+
+        anchor_element = _FakeAnchorElement()
+        selected_element = _FakeCustomElement()
+        selected_element.get_locator().count = AsyncMock(return_value=1)
+        fake_incremental = _FakeIncrementalScrapePage(
+            [
+                [
+                    {
+                        "id": "choice-option",
+                        "tagName": "div",
+                        "attributes": {"role": "option"},
+                        "text": "Choice",
+                        "interactable": True,
+                    }
+                ]
+            ]
+        )
+        monkeypatch.setattr(handler.SkyvernElement, "create_from_incremental", AsyncMock(return_value=selected_element))
+
+        result = await handler.select_from_dropdown(
+            context=InputOrSelectContext(field="Field", is_required=True),
+            page=MagicMock(),
+            skyvern_element=anchor_element,  # type: ignore[arg-type]
+            skyvern_frame=MagicMock(),
+            incremental_scraped=fake_incremental,  # type: ignore[arg-type]
+            check_filter_funcs=[],
+            step=MagicMock(),
+            task=_task(),  # type: ignore[arg-type]
+            force_select=True,
+            target_value="Choice",
+        )
+
+        assert isinstance(result.action_result, handler.ActionSuccess)
+        assert result.value == "Choice"
+        selected_element.click.assert_awaited_once()
+        load_prompt.assert_not_called()
+        custom_select_llm.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_readback_scope_scanned_via_skyvernframe_only(self) -> None:
+        matched_element = _FakeCustomElement()
+        matched_element.get_locator().count = AsyncMock(return_value=0)
+        captured: dict[str, object] = {}
+
+        async def evaluate(*, frame: object, expression: str, arg: object = None) -> object:
+            if "anchorIsComboboxInput" in expression:
+                captured["expression"] = expression
+            if "const nestedChoice =" in expression:
+                return None
+            return False
+
+        readback_scope_element = _FakeAnchorElement()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(handler.SkyvernFrame, "evaluate", AsyncMock(side_effect=evaluate))
+            verified, _ = await _verify_custom_select_option(
+                matched_element=matched_element,  # type: ignore[arg-type]
+                readback_scope_element=readback_scope_element,  # type: ignore[arg-type]
+                anchor_is_combobox_input=False,
+                matched_element_id="matched-option",
+                matched_label="Job Board",
+                use_strict_verification=False,
+            )
+
+        assert verified is False
+        script = str(captured["expression"])
+        assert script.count('"output"') == 0
+        assert script.count("document.querySelectorAll") == 0
+        assert script.count("scopeRoot.querySelectorAll") >= 1
+        assert script.count("triggerSelector") >= 1
+        assert script.count("aria-valuetext") >= 1
+        assert script.count("data-selected-option-id") == 0
+        assert script.count("data-selected-element-id") == 0
+        assert script.count("data-skyvern-selected-id") == 0
+
+
+class TestNoAvailableOptionFoundForCustomSelection:
+    def test_message_includes_code_target_count_excerpt_and_reason(self) -> None:
+        exc = NoAvailableOptionFoundForCustomSelection(
+            reason="not present in the list",
+            target_value="Target Value",
+            observed_options=["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"],
+        )
+        msg = str(exc)
+        assert "code=OPTION_NOT_AVAILABLE" in msg
+        assert "target_value='Target Value'" in msg
+        assert "observed_options_count=6" in msg
+        assert "['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo']" in msg
+        assert "Foxtrot" not in msg  # excerpt is capped at 5
+        assert "not present in the list" in msg
+
+    def test_attributes_are_accessible_for_downstream_consumers(self) -> None:
+        exc = NoAvailableOptionFoundForCustomSelection(
+            reason="not in dropdown",
+            target_value="Target",
+            observed_options=["Alpha", "Bravo"],
+        )
+        assert exc.code == "OPTION_NOT_AVAILABLE"
+        assert exc.target_value == "Target"
+        assert exc.observed_options_count == 2
+        assert exc.observed_options_excerpt == ["Alpha", "Bravo"]
+        assert exc.reason == "not in dropdown"
+
+    def test_omits_optional_fields_when_not_supplied(self) -> None:
+        exc = NoAvailableOptionFoundForCustomSelection(reason=None)
+        msg = str(exc)
+        assert "code=OPTION_NOT_AVAILABLE" in msg
+        assert "target_value" not in msg
+        assert "observed_options_count" not in msg
+        assert "observed_options_excerpt" not in msg
+        assert exc.target_value is None
+        assert exc.observed_options_count == 0
+        assert exc.observed_options_excerpt == []
+
+    def test_no_value_error_when_constructed_from_empty_no_match_payload(self) -> None:
+        # Regression: previously ActionType("") fired on this payload before the
+        # OPTION_NOT_AVAILABLE branch could run.
+        json_response = {"action_type": "", "id": "", "reasoning": "not present", "relevant": False}
+        try:
+            raise NoAvailableOptionFoundForCustomSelection(
+                reason=json_response["reasoning"],
+                target_value="Anything",
+                observed_options=["Alpha"],
+            )
+        except ValueError:
+            pytest.fail("ValueError leaked from no-match exception construction")
+        except NoAvailableOptionFoundForCustomSelection as exc:
+            assert exc.code == "OPTION_NOT_AVAILABLE"
+
+
+class TestNoMatchExceptionForDropdown:
+    def test_returns_transient_when_no_options_and_fallback_id_given(self) -> None:
+        exc = _no_match_exception_for_dropdown(
+            reasoning="dropdown empty",
+            target_value="Target",
+            observed_options=[],
+            transient_fallback_element_id="element-123",
+        )
+        assert isinstance(exc, NoIncrementalElementFoundForCustomSelection)
+        assert "element-123" in str(exc)
+
+    def test_returns_permanent_when_options_observed(self) -> None:
+        exc = _no_match_exception_for_dropdown(
+            reasoning="target not in list",
+            target_value="Target",
+            observed_options=["Alpha", "Bravo"],
+            transient_fallback_element_id="element-123",
+        )
+        assert isinstance(exc, NoAvailableOptionFoundForCustomSelection)
+        assert exc.target_value == "Target"
+        assert exc.observed_options_count == 2
+        assert exc.observed_options_excerpt == ["Alpha", "Bravo"]
+        assert exc.reason == "target not in list"
+
+    def test_returns_permanent_when_no_options_but_no_fallback_id(self) -> None:
+        # The emerging-element path passes None: an upstream guard handles the
+        # zero-options case there, so this branch must surface as permanent.
+        exc = _no_match_exception_for_dropdown(
+            reasoning="target not in list",
+            target_value="Target",
+            observed_options=[],
+            transient_fallback_element_id=None,
+        )
+        assert isinstance(exc, NoAvailableOptionFoundForCustomSelection)
+        assert exc.observed_options_count == 0
+        assert exc.observed_options_excerpt == []
+
+    def test_normalizes_empty_target_value_to_none(self) -> None:
+        exc = _no_match_exception_for_dropdown(
+            reasoning=None,
+            target_value="",
+            observed_options=["Alpha"],
+            transient_fallback_element_id=None,
+        )
+        assert isinstance(exc, NoAvailableOptionFoundForCustomSelection)
+        assert exc.target_value is None
+
+    def test_widget_mutated_defaults_false_and_propagates_when_set(self) -> None:
+        default = _no_match_exception_for_dropdown(
+            reasoning=None,
+            target_value="Target",
+            observed_options=["Alpha"],
+            transient_fallback_element_id=None,
+        )
+        assert isinstance(default, NoAvailableOptionFoundForCustomSelection)
+        assert default.widget_mutated is False
+
+        mutated = _no_match_exception_for_dropdown(
+            reasoning=None,
+            target_value="Target",
+            observed_options=["Alpha"],
+            transient_fallback_element_id=None,
+            widget_mutated=True,
+        )
+        assert isinstance(mutated, NoAvailableOptionFoundForCustomSelection)
+        assert mutated.widget_mutated is True
+
+    def test_native_select_populated_routes_to_permanent_not_transient(self) -> None:
+        # Regression: a native <select> populated via element["options"]
+        # must NOT be misread as zero-options and routed to the transient
+        # exception. Walker first, then helper, end-to-end on the F-guard.
+        tree = [
+            {
+                "tagName": "select",
+                "options": [
+                    {"optionIndex": 0, "text": "January", "value": "1"},
+                    {"optionIndex": 1, "text": "February", "value": "2"},
+                ],
+            }
+        ]
+        observed = _collect_option_texts(tree)
+        assert observed == ["January", "February"]
+        exc = _no_match_exception_for_dropdown(
+            reasoning="target not in list",
+            target_value="December",
+            observed_options=observed,
+            transient_fallback_element_id="select-element-id",
+        )
+        assert isinstance(exc, NoAvailableOptionFoundForCustomSelection)
+        assert exc.observed_options_count == 2
+
+    def test_div_based_dropdown_routes_to_permanent_not_transient(self) -> None:
+        # SKY-17693: a populated div-based listbox was walked as zero options, so a real
+        # "this option does not exist" miss surfaced as the transient retry exception.
+        tree = [
+            {
+                "id": "listbox",
+                "tagName": "div",
+                "attributes": {"role": "listbox"},
+                "children": [
+                    {"id": "row-1", "tagName": "div", "text": "Alpha", "interactable": True},
+                    {"id": "row-2", "tagName": "div", "text": "Bravo", "interactable": True},
+                ],
+            }
+        ]
+        exc = _no_match_exception_for_dropdown(
+            reasoning="target not in list",
+            target_value="Charlie",
+            observed_options=_collect_option_texts(tree),
+            transient_fallback_element_id="listbox",
+        )
+        assert isinstance(exc, NoAvailableOptionFoundForCustomSelection)
+        assert exc.observed_options_excerpt == ["Alpha", "Bravo"]
+
+
+class TestSelectFromDropdownByValueNoMatch:
+    @pytest.mark.asyncio
+    async def test_returns_failure_when_no_dropdown_menu_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=None))
+
+        result = await handler.select_from_dropdown_by_value(
+            value="Missing",
+            page=MagicMock(),
+            skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+            skyvern_frame=MagicMock(),
+            dom=MagicMock(),
+            incremental_scraped=_FakeValueFallbackScrapePage(),  # type: ignore[arg-type]
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert isinstance(result, handler.ActionFailure)
+        assert result.exception_type == NoElementMatchedForTargetOption.__name__
+        assert "No value matched" in (result.exception_message or "")
+
+    @pytest.mark.asyncio
+    async def test_returns_failure_when_dropdown_cannot_scroll(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        dropdown_menu = _FakeDropdownMenuElement()
+        skyvern_frame = MagicMock()
+        skyvern_frame.get_element_scrollable = AsyncMock(return_value=False)
+
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=dropdown_menu))
+        monkeypatch.setattr(handler, "try_to_find_potential_scrollable_element", AsyncMock(return_value=dropdown_menu))
+
+        result = await handler.select_from_dropdown_by_value(
+            value="Missing",
+            page=MagicMock(),
+            skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+            skyvern_frame=skyvern_frame,
+            dom=MagicMock(),
+            incremental_scraped=_FakeValueFallbackScrapePage(),  # type: ignore[arg-type]
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert isinstance(result, handler.ActionFailure)
+        assert result.exception_type == NoElementMatchedForTargetOption.__name__
+        assert "can't scroll" in (result.exception_message or "")
+
+    @pytest.mark.asyncio
+    async def test_returns_failure_after_scrolling_without_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        dropdown_menu = _FakeDropdownMenuElement()
+        skyvern_frame = MagicMock()
+        skyvern_frame.get_element_scrollable = AsyncMock(return_value=True)
+        scroll_down_to_load_all_options = AsyncMock(return_value=None)
+
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=dropdown_menu))
+        monkeypatch.setattr(handler, "try_to_find_potential_scrollable_element", AsyncMock(return_value=dropdown_menu))
+        monkeypatch.setattr(handler, "scroll_down_to_load_all_options", scroll_down_to_load_all_options)
+
+        result = await handler.select_from_dropdown_by_value(
+            value="Missing",
+            page=MagicMock(),
+            skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+            skyvern_frame=skyvern_frame,
+            dom=MagicMock(),
+            incremental_scraped=_FakeValueFallbackScrapePage(),  # type: ignore[arg-type]
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert isinstance(result, handler.ActionFailure)
+        assert result.exception_type == NoElementMatchedForTargetOption.__name__
+        assert "after scrolling" in (result.exception_message or "")
+        scroll_down_to_load_all_options.assert_awaited_once()
+
+
+class TestScrollDownToLoadAllOptionsDetachedHandle:
+    @pytest.mark.asyncio
+    async def test_falls_back_to_mouse_scroll_after_detached_handle(self) -> None:
+        stale_handle = MagicMock()
+        stale_handle.scroll_into_view_if_needed = AsyncMock(side_effect=Exception("Element is not attached to the DOM"))
+        locator = MagicMock()
+        locator.element_handle = AsyncMock(return_value=stale_handle)
+        locator.focus = AsyncMock()
+        scrollable_element = MagicMock()
+        scrollable_element.get_locator = MagicMock(return_value=locator)
+        scrollable_element.move_mouse_to_safe = AsyncMock()
+
+        page = MagicMock()
+        page.mouse.wheel = AsyncMock()
+
+        skyvern_frame = MagicMock()
+        skyvern_frame.engine_selection = None
+        skyvern_frame.scroll_to_element_bottom = AsyncMock()
+        skyvern_frame.scroll_to_element_top = AsyncMock()
+        skyvern_frame.safe_wait_for_animation_end = AsyncMock()
+
+        incremental_scraped = MagicMock()
+        incremental_scraped.get_incremental_elements_num = AsyncMock(return_value=0)
+
+        await handler.scroll_down_to_load_all_options(
+            scrollable_element=scrollable_element,
+            page=page,
+            skyvern_frame=skyvern_frame,
+            incremental_scraped=incremental_scraped,
+        )
+
+        locator.focus.assert_awaited_once()
+        skyvern_frame.scroll_to_element_bottom.assert_not_awaited()
+        skyvern_frame.scroll_to_element_top.assert_not_awaited()
+        assert page.mouse.wheel.await_count >= 1
+
+
+class TestScrollDownToLoadAllOptionsStopCondition:
+    CLIENT_HEIGHT = 300.0
+
+    @classmethod
+    def _bottomed_metrics(cls, scroll_height: float) -> ElementScrollMetrics:
+        return ElementScrollMetrics(
+            scroll_top=max(scroll_height - cls.CLIENT_HEIGHT, 0.0),
+            client_height=cls.CLIENT_HEIGHT,
+            scroll_height=scroll_height,
+        )
+
+    @classmethod
+    def _build_menu(cls, scroll_heights: list[float]) -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+        """A scrollable menu reporting scroll_heights in order, whose mutation counter never settles."""
+        handle = MagicMock()
+        handle.scroll_into_view_if_needed = AsyncMock()
+        locator = MagicMock()
+        locator.element_handle = AsyncMock(return_value=handle)
+        locator.focus = AsyncMock()
+        scrollable_element = MagicMock()
+        scrollable_element.get_locator = MagicMock(return_value=locator)
+        scrollable_element.move_mouse_to_safe = AsyncMock()
+        scrollable_element.get_id = MagicMock(return_value="menu-element-id")
+
+        page = MagicMock()
+        page.mouse.wheel = AsyncMock()
+
+        skyvern_frame = MagicMock()
+        skyvern_frame.engine_selection = None
+        skyvern_frame.scroll_to_element_bottom = AsyncMock()
+        skyvern_frame.scroll_to_element_top = AsyncMock()
+        skyvern_frame.safe_wait_for_animation_end = AsyncMock()
+        skyvern_frame.safe_get_element_scroll_metrics = AsyncMock(
+            side_effect=chain(
+                (cls._bottomed_metrics(height) for height in scroll_heights),
+                repeat(cls._bottomed_metrics(scroll_heights[-1])),
+            )
+        )
+
+        incremental_scraped = MagicMock()
+        incremental_scraped.get_incremental_elements_num = AsyncMock(side_effect=count(4, 4))
+
+        return scrollable_element, page, skyvern_frame, incremental_scraped
+
+    @pytest.mark.asyncio
+    async def test_stops_once_menu_is_bottomed_out_despite_rising_mutation_count(self) -> None:
+        scrollable_element, page, skyvern_frame, incremental_scraped = self._build_menu([1200.0])
+
+        await handler.scroll_down_to_load_all_options(
+            scrollable_element=scrollable_element,
+            page=page,
+            skyvern_frame=skyvern_frame,
+            incremental_scraped=incremental_scraped,
+        )
+
+        assert skyvern_frame.scroll_to_element_bottom.await_count == 2
+        skyvern_frame.scroll_to_element_top.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_keeps_scrolling_while_the_menu_loads_more_options(self) -> None:
+        # The first pass ends flat at the bottom behind a loading row; the next page lands a pass later.
+        scrollable_element, page, skyvern_frame, incremental_scraped = self._build_menu(
+            [1200.0, 1200.0, 2400.0, 3600.0, 3600.0]
+        )
+
+        await handler.scroll_down_to_load_all_options(
+            scrollable_element=scrollable_element,
+            page=page,
+            skyvern_frame=skyvern_frame,
+            incremental_scraped=incremental_scraped,
+        )
+
+        assert skyvern_frame.scroll_to_element_bottom.await_count == 5
+
+    @staticmethod
+    def _read_task_row(monkeypatch: pytest.MonkeyPatch, *, canceled: Callable[[], bool], read_fails: bool) -> None:
+        task = _task()
+
+        async def _get_task(*_args: object, **_kwargs: object) -> object:
+            if read_fails:
+                raise ConnectionError("db blip")
+            return task.model_copy(update={"status": TaskStatus.canceled if canceled() else TaskStatus.running})
+
+        monkeypatch.setattr(
+            "skyvern.services.run_cancellation.app.DATABASE.tasks.get_task", AsyncMock(side_effect=_get_task)
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("run_state", "selects"),
+        [
+            pytest.param("running", True, id="running"),
+            pytest.param("lookup_error", True, id="lookup-error-fails-open"),
+            pytest.param("canceled_mid_loop", False, id="canceled-mid-loop"),
+            pytest.param("canceled_during_option_lookup", False, id="canceled-during-option-lookup"),
+        ],
+    )
+    async def test_value_match_loaded_after_a_cancel_is_not_clicked(
+        self, monkeypatch: pytest.MonkeyPatch, run_state: str, selects: bool
+    ) -> None:
+        scrollable_element, page, skyvern_frame, incremental_scraped = self._build_menu([1200.0, 2400.0, 3600.0])
+        scrollable_element.get_element_handler = AsyncMock(return_value=MagicMock())
+        skyvern_frame.get_element_scrollable = AsyncMock(return_value=True)
+        option = MagicMock()
+        option.click = AsyncMock()
+        incremental_scraped.get_incremental_element_tree = AsyncMock(return_value=[])
+        # Absent before the scroll and after its first pass; the second pass loads it.
+        lookup = AsyncMock(side_effect=[None, None, option])
+        incremental_scraped.select_one_element_by_value = lookup
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=MagicMock()))
+        monkeypatch.setattr(
+            handler, "try_to_find_potential_scrollable_element", AsyncMock(return_value=scrollable_element)
+        )
+        canceled = {
+            "running": lambda: False,
+            "lookup_error": lambda: False,
+            "canceled_mid_loop": lambda: skyvern_frame.scroll_to_element_bottom.await_count >= 2,
+            # Lands while the lookup that finds the option is awaited, after that pass's poll.
+            "canceled_during_option_lookup": lambda: lookup.await_count >= 3,
+        }[run_state]
+        self._read_task_row(monkeypatch, canceled=canceled, read_fails=run_state == "lookup_error")
+
+        result = await handler.select_from_dropdown_by_value(
+            value="Choice",
+            page=page,
+            skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+            skyvern_frame=skyvern_frame,
+            dom=MagicMock(),
+            incremental_scraped=incremental_scraped,
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert result.success is selects
+        assert handler._is_terminal_custom_select_failure(result) is (not selects)
+        assert option.click.await_count == (1 if selects else 0)
+        assert skyvern_frame.scroll_to_element_bottom.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("run_state", "deterministic_attempts", "clicks"),
+        [
+            pytest.param("running", 1, 1, id="running"),
+            pytest.param("canceled_mid_loop", 0, 0, id="canceled-mid-loop"),
+            pytest.param("canceled_during_scroll_back", 0, 0, id="canceled-during-scroll-back"),
+            pytest.param("canceled_during_option_tree", 0, 0, id="canceled-during-option-tree"),
+            pytest.param("canceled_during_llm_call", 1, 0, id="canceled-during-llm-call"),
+        ],
+    )
+    async def test_dropdown_canceled_before_selecting_selects_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, run_state: str, deterministic_attempts: int, clicks: int
+    ) -> None:
+        scrollable_element, page, skyvern_frame, incremental_scraped = self._build_menu([1200.0, 2400.0, 3600.0])
+        scrollable_element.get_element_handler = AsyncMock(return_value=MagicMock())
+        skyvern_frame.get_element_scrollable = AsyncMock(return_value=True)
+        incremental_scraped.get_incremental_element_tree = AsyncMock(return_value=[])
+        # No deterministic match, so the selection falls through to the option the LLM picks.
+        deterministic_select = AsyncMock(return_value=None)
+        llm = AsyncMock(
+            return_value={"id": "choice-option", "action_type": "click", "value": "Choice", "relevant": True}
+        )
+        option = _FakeCustomElement()
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", deterministic_select)
+        monkeypatch.setattr(handler.prompt_engine, "load_prompt", MagicMock(return_value="prompt"))
+        monkeypatch.setattr(handler.app, "CUSTOM_SELECT_AGENT_LLM_API_HANDLER", llm)
+        monkeypatch.setattr(handler.SkyvernElement, "create_from_incremental", AsyncMock(return_value=option))
+        monkeypatch.setattr(
+            handler, "try_to_find_potential_scrollable_element", AsyncMock(return_value=scrollable_element)
+        )
+        canceled = {
+            "running": lambda: False,
+            "canceled_mid_loop": lambda: skyvern_frame.scroll_to_element_bottom.await_count >= 2,
+            "canceled_during_scroll_back": lambda: skyvern_frame.scroll_to_element_top.await_count >= 1,
+            "canceled_during_option_tree": lambda: incremental_scraped.get_incremental_element_tree.await_count >= 1,
+            "canceled_during_llm_call": lambda: llm.await_count >= 1,
+        }[run_state]
+        self._read_task_row(monkeypatch, canceled=canceled, read_fails=False)
+
+        with skyvern_context.scoped(SkyvernContext(tz_info=UTC)):
+            result = await handler.select_from_dropdown(
+                context=InputOrSelectContext(field="Field", is_required=True),
+                page=page,
+                skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+                skyvern_frame=skyvern_frame,
+                incremental_scraped=incremental_scraped,
+                check_filter_funcs=[],
+                step=MagicMock(),
+                task=_task(),  # type: ignore[arg-type]
+                dropdown_menu_element=MagicMock(),
+                force_select=True,
+                target_value="Choice",
+            )
+
+        assert deterministic_select.await_count == deterministic_attempts
+        assert option.click.await_count == clicks
+        # A terminal failure keeps every caller from falling back to another way of selecting.
+        assert handler._is_terminal_custom_select_failure(result.action_result) is (clicks == 0)
+
+
+class TestCustomSelectMissRespectsOptionality:
+    @staticmethod
+    def _patch_open_dropdown_then_miss(
+        monkeypatch: pytest.MonkeyPatch, *, is_required: bool | None, widget_mutated: bool = False
+    ) -> AsyncMock:
+        """Drive handle_select_option_action to the no-match raise, returning the value-fallback mock."""
+        anchor_element = _FakeAnchorElement()
+        fake_frame = MagicMock()
+        fake_frame.safe_wait_for_animation_end = AsyncMock()
+        fake_incremental = _FakeIncrementalScrapePage([[{"id": "opened-option"}]])
+
+        class FakeDomUtil:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            async def get_skyvern_element_by_id(self, _element_id: str) -> _FakeAnchorElement:
+                return anchor_element
+
+        miss = NoAvailableOptionFoundForCustomSelection(
+            reason="target not in list",
+            target_value="Choice",
+            observed_options=["Alpha", "Bravo"],
+        )
+        miss.widget_mutated = widget_mutated
+        value_fallback = AsyncMock(return_value=handler.ActionSuccess())
+        monkeypatch.setattr(handler, "DomUtil", FakeDomUtil)
+        monkeypatch.setattr(handler.SkyvernFrame, "create_instance", AsyncMock(return_value=fake_frame))
+        monkeypatch.setattr(handler, "IncrementalScrapePage", MagicMock(return_value=fake_incremental))
+        monkeypatch.setattr(
+            handler,
+            "_get_input_or_select_context",
+            AsyncMock(return_value=InputOrSelectContext(field="Field", is_required=is_required)),
+        )
+        monkeypatch.setattr(handler, "sequentially_select_from_dropdown", AsyncMock(side_effect=miss))
+        monkeypatch.setattr(handler, "select_from_dropdown_by_value", value_fallback)
+        return value_fallback
+
+    async def _run(self) -> list[handler.ActionResult]:
+        return await handler.handle_select_option_action(
+            action=_select_action(),
+            page=MagicMock(),
+            scraped_page=SimpleNamespace(
+                id_to_element_dict={"field-control": {"id": "field-control"}},
+                id_to_css_dict={},
+            ),
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_optional_miss_records_abort_and_skips_value_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        value_fallback = self._patch_open_dropdown_then_miss(monkeypatch, is_required=False)
+
+        results = await self._run()
+
+        assert len(results) == 1
+        assert isinstance(results[0], handler.ActionAbort)
+        assert results[0].success is True
+        value_fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_required_miss_records_typed_option_not_available_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        value_fallback = self._patch_open_dropdown_then_miss(monkeypatch, is_required=True)
+
+        results = await self._run()
+
+        assert len(results) == 1
+        assert isinstance(results[0], handler.ActionFailure)
+        assert results[0].exception_type == NoAvailableOptionFoundForCustomSelection.__name__
+        assert "OPTION_NOT_AVAILABLE" in (results[0].exception_message or "")
+        value_fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_requiredness_miss_fails_closed_not_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # is_required is LLM-populated and may be None; an undetermined field must fail closed
+        # (typed failure) rather than silently skip a possibly-required selection.
+        value_fallback = self._patch_open_dropdown_then_miss(monkeypatch, is_required=None)
+
+        results = await self._run()
+
+        assert len(results) == 1
+        assert isinstance(results[0], handler.ActionFailure)
+        assert results[0].exception_type == NoAvailableOptionFoundForCustomSelection.__name__
+        assert "OPTION_NOT_AVAILABLE" in (results[0].exception_message or "")
+        value_fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_optional_miss_after_prior_cascade_click_fails_closed_not_skipped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cascading optional select that clicked an earlier level before a deeper miss left the
+        # widget partially mutated; it must fail closed rather than report a clean skip.
+        value_fallback = self._patch_open_dropdown_then_miss(monkeypatch, is_required=False, widget_mutated=True)
+
+        results = await self._run()
+
+        assert len(results) == 1
+        assert isinstance(results[0], handler.ActionFailure)
+        assert results[0].exception_type == NoAvailableOptionFoundForCustomSelection.__name__
+        value_fallback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emerging_path_optional_miss_closes_open_dropdown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The emerging (re-scrape) path raises before the old is_open assignment, so its optional
+        # miss must still dismiss the dropdown the anchor click opened (coordinate click + Escape).
+        anchor_element = _FakeAnchorElement()
+        anchor_element.is_visible = AsyncMock(return_value=True)
+        fake_frame = MagicMock()
+        fake_frame.safe_wait_for_animation_end = AsyncMock()
+        # Empty incremental tree routes into select_from_emerging_elements.
+        fake_incremental = _FakeIncrementalScrapePage([[]])
+
+        class FakeDomUtil:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            async def get_skyvern_element_by_id(self, _element_id: str) -> _FakeAnchorElement:
+                return anchor_element
+
+        value_fallback = AsyncMock(return_value=handler.ActionSuccess())
+        monkeypatch.setattr(handler, "DomUtil", FakeDomUtil)
+        monkeypatch.setattr(handler.SkyvernFrame, "create_instance", AsyncMock(return_value=fake_frame))
+        monkeypatch.setattr(handler, "IncrementalScrapePage", MagicMock(return_value=fake_incremental))
+        monkeypatch.setattr(
+            handler,
+            "_get_input_or_select_context",
+            AsyncMock(return_value=InputOrSelectContext(field="Field", is_required=False)),
+        )
+        monkeypatch.setattr(
+            handler,
+            "select_from_emerging_elements",
+            AsyncMock(
+                side_effect=NoAvailableOptionFoundForCustomSelection(
+                    reason="target not in list", target_value="Choice", observed_options=["Alpha"]
+                )
+            ),
+        )
+        monkeypatch.setattr(handler, "select_from_dropdown_by_value", value_fallback)
+
+        results = await self._run()
+
+        assert len(results) == 1
+        assert isinstance(results[0], handler.ActionAbort)
+        anchor_element.coordinate_click.assert_awaited()
+        anchor_element.press_key.assert_any_await("Escape")
+        value_fallback.assert_not_awaited()
+
+
+class TestClickCustomSelectMiss:
+    @pytest.mark.asyncio
+    async def test_click_reports_the_sequential_dropdown_miss(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        element = _FakeAnchorElement()
+        element.has_attr = AsyncMock(return_value=False)
+        dom = MagicMock()
+        dom.get_skyvern_element_by_id = AsyncMock(return_value=element)
+        page = MagicMock(url="https://example.test/form")
+        page.evaluate = AsyncMock(return_value=False)
+        frame = MagicMock()
+        incremental = MagicMock()
+        incremental.start_listen_dom_increment = AsyncMock()
+        incremental.stop_listen_dom_increment = AsyncMock()
+        miss = NoAvailableOptionFoundForCustomSelection(
+            reason="target not in list", target_value="Choice", observed_options=["Alpha"]
+        )
+
+        monkeypatch.setattr(handler, "DomUtil", MagicMock(return_value=dom))
+        monkeypatch.setattr(handler, "get_or_create_wait_config", AsyncMock(return_value=None))
+        monkeypatch.setattr(handler.asyncio, "sleep", AsyncMock())
+        monkeypatch.setattr(handler, "resolve_engine_selection_for_task", MagicMock(return_value=None))
+        monkeypatch.setattr(handler.SkyvernFrame, "create_instance", AsyncMock(return_value=frame))
+        monkeypatch.setattr(handler, "IncrementalScrapePage", MagicMock(return_value=incremental))
+        monkeypatch.setattr(handler, "chain_click", AsyncMock(return_value=[handler.ActionSuccess()]))
+        monkeypatch.setattr(
+            handler,
+            "handle_sequential_click_with_submit_bypass",
+            AsyncMock(side_effect=miss),
+        )
+
+        results = await handler.handle_click_action(
+            action=handler.ClickAction(element_id="field-control"),
+            page=page,
+            scraped_page=MagicMock(),
+            task=_task(),  # type: ignore[arg-type]
+            step=MagicMock(),
+        )
+
+        assert len(results) == 2
+        assert isinstance(results[-1], handler.ActionFailure)
+        assert results[-1].exception_type == NoAvailableOptionFoundForCustomSelection.__name__
+        assert results[-1].skip_remaining_actions is True
+
+
+class TestSequentialSelectMarksWidgetMutation:
+    @staticmethod
+    def _level_result(*, action_result: object, action_type: object, dropdown_menu: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            action_result=action_result,
+            action_type=action_type,
+            dropdown_menu=dropdown_menu,
+            value="Level0",
+            is_done=AsyncMock(return_value=False),
+        )
+
+    @pytest.mark.asyncio
+    async def test_marks_mutation_when_earlier_level_clicked_before_deeper_miss(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        skyvern_frame = MagicMock()
+        skyvern_frame.safe_wait_for_animation_end = AsyncMock()
+        incremental_scraped = MagicMock()
+        incremental_scraped.get_incremental_element_tree = AsyncMock(return_value=[{"id": "next-level"}])
+
+        # Level 0 commits a click (ActionSuccess) and stays open as an INPUT_TEXT level so the loop
+        # advances straight to level 1 without the confirm-finish screenshot/LLM; level 1 misses.
+        level0 = self._level_result(
+            action_result=handler.ActionSuccess(),
+            action_type=ActionType.INPUT_TEXT,
+            dropdown_menu=object(),
+        )
+        deeper_miss = NoAvailableOptionFoundForCustomSelection(
+            reason="target not in list", target_value="Choice", observed_options=["Alpha"]
+        )
+        monkeypatch.setattr(handler, "select_from_dropdown", AsyncMock(side_effect=[level0, deeper_miss]))
+
+        with pytest.raises(NoAvailableOptionFoundForCustomSelection) as excinfo:
+            await handler.sequentially_select_from_dropdown(
+                action=_select_action(),
+                input_or_select_context=InputOrSelectContext(field="Field", is_required=False),
+                page=MagicMock(),
+                dom=MagicMock(),
+                skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+                skyvern_frame=skyvern_frame,
+                incremental_scraped=incremental_scraped,
+                step=MagicMock(),
+                task=_task(),  # type: ignore[arg-type]
+                force_select=True,
+                target_value="Choice",
+            )
+
+        assert excinfo.value.widget_mutated is True
+
+    @pytest.mark.asyncio
+    async def test_first_level_miss_leaves_widget_unmutated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        skyvern_frame = MagicMock()
+        skyvern_frame.safe_wait_for_animation_end = AsyncMock()
+        first_miss = NoAvailableOptionFoundForCustomSelection(
+            reason="target not in list", target_value="Choice", observed_options=["Alpha"]
+        )
+        monkeypatch.setattr(handler, "select_from_dropdown", AsyncMock(side_effect=first_miss))
+
+        with pytest.raises(NoAvailableOptionFoundForCustomSelection) as excinfo:
+            await handler.sequentially_select_from_dropdown(
+                action=_select_action(),
+                input_or_select_context=InputOrSelectContext(field="Field", is_required=False),
+                page=MagicMock(),
+                dom=MagicMock(),
+                skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+                skyvern_frame=skyvern_frame,
+                incremental_scraped=MagicMock(),
+                step=MagicMock(),
+                task=_task(),  # type: ignore[arg-type]
+                force_select=True,
+                target_value="Choice",
+            )
+
+        assert excinfo.value.widget_mutated is False
+
+
+class TestDateWalkBudget:
+    """A date cascade that never closes its picker: it has to stop on its own budget, and whatever
+    it reports has to match whether a date actually landed in the field."""
+
+    @staticmethod
+    def _unfinished_level() -> SimpleNamespace:
+        # An INPUT_TEXT level that leaves the menu open advances the walk without the
+        # confirm-finish screenshot/LLM, which is the shape a calendar-arrow click takes.
+        return SimpleNamespace(
+            action_result=handler.ActionSuccess(),
+            action_type=ActionType.INPUT_TEXT,
+            dropdown_menu=object(),
+            value="next month",
+            is_done=AsyncMock(return_value=False),
+        )
+
+    async def _walk(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        anchor_element: _FakeAnchorElement,
+        entry_action_type: str = "select_option",
+        label: str | None = "2026-11-01",
+        budget_seconds: float = 0.0,
+    ) -> tuple[object, AsyncMock]:
+        skyvern_frame = MagicMock()
+        skyvern_frame.safe_wait_for_animation_end = AsyncMock()
+        incremental_scraped = MagicMock()
+        incremental_scraped.get_incremental_element_tree = AsyncMock(return_value=[{"id": "next-level"}])
+        select_level = AsyncMock(side_effect=lambda **kwargs: self._unfinished_level())
+        monkeypatch.setattr(handler, "select_from_dropdown", select_level)
+        monkeypatch.setattr(handler, "DATEPICKER_WALK_BUDGET_SECONDS", budget_seconds)
+        action = SelectOptionAction(element_id="field-control", option=SelectOption(label=label))
+
+        result = await handler.sequentially_select_from_dropdown(
+            action=action,
+            input_or_select_context=InputOrSelectContext(field="Start date", is_required=True, is_date_related=True),
+            page=MagicMock(),
+            dom=MagicMock(),
+            skyvern_element=anchor_element,  # type: ignore[arg-type]
+            skyvern_frame=skyvern_frame,
+            incremental_scraped=incremental_scraped,
+            step=MagicMock(),
+            task=_task(),  # type: ignore[arg-type]
+            force_select=True,
+            target_value="2026-11-01",
+            entry_action_type=entry_action_type,
+        )
+        return result, select_level
+
+    @pytest.mark.asyncio
+    async def test_walk_stops_when_the_budget_is_spent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+
+        _, select_level = await self._walk(monkeypatch, anchor_element=anchor_element)
+
+        # Spent budget ends the walk at the level that spent it, rather than at the depth backstop.
+        assert select_level.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cheap_levels_still_walk_past_a_calendar_s_worth_of_month_steps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+
+        _, select_level = await self._walk(monkeypatch, anchor_element=anchor_element, budget_seconds=600.0)
+
+        # A month-stepped calendar needs a level per click; a walk whose levels are cheap keeps them.
+        assert select_level.await_count > 12
+
+    @pytest.mark.asyncio
+    async def test_select_option_entry_clears_the_field_before_typing_the_date(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+        order: list[str] = []
+        anchor_element.input_clear = AsyncMock(side_effect=lambda *a, **k: order.append("clear"))
+        anchor_element.input_sequentially = AsyncMock(side_effect=lambda *a, **k: order.append("type"))
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element)
+
+        # input_sequentially appends a value this short, so an uncleared field concatenates dates.
+        assert order == ["clear", "type"]
+        anchor_element.input_sequentially.assert_awaited_once_with("2026-11-01")
+        assert isinstance(result.action_result, handler.ActionSuccess)  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_input_text_entry_hands_the_date_back_to_its_caller(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element, entry_action_type="input_text")
+
+        # Non-terminal, so handle_input_text_action resumes its own text path (close the picker,
+        # refuse a readonly field, type with replace semantics) instead of typing here.
+        assert isinstance(result.action_result, handler.ActionFailure)  # type: ignore[attr-defined]
+        assert handler._is_terminal_custom_select_failure(result.action_result) is False  # type: ignore[attr-defined]
+        anchor_element.input_sequentially.assert_not_awaited()
+        # That caller only quits a dropdown it is told is still open.
+        assert result.dropdown_menu is not None  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_unspent_walk_with_nothing_typed_fails_instead_of_reporting_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A button-triggered calendar cannot be typed into, so there is no date to claim.
+        anchor_element = _FakeAnchorElement(tag_name="button")
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element)
+
+        assert isinstance(result.action_result, handler.ActionFailure)  # type: ignore[attr-defined]
+        assert handler._is_terminal_custom_select_failure(result.action_result) is True  # type: ignore[attr-defined]
+        anchor_element.input_sequentially.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_typing_that_raises_does_not_become_a_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+        anchor_element.input_sequentially = AsyncMock(side_effect=RuntimeError("not editable"))
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element)
+
+        assert isinstance(result.action_result, handler.ActionFailure)  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_readonly_date_field_is_reported_rather_than_typed_into(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+        anchor_element.is_readonly = AsyncMock(return_value=True)
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element)
+
+        assert result.action_result.exception_type == "InputToReadonlyElement"  # type: ignore[attr-defined]
+        anchor_element.input_sequentially.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_value_only_action_with_no_label_fails_instead_of_reporting_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor_element = _FakeAnchorElement(tag_name="input")
+
+        result, _ = await self._walk(monkeypatch, anchor_element=anchor_element, label=None)
+
+        assert isinstance(result.action_result, handler.ActionFailure)  # type: ignore[attr-defined]
+        anchor_element.input_sequentially.assert_not_awaited()
+
+
+class TestSameLevelClickMarksWidgetMutation:
+    @pytest.mark.asyncio
+    async def test_select_from_dropdown_marks_mutation_when_deterministic_clicked_then_missed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The deterministic path can click the current candidate and still return None (route to
+        # LLM), so a same-level click followed by an LLM no-match must mark the widget mutated even
+        # though nothing is recorded in select_history.
+        async def fake_deterministic(*, on_click_attempted: object = None, **_kwargs: object) -> None:
+            if on_click_attempted is not None:
+                on_click_attempted()  # type: ignore[operator]
+            return None
+
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", fake_deterministic)
+        monkeypatch.setattr(handler.prompt_engine, "load_prompt", MagicMock(return_value="prompt"))
+        monkeypatch.setattr(
+            handler.app,
+            "CUSTOM_SELECT_AGENT_LLM_API_HANDLER",
+            AsyncMock(return_value={"action_type": "", "id": "", "reasoning": "not present"}),
+        )
+        monkeypatch.setattr(handler, "locate_dropdown_menu", AsyncMock(return_value=None))
+        fake_incremental = _FakeIncrementalScrapePage(
+            [[{"tagName": "li", "attributes": {"role": "option"}, "text": "Alpha"}]]
+        )
+
+        skyvern_context.set(SkyvernContext(task_id="tsk-test"))
+        try:
+            with pytest.raises(NoAvailableOptionFoundForCustomSelection) as excinfo:
+                await handler.select_from_dropdown(
+                    context=InputOrSelectContext(field="Field", is_required=False),
+                    page=MagicMock(),
+                    skyvern_element=_FakeAnchorElement(),  # type: ignore[arg-type]
+                    skyvern_frame=MagicMock(),
+                    incremental_scraped=fake_incremental,  # type: ignore[arg-type]
+                    check_filter_funcs=[],
+                    step=MagicMock(),
+                    task=_task(),  # type: ignore[arg-type]
+                    force_select=True,
+                    target_value="Choice",
+                )
+        finally:
+            skyvern_context.reset()
+
+        assert excinfo.value.widget_mutated is True
+
+
+def _already_open_anchor(
+    *,
+    expanded: bool | None = True,
+    anchor_sk: str = "anchor-sk",
+    listbox_dom: str = "listbox-dom",
+) -> dict:
+    # domUtils scrapes aria-expanded as a real bool, so mirror that shape here rather than a string.
+    attributes: dict = {"role": "combobox", "aria-controls": listbox_dom, "id": "anchor-dom"}
+    if expanded is not None:
+        attributes["aria-expanded"] = expanded
+    return {"id": anchor_sk, "tagName": "div", "attributes": attributes, "children": []}
+
+
+def _already_open_option(sk: str, label: str) -> dict:
+    return {
+        "id": sk,
+        "tagName": "li",
+        "attributes": {"role": "option"},
+        "text": label,
+        "interactable": True,
+        "children": [],
+    }
+
+
+def _already_open_listbox(
+    *, options: list[dict], listbox_sk: str = "listbox-sk", listbox_dom: str = "listbox-dom"
+) -> dict:
+    return {
+        "id": listbox_sk,
+        "tagName": "ul",
+        "attributes": {"role": "listbox", "id": listbox_dom},
+        "children": list(options),
+    }
+
+
+def _already_open_pages(
+    *, anchor: dict, listbox: dict, extra_elements: list[dict] | None = None
+) -> tuple[SimpleNamespace, SimpleNamespace]:
+    """Before/after scraped pages whose strict new-element diff is empty because the combobox is already open."""
+    elements = [anchor, listbox, *listbox["children"], *(extra_elements or [])]
+    tree_root = {"id": "root", "tagName": "div", "attributes": {}, "children": [anchor, listbox]}
+    before = SimpleNamespace(id_to_css_dict={})
+    after = SimpleNamespace(
+        id_to_css_dict={},
+        id_to_element_dict={anchor["id"]: anchor},
+        elements=elements,
+        element_tree_trimmed=[tree_root],
+    )
+    return before, after
+
+
+def _install_dom_after_open(monkeypatch: pytest.MonkeyPatch, *, interactable_ids: set[str]) -> MagicMock:
+    def _element_for(element_id: str) -> MagicMock:
+        element = MagicMock()
+        element.is_interactable = MagicMock(return_value=element_id in interactable_ids)
+        element.get_attr = AsyncMock(return_value=None)
+        element.scroll_into_view = AsyncMock()
+        element.click = AsyncMock()
+        return element
+
+    dom_after_open = MagicMock()
+    dom_after_open.get_skyvern_element_by_id = AsyncMock(side_effect=_element_for)
+    monkeypatch.setattr(handler, "DomUtil", MagicMock(return_value=dom_after_open))
+    return dom_after_open
+
+
+async def _run_emerging_already_open(before: SimpleNamespace, after: SimpleNamespace) -> handler.ActionResult:
+    return await handler.select_from_emerging_elements(
+        current_element_id="anchor-sk",
+        options=handler.CustomSelectPromptOptions(target_value="Alpha"),
+        page=MagicMock(),
+        scraped_page=before,
+        scraped_page_after_open=after,
+        step=SimpleNamespace(step_id="step-1"),
+        task=_task(),  # type: ignore[arg-type]
+        engine_selection=None,
+    )
+
+
+class TestAlreadyOpenOwnedListboxRecovery:
+    """SKY-14931: when the combobox is already open, select from its uniquely aria-owned listbox
+    instead of raising no-incremental — and stay fail-closed on closed/ambiguous/empty widgets."""
+
+    @pytest.mark.asyncio
+    async def test_selects_from_already_open_owned_listbox_instead_of_raising(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        anchor = _already_open_anchor()
+        listbox = _already_open_listbox(
+            options=[_already_open_option("opt-a", "Alpha"), _already_open_option("opt-b", "Beta")]
+        )
+        before, after = _already_open_pages(anchor=anchor, listbox=listbox)
+        _install_dom_after_open(monkeypatch, interactable_ids={"opt-a", "opt-b"})
+        monkeypatch.setattr(handler, "json_to_html", MagicMock(return_value="<li>Alpha</li>"))
+        deterministic = AsyncMock(return_value=(handler.ActionSuccess(), "Alpha"))
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", deterministic)
+
+        with skyvern_context.scoped(SkyvernContext(tz_info=UTC)):
+            result = await _run_emerging_already_open(before, after)
+
+        assert isinstance(result, handler.ActionSuccess)
+        assert deterministic.await_count == 1
+        candidates = deterministic.await_args.kwargs["get_option_candidates"]()
+        assert {candidate["label"] for candidate in candidates} == {"Alpha", "Beta"}
+
+    @pytest.mark.asyncio
+    async def test_closed_combobox_stays_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor = _already_open_anchor(expanded=False)
+        listbox = _already_open_listbox(options=[_already_open_option("opt-a", "Alpha")])
+        before, after = _already_open_pages(anchor=anchor, listbox=listbox)
+        _install_dom_after_open(monkeypatch, interactable_ids={"opt-a"})
+        deterministic = AsyncMock(return_value=(handler.ActionSuccess(), "Alpha"))
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", deterministic)
+
+        with (
+            skyvern_context.scoped(SkyvernContext(tz_info=UTC)),
+            pytest.raises(NoIncrementalElementFoundForCustomSelection),
+        ):
+            await _run_emerging_already_open(before, after)
+
+        deterministic.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_owning_anchor_stays_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor = _already_open_anchor()
+        duplicate_anchor = _already_open_anchor(anchor_sk="anchor-sk-2")
+        listbox = _already_open_listbox(options=[_already_open_option("opt-a", "Alpha")])
+        before, after = _already_open_pages(anchor=anchor, listbox=listbox, extra_elements=[duplicate_anchor])
+        _install_dom_after_open(monkeypatch, interactable_ids={"opt-a"})
+        deterministic = AsyncMock(return_value=(handler.ActionSuccess(), "Alpha"))
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", deterministic)
+
+        with (
+            skyvern_context.scoped(SkyvernContext(tz_info=UTC)),
+            pytest.raises(NoIncrementalElementFoundForCustomSelection),
+        ):
+            await _run_emerging_already_open(before, after)
+
+        deterministic.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_owned_listbox_stays_fail_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        anchor = _already_open_anchor()
+        listbox = _already_open_listbox(options=[])
+        before, after = _already_open_pages(anchor=anchor, listbox=listbox)
+        _install_dom_after_open(monkeypatch, interactable_ids=set())
+        deterministic = AsyncMock(return_value=(handler.ActionSuccess(), "Alpha"))
+        monkeypatch.setattr(handler, "_select_deterministic_custom_option", deterministic)
+
+        with (
+            skyvern_context.scoped(SkyvernContext(tz_info=UTC)),
+            pytest.raises(NoIncrementalElementFoundForCustomSelection),
+        ):
+            await _run_emerging_already_open(before, after)
+
+        deterministic.assert_not_awaited()

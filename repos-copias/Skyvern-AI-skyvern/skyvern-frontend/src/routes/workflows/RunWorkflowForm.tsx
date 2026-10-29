@@ -1,0 +1,1968 @@
+import { AxiosError } from "axios";
+import {
+  ExclamationTriangleIcon,
+  PlayIcon,
+  ReloadIcon,
+} from "@radix-ui/react-icons";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type FieldErrors, useForm } from "react-hook-form";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+
+import { getClient } from "@/api/AxiosClient";
+import { ProxyLocation } from "@/api/types";
+import { ProxySelector } from "@/components/ProxySelector";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { CopyApiCommandDropdown } from "@/components/CopyApiCommandDropdown";
+import { Input } from "@/components/ui/input";
+import { KeyValueInput } from "@/components/KeyValueInput";
+import { toast } from "@/components/ui/use-toast";
+import { useApiCredential } from "@/hooks/useApiCredential";
+import { useCredentialGetter } from "@/hooks/useCredentialGetter";
+import { useBlockScriptsQuery } from "@/routes/workflows/hooks/useBlockScriptsQuery";
+import { constructCacheKeyValueFromParameters } from "@/routes/workflows/editor/utils";
+import { useWorkflowQuery } from "@/routes/workflows/hooks/useWorkflowQuery";
+import { useWorkflowStudioEnabled } from "@/hooks/useWorkflowStudioEnabled";
+import { workflowEditorPath } from "./studioNavigation";
+import { CredentialSetupPrompt } from "@/components/onboarding/CredentialSetupPrompt";
+import { usePostHog } from "posthog-js/react";
+import { useFeatureFlag } from "@/hooks/useFeatureFlag";
+import { usePostHogFeatureFlagVariantKey as useFeatureFlagVariantKey } from "@/hooks/usePostHogFeatureFlag";
+import { CREDENTIAL_FALLBACK_RETRY_FLAG } from "@/util/featureFlags";
+import { EXPERIMENT } from "@/util/onboarding/experimentConfig";
+import { isActivationRun } from "@/util/onboarding/rolloutGating";
+import { useOnboardingStateOptional } from "@/store/onboarding/useOnboardingState";
+import { type ApiCommandOptions } from "@/util/apiCommands";
+import { runsApiBaseUrl } from "@/util/env";
+import { parseHeaderJson } from "@/util/secretHeaders";
+import {
+  getRecoveryGuidanceRetryContext,
+  isRecoveryGuidanceTelemetryContext,
+  RecoveryGuidanceTelemetry,
+  type RecoveryGuidanceRetryNavigation,
+  type RecoveryGuidanceTelemetryContext,
+} from "@/util/onboarding/recoveryGuidanceTelemetry";
+
+import { MAX_SCREENSHOT_SCROLLS_DEFAULT } from "./editor/nodes/Taskv2Node/types";
+import { getLabelForWorkflowParameterType } from "./editor/workflowEditorUtils";
+import {
+  CredentialFallbackTrigger,
+  CredentialParameter,
+  WorkflowApiResponse,
+  WorkflowParameter,
+  WorkflowParameterTypes,
+} from "./types/workflowTypes";
+import { WorkflowParameterInput } from "./WorkflowParameterInput";
+import { BrowserProfileSelector } from "./components/BrowserProfileSelector";
+import { BrowserProfileControl } from "./components/BrowserProfileControl";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { RotatingCredentialField } from "./components/RotatingCredentialField";
+import { TestWebhookDialog } from "@/components/TestWebhookDialog";
+import {
+  browserTypeSelectionDisabled,
+  extractBrowserTypeSetting,
+  parseJsonWorkflowParameterValue,
+  hasBrowserTypeOptions,
+  RESERVED_BROWSER_TYPE_FIELD,
+  useBrowserTypeOptionsQuery,
+  validateJsonWorkflowParameterValue,
+} from "./utils";
+import {
+  getLoginCredentialInputs,
+  getRotatingCredentialIds,
+  isAtWillCredentialParameter,
+} from "./runWorkflowCredentials";
+import { useCredentialsQuery } from "./hooks/useCredentialsQuery";
+import { getLoginBlocksWithoutCredentials } from "./runValidation";
+
+/**
+ * Validates the workflow for issues that would prevent it from running.
+ * Returns an array of login block labels that are missing credentials.
+ */
+function validateWorkflowForRun(
+  workflow: WorkflowApiResponse | undefined,
+): Array<{ label: string }> {
+  if (!workflow) {
+    return [];
+  }
+
+  return getLoginBlocksWithoutCredentials(workflow.workflow_definition.blocks);
+}
+
+/**
+ * Compares the raw form values, not the parsed ones: parsing a json parameter
+ * mints a fresh object every call, so comparing after the parse would report
+ * "changed" on every keystroke for any workflow that has one.
+ */
+function isSameRunParameters(
+  previous: Record<string, unknown> | null,
+  next: Record<string, unknown>,
+): boolean {
+  if (previous === null) {
+    return false;
+  }
+  const previousKeys = Object.keys(previous);
+  return (
+    previousKeys.length === Object.keys(next).length &&
+    previousKeys.every(
+      (key) => key in next && Object.is(previous[key], next[key]),
+    )
+  );
+}
+
+// Utility function to omit specified keys from an object
+function omit<T extends Record<string, unknown>, K extends keyof T>(
+  obj: T,
+  keys: K[],
+): Omit<T, K> {
+  const result = { ...obj };
+  keys.forEach((key) => delete result[key]);
+  return result;
+}
+
+type Props = {
+  workflowParameters: Array<WorkflowParameter>;
+  initialValues: Record<string, unknown>;
+  initialSettings: {
+    proxyLocation: ProxyLocation;
+    webhookCallbackUrl: string;
+    reuseBrowserSession: boolean;
+    cdpAddress: string | null;
+    maxScreenshotScrolls: number | null;
+    extraHttpHeaders: Record<string, string> | null;
+    browserProfileId: string | null;
+    cdpConnectHeaders: Record<string, string> | null;
+    runWith: string | null;
+    browserType?: string | null;
+  };
+};
+
+function parseValuesForWorkflowRun(
+  values: Record<string, unknown>,
+  workflowParameters: Array<WorkflowParameter>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => {
+      const parameter = workflowParameters?.find(
+        (parameter) => parameter.key === key,
+      );
+      if (parameter?.workflow_parameter_type === "json") {
+        return [key, parseJsonWorkflowParameterValue(value)];
+      }
+      // can improve this via the type system maybe
+      if (
+        parameter?.workflow_parameter_type === "file_url" &&
+        value !== null &&
+        typeof value === "object" &&
+        "s3uri" in value
+      ) {
+        return [key, value.s3uri];
+      }
+      // Convert boolean values to strings for backend storage
+      if (
+        parameter?.workflow_parameter_type === "boolean" &&
+        typeof value === "boolean"
+      ) {
+        return [key, String(value)];
+      }
+      if (parameter?.workflow_parameter_type === "string") {
+        if (value === null || value === undefined) {
+          return [key, ""];
+        }
+        return [key, String(value)];
+      }
+
+      if (
+        parameter?.workflow_parameter_type === "integer" ||
+        parameter?.workflow_parameter_type === "float"
+      ) {
+        if (
+          value === null ||
+          value === undefined ||
+          (typeof value === "number" && Number.isNaN(value))
+        ) {
+          return [key, ""];
+        }
+        return [key, String(value)];
+      }
+
+      return [key, value];
+    }),
+  );
+}
+
+function omitUndefinedValues(
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined),
+  );
+}
+
+type RunWorkflowRequestBody = {
+  data: Record<string, unknown>; // workflow parameters and values
+  proxy_location: ProxyLocation | null;
+  webhook_callback_url?: string | null;
+  browser_session_id: string | null;
+  reuse_browser_session: boolean | null;
+  browser_profile_id?: string | null;
+  start_fresh_browser?: boolean;
+  max_screenshot_scrolls?: number | null;
+  extra_http_headers?: Record<string, string> | null;
+  cdp_connect_headers?: Record<string, string> | null;
+  browser_address?: string | null;
+  run_with?: "agent" | "code";
+  browser_type?: string | null;
+  ai_fallback?: boolean;
+};
+
+// Start-fresh and a picked override are mutually exclusive, but a per-input
+// agent's seeded override is inert (submit nulls it), so it must not count —
+// otherwise a per-input rerun leaves Start-fresh permanently disabled.
+// eslint-disable-next-line react-refresh/only-export-components
+export function isOverrideProfilePicked(
+  browserProfileId: string | null | undefined,
+  browserProfileKey?: string | null,
+  browserMemoryEnabled?: boolean,
+): boolean {
+  if (browserMemoryEnabled && browserProfileKey?.trim()) {
+    return false;
+  }
+  return Boolean((browserProfileId ?? "").toString().trim());
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function getRunWorkflowRequestBody(
+  values: RunWorkflowFormType,
+  workflowParameters: Array<WorkflowParameter>,
+  browserProfileKey?: string | null,
+  browserMemoryEnabled?: boolean,
+): RunWorkflowRequestBody {
+  const {
+    webhookCallbackUrl,
+    proxyLocation,
+    browserSessionId,
+    reuseBrowserSession,
+    browserProfileId,
+    startFreshBrowser,
+    cdpAddress,
+    maxScreenshotScrolls,
+    extraHttpHeaders,
+    cdpConnectHeaders,
+    runWith,
+    aiFallback,
+    ...rest
+  } = values;
+
+  // The internal browser-type setting lives under a reserved field name so it never collides with
+  // a workflow input parameter literally named `browserType`; that user parameter stays in `rest`
+  // and reaches the request `data` unchanged.
+  const { browserType, rest: parameters } = extractBrowserTypeSetting(rest);
+
+  const parsedParameters = parseValuesForWorkflowRun(
+    parameters,
+    workflowParameters,
+  );
+  const data = omitUndefinedValues(parsedParameters);
+
+  const bsi = browserSessionId?.trim() === "" ? null : browserSessionId;
+  const bpi = browserProfileId?.trim() === "" ? null : browserProfileId;
+  // A cleared address is an empty string, which is not an attachment; normalize it to
+  // null so the backend does not read "" as an attachment and 422 against browser_type.
+  const cda = cdpAddress?.trim() === "" ? null : cdpAddress;
+  // A live session is the browser for the run and the backend rejects fresh +
+  // session together, so an attached session wins and suppresses the fresh flag.
+  const startFresh = Boolean(startFreshBrowser) && !bsi;
+  // A per-input agent resolves its profile from browser_profile_key server-side;
+  // a run-level override ranks above that key and bypasses it, so drop it too.
+  // Browser-memory only — flag-off keeps the legacy payload byte-identical.
+  const perInputAgent =
+    Boolean(browserMemoryEnabled) && Boolean(browserProfileKey?.trim());
+
+  const body: RunWorkflowRequestBody = {
+    data,
+    proxy_location: proxyLocation,
+    browser_session_id: bsi,
+    reuse_browser_session: reuseBrowserSession,
+    // Backend ranks an explicit profile override above start_fresh_browser, so a
+    // fresh run must drop the (possibly settings-derived) override to take effect.
+    browser_profile_id: startFresh || perInputAgent ? null : bpi,
+    browser_address: cda,
+    run_with: runWith,
+    ai_fallback: aiFallback ?? true,
+  };
+
+  // start_fresh_browser is a browser-memory-only field; flag-off must not add it
+  // to the request, keeping the legacy wire shape byte-identical.
+  if (browserMemoryEnabled) {
+    body.start_fresh_browser = startFresh;
+  }
+
+  if (maxScreenshotScrolls) {
+    body.max_screenshot_scrolls = maxScreenshotScrolls;
+  }
+
+  if (webhookCallbackUrl) {
+    body.webhook_callback_url = webhookCallbackUrl;
+  }
+
+  // Only send an explicit engine; omitting it inherits the workflow / system default and keeps
+  // the legacy wire shape byte-identical for runs that don't set one. An attached browser (session
+  // or remote address) owns its engine, so browser_type is suppressed even if the field held one.
+  if (
+    browserType &&
+    !browserTypeSelectionDisabled({
+      browserSessionId: bsi,
+      browserAddress: cda,
+    })
+  ) {
+    body.browser_type = browserType as string;
+  }
+
+  if (extraHttpHeaders) {
+    try {
+      body.extra_http_headers = parseHeaderJson(extraHttpHeaders);
+    } catch (e) {
+      console.error("Invalid extra Header JSON");
+      body.extra_http_headers = null;
+    }
+  }
+
+  if (cdpConnectHeaders) {
+    try {
+      body.cdp_connect_headers = parseHeaderJson(cdpConnectHeaders);
+    } catch {
+      throw new Error(
+        'Invalid CDP Connect Headers: value must be valid JSON (e.g., {"x-api-key": "..."}).',
+      );
+    }
+  }
+
+  return body;
+}
+
+// Transform RunWorkflowRequestBody to match WorkflowRunRequest schema for Runs API v2
+function transformToWorkflowRunRequest(
+  body: RunWorkflowRequestBody,
+  workflowId: string,
+) {
+  const { data, webhook_callback_url, ...rest } = body;
+  const transformed: Record<string, unknown> = {
+    workflow_id: workflowId,
+    parameters: data,
+    ...rest,
+  };
+
+  if (webhook_callback_url) {
+    transformed.webhook_url = webhook_callback_url;
+  }
+
+  return transformed;
+}
+
+const VALID_RUN_WITH = new Set(["agent", "code"]);
+
+function deriveRunWith(
+  workflow?: WorkflowApiResponse,
+  override?: string | null,
+): "agent" | "code" {
+  if (override && VALID_RUN_WITH.has(override))
+    return override as "agent" | "code";
+  if (workflow?.run_with === "agent") return "agent";
+  if (workflow?.run_with === "code") return "code";
+  return "agent";
+}
+
+function formatLoginBlockList(labels: Array<string>) {
+  if (labels.length <= 1) {
+    return labels[0] ?? "";
+  }
+
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+
+  const lastLabel = labels[labels.length - 1];
+  return `${labels.slice(0, -1).join(", ")}, and ${lastLabel}`;
+}
+
+function getLoginCredentialDisplayText(
+  parameter: WorkflowParameter | CredentialParameter,
+  loginBlockLabels: Array<string>,
+) {
+  const parameterLabel = parameter.description || parameter.key;
+
+  // Prefer the login block label for single-use credentials, but use the
+  // parameter label plus "Used by ..." copy when one credential is shared.
+  if (loginBlockLabels.length === 1) {
+    return {
+      title: loginBlockLabels[0] ?? parameterLabel,
+      description: parameterLabel,
+    };
+  }
+
+  if (loginBlockLabels.length === 0) {
+    return {
+      title: parameterLabel,
+      description: parameter.key,
+    };
+  }
+
+  return {
+    title: parameterLabel,
+    description: `Used by ${formatLoginBlockList(loginBlockLabels)}`,
+  };
+}
+
+function FallbackCredentialList({
+  fallbackCredentialIds,
+  fallbackTrigger,
+  credentialNamesById,
+}: {
+  fallbackCredentialIds: Array<string>;
+  fallbackTrigger: CredentialFallbackTrigger | null;
+  credentialNamesById: Map<string, string>;
+}) {
+  if (fallbackCredentialIds.length === 0) {
+    return null;
+  }
+
+  const triggerText =
+    fallbackTrigger === "any_failure"
+      ? "for any reason"
+      : "on credential failures";
+
+  return (
+    <div className="space-y-2">
+      <ol className="space-y-1">
+        {fallbackCredentialIds.map((credentialId, index) => (
+          <li
+            key={credentialId}
+            className="flex min-w-0 items-center gap-2 rounded border border-slate-700/60 bg-slate-950/40 px-2 py-1.5 text-xs text-slate-200"
+          >
+            <span className="shrink-0 text-slate-400">{index + 1}.</span>
+            <span className="truncate">
+              {credentialNamesById.get(credentialId) ?? credentialId}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <p className="text-xs text-slate-400">
+        If the run fails {triggerText}, Skyvern retries it automatically with
+        the next fallback.
+      </p>
+    </div>
+  );
+}
+
+export type RunWorkflowFormType = Record<string, unknown> & {
+  webhookCallbackUrl: string;
+  proxyLocation: ProxyLocation;
+  browserSessionId: string | null;
+  reuseBrowserSession: boolean | null;
+  browserProfileId: string | null;
+  startFreshBrowser?: boolean;
+  cdpAddress: string | null;
+  maxScreenshotScrolls: number | null;
+  extraHttpHeaders: string | null;
+  cdpConnectHeaders: string | null;
+  runWith: "agent" | "code";
+  aiFallback: boolean | null;
+};
+
+function recordRecoveryGuidanceRetryCreated(
+  context: RecoveryGuidanceTelemetryContext | null,
+  retryRunId: unknown,
+): RecoveryGuidanceRetryNavigation | null {
+  if (
+    !isRecoveryGuidanceTelemetryContext(context) ||
+    typeof retryRunId !== "string" ||
+    retryRunId.trim().length === 0
+  ) {
+    return null;
+  }
+  RecoveryGuidanceTelemetry.retryCreated(context, retryRunId);
+  return { ...context, retryRunId };
+}
+
+type RunWorkflowSuccessCallbacks = Readonly<{
+  onStarted: () => void;
+  onNavigate: (
+    workflowRunId: unknown,
+    recoveryGuidanceRetry: RecoveryGuidanceRetryNavigation | null,
+  ) => void;
+}>;
+
+function handleRunWorkflowSuccess(
+  workflowRunId: unknown,
+  recoveryGuidanceRetryContext: RecoveryGuidanceTelemetryContext | null,
+  { onStarted, onNavigate }: RunWorkflowSuccessCallbacks,
+): void {
+  const recoveryGuidanceRetry = recordRecoveryGuidanceRetryCreated(
+    recoveryGuidanceRetryContext,
+    workflowRunId,
+  );
+  onStarted();
+  onNavigate(workflowRunId, recoveryGuidanceRetry);
+}
+
+function RunWorkflowForm({
+  workflowParameters,
+  initialValues,
+  initialSettings,
+}: Props) {
+  const { workflowPermanentId } = useParams();
+  const credentialGetter = useCredentialGetter();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const studioEnabled = useWorkflowStudioEnabled();
+  const queryClient = useQueryClient();
+  const postHog = usePostHog();
+  const apiCredential = useApiCredential();
+  const recoveryGuidanceRetryContext = getRecoveryGuidanceRetryContext(
+    location.state,
+  );
+  const { data: workflow } = useWorkflowQuery({ workflowPermanentId });
+  const { data: browserTypeOptions } = useBrowserTypeOptionsQuery();
+  const loginCredentialInputs = useMemo(
+    () => getLoginCredentialInputs({ workflow, workflowParameters }),
+    [workflow, workflowParameters],
+  );
+  const { data: credentials = [] } = useCredentialsQuery({ page_size: 100 });
+  const credentialNamesById = useMemo(
+    () =>
+      new Map(
+        credentials.map((credential) => [
+          credential.credential_id,
+          credential.name,
+        ]),
+      ),
+    [credentials],
+  );
+  const loginCredentialParameterKeys = useMemo(
+    () => new Set(loginCredentialInputs.map((input) => input.parameter.key)),
+    [loginCredentialInputs],
+  );
+  const visibleWorkflowParameters = useMemo(
+    () =>
+      workflowParameters.filter(
+        (parameter) => !loginCredentialParameterKeys.has(parameter.key),
+      ),
+    [loginCredentialParameterKeys, workflowParameters],
+  );
+  const showGenericInputs =
+    visibleWorkflowParameters.length > 0 || loginCredentialInputs.length === 0;
+
+  // Validate login blocks have credentials selected
+  const loginBlocksWithoutCredentials = useMemo(
+    () => validateWorkflowForRun(workflow),
+    [workflow],
+  );
+  const hasLoginBlockValidationError = loginBlocksWithoutCredentials.length > 0;
+  // Mirrors the backend, which fails a run whose top-level block list is empty.
+  const hasNoBlocks = workflow?.workflow_definition.blocks.length === 0;
+  const onboarding = useOnboardingStateOptional();
+  const credentialFallbackRetryEnabled =
+    useFeatureFlag(CREDENTIAL_FALLBACK_RETRY_FLAG) ?? false;
+  const onboardingFlagVariant = useFeatureFlagVariantKey(EXPERIMENT.flagKey);
+  const browserMemoryEnabled = useFeatureFlag("browser_memory_v1");
+  const onboardingLoading = onboarding != null && onboarding.isLoading;
+  // Gate on the rollout arm so a 0% rollout / rollback restores the
+  // pre-onboarding login-block alert instead of the credential prompt.
+  const isActivation = isActivationRun(onboardingFlagVariant, onboarding);
+  const showDestructiveLoginAlert =
+    hasLoginBlockValidationError && !isActivation && !onboardingLoading;
+
+  const blockingParameterTypes = new Set([
+    "boolean",
+    "integer",
+    "float",
+    "file_url",
+    "json",
+  ]);
+
+  const form = useForm<RunWorkflowFormType>({
+    mode: "onTouched",
+    reValidateMode: "onChange",
+    defaultValues: {
+      ...initialValues,
+      webhookCallbackUrl: initialSettings.webhookCallbackUrl,
+      proxyLocation: initialSettings.proxyLocation ?? ProxyLocation.Residential,
+      browserSessionId: null,
+      reuseBrowserSession: null,
+      browserProfileId: initialSettings.browserProfileId ?? null,
+      startFreshBrowser: false,
+      cdpAddress: initialSettings.cdpAddress,
+      maxScreenshotScrolls: initialSettings.maxScreenshotScrolls,
+      extraHttpHeaders: initialSettings.extraHttpHeaders
+        ? JSON.stringify(initialSettings.extraHttpHeaders)
+        : null,
+      cdpConnectHeaders: initialSettings.cdpConnectHeaders
+        ? JSON.stringify(initialSettings.cdpConnectHeaders)
+        : null,
+      runWith: deriveRunWith(workflow, initialSettings.runWith),
+      [RESERVED_BROWSER_TYPE_FIELD]: initialSettings.browserType ?? null,
+      aiFallback: workflow?.ai_fallback ?? true,
+    },
+  });
+
+  const formErrors = form.formState.errors;
+  // start_fresh and a picked profile override are contradictory (the backend
+  // rejects the pair), so keep them mutually exclusive in the form.
+  const overrideProfilePicked = isOverrideProfilePicked(
+    form.watch("browserProfileId"),
+    workflow?.browser_profile_key,
+    browserMemoryEnabled,
+  );
+  const explicitBrowserSessionPicked = Boolean(
+    form.watch("browserSessionId")?.trim(),
+  );
+  const browserTypeDisabled = browserTypeSelectionDisabled({
+    browserSessionId: form.watch("browserSessionId"),
+    browserAddress: form.watch("cdpAddress"),
+  });
+  const hasBlockingParameterError = workflowParameters.some(
+    (param) =>
+      blockingParameterTypes.has(param.workflow_parameter_type) &&
+      formErrors[param.key],
+  );
+
+  const runWorkflowMutation = useMutation({
+    mutationKey: ["runWorkflow"],
+    mutationFn: async (values: RunWorkflowFormType) => {
+      const client = await getClient(credentialGetter);
+      const body = getRunWorkflowRequestBody(
+        values,
+        workflowParameters,
+        workflow?.browser_profile_key,
+        browserMemoryEnabled,
+      );
+      return client.post<
+        RunWorkflowRequestBody,
+        { data: { workflow_run_id: string } }
+      >(`/workflows/${workflowPermanentId}/run`, body);
+    },
+    onSuccess: (response) => {
+      postHog.capture("workflow.run.started", {
+        org_id: workflow?.organization_id,
+        workflow_permanent_id: workflowPermanentId,
+      });
+      handleRunWorkflowSuccess(
+        response.data?.workflow_run_id,
+        recoveryGuidanceRetryContext,
+        {
+          onStarted: () => {
+            toast({
+              variant: "success",
+              title: "Agent run started",
+              description: "The agent run has been started successfully",
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["workflowRuns"],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["runs"],
+            });
+          },
+          onNavigate: (workflowRunId, recoveryGuidanceRetry) => {
+            const runPath = `/runs/${workflowRunId}`;
+            if (recoveryGuidanceRetry) {
+              navigate(runPath, {
+                state: { recoveryGuidanceRetry },
+              });
+            } else {
+              navigate(runPath);
+            }
+          },
+        },
+      );
+    },
+    onError: (error: AxiosError) => {
+      const detail = (error.response?.data as { detail?: string })?.detail;
+      toast({
+        variant: "destructive",
+        title: "Failed to start agent run",
+        description: detail ?? error.message,
+      });
+    },
+  });
+
+  const [runParameters, setRunParameters] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const rawRunParametersRef = useRef<Record<string, unknown> | null>(null);
+  const [cacheKeyValue, setCacheKeyValue] = useState<string>("");
+  const [isFormReset, setIsFormReset] = useState(false);
+  const cacheKey = workflow?.cache_key ?? "default";
+
+  useEffect(() => {
+    if (!runParameters) {
+      setCacheKeyValue("");
+      return;
+    }
+
+    const ckv = constructCacheKeyValueFromParameters({
+      codeKey: cacheKey,
+      parameters: runParameters,
+    });
+
+    setCacheKeyValue(ckv);
+  }, [cacheKey, runParameters]);
+
+  const { data: blockScripts } = useBlockScriptsQuery({
+    cacheKey,
+    cacheKeyValue,
+    workflowPermanentId,
+    status: "published",
+  });
+
+  const [hasCode, setHasCode] = useState(false);
+
+  useEffect(() => {
+    setHasCode(
+      Object.keys(blockScripts?.blocks ?? {}).length > 0 ||
+        Boolean(blockScripts?.main_script),
+    );
+  }, [blockScripts]);
+
+  // Watch form changes and update run parameters without triggering validation
+  useEffect(() => {
+    const subscription = form.watch((values) => {
+      onChange(values as RunWorkflowFormType);
+    });
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reset form with initial values after all fields are registered
+  useEffect(() => {
+    form.reset({
+      ...initialValues,
+      webhookCallbackUrl: initialSettings.webhookCallbackUrl,
+      proxyLocation: initialSettings.proxyLocation ?? ProxyLocation.Residential,
+      browserSessionId: null,
+      reuseBrowserSession: null,
+      browserProfileId: initialSettings.browserProfileId ?? null,
+      startFreshBrowser: false,
+      cdpAddress: initialSettings.cdpAddress,
+      maxScreenshotScrolls: initialSettings.maxScreenshotScrolls,
+      extraHttpHeaders: initialSettings.extraHttpHeaders
+        ? JSON.stringify(initialSettings.extraHttpHeaders)
+        : null,
+      cdpConnectHeaders: initialSettings.cdpConnectHeaders
+        ? JSON.stringify(initialSettings.cdpConnectHeaders)
+        : null,
+      runWith: deriveRunWith(workflow, initialSettings.runWith),
+      [RESERVED_BROWSER_TYPE_FIELD]: initialSettings.browserType ?? null,
+      aiFallback: workflow?.ai_fallback ?? true,
+    });
+    setIsFormReset(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Trigger validation after form is reset and re-rendered
+  useEffect(() => {
+    if (isFormReset) {
+      form.trigger();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFormReset]);
+
+  // if we're coming from debugger, block scripts may already be cached; let's ensure we bust it
+  // on mount
+  useEffect(() => {
+    queryClient.invalidateQueries({
+      queryKey: ["block-scripts"],
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function onSubmit(values: RunWorkflowFormType) {
+    const {
+      webhookCallbackUrl,
+      proxyLocation,
+      browserSessionId,
+      reuseBrowserSession,
+      browserProfileId,
+      startFreshBrowser,
+      maxScreenshotScrolls,
+      extraHttpHeaders,
+      cdpConnectHeaders,
+      cdpAddress,
+      runWith,
+      aiFallback,
+      ...rest
+    } = values;
+
+    // Keep the reserved browser-type setting separate from `parameters` so the request builder can
+    // extract it; a workflow param literally named `browserType` stays in `parameters`.
+    const { browserType, rest: parameters } = extractBrowserTypeSetting(rest);
+
+    const parsedParameters = parseValuesForWorkflowRun(
+      parameters,
+      workflowParameters,
+    );
+    runWorkflowMutation.mutate({
+      ...parsedParameters,
+      webhookCallbackUrl,
+      proxyLocation,
+      browserSessionId,
+      reuseBrowserSession,
+      browserProfileId,
+      startFreshBrowser,
+      maxScreenshotScrolls,
+      extraHttpHeaders,
+      cdpConnectHeaders,
+      cdpAddress,
+      runWith,
+      [RESERVED_BROWSER_TYPE_FIELD]: browserType,
+      aiFallback,
+    });
+  }
+
+  function onChange(values: RunWorkflowFormType) {
+    const parameters = omit(values, [
+      "webhookCallbackUrl",
+      "proxyLocation",
+      "browserSessionId",
+      "reuseBrowserSession",
+      "browserProfileId",
+      "startFreshBrowser",
+      "maxScreenshotScrolls",
+      "extraHttpHeaders",
+      "cdpConnectHeaders",
+      "cdpAddress",
+      "runWith",
+      "aiFallback",
+      RESERVED_BROWSER_TYPE_FIELD,
+    ]);
+
+    // A settings-only edit still fires this subscription, and a fresh object
+    // would re-render the whole form (every CodeMirror editor in it included)
+    // for a parameter set that did not move.
+    if (isSameRunParameters(rawRunParametersRef.current, parameters)) {
+      return;
+    }
+    rawRunParametersRef.current = parameters;
+
+    setRunParameters(parseValuesForWorkflowRun(parameters, workflowParameters));
+  }
+
+  const handleInvalid = (errors: FieldErrors<RunWorkflowFormType>) => {
+    const hasBlockingErrors = workflowParameters.some(
+      (param) =>
+        blockingParameterTypes.has(param.workflow_parameter_type) &&
+        errors[param.key],
+    );
+
+    if (!hasBlockingErrors) {
+      onSubmit(form.getValues());
+    }
+  };
+
+  if (!workflowPermanentId || !workflow) {
+    return <div>Invalid agent</div>;
+  }
+
+  return (
+    <Form {...form}>
+      <form
+        onSubmit={form.handleSubmit(onSubmit, handleInvalid)}
+        className="space-y-8"
+      >
+        <header className="flex items-end justify-between gap-4">
+          <div className="space-y-5">
+            <h1 className="text-3xl">
+              Inputs{workflow?.title ? ` - ${workflow.title}` : ""}
+            </h1>
+            <h2 className="text-lg text-muted-foreground">
+              Fill the placeholder values that you have linked throughout your
+              agent.
+            </h2>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <CopyApiCommandDropdown
+              getOptions={() => {
+                const values = form.getValues();
+                const body = getRunWorkflowRequestBody(
+                  values,
+                  workflowParameters,
+                  workflow?.browser_profile_key,
+                  browserMemoryEnabled,
+                );
+                const transformedBody = transformToWorkflowRunRequest(
+                  body,
+                  workflowPermanentId,
+                );
+
+                // Build headers - x-max-steps-override is optional and can be added manually if needed
+                const headers: Record<string, string> = {
+                  "Content-Type": "application/json",
+                  "x-api-key": apiCredential ?? "<your-api-key>",
+                };
+
+                return {
+                  method: "POST",
+                  url: `${runsApiBaseUrl}/run/workflows`,
+                  body: transformedBody,
+                  headers,
+                } satisfies ApiCommandOptions;
+              }}
+            />
+            <Button
+              type="submit"
+              disabled={
+                runWorkflowMutation.isPending ||
+                hasLoginBlockValidationError ||
+                hasBlockingParameterError ||
+                hasNoBlocks
+              }
+            >
+              {runWorkflowMutation.isPending && (
+                <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              {!runWorkflowMutation.isPending && (
+                <PlayIcon className="mr-2 h-4 w-4" />
+              )}
+              Run agent
+            </Button>
+          </div>
+        </header>
+
+        {hasNoBlocks && (
+          <Alert>
+            <ExclamationTriangleIcon className="h-4 w-4" />
+            <AlertTitle>This agent has no blocks yet</AlertTitle>
+            <AlertDescription>
+              <Link
+                to={workflowEditorPath(workflowPermanentId, studioEnabled)}
+                className="underline hover:no-underline"
+              >
+                Add a block
+              </Link>{" "}
+              or ask Copilot to build the agent, then run it.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {hasLoginBlockValidationError && isActivation && (
+          <CredentialSetupPrompt
+            workflowPermanentId={workflowPermanentId}
+            blocksMissingCredentials={loginBlocksWithoutCredentials}
+          />
+        )}
+
+        {showDestructiveLoginAlert && (
+          <Alert variant="destructive">
+            <ExclamationTriangleIcon className="h-4 w-4" />
+            <AlertTitle>Cannot run agent</AlertTitle>
+            <AlertDescription>
+              <p>
+                The following login block(s) need a credential selected before
+                running:
+              </p>
+              <ul className="mt-2 list-inside list-disc">
+                {loginBlocksWithoutCredentials.map((block) => (
+                  <li key={block.label}>{block.label}</li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                <Link
+                  to={workflowEditorPath(workflowPermanentId, studioEnabled)}
+                  className="underline hover:no-underline"
+                >
+                  Go to the editor
+                </Link>{" "}
+                to configure credentials for these blocks.
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {loginCredentialInputs.length > 0 && (
+          <div className="space-y-8 rounded-lg bg-slate-elevation3 px-6 py-5">
+            <header>
+              <h1 className="text-lg">Login credentials</h1>
+            </header>
+            {loginCredentialInputs.map((input) => {
+              const {
+                parameter,
+                loginBlockLabels,
+                fallbackCredentialIds,
+                fallbackTrigger,
+              } = input;
+              const { title, description } = getLoginCredentialDisplayText(
+                parameter,
+                loginBlockLabels,
+              );
+              // Only surface fallbacks (and the "retries automatically" promise) for orgs in the
+              // rollout; the backend retry gate is keyed on the same flag.
+              const hasFallbacks =
+                credentialFallbackRetryEnabled &&
+                fallbackCredentialIds.length > 0;
+              const displayedFallbackCredentialIds = hasFallbacks
+                ? fallbackCredentialIds
+                : [];
+
+              if (
+                parameter.parameter_type === WorkflowParameterTypes.Workflow
+              ) {
+                return (
+                  <FormField
+                    key={parameter.key}
+                    control={form.control}
+                    name={parameter.key}
+                    rules={{
+                      validate: (value) => {
+                        if (
+                          value === null ||
+                          value === undefined ||
+                          value === ""
+                        ) {
+                          if (isAtWillCredentialParameter(parameter)) {
+                            return;
+                          }
+                          return "Warning: you left this field empty";
+                        }
+                      },
+                    }}
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex gap-16">
+                          <FormLabel className="!text-foreground">
+                            <div className="w-72">
+                              <div className="flex items-center gap-2 text-lg">
+                                {title}
+                                <span className="text-sm text-muted-foreground">
+                                  credential
+                                </span>
+                              </div>
+                              <h2 className="text-sm text-muted-foreground">
+                                {description}
+                              </h2>
+                            </div>
+                          </FormLabel>
+                          <div className="w-full space-y-2">
+                            <FormControl>
+                              <WorkflowParameterInput
+                                type={parameter.workflow_parameter_type}
+                                value={field.value}
+                                onChange={(value) => {
+                                  field.onChange(value);
+                                  form.trigger(parameter.key);
+                                }}
+                              />
+                            </FormControl>
+                            {form.formState.errors[parameter.key] && (
+                              <div className="text-xs text-warning">
+                                {form.formState.errors[parameter.key]?.message}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                );
+              }
+
+              const credentialIds = getRotatingCredentialIds(parameter);
+
+              if (credentialIds.length <= 1) {
+                const primaryCredentialId =
+                  credentialIds[0] ?? parameter.credential_id;
+                return (
+                  <div key={parameter.key} className="flex gap-16">
+                    <div className="w-72 shrink-0 text-slate-50">
+                      <div className="flex items-center gap-2 text-lg">
+                        {title}
+                        <span className="text-sm text-slate-400">
+                          credential
+                        </span>
+                      </div>
+                      <h2 className="text-sm text-slate-400">{description}</h2>
+                    </div>
+                    <div className="w-full space-y-2">
+                      <div className="flex min-w-0 items-center gap-2 rounded border border-slate-700/60 bg-slate-950/40 px-2 py-1.5 text-xs text-slate-200">
+                        <span className="min-w-0 truncate">
+                          {credentialNamesById.get(primaryCredentialId) ??
+                            primaryCredentialId}
+                        </span>
+                        {hasFallbacks && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 text-xs font-normal"
+                          >
+                            Primary
+                          </Badge>
+                        )}
+                      </div>
+                      <FallbackCredentialList
+                        fallbackCredentialIds={displayedFallbackCredentialIds}
+                        fallbackTrigger={fallbackTrigger}
+                        credentialNamesById={credentialNamesById}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <FormField
+                  key={parameter.key}
+                  control={form.control}
+                  name={parameter.key}
+                  render={({ field }) => (
+                    <RotatingCredentialField
+                      parameter={parameter as CredentialParameter}
+                      value={field.value}
+                      onChange={(value) => {
+                        field.onChange(value);
+                        form.trigger(parameter.key);
+                      }}
+                      credentialNamesById={credentialNamesById}
+                      title={title}
+                      description={description}
+                      showPrimaryBadge={hasFallbacks}
+                      fallbackContent={
+                        <FallbackCredentialList
+                          fallbackCredentialIds={displayedFallbackCredentialIds}
+                          fallbackTrigger={fallbackTrigger}
+                          credentialNamesById={credentialNamesById}
+                        />
+                      }
+                    />
+                  )}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {showGenericInputs && (
+          <div className="space-y-8 rounded-lg bg-slate-elevation3 px-6 py-5">
+            <header>
+              <h1 className="text-lg">
+                {loginCredentialInputs.length > 0 ? "Other inputs" : "Inputs"}
+              </h1>
+            </header>
+            {visibleWorkflowParameters?.map((parameter) => {
+              return (
+                <FormField
+                  key={parameter.key}
+                  control={form.control}
+                  name={parameter.key}
+                  rules={{
+                    validate: (value) => {
+                      if (parameter.workflow_parameter_type === "json") {
+                        return validateJsonWorkflowParameterValue(value);
+                      }
+
+                      // Boolean parameters are required - show error and block submission
+                      if (parameter.workflow_parameter_type === "boolean") {
+                        if (value === null || value === undefined) {
+                          return "This field is required";
+                        }
+                        return;
+                      }
+
+                      // Numeric parameters are required - show error and block submission
+                      if (
+                        parameter.workflow_parameter_type === "integer" ||
+                        parameter.workflow_parameter_type === "float"
+                      ) {
+                        if (
+                          value === null ||
+                          value === undefined ||
+                          Number.isNaN(value)
+                        ) {
+                          return "This field is required";
+                        }
+                        return;
+                      }
+
+                      if (parameter.workflow_parameter_type === "file_url") {
+                        if (
+                          value === null ||
+                          value === undefined ||
+                          (typeof value === "string" && value.trim() === "") ||
+                          (typeof value === "object" &&
+                            value !== null &&
+                            "s3uri" in value &&
+                            !value.s3uri)
+                        ) {
+                          return "This field is required";
+                        }
+                        return;
+                      }
+
+                      // An at-will credential (credential_id, no default) may be left
+                      // empty: the run proceeds without a credential.
+                      if (isAtWillCredentialParameter(parameter)) {
+                        return;
+                      }
+
+                      // For string parameters, show warning but don't block
+                      if (
+                        parameter.workflow_parameter_type === "string" &&
+                        (value === null || value === "")
+                      ) {
+                        return "Warning: you left this field empty";
+                      }
+
+                      // For all other non-boolean types, show warning but don't block
+                      if (value === null || value === undefined) {
+                        return "Warning: you left this field empty";
+                      }
+                    },
+                  }}
+                  render={({ field }) => {
+                    return (
+                      <FormItem>
+                        <div className="flex gap-16">
+                          <FormLabel className="!text-foreground">
+                            <div className="w-72">
+                              <div className="flex items-center gap-2 text-lg">
+                                {parameter.key}
+                                <span className="text-sm text-muted-foreground">
+                                  {getLabelForWorkflowParameterType(
+                                    parameter.workflow_parameter_type,
+                                  )}
+                                </span>
+                              </div>
+                              <h2 className="text-sm text-muted-foreground">
+                                {parameter.description}
+                              </h2>
+                            </div>
+                          </FormLabel>
+                          <div className="w-full space-y-2">
+                            <FormControl>
+                              <WorkflowParameterInput
+                                type={parameter.workflow_parameter_type}
+                                value={field.value}
+                                onChange={(value) => {
+                                  field.onChange(value);
+                                  form.trigger(parameter.key);
+                                }}
+                              />
+                            </FormControl>
+                            {form.formState.errors[parameter.key] && (
+                              <div
+                                className={`text-xs ${
+                                  parameter.workflow_parameter_type ===
+                                    "boolean" ||
+                                  parameter.workflow_parameter_type ===
+                                    "integer" ||
+                                  parameter.workflow_parameter_type ===
+                                    "float" ||
+                                  parameter.workflow_parameter_type ===
+                                    "file_url" ||
+                                  parameter.workflow_parameter_type === "json"
+                                    ? "text-destructive"
+                                    : "text-warning"
+                                }`}
+                              >
+                                {form.formState.errors[parameter.key]?.message}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </FormItem>
+                    );
+                  }}
+                />
+              );
+            })}
+            {visibleWorkflowParameters.length === 0 && (
+              <div>This agent doesn't have any inputs</div>
+            )}
+          </div>
+        )}
+
+        <div className="space-y-8 rounded-lg bg-slate-elevation3 px-6 py-5">
+          <header>
+            <h1 className="text-lg">Settings</h1>
+          </header>
+          <FormField
+            key="webhookCallbackUrl"
+            control={form.control}
+            name="webhookCallbackUrl"
+            rules={{
+              validate: (value) => {
+                if (value === null || value === "") {
+                  return;
+                }
+                if (typeof value !== "string") {
+                  return "Invalid URL";
+                }
+                const urlSchema = z.string().url({ message: "Invalid URL" });
+                const { success } = urlSchema.safeParse(value);
+                if (!success) {
+                  return "Invalid URL";
+                }
+              },
+            }}
+            render={({ field }) => {
+              return (
+                <FormItem>
+                  <div className="flex gap-16">
+                    <FormLabel>
+                      <div className="w-72">
+                        <div className="flex items-center gap-2 text-lg">
+                          Webhook Callback URL
+                        </div>
+                        <h2 className="text-sm text-muted-foreground">
+                          The URL of a webhook endpoint to send the details of
+                          the agent result.
+                        </h2>
+                      </div>
+                    </FormLabel>
+                    <div className="w-full space-y-2">
+                      <FormControl>
+                        <div className="flex flex-col gap-2">
+                          <Input
+                            className="w-full"
+                            {...field}
+                            placeholder="https://"
+                            value={
+                              field.value === null
+                                ? ""
+                                : (field.value as string)
+                            }
+                          />
+                          <TestWebhookDialog
+                            runType="workflow_run"
+                            runId={null}
+                            initialWebhookUrl={
+                              field.value === null
+                                ? undefined
+                                : (field.value as string)
+                            }
+                            trigger={
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="self-start"
+                                disabled={!field.value}
+                              >
+                                Test Webhook
+                              </Button>
+                            }
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </div>
+                  </div>
+                </FormItem>
+              );
+            }}
+          />
+          <FormField
+            key="proxyLocation"
+            control={form.control}
+            name="proxyLocation"
+            render={({ field }) => {
+              return (
+                <FormItem>
+                  <div className="flex gap-16">
+                    <FormLabel>
+                      <div className="w-72">
+                        <div className="flex items-center gap-2 text-lg">
+                          Proxy Location
+                        </div>
+                        <h2 className="text-sm text-muted-foreground">
+                          Route Skyvern through one of our available proxies.
+                        </h2>
+                      </div>
+                    </FormLabel>
+                    <div className="w-full space-y-2">
+                      <FormControl>
+                        <ProxySelector
+                          value={field.value}
+                          onChange={field.onChange}
+                          className="w-48"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </div>
+                  </div>
+                </FormItem>
+              );
+            }}
+          />
+          <FormField
+            key="runWith"
+            control={form.control}
+            name="runWith"
+            render={({ field }) => {
+              const descriptions: Record<string, ReactNode> = {
+                agent: hasCode ? (
+                  <span>
+                    Run this agent with AI. (Even though it has generated code.)
+                  </span>
+                ) : (
+                  <span>Run this agent with AI.</span>
+                ),
+                code: hasCode ? (
+                  <span>Run this agent with generated code.</span>
+                ) : (
+                  <span>
+                    Run this agent with generated code (after it is first
+                    generated).
+                  </span>
+                ),
+              };
+              return (
+                <FormItem>
+                  <div className="flex gap-16">
+                    <FormLabel>
+                      <div className="w-72">
+                        <div className="flex items-center gap-2 text-lg">
+                          Run With
+                        </div>
+                        <h2 className="text-sm text-muted-foreground">
+                          {descriptions[field.value] ?? descriptions.agent}
+                        </h2>
+                      </div>
+                    </FormLabel>
+                    <div className="w-full space-y-2">
+                      <FormControl>
+                        <Select
+                          value={field.value}
+                          onValueChange={(v) => field.onChange(v)}
+                        >
+                          <SelectTrigger className="w-48">
+                            <SelectValue placeholder="Run Method" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="agent">Skyvern Agent</SelectItem>
+                            <SelectItem value="code">Code</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                      <FormMessage />
+                    </div>
+                  </div>
+                </FormItem>
+              );
+            }}
+          />
+
+          <FormField
+            key="aiFallback"
+            control={form.control}
+            name="aiFallback"
+            render={({ field }) => {
+              return (
+                <FormItem>
+                  <div className="flex gap-16">
+                    <FormLabel>
+                      <div className="w-72">
+                        <div className="flex items-center gap-2 text-lg">
+                          AI Fallback (cached scripts)
+                        </div>
+                        <h2 className="text-sm text-muted-foreground">
+                          If the run fails when running with code, keep this on
+                          to have AI attempt to fix the issue and regenerate the
+                          code.
+                        </h2>
+                      </div>
+                    </FormLabel>
+                    <div className="w-full space-y-2">
+                      <FormControl>
+                        <Switch
+                          checked={field.value ?? true}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </div>
+                  </div>
+                </FormItem>
+              );
+            }}
+          />
+        </div>
+
+        <div className="space-y-8 rounded-lg bg-slate-elevation3 px-6 py-5">
+          <Accordion type="single" collapsible>
+            <AccordionItem value="advanced" className="border-b-0">
+              <AccordionTrigger className="py-0">
+                <header>
+                  <h1 className="text-lg">Advanced Settings</h1>
+                </header>
+              </AccordionTrigger>
+              <AccordionContent className="pl-6 pr-1 pt-1">
+                <div className="space-y-8 pt-5">
+                  {hasBrowserTypeOptions(browserTypeOptions) ? (
+                    <FormField
+                      key={RESERVED_BROWSER_TYPE_FIELD}
+                      control={form.control}
+                      name={RESERVED_BROWSER_TYPE_FIELD}
+                      render={({ field }) => {
+                        const current =
+                          field.value === null || field.value === undefined
+                            ? "default"
+                            : (field.value as string);
+                        return (
+                          <FormItem>
+                            <div className="flex gap-16">
+                              <FormLabel>
+                                <div className="w-72">
+                                  <div className="flex items-center gap-2 text-lg">
+                                    Browser Type
+                                  </div>
+                                  <h2 className="text-sm text-muted-foreground">
+                                    Browser engine for this run, overriding the
+                                    agent's setting. Default keeps the agent's
+                                    setting. Google Chrome does not support the
+                                    captcha-solver extension.
+                                  </h2>
+                                </div>
+                              </FormLabel>
+                              <div className="w-full space-y-2">
+                                <FormControl>
+                                  <Select
+                                    value={current}
+                                    onValueChange={(v) =>
+                                      field.onChange(v === "default" ? null : v)
+                                    }
+                                    disabled={browserTypeDisabled}
+                                  >
+                                    <SelectTrigger className="w-48">
+                                      <SelectValue placeholder="Browser Type" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="default">
+                                        Default
+                                      </SelectItem>
+                                      {(browserTypeOptions ?? []).map(
+                                        (option) => (
+                                          <SelectItem
+                                            key={option.value}
+                                            value={option.value}
+                                          >
+                                            {option.label}
+                                          </SelectItem>
+                                        ),
+                                      )}
+                                    </SelectContent>
+                                  </Select>
+                                </FormControl>
+                                {browserTypeDisabled ? (
+                                  <p className="text-sm text-muted-foreground">
+                                    An attached browser session or remote
+                                    address provides its own engine, so the
+                                    browser type can&apos;t be set for this run.
+                                  </p>
+                                ) : null}
+                                <FormMessage />
+                              </div>
+                            </div>
+                          </FormItem>
+                        );
+                      }}
+                    />
+                  ) : null}
+                  <FormField
+                    key="browserSessionId"
+                    control={form.control}
+                    name="browserSessionId"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  Browser Session ID
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  Use a persistent browser session to maintain
+                                  state and enable browser interaction.
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="pbs_xxx"
+                                  value={
+                                    field.value === null
+                                      ? ""
+                                      : (field.value as string)
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="reuseBrowserSession"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex gap-16">
+                          <FormLabel>
+                            <div className="w-72">
+                              <div className="flex items-center gap-2 text-lg">
+                                Reuse browser session
+                              </div>
+                              <h2 className="text-sm text-muted-foreground">
+                                Override whether this run continues in the
+                                workflow&apos;s live browser.
+                              </h2>
+                            </div>
+                          </FormLabel>
+                          <div className="w-full space-y-2">
+                            <FormControl>
+                              <Select
+                                value={
+                                  field.value == null
+                                    ? "workflow-default"
+                                    : field.value
+                                      ? "on"
+                                      : "off"
+                                }
+                                onValueChange={(value) =>
+                                  field.onChange(
+                                    value === "workflow-default"
+                                      ? null
+                                      : value === "on",
+                                  )
+                                }
+                                disabled={explicitBrowserSessionPicked}
+                              >
+                                <SelectTrigger
+                                  className="w-64"
+                                  aria-label="Reuse browser session override"
+                                >
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="workflow-default">
+                                    Workflow default (currently{" "}
+                                    {initialSettings.reuseBrowserSession
+                                      ? "on"
+                                      : "off"}
+                                    )
+                                  </SelectItem>
+                                  <SelectItem value="on">On</SelectItem>
+                                  <SelectItem value="off">Off</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </FormControl>
+                            <FormMessage />
+                          </div>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="browserProfileId"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  Browser Profile
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  Load a saved browser profile to reuse cookies,
+                                  storage, and signed-in state for this run.
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                {browserMemoryEnabled ? (
+                                  workflow?.browser_profile_key ? (
+                                    // F8: a per-input agent has no single profile to
+                                    // override — show the state read-only, not a picker.
+                                    <div className="rounded-md border border-input px-3 py-2 text-sm text-muted-foreground">
+                                      This agent keeps one profile per input
+                                      value — a one-run override doesn’t apply
+                                      here.
+                                    </div>
+                                  ) : (
+                                    <BrowserProfileControl
+                                      mode="dropdown"
+                                      profileId={field.value}
+                                      onProfileChange={(id) => {
+                                        field.onChange(id);
+                                        // Picking an override and starting fresh are
+                                        // mutually exclusive; a real pick clears fresh.
+                                        if (id) {
+                                          form.setValue(
+                                            "startFreshBrowser",
+                                            false,
+                                          );
+                                        }
+                                      }}
+                                      codeValue=""
+                                      onCodeChange={() => {}}
+                                      codeMode="none"
+                                      restingCaption="Resolved from agent settings"
+                                    />
+                                  )
+                                ) : (
+                                  <BrowserProfileSelector
+                                    value={field.value}
+                                    onChange={field.onChange}
+                                  />
+                                )}
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                  {browserMemoryEnabled && (
+                    <FormField
+                      control={form.control}
+                      name="startFreshBrowser"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormControl>
+                            {overrideProfilePicked ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <label className="flex w-fit cursor-not-allowed items-center gap-2 text-sm opacity-50">
+                                    <Checkbox checked={false} disabled />
+                                    Start fresh for this run
+                                  </label>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  This run starts from the picked profile —
+                                  clear it to start fresh.
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+                                <Checkbox
+                                  checked={Boolean(field.value)}
+                                  onCheckedChange={(v) =>
+                                    field.onChange(v === true)
+                                  }
+                                />
+                                Start fresh for this run
+                              </label>
+                            )}
+                          </FormControl>
+                          <p className="ml-6 text-xs text-muted-foreground">
+                            Ignores saved profiles this run — nothing is read or
+                            written.
+                          </p>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+                  <FormField
+                    key="cdpAddress"
+                    control={form.control}
+                    name="cdpAddress"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  Browser Address
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  The address of the Browser server to use for
+                                  the agent run.
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  placeholder="http://127.0.0.1:9222"
+                                  value={
+                                    field.value === null
+                                      ? ""
+                                      : (field.value as string)
+                                  }
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                  <FormField
+                    key="extraHttpHeaders"
+                    control={form.control}
+                    name="extraHttpHeaders"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  Extra HTTP Headers
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  Specify some self defined HTTP requests
+                                  headers in Dict format
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                <KeyValueInput
+                                  value={field.value ?? ""}
+                                  onChange={(val) => field.onChange(val)}
+                                  addButtonText="Add Header"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                  <FormField
+                    key="cdpConnectHeaders"
+                    control={form.control}
+                    name="cdpConnectHeaders"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  CDP Connect Headers
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  Headers attached only to the CDP WebSocket
+                                  handshake when connecting to a remote browser
+                                  (e.g. auth for the CDP endpoint). Not
+                                  forwarded to target sites.
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                <KeyValueInput
+                                  value={field.value ?? ""}
+                                  onChange={(val) => field.onChange(val)}
+                                  addButtonText="Add Header"
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                  <FormField
+                    key="maxScreenshotScrolls"
+                    control={form.control}
+                    name="maxScreenshotScrolls"
+                    render={({ field }) => {
+                      return (
+                        <FormItem>
+                          <div className="flex gap-16">
+                            <FormLabel>
+                              <div className="w-72">
+                                <div className="flex items-center gap-2 text-lg">
+                                  Max Screenshot Scrolls
+                                </div>
+                                <h2 className="text-sm text-muted-foreground">
+                                  {`The maximum number of scrolls for the post action screenshot. Default is ${MAX_SCREENSHOT_SCROLLS_DEFAULT}. If it's set to 0, it will take the current viewport screenshot.`}
+                                </h2>
+                              </div>
+                            </FormLabel>
+                            <div className="w-full space-y-2">
+                              <FormControl>
+                                <Input
+                                  {...field}
+                                  type="number"
+                                  min={0}
+                                  value={field.value ?? ""}
+                                  placeholder={`Default: ${MAX_SCREENSHOT_SCROLLS_DEFAULT}`}
+                                  onChange={(event) => {
+                                    const value =
+                                      event.target.value === ""
+                                        ? null
+                                        : Number(event.target.value);
+                                    field.onChange(value);
+                                  }}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </div>
+                          </div>
+                        </FormItem>
+                      );
+                    }}
+                  />
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </form>
+    </Form>
+  );
+}
+
+/* eslint-disable react-refresh/only-export-components */
+export {
+  handleRunWorkflowSuccess,
+  recordRecoveryGuidanceRetryCreated,
+  RunWorkflowForm,
+};
+/* eslint-enable react-refresh/only-export-components */

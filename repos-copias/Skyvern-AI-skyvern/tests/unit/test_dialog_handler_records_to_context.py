@@ -1,0 +1,546 @@
+"""Tests for dialog-handler recording into SkyvernContext."""
+
+import ast
+import inspect
+import textwrap
+from collections.abc import Generator
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.core.skyvern_context import SkyvernContext
+from skyvern.webeye import dialog_handler
+
+
+def _make_dialog(dialog_type: str, message: str, default_value: str = "") -> MagicMock:
+    dialog = MagicMock()
+    dialog.type = dialog_type
+    dialog.message = message
+    dialog.default_value = default_value
+    dialog.accept = AsyncMock()
+    dialog.dismiss = AsyncMock()
+    return dialog
+
+
+@pytest.fixture
+def isolated_context() -> Generator[SkyvernContext, None, None]:
+    ctx = SkyvernContext(
+        organization_id="o_test",
+        task_id="tsk_test",
+        workflow_run_id="wr_test",
+    )
+    skyvern_context.set(ctx)
+    try:
+        yield ctx
+    finally:
+        skyvern_context.reset()
+
+
+@pytest.mark.asyncio
+async def test_alert_records_into_context_and_auto_accepts(isolated_context: SkyvernContext) -> None:
+    dialog = _make_dialog("alert", "The value of '47' is invalid.")
+
+    await dialog_handler._handle_dialog(dialog)
+
+    dialog.accept.assert_awaited_once()
+    assert isolated_context.recent_dialog_messages == [
+        {"type": "alert", "message": "The value of '47' is invalid.", "count": 1}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_repeated_alerts_dedupe_with_count(isolated_context: SkyvernContext) -> None:
+    dialog = _make_dialog("alert", "phone invalid")
+
+    for _ in range(5):
+        await dialog_handler._handle_dialog(dialog)
+
+    assert len(isolated_context.recent_dialog_messages) == 1
+    assert isolated_context.recent_dialog_messages[0]["count"] == 5
+
+
+@pytest.mark.asyncio
+async def test_no_context_does_not_raise() -> None:
+    skyvern_context.reset()
+    dialog = _make_dialog("alert", "something")
+    await dialog_handler._handle_dialog(dialog)
+    dialog.accept.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_record_failure_does_not_break_dialog_acceptance(
+    isolated_context: SkyvernContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_a: object, **_kw: object) -> None:
+        raise RuntimeError("simulated record failure")
+
+    monkeypatch.setattr(SkyvernContext, "record_dialog_message", boom)
+    dialog = _make_dialog("alert", "anything")
+
+    await dialog_handler._handle_dialog(dialog)
+
+    dialog.accept.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_non_alert_dialogs_are_not_recorded(
+    isolated_context: SkyvernContext,
+) -> None:
+    isolated_context.navigation_goal = "test"
+
+    await dialog_handler._handle_dialog(_make_dialog("confirm", "Are you sure?"))
+    await dialog_handler._handle_dialog(_make_dialog("prompt", "Enter your name:"))
+    await dialog_handler._handle_dialog(_make_dialog("beforeunload", "Changes may not be saved."))
+
+    assert isolated_context.recent_dialog_messages == []
+
+
+class TestAcceptancePreflight:
+    """SKY-12875: every confirm/prompt ACCEPT routes through one choke point that runs the
+    observe-only acceptance preflight with the registration-time page. The decision is discarded —
+    the response must be identical whether the policy observes or not."""
+
+    @pytest.fixture
+    def preflight_spy(self, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+        calls: list[dict] = []
+
+        def spy(page: object, *, dialog_type: str, response: str, site: str) -> None:
+            calls.append({"page": page, "dialog_type": dialog_type, "response": response, "site": site})
+
+        monkeypatch.setattr(dialog_handler, "preflight_dialog_response", spy)
+        return calls
+
+    @pytest.mark.asyncio
+    async def test_auto_accepted_confirm_is_preflighted_with_the_registered_page(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict]
+    ) -> None:
+        page = MagicMock()
+        dialog = _make_dialog("confirm", "Are you sure?")
+        await dialog_handler._handle_dialog(dialog, page=page)
+        dialog.accept.assert_awaited_once()
+        assert preflight_spy == [
+            {"page": page, "dialog_type": "confirm", "response": "accept", "site": "dialog_handler"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_llm_accepted_prompt_is_preflighted(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(dialog_handler.prompt_engine, "load_prompt", lambda *a, **k: "prompt")
+        monkeypatch.setattr(
+            dialog_handler.app,
+            "SECONDARY_LLM_API_HANDLER",
+            AsyncMock(return_value={"action": "accept", "prompt_text": "Jamie"}),
+        )
+        dialog = _make_dialog("prompt", "Enter your name:")
+        await dialog_handler._handle_dialog(dialog, page=MagicMock())
+        dialog.accept.assert_awaited_once_with("Jamie")
+        assert [call["dialog_type"] for call in preflight_spy] == ["prompt"]
+
+    @pytest.mark.asyncio
+    async def test_a_dismissal_is_preflighted_too(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(dialog_handler.prompt_engine, "load_prompt", lambda *a, **k: "prompt")
+        monkeypatch.setattr(
+            dialog_handler.app,
+            "SECONDARY_LLM_API_HANDLER",
+            AsyncMock(return_value={"action": "dismiss"}),
+        )
+        dialog = _make_dialog("confirm", "Are you sure?")
+        await dialog_handler._handle_dialog(dialog, page=MagicMock())
+        dialog.dismiss.assert_awaited_once()
+        dialog.accept.assert_not_awaited()
+        # THE CHOICE IS THE CAPABILITY: a page can branch on dismiss (probed in real Chromium
+        # firing an exfil POST specifically on it), so dismissal is evaluated like acceptance.
+        assert [(call["dialog_type"], call["response"]) for call in preflight_spy] == [("confirm", "dismiss")]
+
+    @pytest.mark.asyncio
+    async def test_the_llm_error_fallback_accept_is_still_preflighted(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(dialog_handler.prompt_engine, "load_prompt", lambda *a, **k: "prompt")
+        monkeypatch.setattr(
+            dialog_handler.app, "SECONDARY_LLM_API_HANDLER", AsyncMock(side_effect=RuntimeError("llm down"))
+        )
+        dialog = _make_dialog("confirm", "Proceed?")
+        await dialog_handler._handle_dialog(dialog, page=MagicMock())
+        dialog.accept.assert_awaited_once()
+        assert [call["dialog_type"] for call in preflight_spy] == ["confirm"]
+
+    @pytest.mark.asyncio
+    async def test_alert_accepts_are_not_preflighted_but_beforeunload_accepts_are(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict]
+    ) -> None:
+        # Alert has one possible response — no choice, no capability. Accepting a beforeunload
+        # commits a pending navigation, so it routes through the choke point.
+        alert = _make_dialog("alert", "message")
+        await dialog_handler._handle_dialog(alert, page=MagicMock())
+        alert.accept.assert_awaited_once()
+        assert preflight_spy == []
+
+        beforeunload = _make_dialog("beforeunload", "message")
+        await dialog_handler._handle_dialog(beforeunload, page=MagicMock())
+        beforeunload.accept.assert_awaited_once()
+        assert [(call["dialog_type"], call["response"]) for call in preflight_spy] == [("beforeunload", "accept")]
+
+    @pytest.mark.asyncio
+    async def test_the_response_is_identical_with_the_real_preflight_observing(
+        self, isolated_context: SkyvernContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Parity with the REAL function, not a spy, on an ENROLLED run whose decision is a real
+        # DENIED (unenrolled parity is vacuous: NOT_ENROLLED cannot tempt a handler into
+        # branching). The accept calls must match exactly between disabled and observe modes, or
+        # observe mode changed a dialog's fate.
+        from skyvern.config import settings
+        from skyvern.forge.sdk.browser_action_policy import PolicyOutcome, declare_policy
+        from skyvern.forge.sdk.browser_action_preflight import preflight_dialog_response
+
+        isolated_context.browser_action_policy = declare_policy(owner_id="wr_test", origin_urls=["https://example.com"])
+        monkeypatch.setattr(settings, "BROWSER_ACTION_POLICY_MODE", "observe")
+        page = MagicMock()
+        decision = preflight_dialog_response(page, dialog_type="confirm", response="accept", site="test")
+        assert decision is not None and decision.outcome is PolicyOutcome.DENIED
+
+        accepts: dict[str, object] = {}
+        for mode in ("disabled", "observe"):
+            monkeypatch.setattr(settings, "BROWSER_ACTION_POLICY_MODE", mode)
+            dialog = _make_dialog("confirm", "Are you sure?")
+            await dialog_handler._handle_dialog(dialog, page=page)
+            accepts[mode] = (dialog.accept.await_args_list, dialog.dismiss.await_args_list)
+        assert accepts["disabled"] == accepts["observe"]
+
+    @pytest.mark.asyncio
+    async def test_registration_hands_the_handler_its_own_page(
+        self, isolated_context: SkyvernContext, preflight_spy: list[dict]
+    ) -> None:
+        # "Dialog registration records the originating page": the listener is bound to the page it
+        # was registered on, so the preflight always receives that page and never a guess.
+        registered: dict[str, object] = {}
+
+        page = MagicMock()
+        page.on = lambda event, handler: registered.update({event: handler})
+        browser_context = MagicMock()
+        browser_context.pages = [page]
+        browser_context.on = MagicMock()
+
+        dialog_handler._registered_contexts.discard(browser_context)
+        dialog_handler.set_dialog_handler(browser_context)
+        listener = registered["dialog"]
+        await listener(_make_dialog("confirm", "Sure?"))
+        assert [call["page"] for call in preflight_spy] == [page]
+
+    def test_a_page_is_never_double_registered(self) -> None:
+        # A fresh partial per registration has no pyee identity dedupe; the page guard restores
+        # it, or a double-registered page would answer one dialog twice.
+        registrations: list[object] = []
+        page = MagicMock()
+        page.on = lambda event, handler: registrations.append(handler)
+        for _ in range(2):
+            browser_context = MagicMock()
+            browser_context.pages = [page]
+            browser_context.on = MagicMock()
+            dialog_handler.set_dialog_handler(browser_context)
+        assert len(registrations) == 1
+
+
+class TestDeclaredDialogPolicy:
+    """A block-declared policy is an INPUT to this one handler, not a second listener: every
+    answer it gives still leaves through _respond, so the acceptance preflight still sees it."""
+
+    @pytest.fixture
+    def armed_page(self) -> Generator[MagicMock, None, None]:
+        page = MagicMock()
+        page.context = MagicMock()
+        try:
+            yield page
+        finally:
+            dialog_handler.clear_dialog_policy(page.context)
+
+    @pytest.mark.asyncio
+    async def test_declared_accept_answers_through_the_preflight_choke_point(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(
+            dialog_handler.app, "SECONDARY_LLM_API_HANDLER", AsyncMock(side_effect=AssertionError("LLM consulted"))
+        )
+        calls: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            dialog_handler,
+            "preflight_dialog_response",
+            lambda page, *, dialog_type, response, site: calls.append((dialog_type, response)),
+        )
+        dialog_handler.set_dialog_policy(armed_page.context, "accept", "Jamie")
+
+        dialog = _make_dialog("prompt", "Your name?")
+        await dialog_handler._handle_dialog(dialog, page=armed_page)
+
+        dialog.accept.assert_awaited_once_with("Jamie")
+        assert calls == [("prompt", "accept")]
+        assert dialog_handler.take_dialog_records(armed_page.context) == [{"type": "prompt", "message": "Your name?"}]
+
+    @pytest.mark.asyncio
+    async def test_declared_dismiss_survives_until_the_policy_is_cleared(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock
+    ) -> None:
+        dialog_handler.set_dialog_policy(armed_page.context, "dismiss")
+
+        first = _make_dialog("confirm", "Leave page?")
+        second = _make_dialog("confirm", "Really leave?")
+        await dialog_handler._handle_dialog(first, page=armed_page)
+        await dialog_handler._handle_dialog(second, page=armed_page)
+        dialog_handler.clear_dialog_policy(armed_page.context)
+        after_teardown = _make_dialog("confirm", "Leave page?")
+        await dialog_handler._handle_dialog(after_teardown, page=armed_page)
+
+        assert first.dismiss.await_count == 1
+        assert second.dismiss.await_count == 1
+        after_teardown.dismiss.assert_not_awaited()
+        after_teardown.accept.assert_awaited_once()
+        assert dialog_handler.take_dialog_records(armed_page.context) == []
+
+    def test_nothing_suspends_between_reading_the_policy_and_applying_it(self) -> None:
+        """Revocation is synchronous while the listener is its own task, so the handler is safe only
+        because it cannot be suspended between reading the policy and acting on it; an await added in
+        that window would let a revoked policy still be applied, which no behavioral test can catch."""
+        source = textwrap.dedent(inspect.getsource(dialog_handler._handle_dialog))
+        body = ast.parse(source).body[0].body  # type: ignore[attr-defined]
+        read_index = next(i for i, stmt in enumerate(body) if "_dialog_policies.get" in ast.unparse(stmt))
+        try_index = next(i for i, stmt in enumerate(body) if isinstance(stmt, ast.Try))
+
+        for stmt in body[read_index + 1 : try_index]:
+            # A nested coroutine definition carries awaits that only run when it is called, which
+            # for _respond is after the branch has already chosen the answer.
+            if isinstance(stmt, ast.AsyncFunctionDef | ast.FunctionDef):
+                continue
+            assert not [node for node in ast.walk(stmt) if isinstance(node, ast.Await)], (
+                f"await added between the policy read and the try block: {ast.unparse(stmt)[:60]}"
+            )
+
+        for stmt in ast.parse(source).body[0].body[try_index].body:  # type: ignore[attr-defined,union-attr]
+            if "policy is not None" in ast.unparse(stmt):
+                break
+            # Branches ahead of the policy branch may await, but only if they cannot fall through
+            # to it -- otherwise their await is a suspension point in the same window. An else or
+            # elif arm falls through like any other statement, and a branch test runs before the
+            # branch is even taken, so neither may await either.
+            assert isinstance(stmt, ast.If) and isinstance(stmt.body[-1], ast.Return) and not stmt.orelse, (
+                f"statement before the policy branch can fall through to it: {ast.unparse(stmt)[:60]}"
+            )
+            assert not [node for node in ast.walk(stmt.test) if isinstance(node, ast.Await)], (
+                f"await in a branch test before the policy branch: {ast.unparse(stmt.test)[:60]}"
+            )
+        else:
+            raise AssertionError("policy branch not found inside the handler's try block")
+
+    @pytest.mark.asyncio
+    async def test_an_unarmed_context_is_never_recorded_and_keeps_the_default_path(
+        self, isolated_context: SkyvernContext
+    ) -> None:
+        page = MagicMock()
+        page.context = MagicMock()
+        dialog = _make_dialog("confirm", "Are you sure?")
+
+        await dialog_handler._handle_dialog(dialog, page=page)
+        await dialog_handler._handle_dialog(_make_dialog("confirm", "Are you sure?"))
+
+        dialog.accept.assert_awaited_once_with("")
+        assert dialog_handler.take_dialog_records(page.context) == []
+
+    @pytest.mark.asyncio
+    async def test_beforeunload_is_accepted_even_while_a_dismiss_policy_is_armed(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock
+    ) -> None:
+        """A block declares "dismiss" to answer a confirm, then navigates. Letting the policy reach
+        beforeunload would cancel that navigation and stall the block until its own timeout, so
+        beforeunload keeps its auto-accept and is only recorded."""
+        dialog_handler.set_dialog_policy(armed_page.context, "dismiss")
+        dialog = _make_dialog("beforeunload", "Changes you made may not be saved.")
+
+        await dialog_handler._handle_dialog(dialog, page=armed_page)
+
+        dialog.accept.assert_awaited_once_with()
+        dialog.dismiss.assert_not_awaited()
+        assert dialog_handler.take_dialog_records(armed_page.context) == [
+            {"type": "beforeunload", "message": "Changes you made may not be saved."}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_alert_is_observed_by_an_armed_policy_but_answered_by_its_own_branch(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        preflighted: list[str] = []
+        monkeypatch.setattr(
+            dialog_handler,
+            "preflight_dialog_response",
+            lambda page, *, dialog_type, response, site: preflighted.append(response),
+        )
+        dialog_handler.set_dialog_policy(armed_page.context, "dismiss")
+        dialog = _make_dialog("alert", "Saved.")
+
+        await dialog_handler._handle_dialog(dialog, page=armed_page)
+
+        dialog.accept.assert_awaited_once_with()
+        dialog.dismiss.assert_not_awaited()
+        assert preflighted == []
+        assert dialog_handler.take_dialog_records(armed_page.context) == [{"type": "alert", "message": "Saved."}]
+
+    @pytest.mark.asyncio
+    async def test_a_chatty_page_cannot_grow_the_records_without_bound(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock
+    ) -> None:
+        # Asserted against the record cap, not the prompt-sizing one: retuning the LLM prompt
+        # budget must not resize this return value, and the two are equal today.
+        dialog_handler.set_dialog_policy(armed_page.context, "accept")
+        overflow = dialog_handler.MAX_DIALOG_POLICY_RECORDS + 3
+        for index in range(overflow):
+            await dialog_handler._handle_dialog(_make_dialog("confirm", f"dialog {index}"), page=armed_page)
+        long_message = "x" * (skyvern_context.MAX_DIALOG_MESSAGE_CHARS + 50)
+        await dialog_handler._handle_dialog(_make_dialog("confirm", long_message), page=armed_page)
+
+        records = dialog_handler.take_dialog_records(armed_page.context)
+
+        assert len(records) == dialog_handler.MAX_DIALOG_POLICY_RECORDS
+        assert records[0]["message"] == f"dialog {overflow - dialog_handler.MAX_DIALOG_POLICY_RECORDS + 1}"
+        assert records[-1]["message"] == "x" * skyvern_context.MAX_DIALOG_MESSAGE_CHARS + "…"
+
+    def test_a_policy_is_refused_for_an_action_the_handler_cannot_give(self) -> None:
+        with pytest.raises(ValueError):
+            dialog_handler.set_dialog_policy(MagicMock(), "ignore")
+
+    @pytest.mark.parametrize("run_declared_first", [True, False], ids=["run-then-block", "block-then-run"])
+    @pytest.mark.asyncio
+    async def test_the_later_declaration_answers_during_the_block_and_the_run_answer_outlives_it(
+        self,
+        isolated_context: SkyvernContext,
+        armed_page: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        run_declared_first: bool,
+    ) -> None:
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(
+            dialog_handler.app, "SECONDARY_LLM_API_HANDLER", AsyncMock(side_effect=AssertionError("LLM consulted"))
+        )
+        run_id = "wr_test"
+        if run_declared_first:
+            dialog_handler.set_run_dialog_policy(armed_page.context, "accept", "from the run", run_id)
+        try:
+            dialog_handler.set_dialog_policy(armed_page.context, "dismiss")
+            if not run_declared_first:
+                dialog_handler.set_run_dialog_policy(armed_page.context, "accept", "from the run", run_id)
+            during_block = _make_dialog("prompt", "Delete?")
+            await dialog_handler._handle_dialog(during_block, page=armed_page)
+            dialog_handler.clear_dialog_policy(armed_page.context)
+            after_block = _make_dialog("prompt", "Name?")
+            await dialog_handler._handle_dialog(after_block, page=armed_page)
+        finally:
+            dialog_handler.clear_run_dialog_policies([run_id])
+
+        if run_declared_first:
+            during_block.dismiss.assert_awaited_once_with()
+            during_block.accept.assert_not_awaited()
+        else:
+            during_block.accept.assert_awaited_once_with("from the run")
+            during_block.dismiss.assert_not_awaited()
+        after_block.accept.assert_awaited_once_with("from the run")
+        assert dialog_handler.take_dialog_records(armed_page.context) == []
+
+    @pytest.mark.asyncio
+    async def test_clearing_a_child_run_answer_restores_the_parent_then_default_handling(
+        self, isolated_context: SkyvernContext, armed_page: MagicMock
+    ) -> None:
+        dialog_handler.set_run_dialog_policy(armed_page.context, "accept", "parent", "wr_parent_answer")
+        dialog_handler.set_run_dialog_policy(armed_page.context, "dismiss", None, "wr_child_answer")
+        answers = [_make_dialog("prompt", "Name?", default_value="default") for _ in range(3)]
+        try:
+            await dialog_handler._handle_dialog(answers[0], page=armed_page)
+            dialog_handler.clear_run_dialog_policies(["wr_child_answer"])
+            await dialog_handler._handle_dialog(answers[1], page=armed_page)
+            dialog_handler.clear_run_dialog_policies(["wr_parent_answer"])
+            await dialog_handler._handle_dialog(answers[2], page=armed_page)
+        finally:
+            dialog_handler.clear_run_dialog_policies(["wr_parent_answer", "wr_child_answer"])
+
+        answers[0].dismiss.assert_awaited_once_with()
+        answers[1].accept.assert_awaited_once_with("parent")
+        answers[2].accept.assert_awaited_once_with("default")
+
+
+class _DriverError(Exception):
+    """Stands in for the deployed driver's error type, which is deliberately NOT the
+    ``playwright.async_api.Error`` the handler module imports — a class-based ``except`` would
+    miss every one of these, so the guard has to match on message text."""
+
+
+VANISHED_DIALOG_MESSAGES = (
+    "Dialog.accept: Protocol error (Page.handleJavaScriptDialog): No dialog is showing",
+    "Dialog.accept: Target page, context or browser has been closed",
+)
+
+
+class TestVanishedDialogGuard:
+    """SKY-15057: answering a dialog races the page. When the dialog is already gone, every
+    response path raises from inside a pyee listener, so an unguarded raise escapes into asyncio's
+    default exception handler — logged at error, stripped of every context field bound here."""
+
+    @pytest.mark.parametrize("message", VANISHED_DIALOG_MESSAGES)
+    @pytest.mark.asyncio
+    async def test_alert_accept_losing_the_race_does_not_propagate(
+        self, isolated_context: SkyvernContext, message: str
+    ) -> None:
+        # Driven through the registered listener, not the handler directly: the escape happens when
+        # the listener's coroutine raises, so the registration seam is part of what has to hold.
+        registered: dict[str, object] = {}
+        page = MagicMock()
+        page.on = lambda event, handler: registered.update({event: handler})
+        browser_context = MagicMock()
+        browser_context.pages = [page]
+        browser_context.on = MagicMock()
+        dialog_handler.set_dialog_handler(browser_context)
+
+        dialog = _make_dialog("alert", "The value of '47' is invalid.")
+        dialog.accept = AsyncMock(side_effect=_DriverError(message))
+
+        await registered["dialog"](dialog)
+
+    @pytest.mark.asyncio
+    async def test_a_respond_routed_accept_losing_the_race_does_not_propagate(
+        self, isolated_context: SkyvernContext
+    ) -> None:
+        dialog = _make_dialog("confirm", "Are you sure?")
+        dialog.accept = AsyncMock(side_effect=_DriverError(VANISHED_DIALOG_MESSAGES[0]))
+
+        await dialog_handler._handle_dialog(dialog, page=MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_an_unrelated_driver_error_still_propagates(self, isolated_context: SkyvernContext) -> None:
+        # The guard names one expected outcome; it is not a blanket swallow of driver failures.
+        dialog = _make_dialog("alert", "message")
+        dialog.accept = AsyncMock(side_effect=_DriverError("Dialog.accept: Protocol error: something else"))
+
+        with pytest.raises(_DriverError):
+            await dialog_handler._handle_dialog(dialog, page=MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_a_vanished_dialog_is_not_retried_as_a_fallback_accept(
+        self, isolated_context: SkyvernContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The LLM path's error arm falls back to accept. A vanished dialog reaching it would answer
+        # a dialog we decided to DISMISS, log the race at error, and raise a second time on the way
+        # out — so the race has to skip the fallback rather than be caught by it.
+        isolated_context.navigation_goal = "goal"
+        monkeypatch.setattr(dialog_handler.prompt_engine, "load_prompt", lambda *a, **k: "prompt")
+        monkeypatch.setattr(
+            dialog_handler.app, "SECONDARY_LLM_API_HANDLER", AsyncMock(return_value={"action": "dismiss"})
+        )
+        dialog = _make_dialog("confirm", "Are you sure?")
+        dialog.dismiss = AsyncMock(side_effect=_DriverError(VANISHED_DIALOG_MESSAGES[0]))
+
+        await dialog_handler._handle_dialog(dialog, page=MagicMock())
+
+        dialog.accept.assert_not_awaited()

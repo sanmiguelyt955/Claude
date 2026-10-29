@@ -1,0 +1,118 @@
+from typing import Any
+
+import pytest
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+from skyvern.forge.sdk.encrypt import aes as aes_module
+from skyvern.forge.sdk.encrypt.aes import AES
+from skyvern.forge.sdk.encrypt.base import TokenDecryptionError
+
+SECRET = "test-secret-key"
+PRIMARY_SALT = "primary_salt_value_xxxxxxxxxxxxxxx"
+PRIMARY_IV = "primary_iv_xxxxxxxxx"
+PRIOR_SALT = "prior_salt_value_xxxxxxxxxxxxxxxxx"
+PRIOR_IV = "prior_iv_value_xxxxx"
+LEGACY_PRIMARY_CIPHERTEXT = "rvmea7ou1gzyata3OwKEQg=="
+# "prior path" under PRIOR_SALT/PRIOR_IV, pinned so a key-derivation change that strands stored ciphertext fails here.
+LEGACY_PRIOR_CIPHERTEXT = "siwQyNbc6raO5BfK8ed/aw=="
+
+
+@pytest.mark.asyncio
+async def test_decrypts_ciphertext_created_with_legacy_primary_normalization() -> None:
+    aes = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[(PRIMARY_SALT, PRIMARY_IV)],
+    )
+    assert await aes.decrypt(LEGACY_PRIMARY_CIPHERTEXT) == "legacy primary"
+
+
+@pytest.mark.asyncio
+async def test_decrypt_with_legacy_fallback_after_rotation() -> None:
+    legacy = AES(secret_key=SECRET, salt=PRIOR_SALT, iv=PRIOR_IV)
+    ciphertext = await legacy.encrypt("hello world")
+
+    rotated = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[(PRIOR_SALT, PRIOR_IV)],
+    )
+    assert await rotated.decrypt(ciphertext) == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_decrypt_uses_primary_first_when_round_tripping() -> None:
+    aes = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[(PRIOR_SALT, PRIOR_IV)],
+    )
+    ciphertext = await aes.encrypt("primary path")
+    assert await aes.decrypt(ciphertext) == "primary path"
+
+
+@pytest.mark.asyncio
+async def test_decrypt_raises_after_exhausting_all_keys() -> None:
+    legacy = AES(secret_key=SECRET, salt=PRIOR_SALT, iv=PRIOR_IV)
+    ciphertext = await legacy.encrypt("unreachable")
+
+    mismatched = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[("another_salt_xxxxxxxxxxxx", "another_iv_xxxxxxxx")],
+    )
+    # Typed so callers that poll can tell a terminal key mismatch from a transient failure.
+    with pytest.raises(TokenDecryptionError):
+        await mismatched.decrypt(ciphertext)
+
+
+@pytest.mark.asyncio
+async def test_decrypt_without_fallbacks_still_works() -> None:
+    aes = AES(secret_key=SECRET, salt=PRIMARY_SALT, iv=PRIMARY_IV)
+    ciphertext = await aes.encrypt("no fallbacks")
+    assert await aes.decrypt(ciphertext) == "no fallbacks"
+
+
+@pytest.mark.asyncio
+async def test_decrypt_tries_multiple_fallbacks_in_order() -> None:
+    legacy = AES(secret_key=SECRET, salt=PRIOR_SALT, iv=PRIOR_IV)
+    ciphertext = await legacy.encrypt("third match")
+
+    aes = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[
+            ("never_used_salt_xxxxxxxxx", "never_used_iv_xxxxx"),
+            (PRIOR_SALT, PRIOR_IV),
+        ],
+    )
+    assert await aes.decrypt(ciphertext) == "third match"
+
+
+@pytest.mark.asyncio
+async def test_derives_each_salt_key_once_and_still_reads_existing_ciphertext(monkeypatch: pytest.MonkeyPatch) -> None:
+    derived_salts: list[bytes] = []
+
+    def counting_pbkdf2(**kwargs: Any) -> PBKDF2HMAC:
+        derived_salts.append(kwargs["salt"])
+        return PBKDF2HMAC(**kwargs)
+
+    monkeypatch.setattr(aes_module, "PBKDF2HMAC", counting_pbkdf2)
+    aes = AES(
+        secret_key=SECRET,
+        salt=PRIMARY_SALT,
+        iv=PRIMARY_IV,
+        fallback_decrypt_keys=[(PRIOR_SALT, PRIOR_IV)],
+    )
+
+    for _ in range(3):
+        assert await aes.decrypt(LEGACY_PRIMARY_CIPHERTEXT) == "legacy primary"
+        assert await aes.decrypt(LEGACY_PRIOR_CIPHERTEXT) == "prior path"
+        assert await aes.decrypt(await aes.encrypt("round trip")) == "round trip"
+
+    assert len(derived_salts) == 2, "PBKDF2 must run once per salt per process, not on every encrypt/decrypt"

@@ -1,0 +1,1471 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+from decimal import Decimal
+from typing import Any
+
+import structlog
+from sqlalchemy import and_, delete, func, or_, select, tuple_, update
+
+from skyvern.forge.sdk.db._error_handling import db_operation
+from skyvern.forge.sdk.db.base_alchemy_db import read_retry
+from skyvern.forge.sdk.db.base_repository import BaseRepository
+from skyvern.forge.sdk.db.datetime_utils import naive_utc_now, to_naive_utc
+from skyvern.forge.sdk.db.enums import TaskType
+from skyvern.forge.sdk.db.exceptions import NotFoundError
+from skyvern.forge.sdk.db.models import (
+    ActionModel,
+    StepModel,
+    TaskModel,
+    TaskRunModel,
+    WorkflowRunAttemptModel,
+    WorkflowRunBlockModel,
+    WorkflowRunModel,
+)
+from skyvern.forge.sdk.db.repositories.workflow_runs import _folder_access_filter
+from skyvern.forge.sdk.db.utils import (
+    as_stored_json,
+    convert_to_step,
+    convert_to_task,
+    hydrate_action,
+    serialize_proxy_location,
+)
+from skyvern.forge.sdk.models import TASK_V3_TURN_STEP_CREATED_BY, Step, StepStatus
+from skyvern.forge.sdk.schemas.runs import Run
+from skyvern.forge.sdk.schemas.tasks import OrderBy, SortDirection, Task, TaskStatus
+from skyvern.forge.sdk.services.audit_events import record_run_cancel_audit
+from skyvern.forge.sdk.services.request_principal import RequestPrincipal
+from skyvern.forge.sdk.trace import traced
+from skyvern.forge.sdk.utils.sanitization import sanitize_postgres_text
+from skyvern.schemas.runs import ProxyLocationInput, RunStatus, RunType
+from skyvern.schemas.steps import AgentStepOutput
+from skyvern.webeye.actions.action_types import ActionType
+from skyvern.webeye.actions.actions import Action
+
+LOG = structlog.get_logger()
+
+
+def _step_status_values(status: StepStatus) -> dict[str, Any]:
+    values: dict[str, Any] = {"status": status}
+    if status.is_terminal():
+        values["finished_at"] = func.coalesce(StepModel.finished_at, naive_utc_now())
+    return values
+
+
+class TasksRepository(BaseRepository):
+    _background_tasks: set[asyncio.Task] = set()  # noqa: RUF012
+
+    @db_operation("create_task")
+    async def create_task(
+        self,
+        url: str,
+        title: str | None,
+        navigation_goal: str | None,
+        data_extraction_goal: str | None,
+        navigation_payload: dict[str, Any] | list | str | None,
+        status: str = "created",
+        complete_criterion: str | None = None,
+        terminate_criterion: str | None = None,
+        webhook_callback_url: str | None = None,
+        totp_verification_url: str | None = None,
+        totp_identifier: str | None = None,
+        organization_id: str | None = None,
+        proxy_location: ProxyLocationInput = None,
+        extracted_information_schema: dict[str, Any] | list | str | None = None,
+        workflow_run_id: str | None = None,
+        order: int | None = None,
+        retry: int | None = None,
+        max_steps_per_run: int | None = None,
+        error_code_mapping: dict[str, str] | None = None,
+        workflow_system_prompt: str | None = None,
+        task_type: str = TaskType.general,
+        application: str | None = None,
+        include_action_history_in_verification: bool | None = None,
+        model: dict[str, Any] | None = None,
+        max_screenshot_scrolling_times: int | None = None,
+        extra_http_headers: dict[str, str] | None = None,
+        cdp_connect_headers: dict[str, str] | None = None,
+        browser_session_id: str | None = None,
+        browser_address: str | None = None,
+        download_timeout: float | None = None,
+        include_extracted_text: bool = True,
+        attempt_number: int | None = None,
+    ) -> Task:
+        # Sanitize text fields to remove NUL bytes and control characters
+        # that PostgreSQL cannot store in text columns
+        def _sanitize(v: str | None) -> str | None:
+            return sanitize_postgres_text(v) if isinstance(v, str) else v
+
+        navigation_goal = _sanitize(navigation_goal)
+        data_extraction_goal = _sanitize(data_extraction_goal)
+        title = _sanitize(title)
+        url = sanitize_postgres_text(url)
+        complete_criterion = _sanitize(complete_criterion)
+        terminate_criterion = _sanitize(terminate_criterion)
+        workflow_system_prompt = _sanitize(workflow_system_prompt)
+        # Workflow blocks pass datetimes and NULs in these. Normalizing them to their stored JSON form lets the
+        # returned Task match the row without a re-read.
+        navigation_payload = as_stored_json(navigation_payload)
+        extracted_information_schema = as_stored_json(extracted_information_schema)
+        error_code_mapping = as_stored_json(error_code_mapping)
+        model = as_stored_json(model)
+        extra_http_headers = as_stored_json(extra_http_headers)
+        cdp_connect_headers = as_stored_json(cdp_connect_headers)
+
+        # created_at is passed so an already-running task cannot start before it was created; None
+        # falls through to the column default.
+        started_at = naive_utc_now() if str(status) == TaskStatus.running.value else None
+
+        async with self.Session() as session:
+            new_task = TaskModel(
+                status=status,
+                started_at=started_at,
+                created_at=started_at,
+                task_type=task_type,
+                url=url,
+                title=title,
+                webhook_callback_url=webhook_callback_url,
+                totp_verification_url=totp_verification_url,
+                totp_identifier=totp_identifier,
+                navigation_goal=navigation_goal,
+                complete_criterion=complete_criterion,
+                terminate_criterion=terminate_criterion,
+                data_extraction_goal=data_extraction_goal,
+                navigation_payload=navigation_payload,
+                organization_id=organization_id,
+                proxy_location=serialize_proxy_location(proxy_location),
+                extracted_information_schema=extracted_information_schema,
+                workflow_run_id=workflow_run_id,
+                order=order,
+                retry=retry,
+                max_steps_per_run=max_steps_per_run,
+                error_code_mapping=error_code_mapping,
+                workflow_system_prompt=workflow_system_prompt,
+                application=application,
+                include_action_history_in_verification=include_action_history_in_verification,
+                model=model,
+                max_screenshot_scrolling_times=max_screenshot_scrolling_times,
+                extra_http_headers=extra_http_headers,
+                cdp_connect_headers=cdp_connect_headers,
+                browser_session_id=browser_session_id,
+                browser_address=browser_address,
+                download_timeout=download_timeout,
+                include_extracted_text=include_extracted_text,
+                attempt_number=attempt_number,
+            )
+            session.add(new_task)
+            # The flush fills every column default, so the row needs no re-read; convert it before commit expires it.
+            await session.flush()
+            task = convert_to_task(new_task, self.debug_enabled)
+            await session.commit()
+            return task
+
+    @db_operation("create_step")
+    async def create_step(
+        self,
+        task_id: str,
+        order: int,
+        retry_index: int,
+        organization_id: str | None = None,
+        status: StepStatus = StepStatus.created,
+        created_by: str | None = None,
+    ) -> Step:
+        async with self.Session() as session:
+            new_step = StepModel(
+                task_id=task_id,
+                order=order,
+                retry_index=retry_index,
+                status=status,
+                organization_id=organization_id,
+                created_by=created_by,
+            )
+            session.add(new_step)
+            # The flush fills every column default, so the row needs no re-read; convert it before commit expires it.
+            await session.flush()
+            step = convert_to_step(new_step, debug_enabled=self.debug_enabled)
+            await session.commit()
+            return step
+
+    @read_retry()
+    @db_operation("get_task", log_errors=False)
+    async def get_task(self, task_id: str, organization_id: str | None = None) -> Task | None:
+        """Get a task by its id"""
+        async with self.Session() as session:
+            query = select(TaskModel).filter_by(task_id=task_id)
+            if organization_id is not None:
+                query = query.filter_by(organization_id=organization_id)
+            if task_obj := (await session.scalars(query)).first():
+                return convert_to_task(task_obj, self.debug_enabled)
+            else:
+                LOG.info(
+                    "Task not found",
+                    task_id=task_id,
+                    organization_id=organization_id,
+                )
+                return None
+
+    @db_operation("get_tasks_by_ids")
+    async def get_tasks_by_ids(
+        self,
+        task_ids: list[str],
+        organization_id: str,
+    ) -> list[Task]:
+        async with self.Session() as session:
+            tasks = (
+                await session.scalars(
+                    select(TaskModel).filter(TaskModel.task_id.in_(task_ids)).filter_by(organization_id=organization_id)
+                )
+            ).all()
+            return [convert_to_task(task, debug_enabled=self.debug_enabled) for task in tasks]
+
+    @db_operation("get_step")
+    async def get_step(self, step_id: str, organization_id: str | None = None) -> Step | None:
+        async with self.Session() as session:
+            if step := (
+                await session.scalars(
+                    select(StepModel).filter_by(step_id=step_id).filter_by(organization_id=organization_id)
+                )
+            ).first():
+                return convert_to_step(step, debug_enabled=self.debug_enabled)
+
+            else:
+                return None
+
+    @db_operation("get_task_steps")
+    async def get_task_steps(self, task_id: str, organization_id: str) -> list[Step]:
+        async with self.Session() as session:
+            if steps := (
+                await session.scalars(
+                    select(StepModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    .order_by(StepModel.order)
+                    .order_by(StepModel.retry_index)
+                )
+            ).all():
+                return [convert_to_step(step, debug_enabled=self.debug_enabled) for step in steps]
+            else:
+                return []
+
+    @db_operation("get_steps_by_task_ids")
+    async def get_steps_by_task_ids(self, task_ids: list[str], organization_id: str | None = None) -> list[Step]:
+        async with self.Session() as session:
+            steps = (
+                await session.scalars(
+                    select(StepModel).filter(StepModel.task_id.in_(task_ids)).filter_by(organization_id=organization_id)
+                )
+            ).all()
+            return [convert_to_step(step, debug_enabled=self.debug_enabled) for step in steps]
+
+    @db_operation("get_step_counts_by_task_ids")
+    async def get_step_counts_by_task_ids(
+        self, task_ids: list[str], organization_id: str | None = None
+    ) -> tuple[int, int]:
+        """Return (total_steps, completed_steps) counts without fetching full step objects."""
+        async with self.Session() as session:
+            query = (
+                select(
+                    func.count().label("total"),
+                    func.count().filter(StepModel.status == StepStatus.completed).label("completed"),
+                )
+                .where(StepModel.task_id.in_(task_ids))
+                .where(StepModel.organization_id == organization_id)
+            )
+            row = (await session.execute(query)).one()
+            return row.total, row.completed
+
+    @db_operation("get_step_cost_sum_by_task_ids")
+    async def get_step_cost_sum_by_task_ids(self, task_ids: list[str], organization_id: str) -> float:
+        """Sum `step_cost` across all steps belonging to the given task_ids.
+
+        Returns 0.0 for empty task_ids. Includes failed steps.
+        """
+        if not task_ids:
+            return 0.0
+        async with self.Session() as session:
+            query = (
+                select(func.coalesce(func.sum(StepModel.step_cost), 0))
+                .where(StepModel.task_id.in_(task_ids))
+                .where(StepModel.organization_id == organization_id)
+            )
+            total = (await session.execute(query)).scalar_one()
+            return float(total)
+
+    @db_operation("get_workflow_run_block_progress_timestamp")
+    async def get_workflow_run_block_progress_timestamp(
+        self,
+        workflow_run_id: str,
+        organization_id: str | None = None,
+    ) -> datetime | None:
+        async with self.Session() as session:
+            block_stmt = (
+                select(func.max(WorkflowRunBlockModel.modified_at))
+                .where(WorkflowRunBlockModel.workflow_run_id == workflow_run_id)
+                .where(WorkflowRunBlockModel.organization_id == organization_id)
+            )
+            return (await session.execute(block_stmt)).scalar_one_or_none()
+
+    @db_operation("get_total_unique_step_order_count_by_task_ids")
+    async def get_total_unique_step_order_count_by_task_ids(
+        self,
+        *,
+        task_ids: list[str],
+        organization_id: str,
+    ) -> int:
+        """
+        Get the total count of unique (step.task_id, step.order) pairs of StepModel for the given task ids
+        Basically translate this sql query into a SQLAlchemy query: select count(distinct(s.task_id, s.order)) from steps s
+        where s.task_id in task_ids. Task V3 turn steps are not budget units.
+        """
+        async with self.Session() as session:
+            unique_step_orders = (
+                select(StepModel.task_id, StepModel.order)
+                .where(StepModel.task_id.in_(task_ids))
+                .where(StepModel.organization_id == organization_id)
+                .where(StepModel.created_by.is_distinct_from(TASK_V3_TURN_STEP_CREATED_BY))
+                .distinct()
+                .subquery()
+            )
+            query = select(func.count()).select_from(unique_step_orders)
+            return (await session.execute(query)).scalar()
+
+    @db_operation("get_total_unique_progress_round_count_by_task_ids")
+    async def get_total_unique_progress_round_count_by_task_ids(
+        self,
+        *,
+        task_ids: list[str],
+        organization_id: str,
+    ) -> int:
+        """Distinct (task_id, order) pairs across steps UNION actions' round-stamped step_order.
+
+        A step-engine action's step_order mirrors an existing step order, so the union equals the
+        step count; a task_v3 task counts its order-0 step plus its round-stamped actions, so each of
+        its action rounds counts individually. Its per-turn steps are not budget units.
+        This is the workflow-run step-budget unit.
+        """
+        async with self.Session() as session:
+            step_pairs = (
+                select(StepModel.task_id, StepModel.order)
+                .where(StepModel.task_id.in_(task_ids))
+                .where(StepModel.organization_id == organization_id)
+                .where(StepModel.created_by.is_distinct_from(TASK_V3_TURN_STEP_CREATED_BY))
+            )
+            action_pairs = (
+                select(ActionModel.task_id, ActionModel.step_order)
+                .where(ActionModel.task_id.in_(task_ids))
+                .where(ActionModel.organization_id == organization_id)
+                .where(ActionModel.step_order.is_not(None))
+            )
+            union_pairs = step_pairs.union(action_pairs).subquery()
+            query = select(func.count()).select_from(union_pairs)
+            return (await session.execute(query)).scalar() or 0
+
+    @db_operation("get_task_step_models")
+    async def get_task_step_models(self, task_id: str, organization_id: str | None = None) -> Sequence[StepModel]:
+        async with self.Session() as session:
+            return (
+                await session.scalars(
+                    select(StepModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    .order_by(StepModel.order)
+                    .order_by(StepModel.retry_index)
+                )
+            ).all()
+
+    @db_operation("get_task_step_count")
+    async def get_task_step_count(self, task_id: str, organization_id: str | None = None) -> int:
+        async with self.Session() as session:
+            result = await session.scalar(
+                select(func.count(StepModel.step_id))
+                .filter_by(task_id=task_id)
+                .filter_by(organization_id=organization_id)
+            )
+            return result or 0
+
+    @db_operation("get_task_actions")
+    async def get_task_actions(self, task_id: str, organization_id: str | None = None) -> list[Action]:
+        async with self.Session() as session:
+            query = (
+                select(ActionModel)
+                .filter(ActionModel.organization_id == organization_id)
+                .filter(ActionModel.task_id == task_id)
+                .order_by(ActionModel.created_at)
+            )
+
+            actions = (await session.scalars(query)).all()
+            return [Action.model_validate(action) for action in actions]
+
+    @db_operation("get_task_actions_hydrated")
+    async def get_task_actions_hydrated(self, task_id: str, organization_id: str | None = None) -> list[Action]:
+        async with self.Session() as session:
+            query = (
+                select(ActionModel)
+                .filter(ActionModel.organization_id == organization_id)
+                .filter(ActionModel.task_id == task_id)
+                .order_by(ActionModel.created_at)
+            )
+
+            actions = (await session.scalars(query)).all()
+            return [hydrate_action(action) for action in actions]
+
+    @db_operation("get_tasks_actions")
+    async def get_tasks_actions(self, task_ids: list[str], organization_id: str | None = None) -> list[Action]:
+        async with self.Session() as session:
+            query = (
+                select(ActionModel)
+                .filter(ActionModel.organization_id == organization_id)
+                .filter(ActionModel.task_id.in_(task_ids))
+                .order_by(ActionModel.created_at.desc())
+            )
+            actions = (await session.scalars(query)).all()
+            return [hydrate_action(action) for action in actions]
+
+    @db_operation("get_recent_actions_for_tasks")
+    async def get_recent_actions_for_tasks(
+        self,
+        task_ids: list[str],
+        organization_id: str,
+        per_task_limit: int = 15,
+    ) -> list[Action]:
+        """Return the most recent *per_task_limit* actions per task for the given task IDs.
+
+        Uses a windowed query so the database enforces the per-task cap.
+        Results are newest-first within each task.
+        """
+        if not task_ids:
+            return []
+        unique_ids = list(dict.fromkeys(task_ids))
+        async with self.Session() as session:
+            ranked_actions = (
+                select(
+                    ActionModel.action_id.label("action_id"),
+                    func.row_number()
+                    .over(partition_by=ActionModel.task_id, order_by=ActionModel.created_at.desc())
+                    .label("task_rank"),
+                )
+                .where(ActionModel.organization_id == organization_id)
+                .where(ActionModel.task_id.in_(unique_ids))
+                .subquery()
+            )
+            query = (
+                select(ActionModel)
+                .join(ranked_actions, ActionModel.action_id == ranked_actions.c.action_id)
+                .where(ranked_actions.c.task_rank <= per_task_limit)
+                .order_by(ActionModel.task_id, ActionModel.created_at.desc())
+            )
+            rows = (await session.scalars(query)).all()
+        return [hydrate_action(row) for row in rows]
+
+    @db_operation("get_action_count_for_step")
+    async def get_action_count_for_step(
+        self,
+        step_id: str,
+        task_id: str,
+        organization_id: str,
+        exclude_action_types: Sequence[ActionType] | None = None,
+    ) -> int:
+        """Get count of actions for a step. Uses composite index for efficiency."""
+        async with self.Session() as session:
+            query = (
+                select(func.count())
+                .select_from(ActionModel)
+                .where(ActionModel.organization_id == organization_id)
+                .where(ActionModel.task_id == task_id)
+                .where(ActionModel.step_id == step_id)
+            )
+            if exclude_action_types:
+                query = query.where(ActionModel.action_type.notin_([t.value for t in exclude_action_types]))
+            result = await session.scalar(query)
+            return result or 0
+
+    @db_operation("get_first_step")
+    async def get_first_step(self, task_id: str, organization_id: str | None = None) -> Step | None:
+        async with self.Session() as session:
+            if step := (
+                await session.scalars(
+                    select(StepModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    .order_by(StepModel.order.asc())
+                    .order_by(StepModel.retry_index.asc())
+                )
+            ).first():
+                return convert_to_step(step, debug_enabled=self.debug_enabled)
+            else:
+                LOG.info(
+                    "Latest step not found",
+                    task_id=task_id,
+                    organization_id=organization_id,
+                )
+                return None
+
+    @db_operation("get_latest_step")
+    async def get_latest_step(self, task_id: str, organization_id: str | None = None) -> Step | None:
+        async with self.Session() as session:
+            if step := (
+                await session.scalars(
+                    select(StepModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    .filter(StepModel.status != StepStatus.canceled)
+                    # A Task V3 block's turn steps sit above its own step, which holds its final screenshot.
+                    .filter(StepModel.created_by.is_distinct_from(TASK_V3_TURN_STEP_CREATED_BY))
+                    .order_by(StepModel.order.desc())
+                    .order_by(StepModel.retry_index.desc())
+                )
+            ).first():
+                return convert_to_step(step, debug_enabled=self.debug_enabled)
+            else:
+                LOG.info(
+                    "Latest step not found",
+                    task_id=task_id,
+                    organization_id=organization_id,
+                )
+                return None
+
+    @traced(name="skyvern.db.update_step")
+    @db_operation("update_step")
+    async def update_step(
+        self,
+        task_id: str,
+        step_id: str,
+        status: StepStatus | None = None,
+        output: AgentStepOutput | None = None,
+        is_last: bool | None = None,
+        retry_index: int | None = None,
+        organization_id: str | None = None,
+        incremental_cost: float | None = None,
+        incremental_input_tokens: int | None = None,
+        incremental_output_tokens: int | None = None,
+        incremental_reasoning_tokens: int | None = None,
+        incremental_cached_tokens: int | None = None,
+        created_by: str | None = None,
+        last_llm_model: str | None = None,
+    ) -> Step:
+        values: dict[str, Any] = {}
+        if status is not None:
+            values.update(_step_status_values(status))
+        if output is not None:
+            values["output"] = output.model_dump(exclude_none=True)
+        if is_last is not None:
+            values["is_last"] = is_last
+        if retry_index is not None:
+            values["retry_index"] = retry_index
+        # Accumulated in SQL, not Python: concurrent LLM calls against the same step would
+        # otherwise both read the pre-increment value and the later commit would drop the earlier one.
+        for column, delta in (
+            (StepModel.step_cost, incremental_cost),
+            (StepModel.input_token_count, incremental_input_tokens),
+            (StepModel.output_token_count, incremental_output_tokens),
+            (StepModel.reasoning_token_count, incremental_reasoning_tokens),
+            (StepModel.cached_token_count, incremental_cached_tokens),
+        ):
+            if delta is not None:
+                values[column.key] = func.coalesce(column, 0) + delta
+        if created_by is not None:
+            values["created_by"] = created_by
+        if last_llm_model is not None:
+            values["last_llm_model"] = last_llm_model
+
+        if values:
+            await self._write_step(task_id, step_id, organization_id, values)
+
+        updated_step = await self.get_step(step_id, organization_id)
+        # get_step does not scope by task_id, so re-check it here: a call carrying no field to
+        # update never runs the statement above and would otherwise skip that filter entirely.
+        if not updated_step or updated_step.task_id != task_id:
+            raise NotFoundError("Step not found")
+        return updated_step
+
+    @traced(name="skyvern.db.finish_step")
+    @db_operation("finish_step")
+    async def finish_step(
+        self,
+        task_id: str,
+        step_id: str,
+        organization_id: str | None,
+        status: StepStatus,
+        output: AgentStepOutput,
+    ) -> None:
+        """`update_step`'s status and output write without reading the row back, for a caller that has no use for it."""
+        values = {**_step_status_values(status), "output": output.model_dump(exclude_none=True)}
+        await self._write_step(task_id, step_id, organization_id, values)
+
+    async def _write_step(
+        self, task_id: str, step_id: str, organization_id: str | None, values: dict[str, Any]
+    ) -> None:
+        async with self.Session() as session:
+            result = await session.execute(
+                update(StepModel)
+                .where(StepModel.task_id == task_id)
+                .where(StepModel.step_id == step_id)
+                .where(StepModel.organization_id == organization_id)
+                .values(values)
+            )
+            if result.rowcount == 0:
+                raise NotFoundError("Step not found")
+            await session.commit()
+
+    @db_operation("clear_task_failure_reason")
+    async def clear_task_failure_reason(self, organization_id: str, task_id: str) -> Task:
+        async with self.Session() as session:
+            if task := (
+                await session.scalars(
+                    select(TaskModel).filter_by(task_id=task_id).filter_by(organization_id=organization_id)
+                )
+            ).first():
+                task.failure_reason = None
+                await session.commit()
+                await session.refresh(task)
+                return convert_to_task(task, debug_enabled=self.debug_enabled)
+            else:
+                raise NotFoundError("Task not found")
+
+    @traced(name="skyvern.db.update_task")
+    @db_operation("update_task")
+    async def update_task(
+        self,
+        task_id: str,
+        status: TaskStatus | None = None,
+        extracted_information: dict[str, Any] | list | str | None = None,
+        webhook_failure_reason: str | None = None,
+        failure_reason: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+        max_steps_per_run: int | None = None,
+        organization_id: str | None = None,
+        failure_category: list[dict[str, Any]] | None = None,
+        *,
+        keep_final_status: bool = False,
+    ) -> Task:
+        updated_task, _ = await self._update_task_with_finish_claim(
+            task_id,
+            status=status,
+            extracted_information=extracted_information,
+            webhook_failure_reason=webhook_failure_reason,
+            failure_reason=failure_reason,
+            errors=errors,
+            max_steps_per_run=max_steps_per_run,
+            organization_id=organization_id,
+            failure_category=failure_category,
+            keep_final_status=keep_final_status,
+        )
+        return updated_task
+
+    @traced(name="skyvern.db.update_task_and_claim_finish")
+    @db_operation("update_task_and_claim_finish")
+    async def update_task_and_claim_finish(
+        self,
+        task_id: str,
+        status: TaskStatus | None = None,
+        extracted_information: dict[str, Any] | list | str | None = None,
+        webhook_failure_reason: str | None = None,
+        failure_reason: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+        max_steps_per_run: int | None = None,
+        organization_id: str | None = None,
+        failure_category: list[dict[str, Any]] | None = None,
+        *,
+        keep_final_status: bool = False,
+    ) -> tuple[Task, bool]:
+        """``update_task``, plus whether THIS write flipped ``finished_at`` from NULL.
+
+        The flip happens under a row lock and every finalizer stamps ``finished_at``
+        atomically with its terminal status (here and in the bulk CAS paths), so at
+        most one concurrent finalizer sees True. Callers use it as the exactly-once
+        gate for per-task side effects such as the run-minutes emission.
+        """
+        return await self._update_task_with_finish_claim(
+            task_id,
+            status=status,
+            extracted_information=extracted_information,
+            webhook_failure_reason=webhook_failure_reason,
+            failure_reason=failure_reason,
+            errors=errors,
+            max_steps_per_run=max_steps_per_run,
+            organization_id=organization_id,
+            failure_category=failure_category,
+            keep_final_status=keep_final_status,
+        )
+
+    @db_operation("update_task_and_claim_finish_for_cancel")
+    async def update_task_and_claim_finish_for_cancel(
+        self, task_id: str, organization_id: str, audit_actor: RequestPrincipal | None = None
+    ) -> tuple[Task, bool, bool]:
+        finish_claimed = False
+        async with self.Session() as session:
+            task = (
+                await session.scalars(
+                    select(TaskModel).filter_by(task_id=task_id, organization_id=organization_id).with_for_update()
+                )
+            ).first()
+            if task is None:
+                raise NotFoundError("Task not found")
+            if TaskStatus(task.status).is_final():
+                return convert_to_task(task, debug_enabled=self.debug_enabled), False, False
+
+            finish_claimed = task.finished_at is None
+            result = await session.execute(
+                update(TaskModel)
+                .where(TaskModel.task_id == task_id)
+                .where(TaskModel.organization_id == organization_id)
+                .where(TaskModel.status.not_in([status.value for status in TaskStatus if status.is_final()]))
+                .values(
+                    status=TaskStatus.canceled.value,
+                    finished_at=func.coalesce(TaskModel.finished_at, naive_utc_now()),
+                )
+                .returning(TaskModel)
+                .execution_options(populate_existing=True)
+            )
+            updated_model = result.scalar_one_or_none()
+            status_changed = updated_model is not None
+            updated_task = convert_to_task(updated_model or task, debug_enabled=self.debug_enabled)
+            await session.commit()
+
+            if status_changed and audit_actor is not None:
+                await record_run_cancel_audit(audit_actor, organization_id, "task", task_id)
+
+            if status_changed:
+                bg = asyncio.create_task(
+                    self.sync_task_run_status(
+                        organization_id=updated_task.organization_id or "",
+                        run_id=updated_task.task_id,
+                        status=TaskStatus.canceled.value,
+                        started_at=updated_task.started_at,
+                        finished_at=updated_task.finished_at,
+                    )
+                )
+                self._background_tasks.add(bg)
+                bg.add_done_callback(self._background_tasks.discard)
+
+            return updated_task, finish_claimed and status_changed, status_changed
+
+    async def _update_task_with_finish_claim(
+        self,
+        task_id: str,
+        status: TaskStatus | None = None,
+        extracted_information: dict[str, Any] | list | str | None = None,
+        webhook_failure_reason: str | None = None,
+        failure_reason: str | None = None,
+        errors: list[dict[str, Any]] | None = None,
+        max_steps_per_run: int | None = None,
+        organization_id: str | None = None,
+        failure_category: list[dict[str, Any]] | None = None,
+        *,
+        keep_final_status: bool = False,
+    ) -> tuple[Task, bool]:
+        if (
+            status is None
+            and extracted_information is None
+            and failure_reason is None
+            and errors is None
+            and max_steps_per_run is None
+            and webhook_failure_reason is None
+            and failure_category is None
+        ):
+            raise ValueError(
+                "At least one of status, extracted_information, or failure_reason must be provided to update the task"
+            )
+        finish_claimed = False
+        async with self.Session() as session:
+            if task := (
+                await session.scalars(
+                    select(TaskModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    # The row lock makes the finished_at NULL->set flip below an atomic
+                    # claim: concurrent finalizers serialize here, and only the first
+                    # sees finished_at still NULL.
+                    .with_for_update()
+                )
+            ).first():
+                if keep_final_status and TaskStatus(task.status).is_final():
+                    return convert_to_task(task, debug_enabled=self.debug_enabled), False
+                if status is not None:
+                    task.status = status
+                    if status == TaskStatus.queued and task.queued_at is None:
+                        task.queued_at = naive_utc_now()
+                    if status == TaskStatus.running and task.started_at is None:
+                        task.started_at = naive_utc_now()
+                    if status.is_final() and task.finished_at is None:
+                        task.finished_at = naive_utc_now()
+                        finish_claimed = True
+                if extracted_information is not None:
+                    task.extracted_information = extracted_information
+                if failure_reason is not None:
+                    task.failure_reason = failure_reason
+                if errors is not None:
+                    task.errors = (task.errors or []) + errors
+                if max_steps_per_run is not None:
+                    task.max_steps_per_run = max_steps_per_run
+                if webhook_failure_reason is not None:
+                    task.webhook_failure_reason = webhook_failure_reason
+                if failure_category is not None:
+                    task.failure_category = failure_category
+                await session.commit()
+                updated_task = await self.get_task(task_id, organization_id=organization_id)
+                if not updated_task:
+                    raise NotFoundError("Task not found")
+
+                # Best-effort fire-and-forget write-through to task_runs.
+                # Mirrors the WorkflowService pattern — cron catches any missed syncs.
+                if status is not None:
+                    bg = asyncio.create_task(
+                        self.sync_task_run_status(
+                            organization_id=updated_task.organization_id or "",
+                            run_id=updated_task.task_id,
+                            status=status.value,
+                            started_at=updated_task.started_at,
+                            finished_at=updated_task.finished_at,
+                        ),
+                    )
+                    self._background_tasks.add(bg)
+                    bg.add_done_callback(self._background_tasks.discard)
+
+                return updated_task, finish_claimed
+            else:
+                raise NotFoundError("Task not found")
+
+    @traced(name="skyvern.db.reset_task_for_rerun")
+    @db_operation("reset_task_for_rerun")
+    async def reset_task_for_rerun(self, task_id: str, organization_id: str) -> Task:
+        """Return a task to ``created`` with its lifecycle timestamps cleared.
+
+        ``update_task`` only ever stamps timestamps forward, so it cannot undo a finished
+        run. Clearing ``finished_at`` here is what re-arms the exactly-once finish claim in
+        ``_update_task_with_finish_claim``: leaving it set spends the rerun's claim before it
+        begins, and the rerun's real compute never emits.
+        """
+        async with self.Session() as session:
+            if task := (
+                await session.scalars(
+                    select(TaskModel)
+                    .filter_by(task_id=task_id)
+                    .filter_by(organization_id=organization_id)
+                    .with_for_update()
+                )
+            ).first():
+                task.status = TaskStatus.created
+                task.queued_at = None
+                task.started_at = None
+                task.finished_at = None
+                task.task_queue = None
+                await session.commit()
+                await session.refresh(task)
+                reset_task = convert_to_task(task, debug_enabled=self.debug_enabled)
+            else:
+                raise NotFoundError("Task not found")
+
+        await self.sync_task_run_status(
+            organization_id=organization_id,
+            run_id=task_id,
+            status=TaskStatus.created.value,
+        )
+        return reset_task
+
+    @db_operation("update_task_routing")
+    async def update_task_routing(self, task_id: str, task_queue: str) -> None:
+        """Record the latest selected Temporal queue without refreshing the task's lifecycle or reaper clocks."""
+        async with self.Session() as session:
+            await session.execute(
+                update(TaskModel)
+                .where(TaskModel.task_id == task_id)
+                .values(task_queue=task_queue, modified_at=TaskModel.modified_at)
+            )
+            await session.commit()
+
+    @db_operation("update_task_2fa_state")
+    async def update_task_2fa_state(
+        self,
+        task_id: str,
+        organization_id: str,
+        waiting_for_verification_code: bool,
+        verification_code_identifier: str | None = None,
+        verification_code_polling_started_at: datetime | None = None,
+    ) -> Task:
+        """Update task 2FA verification code waiting state."""
+        async with self.Session() as session:
+            if task := (
+                await session.scalars(
+                    select(TaskModel).filter_by(task_id=task_id).filter_by(organization_id=organization_id)
+                )
+            ).first():
+                task.waiting_for_verification_code = waiting_for_verification_code
+                if verification_code_identifier is not None:
+                    task.verification_code_identifier = verification_code_identifier
+                if verification_code_polling_started_at is not None:
+                    task.verification_code_polling_started_at = verification_code_polling_started_at
+                if not waiting_for_verification_code:
+                    # Clear identifiers when no longer waiting
+                    task.verification_code_identifier = None
+                    task.verification_code_polling_started_at = None
+                await session.commit()
+                updated_task = await self.get_task(task_id, organization_id=organization_id)
+                if not updated_task:
+                    raise NotFoundError("Task not found")
+                return updated_task
+            else:
+                raise NotFoundError("Task not found")
+
+    @db_operation("bulk_update_tasks")
+    async def bulk_update_tasks(
+        self,
+        task_ids: list[str],
+        status: TaskStatus | None = None,
+        failure_reason: str | None = None,
+        only_if_status_in: list[TaskStatus] | None = None,
+    ) -> list[str]:
+        """Bulk update tasks by their IDs.
+
+        Args:
+            task_ids: List of task IDs to update
+            status: Optional status to set for all tasks
+            failure_reason: Optional failure reason to set for all tasks
+            only_if_status_in: Optional status whitelist used as a compare-and-set guard
+
+        Returns:
+            IDs of rows that matched the update. Callers that fan out side effects
+            (webhooks) must drive them from this list, not from `task_ids`, so a task
+            claimed by another sweeper is not acted on twice.
+        """
+        if not task_ids:
+            return []
+
+        async with self.Session() as session:
+            update_values: dict[str, Any] = {}
+            if status:
+                update_values["status"] = status.value
+                if status.is_final():
+                    update_values["finished_at"] = func.coalesce(TaskModel.finished_at, naive_utc_now())
+            if failure_reason:
+                update_values["failure_reason"] = failure_reason
+
+            if not update_values:
+                return []
+
+            update_stmt = update(TaskModel).where(TaskModel.task_id.in_(task_ids))
+            if only_if_status_in is not None:
+                update_stmt = update_stmt.where(
+                    TaskModel.status.in_([eligible_status.value for eligible_status in only_if_status_in])
+                )
+            result = await session.execute(update_stmt.values(**update_values).returning(TaskModel.task_id))
+            updated_task_ids = list(result.scalars().all())
+            await session.commit()
+            return updated_task_ids
+
+    @db_operation("bulk_update_tasks_by_workflow_run_ids")
+    async def bulk_update_tasks_by_workflow_run_ids(
+        self,
+        workflow_run_ids: list[str],
+        new_status: TaskStatus,
+        only_if_status_in: list[TaskStatus],
+        failure_reason: str | None = None,
+    ) -> int:
+        """Cascade-update child tasks of the given workflow_runs.
+
+        The standalone-task cleanup cron skips rows with workflow_run_id set;
+        this method sweeps their children when a parent is finalized. Stamps
+        ``finished_at`` via COALESCE on terminal transitions. Returns row count.
+        """
+        if not workflow_run_ids or not only_if_status_in:
+            return 0
+
+        async with self.Session() as session:
+            update_values: dict[str, Any] = {"status": new_status.value}
+            if new_status.is_final():
+                update_values["finished_at"] = func.coalesce(TaskModel.finished_at, naive_utc_now())
+            if failure_reason is not None:
+                update_values["failure_reason"] = failure_reason
+
+            update_stmt = (
+                update(TaskModel)
+                .where(TaskModel.workflow_run_id.in_(workflow_run_ids))
+                .where(TaskModel.status.in_([s.value for s in only_if_status_in]))
+                .values(**update_values)
+            )
+            result = await session.execute(update_stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    @db_operation("bulk_update_steps_by_workflow_run_ids")
+    async def bulk_update_steps_by_workflow_run_ids(
+        self,
+        workflow_run_ids: list[str],
+        new_status: StepStatus,
+        only_if_status_in: list[StepStatus],
+    ) -> int:
+        # No failure_reason parameter: StepModel has no failure_reason column.
+        if not workflow_run_ids or not only_if_status_in:
+            return 0
+
+        task_id_subquery = (
+            select(TaskModel.task_id).where(TaskModel.workflow_run_id.in_(workflow_run_ids)).scalar_subquery()
+        )
+        update_values: dict[str, Any] = {"status": new_status.value}
+        if new_status.is_terminal():
+            update_values["finished_at"] = func.coalesce(StepModel.finished_at, naive_utc_now())
+        async with self.Session() as session:
+            stmt = (
+                update(StepModel)
+                .where(StepModel.task_id.in_(task_id_subquery))
+                .where(StepModel.status.in_([s.value for s in only_if_status_in]))
+                .values(**update_values)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    @db_operation("bulk_update_steps_by_task_ids")
+    async def bulk_update_steps_by_task_ids(
+        self,
+        task_ids: list[str],
+        new_status: StepStatus,
+        only_if_status_in: list[StepStatus],
+    ) -> int:
+        if not task_ids or not only_if_status_in:
+            return 0
+
+        update_values: dict[str, Any] = {"status": new_status.value}
+        if new_status.is_terminal():
+            update_values["finished_at"] = func.coalesce(StepModel.finished_at, naive_utc_now())
+        async with self.Session() as session:
+            stmt = (
+                update(StepModel)
+                .where(StepModel.task_id.in_(task_ids))
+                .where(StepModel.status.in_([s.value for s in only_if_status_in]))
+                .values(**update_values)
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    @db_operation("get_tasks")
+    async def get_tasks(
+        self,
+        page: int = 1,
+        page_size: int = 10,
+        task_status: list[TaskStatus] | None = None,
+        workflow_run_id: str | None = None,
+        organization_id: str | None = None,
+        only_standalone_tasks: bool = False,
+        application: str | None = None,
+        order_by_column: OrderBy = OrderBy.created_at,
+        order: SortDirection = SortDirection.desc,
+        keyset: bool = False,
+        after: tuple[datetime, str] | None = None,
+    ) -> list[Task]:
+        """
+        Get all tasks.
+        :param page: Starts at 1; ignored when keyset is set
+        :param page_size:
+        :param task_status:
+        :param workflow_run_id:
+        :param only_standalone_tasks:
+        :param order_by_column:
+        :param order:
+        :param keyset: order by (order_by_column, task_id) and return the rows strictly after `after`
+        :param after: the (sort timestamp, task_id) of the last row already read, or None to start
+        :return:
+        """
+        if page < 1:
+            raise ValueError(f"Page must be greater than 0, got {page}")
+
+        folder_access_filter = None
+        if organization_id is not None:
+            folder_access_filter = await _folder_access_filter(organization_id, WorkflowRunModel.workflow_permanent_id)
+        async with self.Session() as session:
+            db_page = page - 1  # offset logic is 0 based
+            query = (
+                select(TaskModel, WorkflowRunModel.workflow_permanent_id)
+                .join(WorkflowRunModel, TaskModel.workflow_run_id == WorkflowRunModel.workflow_run_id, isouter=True)
+                .filter(TaskModel.organization_id == organization_id)
+            )
+            if folder_access_filter is not None:
+                query = query.filter(folder_access_filter)
+            if task_status:
+                query = query.filter(TaskModel.status.in_(task_status))
+            if workflow_run_id:
+                query = query.filter(TaskModel.workflow_run_id == workflow_run_id)
+            if only_standalone_tasks:
+                query = query.filter(TaskModel.workflow_run_id.is_(None))
+            if application:
+                query = query.filter(TaskModel.application == application)
+            order_by_col = getattr(TaskModel, order_by_column)
+            descending = order == SortDirection.desc
+            if keyset:
+                if after is not None:
+                    after_ts, after_task_id = after
+                    row = tuple_(order_by_col, TaskModel.task_id)
+                    # The single-column bound lets the (organization_id, created_at) index range-scan;
+                    # the row comparison alone is not always used as an index condition.
+                    query = query.filter(
+                        order_by_col <= after_ts if descending else order_by_col >= after_ts,
+                        row < tuple_(after_ts, after_task_id) if descending else row > tuple_(after_ts, after_task_id),
+                    )
+                query = query.order_by(
+                    *(col.desc() if descending else col.asc() for col in (order_by_col, TaskModel.task_id))
+                ).limit(page_size)
+            else:
+                query = (
+                    query.order_by(order_by_col.desc() if descending else order_by_col.asc())
+                    .limit(page_size)
+                    .offset(db_page * page_size)
+                )
+
+            results = (await session.execute(query)).all()
+
+        # A large page is seconds of pure-Python model building; on the event loop it stalls every other request.
+        # The query loads every column, so the thread only reads loaded attributes and never uses the session.
+        return await asyncio.to_thread(
+            lambda: [
+                convert_to_task(task, debug_enabled=self.debug_enabled, workflow_permanent_id=workflow_permanent_id)
+                for task, workflow_permanent_id in results
+            ]
+        )
+
+    @db_operation("get_tasks_count")
+    async def get_tasks_count(
+        self,
+        organization_id: str,
+        task_status: list[TaskStatus] | None = None,
+        workflow_run_id: str | None = None,
+        only_standalone_tasks: bool = False,
+        application: str | None = None,
+    ) -> int:
+        async with self.Session() as session:
+            count_query = (
+                select(func.count()).select_from(TaskModel).filter(TaskModel.organization_id == organization_id)
+            )
+            if task_status:
+                count_query = count_query.filter(TaskModel.status.in_(task_status))
+            if workflow_run_id:
+                count_query = count_query.filter(TaskModel.workflow_run_id == workflow_run_id)
+            if only_standalone_tasks:
+                count_query = count_query.filter(TaskModel.workflow_run_id.is_(None))
+            if application:
+                count_query = count_query.filter(TaskModel.application == application)
+            return (await session.execute(count_query)).scalar_one()
+
+    @db_operation("get_running_tasks_info_globally")
+    async def get_running_tasks_info_globally(
+        self,
+        stale_threshold_hours: int = 24,
+    ) -> tuple[int, int]:
+        """
+        Get information about running tasks across all organizations.
+        Used by cleanup service to determine if cleanup should be skipped.
+
+        Args:
+            stale_threshold_hours: Tasks not updated for this many hours are considered stale.
+
+        Returns:
+            Tuple of (active_task_count, stale_task_count).
+            Active tasks are those updated within the threshold.
+            Stale tasks are those not updated within the threshold but still in running status.
+        """
+        async with self.Session() as session:
+            running_statuses = [TaskStatus.created, TaskStatus.queued, TaskStatus.running]
+            stale_cutoff = naive_utc_now() - timedelta(hours=stale_threshold_hours)
+
+            # Count active tasks (recently updated)
+            active_query = (
+                select(func.count())
+                .select_from(TaskModel)
+                .filter(TaskModel.status.in_(running_statuses))
+                .filter(TaskModel.modified_at >= stale_cutoff)
+            )
+            active_count = (await session.execute(active_query)).scalar_one()
+
+            # Count stale tasks (not updated for a long time)
+            stale_query = (
+                select(func.count())
+                .select_from(TaskModel)
+                .filter(TaskModel.status.in_(running_statuses))
+                .filter(TaskModel.modified_at < stale_cutoff)
+            )
+            stale_count = (await session.execute(stale_query)).scalar_one()
+
+            return (active_count, stale_count)
+
+    @db_operation("get_latest_task_by_workflow_id")
+    async def get_latest_task_by_workflow_id(
+        self,
+        organization_id: str,
+        workflow_id: str,
+        before: datetime | None = None,
+    ) -> Task | None:
+        async with self.Session() as session:
+            query = select(TaskModel).filter_by(organization_id=organization_id).filter_by(workflow_id=workflow_id)
+            if before:
+                query = query.filter(TaskModel.created_at < before)
+            task = (await session.scalars(query.order_by(TaskModel.created_at.desc()))).first()
+            if task:
+                return convert_to_task(task, debug_enabled=self.debug_enabled)
+            return None
+
+    @db_operation("get_last_task_for_workflow_run")
+    async def get_last_task_for_workflow_run(
+        self, workflow_run_id: str, attempt_number: int | None = None
+    ) -> Task | None:
+        async with self.Session() as session:
+            query = select(TaskModel).filter_by(workflow_run_id=workflow_run_id)
+            if attempt_number is not None:
+                attempt_filter = TaskModel.attempt_number == attempt_number
+                if attempt_number == 1:
+                    attempt_filter = or_(attempt_filter, TaskModel.attempt_number.is_(None))
+                query = query.where(attempt_filter)
+            if task := (await session.scalars(query.order_by(TaskModel.created_at.desc()))).first():
+                return convert_to_task(task, debug_enabled=self.debug_enabled)
+            return None
+
+    @db_operation("get_tasks_by_workflow_run_id")
+    async def get_tasks_by_workflow_run_id(self, workflow_run_id: str, attempt_number: int | None = None) -> list[Task]:
+        async with self.Session() as session:
+            query = select(TaskModel).filter_by(workflow_run_id=workflow_run_id)
+            if attempt_number is not None:
+                attempt_filter = TaskModel.attempt_number == attempt_number
+                if attempt_number == 1:
+                    attempt_filter = or_(attempt_filter, TaskModel.attempt_number.is_(None))
+                query = query.where(attempt_filter)
+            tasks = (await session.scalars(query.order_by(TaskModel.created_at))).all()
+            return [convert_to_task(task, debug_enabled=self.debug_enabled) for task in tasks]
+
+    @db_operation("delete_task_steps")
+    async def delete_task_steps(self, organization_id: str, task_id: str) -> None:
+        async with self.Session() as session:
+            # delete artifacts by filtering organization_id and task_id
+            stmt = delete(StepModel).where(
+                and_(
+                    StepModel.organization_id == organization_id,
+                    StepModel.task_id == task_id,
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    @db_operation("get_previous_actions_for_task")
+    async def get_previous_actions_for_task(self, task_id: str) -> list[Action]:
+        async with self.Session() as session:
+            query = (
+                select(ActionModel)
+                .filter_by(task_id=task_id)
+                .order_by(ActionModel.step_order, ActionModel.action_order, ActionModel.created_at)
+            )
+            actions = (await session.scalars(query)).all()
+            return [Action.model_validate(action) for action in actions]
+
+    @db_operation("delete_task_actions")
+    async def delete_task_actions(self, organization_id: str, task_id: str) -> None:
+        async with self.Session() as session:
+            # delete actions by filtering organization_id and task_id
+            stmt = delete(ActionModel).where(
+                and_(
+                    ActionModel.organization_id == organization_id,
+                    ActionModel.task_id == task_id,
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def sync_task_run_status(
+        self,
+        organization_id: str,
+        run_id: str,
+        status: str,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        source_workflow_run_id: str | None = None,
+    ) -> None:
+        """Best-effort write-through: propagate status from source table to task_runs.
+
+        Workflow syncs copy the current source row, since retries can outlive a queued sync.
+        Does NOT raise if the task_runs row is missing (race at creation time).
+        """
+        try:
+            async with self.Session() as session:
+                vals: dict[str, Any] = {"status": status}
+                if started_at is not None:
+                    vals["started_at"] = to_naive_utc(started_at)
+                if finished_at is not None:
+                    vals["finished_at"] = to_naive_utc(finished_at)
+                stmt = (
+                    update(TaskRunModel)
+                    .where(TaskRunModel.run_id == run_id)
+                    .where(TaskRunModel.organization_id == organization_id)
+                )
+                if source_workflow_run_id is not None:
+                    stmt = stmt.where(
+                        WorkflowRunModel.workflow_run_id == source_workflow_run_id,
+                        WorkflowRunModel.organization_id == TaskRunModel.organization_id,
+                    )
+                    # Copy all three fields in the same statement, including cleared timestamps.
+                    # Matching status alone cannot distinguish two attempts that both failed.
+                    vals = {
+                        "status": WorkflowRunModel.status,
+                        "started_at": WorkflowRunModel.started_at,
+                        "finished_at": WorkflowRunModel.finished_at,
+                    }
+                stmt = stmt.values(**vals)
+                await session.execute(stmt)
+                await session.commit()
+        except Exception:
+            LOG.warning(
+                "Best-effort task_run status sync failed",
+                run_id=run_id,
+                organization_id=organization_id,
+                status=status,
+                exc_info=True,
+            )
+
+    @db_operation("create_task_run")
+    async def create_task_run(
+        self,
+        task_run_type: RunType,
+        organization_id: str,
+        run_id: str,
+        title: str | None = None,
+        url: str | None = None,
+        url_hash: str | None = None,
+        status: RunStatus | None = None,
+        workflow_permanent_id: str | None = None,
+        parent_workflow_run_id: str | None = None,
+        debug_session_id: str | None = None,
+        # script_run, started_at, finished_at are intentionally omitted here —
+        # they are set via update_task_run() after the run starts/finishes (PRs 2-5).
+    ) -> Run:
+        searchable_text = " ".join(filter(None, [title, url]))
+        async with self.Session() as session:
+            task_run = TaskRunModel(
+                task_run_type=task_run_type,
+                organization_id=organization_id,
+                run_id=run_id,
+                title=title,
+                url=url,
+                url_hash=url_hash,
+                status=status,
+                workflow_permanent_id=workflow_permanent_id,
+                parent_workflow_run_id=parent_workflow_run_id,
+                debug_session_id=debug_session_id,
+                searchable_text=searchable_text or None,
+            )
+            session.add(task_run)
+            # The flush already holds what a post-commit refresh would reread: Python defaults are set at flush and
+            # any server default returns through the INSERT. Only a trigger could differ; add a refresh if one lands.
+            await session.flush()
+            run = Run.model_validate(task_run)
+            await session.commit()
+            return run
+
+    @db_operation("update_task_run")
+    async def update_task_run(
+        self,
+        organization_id: str,
+        run_id: str,
+        title: str | None = None,
+        url: str | None = None,
+        url_hash: str | None = None,
+        status: str | None = None,
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+    ) -> None:
+        async with self.Session() as session:
+            task_run = (
+                await session.scalars(
+                    select(TaskRunModel).filter_by(run_id=run_id).filter_by(organization_id=organization_id)
+                )
+            ).first()
+            if not task_run:
+                raise NotFoundError(f"TaskRun {run_id} not found")
+
+            if title is not None:
+                task_run.title = title
+            if url is not None:
+                task_run.url = url
+            if url_hash is not None:
+                task_run.url_hash = url_hash
+            if status is not None:
+                task_run.status = status
+            if started_at is not None:
+                task_run.started_at = to_naive_utc(started_at)
+            if finished_at is not None:
+                task_run.finished_at = to_naive_utc(finished_at)
+
+            # Recompute searchable_text when title or url changes
+            if title is not None or url is not None:
+                task_run.searchable_text = " ".join(filter(None, [task_run.title, task_run.url])) or None
+
+            await session.commit()
+
+    @db_operation("update_job_run_compute_cost")
+    async def update_job_run_compute_cost(
+        self,
+        organization_id: str,
+        run_id: str,
+        instance_type: str | None = None,
+        duration_ms: int | None = None,
+        compute_cost: Decimal | None = None,
+        compute_hourly_rate_id: int | None = None,
+        llm_cost: Decimal | None = None,
+        proxy_cost: Decimal | None = None,
+        captcha_cost: Decimal | None = None,
+    ) -> None:
+        """Update compute cost metrics for a job run."""
+        async with self.Session() as session:
+            task_run = (
+                await session.scalars(
+                    select(TaskRunModel).filter_by(run_id=run_id, organization_id=organization_id).with_for_update()
+                )
+            ).first()
+            if not task_run:
+                LOG.warning(
+                    "TaskRun not found for compute cost update",
+                    run_id=run_id,
+                    organization_id=organization_id,
+                )
+                return
+
+            attempt_number = 1
+            if task_run.task_run_type == "workflow_run":
+                attempt_number = (
+                    await session.scalar(
+                        select(func.max(WorkflowRunAttemptModel.attempt_number)).where(
+                            WorkflowRunAttemptModel.workflow_run_id == run_id,
+                            WorkflowRunAttemptModel.organization_id == organization_id,
+                        )
+                    )
+                    or 1
+                )
+
+            # The workflow activity disables Temporal retries, so its interceptor records cost once per attempt.
+            if instance_type is not None:
+                task_run.instance_type = instance_type
+            if duration_ms is not None:
+                task_run.duration_ms = (task_run.duration_ms or 0) + duration_ms if attempt_number >= 2 else duration_ms
+            if compute_cost is not None:
+                task_run.compute_cost = (
+                    (task_run.compute_cost or Decimal(0)) + compute_cost if attempt_number >= 2 else compute_cost
+                )
+            if compute_hourly_rate_id is not None:
+                task_run.compute_hourly_rate_id = compute_hourly_rate_id
+            if llm_cost is not None:
+                task_run.llm_cost = llm_cost
+            if proxy_cost is not None:
+                task_run.proxy_cost = proxy_cost
+            if captcha_cost is not None:
+                task_run.captcha_cost = captcha_cost
+            await session.commit()
+
+    @db_operation("get_run")
+    async def get_run(
+        self,
+        run_id: str,
+        organization_id: str | None = None,
+    ) -> Run | None:
+        async with self.Session() as session:
+            query = select(TaskRunModel).filter_by(run_id=run_id)
+            if organization_id:
+                query = query.filter_by(organization_id=organization_id)
+            task_run = (await session.scalars(query)).first()
+            return Run.model_validate(task_run) if task_run else None

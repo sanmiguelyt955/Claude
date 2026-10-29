@@ -1,0 +1,118 @@
+import { useNodesData } from "@xyflow/react";
+import { useLayoutEffect, type ComponentType } from "react";
+
+import { usePendingCommitsStore } from "@/store/PendingCommitsStore";
+
+import { AppNode, type WorkflowBlockNode } from "../nodes";
+import { ActionBlockForm } from "./BlockConfigForm/ActionBlockForm";
+import { CodeBlockBlockForm } from "./BlockConfigForm/CodeBlockBlockForm";
+import { ConditionalBlockForm } from "./BlockConfigForm/ConditionalBlockForm";
+import { DownloadBlockForm } from "./BlockConfigForm/DownloadBlockForm";
+import { DataExportBlockForm } from "./BlockConfigForm/DataExportBlockForm";
+import { EmailInboxBlockForm } from "./BlockConfigForm/EmailInboxBlockForm";
+import { ExtractionBlockForm } from "./BlockConfigForm/ExtractionBlockForm";
+import { FileDownloadBlockForm } from "./BlockConfigForm/FileDownloadBlockForm";
+import { FileParserBlockForm } from "./BlockConfigForm/FileParserBlockForm";
+import { FileUploadBlockForm } from "./BlockConfigForm/FileUploadBlockForm";
+import { GoogleSheetsReadBlockForm } from "./BlockConfigForm/GoogleSheetsReadBlockForm";
+import { GoogleSheetsWriteBlockForm } from "./BlockConfigForm/GoogleSheetsWriteBlockForm";
+import { WebSearchBlockForm } from "./BlockConfigForm/WebSearchBlockForm";
+import { HttpRequestBlockForm } from "./BlockConfigForm/HttpRequestBlockForm";
+import { HumanInteractionBlockForm } from "./BlockConfigForm/HumanInteractionBlockForm";
+import { LoginBlockForm } from "./BlockConfigForm/LoginBlockForm";
+import { LoopBlockForm } from "./BlockConfigForm/LoopBlockForm";
+import { NavigationBlockForm } from "./BlockConfigForm/NavigationBlockForm";
+import { PDFParserBlockForm } from "./BlockConfigForm/PDFParserBlockForm";
+import { PrintPageBlockForm } from "./BlockConfigForm/PrintPageBlockForm";
+import { PdfFillBlockForm } from "./BlockConfigForm/PdfFillBlockForm";
+import { SendEmailBlockForm } from "./BlockConfigForm/SendEmailBlockForm";
+import { SplitPdfBlockForm } from "./BlockConfigForm/SplitPdfBlockForm";
+import { TaskBlockForm } from "./BlockConfigForm/TaskBlockForm";
+import { Taskv2BlockForm } from "./BlockConfigForm/Taskv2BlockForm";
+import { TextPromptBlockForm } from "./BlockConfigForm/TextPromptBlockForm";
+import { URLBlockForm } from "./BlockConfigForm/URLBlockForm";
+import { UploadBlockForm } from "./BlockConfigForm/UploadBlockForm";
+import { ValidationBlockForm } from "./BlockConfigForm/ValidationBlockForm";
+import { TerminateBlockForm } from "./BlockConfigForm/TerminateBlockForm";
+import { WaitBlockForm } from "./BlockConfigForm/WaitBlockForm";
+import { WorkflowSettingsBlockForm } from "./BlockConfigForm/WorkflowSettingsBlockForm";
+import { WorkflowTriggerBlockForm } from "./BlockConfigForm/WorkflowTriggerBlockForm";
+
+type WorkflowBlockNodeType = WorkflowBlockNode["type"];
+
+type BlockFormComponent = ComponentType<{ blockId: string }>;
+
+const BLOCK_FORMS: Record<WorkflowBlockNodeType, BlockFormComponent> = {
+  task: TaskBlockForm,
+  taskv2: Taskv2BlockForm,
+  navigation: NavigationBlockForm,
+  extraction: ExtractionBlockForm,
+  action: ActionBlockForm,
+  login: LoginBlockForm,
+  wait: WaitBlockForm,
+  terminate: TerminateBlockForm,
+  loop: LoopBlockForm,
+  conditional: ConditionalBlockForm,
+  textPrompt: TextPromptBlockForm,
+  sendEmail: SendEmailBlockForm,
+  emailInbox: EmailInboxBlockForm,
+  codeBlock: CodeBlockBlockForm,
+  fileParser: FileParserBlockForm,
+  fileDownload: FileDownloadBlockForm,
+  download: DownloadBlockForm,
+  upload: UploadBlockForm,
+  fileUpload: FileUploadBlockForm,
+  pdfParser: PDFParserBlockForm,
+  validation: ValidationBlockForm,
+  human_interaction: HumanInteractionBlockForm,
+  url: URLBlockForm,
+  http_request: HttpRequestBlockForm,
+  web_search: WebSearchBlockForm,
+  printPage: PrintPageBlockForm,
+  pdfFill: PdfFillBlockForm,
+  workflowTrigger: WorkflowTriggerBlockForm,
+  googleSheetsRead: GoogleSheetsReadBlockForm,
+  googleSheetsWrite: GoogleSheetsWriteBlockForm,
+  splitPdf: SplitPdfBlockForm,
+  dataExport: DataExportBlockForm,
+};
+
+function BlockConfigForm({ blockId }: Readonly<{ blockId: string }>) {
+  const flushPendingCommit = usePendingCommitsStore((state) => state.flush);
+
+  // useLayoutEffect cleanups run synchronously after commit and BEFORE
+  // useEffect cleanups, so capturing `blockId` here flushes the previous
+  // block's pending edits before the form's useEffect cleanup unregisters
+  // the commit.
+  useLayoutEffect(() => {
+    return () => {
+      flushPendingCommit(blockId);
+    };
+  }, [blockId, flushPendingCommit]);
+
+  // Subscribe to the node's live slice so block transmutation (same id,
+  // new type) re-dispatches to the matching form instead of writing
+  // fields against a stale schema.
+  const nodeSlice = useNodesData<AppNode>(blockId);
+  if (!nodeSlice) {
+    return null;
+  }
+
+  if (nodeSlice.type === "start") {
+    return <WorkflowSettingsBlockForm blockId={blockId} />;
+  }
+
+  if (!(nodeSlice.type in BLOCK_FORMS)) {
+    return null;
+  }
+
+  const Form = BLOCK_FORMS[nodeSlice.type as WorkflowBlockNode["type"]];
+  return <Form blockId={blockId} />;
+}
+
+export {
+  BLOCK_FORMS,
+  BlockConfigForm,
+  type BlockFormComponent,
+  type WorkflowBlockNodeType,
+};

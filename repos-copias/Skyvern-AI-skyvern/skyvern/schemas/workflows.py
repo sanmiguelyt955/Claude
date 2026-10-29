@@ -1,0 +1,2006 @@
+import abc
+import ast
+import functools
+import re
+import textwrap
+import unicodedata
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Annotated, Any, Literal, Protocol, TypeVar
+
+import structlog
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictInt,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from skyvern.config import settings
+from skyvern.constants import ERROR_CODE_REASONING_MAX_LENGTH, MAX_PDF_OCR_PAGES
+from skyvern.forge.sdk.api.llm.config_registry import LLMConfigRegistry
+from skyvern.forge.sdk.api.llm.custom_llm_registry import is_custom_llm_key
+from skyvern.forge.sdk.settings_manager import SettingsManager
+from skyvern.forge.sdk.workflow.browser_profile_key import validate_browser_profile_key
+from skyvern.forge.sdk.workflow.models.parameter import OutputParameter, ParameterType, WorkflowParameterType
+from skyvern.forge.sdk.workflow.models.run_limits import (
+    WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES,
+    MaxScreenshotScrolls,
+    reject_bool_max_elapsed_time_minutes,
+)
+from skyvern.forge.sdk.workflow.models.validators import normalize_run_with
+from skyvern.schemas.browser_settings import BrowserSettings, require_known_timezone
+from skyvern.schemas.emails import EmailBodyFormat, EmailTransport
+from skyvern.schemas.runs import GeoTarget, ProxyLocation, RunEngine, normalize_browser_type
+from skyvern.utils.secret_headers import mask_header_values
+from skyvern.utils.strings import sanitize_identifier
+from skyvern.utils.templating import mask_jinja_control_blocks, replace_jinja_reference
+
+LOG = structlog.get_logger()
+
+
+def sanitize_block_label(value: str) -> str:
+    """Sanitizes a block label to be a valid Python/Jinja2 identifier.
+
+    Block labels are used to create output parameter keys (e.g., '{label}_output')
+    which are then used as Jinja2 template variable names.
+
+    Args:
+        value: The raw label value to sanitize
+
+    Returns:
+        A sanitized label that is a valid Python identifier
+    """
+    return sanitize_identifier(value, default="block")
+
+
+def sanitize_parameter_key(value: str) -> str:
+    """Sanitizes a parameter key to be a valid Python/Jinja2 identifier.
+
+    Parameter keys are used as Jinja2 template variable names.
+
+    Args:
+        value: The raw key value to sanitize
+
+    Returns:
+        A sanitized key that is a valid Python identifier
+    """
+    return sanitize_identifier(value, default="parameter")
+
+
+def _has_jinja_syntax(value: str) -> bool:
+    return "{{" in value or "{%" in value
+
+
+@functools.lru_cache(maxsize=1)
+def _get_text_prompt_model_name_by_llm_key() -> dict[str, str]:
+    """Build a reverse mapping from internal llm_key to public model_name.
+
+    Cached because settings don't change at runtime.  Tests that monkeypatch
+    settings must call ``_get_text_prompt_model_name_by_llm_key.cache_clear()``
+    to avoid cross-test pollution.
+    """
+    reverse_mapping: dict[str, str] = {}
+    for model_name, metadata in SettingsManager.get_settings().get_model_name_to_llm_key().items():
+        llm_key = metadata.get("llm_key")
+        if llm_key and llm_key not in reverse_mapping:
+            reverse_mapping[llm_key] = model_name
+    return reverse_mapping
+
+
+ENGINE_PINNED_DESCRIPTION = (
+    "Set to true only when skyvern-1.0 was explicitly chosen for this block; leave it unset otherwise."
+)
+
+FORCE_OCR_DESCRIPTION = (
+    "PDF only: ignore the PDF's embedded text layer and read the pages with vision OCR instead. "
+    "Use it when a PDF's text layer is unreadable in a way Skyvern does not detect on its own. "
+    f"OCR reads at most the first {MAX_PDF_OCR_PAGES} pages, so a longer PDF loses the rest; "
+    "leave this off unless the text layer is unusable."
+)
+
+
+class _LLMSelectionBlock(Protocol):
+    label: str
+    model: dict[str, Any] | None
+    llm_key: str | None
+
+
+_LLMSelectionBlockT = TypeVar("_LLMSelectionBlockT", bound=_LLMSelectionBlock)
+
+
+def _normalize_llm_selection(
+    block: _LLMSelectionBlockT,
+    *,
+    unrecognized_message: str,
+) -> _LLMSelectionBlockT:
+    raw_llm_key = block.llm_key.strip() if block.llm_key else None
+
+    if block.model:
+        block.llm_key = None
+        return block
+
+    if not raw_llm_key:
+        block.llm_key = None
+        return block
+
+    if _has_jinja_syntax(raw_llm_key):
+        block.llm_key = raw_llm_key
+        return block
+
+    model_name = _get_text_prompt_model_name_by_llm_key().get(raw_llm_key)
+    if model_name:
+        block.model = {"model_name": model_name}
+        block.llm_key = None
+        return block
+
+    if is_custom_llm_key(raw_llm_key):
+        LOG.warning(
+            "Rejecting raw custom LLM key on block llm_key; use the model selector instead",
+            label=block.label,
+        )
+        block.llm_key = None
+        return block
+
+    if raw_llm_key in LLMConfigRegistry.get_model_names():
+        block.llm_key = raw_llm_key
+        return block
+
+    LOG.warning(unrecognized_message, label=block.label, llm_key=raw_llm_key)
+    block.llm_key = None
+    return block
+
+
+def _replace_references_in_value(value: Any, old_key: str, new_key: str) -> Any:
+    """Recursively replaces Jinja references in a value (string, dict, or list)."""
+    if isinstance(value, str):
+        return replace_jinja_reference(value, old_key, new_key)
+    elif isinstance(value, dict):
+        return {k: _replace_references_in_value(v, old_key, new_key) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_replace_references_in_value(item, old_key, new_key) for item in value]
+    return value
+
+
+def _rewrite_error_code_mapping_refs_atomic(mapping: Any, substitutions: list[tuple[str, str]]) -> Any:
+    """Atomically rewrites Jinja references (keys and values) in an error_code_mapping dict.
+
+    Uses unique sentinels so chained rewrites don't occur when one substitution's new
+    identifier matches another's old identifier (e.g. foo-bar -> foo_bar AND foo_bar -> foo_bar_2).
+    """
+    if not isinstance(mapping, dict) or not substitutions:
+        return mapping
+
+    sentinels = [(old, new, f"\x00SKY_SANITIZE_{i}\x00") for i, (old, new) in enumerate(substitutions)]
+
+    def _apply(text: str) -> str:
+        for old, _new, sentinel in sentinels:
+            text = replace_jinja_reference(text, old, sentinel)
+        for _old, new, sentinel in sentinels:
+            text = text.replace(sentinel, new)
+        return text
+
+    return {
+        (_apply(k) if isinstance(k, str) else k): (_apply(v) if isinstance(v, str) else v) for k, v in mapping.items()
+    }
+
+
+def _replace_direct_string_in_value(value: Any, old_key: str, new_key: str) -> Any:
+    """Recursively replaces exact string matches in a value (for fields like source_parameter_key)."""
+    if isinstance(value, str):
+        return new_key if value == old_key else value
+    elif isinstance(value, dict):
+        return {k: _replace_direct_string_in_value(v, old_key, new_key) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_replace_direct_string_in_value(item, old_key, new_key) for item in value]
+    return value
+
+
+def _make_unique(candidate: str, seen: set[str]) -> str:
+    """Appends a numeric suffix to make candidate unique within the seen set.
+
+    Args:
+        candidate: The candidate identifier
+        seen: Set of already-used identifiers (mutated -- the chosen name is added)
+
+    Returns:
+        A unique identifier, either candidate itself or candidate_N
+    """
+    if candidate not in seen:
+        seen.add(candidate)
+        return candidate
+    counter = 2
+    while f"{candidate}_{counter}" in seen:
+        counter += 1
+    unique = f"{candidate}_{counter}"
+    seen.add(unique)
+    return unique
+
+
+def _sanitize_blocks_recursive(
+    blocks: list[dict[str, Any]],
+    label_mapping: dict[str, str],
+    seen_labels: set[str],
+) -> list[dict[str, Any]]:
+    """Recursively sanitizes block labels and collects the label mapping.
+
+    Args:
+        blocks: List of block dictionaries
+        label_mapping: Dictionary to store old_label -> new_label mappings (mutated)
+        seen_labels: Set of already-used labels for collision avoidance (mutated)
+
+    Returns:
+        List of blocks with sanitized labels
+    """
+    sanitized_blocks = []
+    for block in blocks:
+        block = dict(block)  # Make a copy to avoid mutating the original
+
+        # Sanitize the block's label
+        if "label" in block and isinstance(block["label"], str):
+            old_label = block["label"]
+            new_label = sanitize_block_label(old_label)
+            new_label = _make_unique(new_label, seen_labels)
+            if old_label != new_label:
+                label_mapping[old_label] = new_label
+                block["label"] = new_label
+            else:
+                # Even if unchanged, track it as seen for collision avoidance
+                seen_labels.add(old_label)
+
+        # Handle nested blocks in for_loop
+        if "loop_blocks" in block and isinstance(block["loop_blocks"], list):
+            block["loop_blocks"] = _sanitize_blocks_recursive(block["loop_blocks"], label_mapping, seen_labels)
+
+        sanitized_blocks.append(block)
+
+    return sanitized_blocks
+
+
+def _sanitize_parameters(
+    parameters: list[dict[str, Any]],
+    key_mapping: dict[str, str],
+    seen_keys: set[str],
+) -> list[dict[str, Any]]:
+    """Sanitizes parameter keys and collects the key mapping.
+
+    Args:
+        parameters: List of parameter dictionaries
+        key_mapping: Dictionary to store old_key -> new_key mappings (mutated)
+        seen_keys: Set of already-used keys for collision avoidance (mutated)
+
+    Returns:
+        List of parameters with sanitized keys
+    """
+    sanitized_params = []
+    for param in parameters:
+        param = dict(param)  # Make a copy
+
+        if "key" in param and isinstance(param["key"], str):
+            old_key = param["key"]
+            new_key = sanitize_parameter_key(old_key)
+            new_key = _make_unique(new_key, seen_keys)
+            if old_key != new_key:
+                key_mapping[old_key] = new_key
+                param["key"] = new_key
+            else:
+                # Even if unchanged, track it as seen for collision avoidance
+                seen_keys.add(old_key)
+
+        sanitized_params.append(param)
+
+    return sanitized_params
+
+
+def _update_parameter_keys_in_blocks(
+    blocks: list[dict[str, Any]],
+    key_mapping: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Updates parameter_keys arrays in blocks to use new parameter key names.
+
+    Args:
+        blocks: List of block dictionaries
+        key_mapping: Dictionary of old_key -> new_key mappings
+
+    Returns:
+        List of blocks with updated parameter_keys
+    """
+    updated_blocks = []
+    for block in blocks:
+        block = dict(block)
+
+        # Update parameter_keys array if present
+        if "parameter_keys" in block and isinstance(block["parameter_keys"], list):
+            block["parameter_keys"] = [
+                key_mapping.get(key, key) if isinstance(key, str) else key for key in block["parameter_keys"]
+            ]
+
+        # Handle nested blocks in for_loop
+        if "loop_blocks" in block and isinstance(block["loop_blocks"], list):
+            block["loop_blocks"] = _update_parameter_keys_in_blocks(block["loop_blocks"], key_mapping)
+
+        updated_blocks.append(block)
+
+    return updated_blocks
+
+
+def sanitize_workflow_yaml_with_references(workflow_yaml: dict[str, Any]) -> dict[str, Any]:
+    """Sanitizes block labels and parameter keys, and updates all references throughout the workflow.
+
+    This function:
+    1. Sanitizes all block labels to be valid Python identifiers
+    2. Sanitizes all parameter keys to be valid Python identifiers
+    3. Updates all Jinja references from {old_key} to {new_key}
+    4. Updates next_block_label if it references an old label
+    5. Updates finally_block_label if it references an old label
+    6. Updates parameter_keys arrays in blocks
+    7. Updates source_parameter_key and other direct references
+
+    Args:
+        workflow_yaml: The parsed workflow YAML dictionary
+
+    Returns:
+        The workflow YAML with sanitized identifiers and updated references
+    """
+    workflow_yaml = dict(workflow_yaml)  # Make a copy
+
+    workflow_definition = workflow_yaml.get("workflow_definition")
+    if not workflow_definition or not isinstance(workflow_definition, dict):
+        return workflow_yaml
+
+    workflow_definition = dict(workflow_definition)  # Make a copy
+    workflow_yaml["workflow_definition"] = workflow_definition
+
+    # Step 1: Sanitize all block labels and collect the mapping
+    label_mapping: dict[str, str] = {}  # old_label -> new_label
+    seen_labels: set[str] = set()
+    blocks = workflow_definition.get("blocks")
+    if blocks and isinstance(blocks, list):
+        workflow_definition["blocks"] = _sanitize_blocks_recursive(blocks, label_mapping, seen_labels)
+
+    # Step 2: Sanitize all parameter keys and collect the mapping
+    param_key_mapping: dict[str, str] = {}  # old_key -> new_key
+    seen_keys: set[str] = set()
+    parameters = workflow_definition.get("parameters")
+    if parameters and isinstance(parameters, list):
+        workflow_definition["parameters"] = _sanitize_parameters(parameters, param_key_mapping, seen_keys)
+
+    # If nothing was changed, return early
+    if not label_mapping and not param_key_mapping:
+        return workflow_yaml
+
+    LOG.info(
+        "Auto-sanitized workflow identifiers during import",
+        sanitized_labels=label_mapping if label_mapping else None,
+        sanitized_parameter_keys=param_key_mapping if param_key_mapping else None,
+    )
+
+    # Step 3: Update all block label references
+    for old_label, new_label in label_mapping.items():
+        old_output_key = f"{old_label}_output"
+        new_output_key = f"{new_label}_output"
+
+        # Update Jinja references in blocks for {label}_output pattern
+        if "blocks" in workflow_definition:
+            workflow_definition["blocks"] = _replace_references_in_value(
+                workflow_definition["blocks"], old_output_key, new_output_key
+            )
+            # Also update shorthand {{ label }} references (must be done after _output to avoid partial matches)
+            workflow_definition["blocks"] = _replace_references_in_value(
+                workflow_definition["blocks"], old_label, new_label
+            )
+
+        # Update Jinja references in parameters for {label}_output pattern
+        if "parameters" in workflow_definition:
+            workflow_definition["parameters"] = _replace_references_in_value(
+                workflow_definition["parameters"], old_output_key, new_output_key
+            )
+            # Also update shorthand {{ label }} references
+            workflow_definition["parameters"] = _replace_references_in_value(
+                workflow_definition["parameters"], old_label, new_label
+            )
+            # Also update direct string references (e.g., source_parameter_key)
+            workflow_definition["parameters"] = _replace_direct_string_in_value(
+                workflow_definition["parameters"], old_output_key, new_output_key
+            )
+
+        # workflow_system_prompt is rendered through Jinja at execution time, so
+        # references inside it need the same rename treatment as block fields.
+        if isinstance(workflow_definition.get("workflow_system_prompt"), str):
+            workflow_definition["workflow_system_prompt"] = _replace_references_in_value(
+                workflow_definition["workflow_system_prompt"], old_output_key, new_output_key
+            )
+            workflow_definition["workflow_system_prompt"] = _replace_references_in_value(
+                workflow_definition["workflow_system_prompt"], old_label, new_label
+            )
+
+    # Step 4: Update all parameter key references
+    for old_key, new_key in param_key_mapping.items():
+        # Update Jinja references in blocks (e.g., {{ old_key }})
+        if "blocks" in workflow_definition:
+            workflow_definition["blocks"] = _replace_references_in_value(
+                workflow_definition["blocks"], old_key, new_key
+            )
+
+        # Update Jinja references in parameters (e.g., default values that reference other params)
+        if "parameters" in workflow_definition:
+            workflow_definition["parameters"] = _replace_references_in_value(
+                workflow_definition["parameters"], old_key, new_key
+            )
+            # Also update direct string references (e.g., source_parameter_key)
+            workflow_definition["parameters"] = _replace_direct_string_in_value(
+                workflow_definition["parameters"], old_key, new_key
+            )
+
+        if isinstance(workflow_definition.get("workflow_system_prompt"), str):
+            workflow_definition["workflow_system_prompt"] = _replace_references_in_value(
+                workflow_definition["workflow_system_prompt"], old_key, new_key
+            )
+
+    # Rewrite workflow-level error_code_mapping atomically so substitutions don't chain
+    # (e.g. foo-bar -> foo_bar and foo_bar -> foo_bar_2 must not combine into foo_bar_2).
+    if "error_code_mapping" in workflow_definition:
+        substitutions: list[tuple[str, str]] = []
+        for old_label, new_label in label_mapping.items():
+            # More specific output-key substitution must come before the bare label.
+            substitutions.append((f"{old_label}_output", f"{new_label}_output"))
+            substitutions.append((old_label, new_label))
+        for old_key, new_key in param_key_mapping.items():
+            substitutions.append((old_key, new_key))
+        workflow_definition["error_code_mapping"] = _rewrite_error_code_mapping_refs_atomic(
+            workflow_definition["error_code_mapping"], substitutions
+        )
+
+    # Step 5: Update parameter_keys arrays in blocks
+    if param_key_mapping and "blocks" in workflow_definition:
+        workflow_definition["blocks"] = _update_parameter_keys_in_blocks(
+            workflow_definition["blocks"], param_key_mapping
+        )
+
+    # Step 6: Update finally_block_label if it references an old label
+    if "finally_block_label" in workflow_definition:
+        finally_label = workflow_definition["finally_block_label"]
+        if finally_label in label_mapping:
+            workflow_definition["finally_block_label"] = label_mapping[finally_label]
+
+    # Step 7: Update next_block_label in all blocks
+    def update_next_block_label(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        updated_blocks = []
+        for block in blocks:
+            block = dict(block)
+            if "next_block_label" in block:
+                next_label = block["next_block_label"]
+                if next_label in label_mapping:
+                    block["next_block_label"] = label_mapping[next_label]
+            if "loop_blocks" in block and isinstance(block["loop_blocks"], list):
+                block["loop_blocks"] = update_next_block_label(block["loop_blocks"])
+            updated_blocks.append(block)
+        return updated_blocks
+
+    if label_mapping and "blocks" in workflow_definition:
+        workflow_definition["blocks"] = update_next_block_label(workflow_definition["blocks"])
+
+    return workflow_yaml
+
+
+class WorkflowStatus(StrEnum):
+    published = "published"
+    draft = "draft"
+    auto_generated = "auto_generated"
+    importing = "importing"
+    import_failed = "import_failed"
+
+
+class BlockType(StrEnum):
+    TASK = "task"
+    TaskV2 = "task_v2"
+    FOR_LOOP = "for_loop"
+    WHILE_LOOP = "while_loop"
+    CONDITIONAL = "conditional"
+    CODE = "code"
+    TEXT_PROMPT = "text_prompt"
+    DOWNLOAD_TO_S3 = "download_to_s3"
+    UPLOAD_TO_S3 = "upload_to_s3"
+    FILE_UPLOAD = "file_upload"
+    SEND_EMAIL = "send_email"
+    FILE_URL_PARSER = "file_url_parser"
+    VALIDATION = "validation"
+    ACTION = "action"
+    NAVIGATION = "navigation"
+    EXTRACTION = "extraction"
+    LOGIN = "login"
+    WAIT = "wait"
+    FILE_DOWNLOAD = "file_download"
+    GOTO_URL = "goto_url"
+    PDF_PARSER = "pdf_parser"
+    HTTP_REQUEST = "http_request"
+    WEB_SEARCH = "web_search"
+    HUMAN_INTERACTION = "human_interaction"
+    PRINT_PAGE = "print_page"
+    WORKFLOW_TRIGGER = "workflow_trigger"
+    GOOGLE_SHEETS_READ = "google_sheets_read"
+    GOOGLE_SHEETS_WRITE = "google_sheets_write"
+    PDF_FILL = "pdf_fill"
+    SPLIT_PDF = "split_pdf"
+    EMAIL_INBOX = "email_inbox"
+    DATA_EXPORT = "data_export"
+    TERMINATE = "terminate"
+
+
+class AIFallbackMode(StrEnum):
+    """Controls how an action block uses a CSS/XPath selector relative to AI.
+
+    - `fallback`: attempt the selector first; fall back to AI on failure.
+    - `proactive`: always use AI; the selector (if any) is a hint only.
+
+    When `selector` is None, both modes degrade to AI-only — the difference
+    is purely semantic (whether the author expected to have a selector here).
+    """
+
+    FALLBACK = "fallback"
+    PROACTIVE = "proactive"
+
+
+class BlockStatus(StrEnum):
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+    terminated = "terminated"
+    canceled = "canceled"
+    timed_out = "timed_out"
+    skipped = "skipped"
+
+
+class CodeBlockFailureKind(StrEnum):
+    """Whose failure a failed CodeBlock was: the block's own code, or the runner executing it."""
+
+    user_exception = "user_exception"
+    browser_operation_failed = "browser_operation_failed"
+    runner_timeout = "runner_timeout"
+    runner_error = "runner_error"
+
+
+@dataclass(frozen=True)
+class BlockResult:
+    success: bool
+    output_parameter: OutputParameter
+    output_parameter_value: dict[str, Any] | list | str | None = None
+    status: BlockStatus | None = None
+    failure_reason: str | None = None
+    error_codes: list[str] = field(default_factory=list)
+    workflow_run_block_id: str | None = None
+    # True for synthetic loop-level failures (max iterations, max steps per iter,
+    # missing block label) so callers can distinguish them from real child-block
+    # results. Set explicitly at the synthetic construction sites in loop helpers.
+    is_synthetic_loop_failure: bool = False
+    # False when retry/continuation cannot change the outcome, such as invalid
+    # CodeBlock source that fails before execution.
+    can_continue_after_failure: bool = True
+    # A failed CodeBlock's failing tab showed a sign-in form. Kept off the output so templates never see it.
+    sign_in_form_visible: bool = False
+    # Set only by an executor that can classify a failed CodeBlock; None means unclassified, not "no failure".
+    codeblock_failure_kind: CodeBlockFailureKind | None = None
+
+
+class FileType(StrEnum):
+    AUTO_DETECT = "auto_detect"
+    CSV = "csv"
+    EXCEL = "excel"
+    PDF = "pdf"
+    IMAGE = "image"
+    DOCX = "docx"
+    ZIP = "zip"
+
+
+class PDFFormat(StrEnum):
+    A4 = "A4"
+    LETTER = "Letter"
+    LEGAL = "Legal"
+    TABLOID = "Tabloid"
+
+
+class FileStorageType(StrEnum):
+    S3 = "s3"
+    AZURE = "azure"
+    GOOGLE_DRIVE = "google_drive"
+    SFTP = "sftp"
+
+
+class FileDownloadTarget(StrEnum):
+    WEBSITE = "website"
+    S3 = "s3"
+    AZURE = "azure"
+    GOOGLE_DRIVE = "google_drive"
+    SFTP = "sftp"
+
+
+def _normalize_optional_endpoint_url(value: str | None) -> str | None:
+    """Treat a blank S3 ``endpoint_url`` as absent.
+
+    The editor serializes an unset destination field as ``""`` and a Jinja value can render
+    empty, and botocore raises ``ValueError: Invalid endpoint:`` on an empty endpoint_url
+    instead of falling back to AWS the way an empty ``region_name`` does.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
+class FileUploadDestination(BaseModel):
+    """Customer-storage destination for a single file upload.
+
+    Used by ``AgentFunction.upload_file_to_customer_storage``. The cloud
+    override inspects this to decide whether to compute a presigned/SAS URL
+    and route through the NAT egress proxy or upload directly via the SDK.
+    """
+
+    storage_type: FileStorageType
+    customer_uri: str
+    sdk_uri: str
+
+    s3_bucket: str | None = None
+    s3_key: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_region_name: str | None = None
+    endpoint_url: str | None = None
+    # Addresses ``endpoint_url``'s host already resolved to and was cleared against, passed to the
+    # S3 client so a rebinding name cannot be re-answered with an internal address at connect time.
+    endpoint_resolved_ips: tuple[str, ...] | None = None
+
+    azure_storage_account_name: str | None = None
+    azure_storage_account_key: str | None = None
+    azure_blob_container_name: str | None = None
+    azure_blob_name: str | None = None
+
+    google_access_token: str | None = None
+    google_drive_folder_id: str | None = None
+    sftp_host: str | None = None
+    sftp_port: int | None = None
+    sftp_username: str | None = None
+    sftp_password: str | None = None
+    sftp_private_key: str | None = None
+    sftp_private_key_passphrase: str | None = None
+    sftp_remote_path: str | None = None
+    sftp_host_key: str | None = None
+
+
+class ParameterYAML(BaseModel, abc.ABC):
+    parameter_type: ParameterType
+    key: str
+    description: str | None = None
+
+    @field_validator("key")
+    @classmethod
+    def validate_key_is_valid_identifier(cls, v: str) -> str:
+        """Validate that parameter key is a valid Jinja2/Python identifier.
+
+        Parameter keys are used as Jinja2 template variable names. Jinja2 variable names
+        must be valid Python identifiers (letters, digits, underscores; cannot start with digit).
+
+        Characters like '/', '-', '.', etc. are NOT allowed because they are interpreted as
+        operators in Jinja2 templates, causing parsing errors like "'State_' is undefined"
+        when using a key like "State_/_Province".
+        """
+        if any(char in v for char in [" ", "\t", "\n", "\r"]):
+            raise ValueError("Key cannot contain whitespace characters")
+
+        if not v.isidentifier():
+            raise ValueError(
+                f"Key '{v}' is not a valid parameter name. "
+                "Parameter keys must be valid Python identifiers "
+                "(only letters, digits, and underscores; cannot start with a digit). "
+                "Characters like '/', '-', '.', etc. are not allowed because they conflict with Jinja2 template syntax."
+            )
+        return v
+
+
+class AWSSecretParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.AWS_SECRET] = ParameterType.AWS_SECRET  # type: ignore
+    aws_key: str
+
+
+class BitwardenLoginCredentialParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.BITWARDEN_LOGIN_CREDENTIAL] = ParameterType.BITWARDEN_LOGIN_CREDENTIAL  # type: ignore
+
+    # bitwarden cli required fields
+    bitwarden_client_id_aws_secret_key: str
+    bitwarden_client_secret_aws_secret_key: str
+    bitwarden_master_password_aws_secret_key: str
+    # parameter key for the url to request the login credentials from bitwarden
+    url_parameter_key: str | None = None
+    # bitwarden collection id to filter the login credentials from,
+    # if not provided, no filtering will be done
+    bitwarden_collection_id: str | None = None
+    # bitwarden item id to request the login credential
+    bitwarden_item_id: str | None = None
+    totp_identifier: str | None = None
+
+
+class CredentialParameterYAML(ParameterYAML):
+    parameter_type: Literal[ParameterType.CREDENTIAL] = ParameterType.CREDENTIAL  # type: ignore
+    credential_id: str
+    credential_ids: list[str] | None = None
+    selection_strategy: str | None = None
+    fallback_credential_ids: list[str] | None = None
+    fallback_trigger: str | None = None
+
+
+class BitwardenSensitiveInformationParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal["bitwarden_sensitive_information"] = ParameterType.BITWARDEN_SENSITIVE_INFORMATION  # type: ignore
+
+    # bitwarden cli required fields
+    bitwarden_client_id_aws_secret_key: str
+    bitwarden_client_secret_aws_secret_key: str
+    bitwarden_master_password_aws_secret_key: str
+    # bitwarden collection id to filter the Bitwarden Identity from
+    bitwarden_collection_id: str
+    # unique key to identify the Bitwarden Identity in the collection
+    # this has to be in the identity's name
+    bitwarden_identity_key: str
+    # fields to extract from the Bitwarden Identity. Custom fields are prioritized over default identity fields
+    bitwarden_identity_fields: list[str]
+
+
+class BitwardenCreditCardDataParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.BITWARDEN_CREDIT_CARD_DATA] = ParameterType.BITWARDEN_CREDIT_CARD_DATA  # type: ignore
+    # bitwarden cli required fields
+    bitwarden_client_id_aws_secret_key: str
+    bitwarden_client_secret_aws_secret_key: str
+    bitwarden_master_password_aws_secret_key: str
+    # bitwarden ids for the credit card item
+    bitwarden_collection_id: str
+    bitwarden_item_id: str
+
+
+class OnePasswordCredentialParameterYAML(ParameterYAML):
+    parameter_type: Literal[ParameterType.ONEPASSWORD] = ParameterType.ONEPASSWORD  # type: ignore
+    vault_id: str
+    item_id: str
+    totp_field_name: str | None = None
+    totp_identifier: str | None = None
+
+
+class AzureVaultCredentialParameterYAML(ParameterYAML):
+    parameter_type: Literal[ParameterType.AZURE_VAULT_CREDENTIAL] = ParameterType.AZURE_VAULT_CREDENTIAL  # type: ignore
+    vault_name: str
+    username_key: str
+    password_key: str
+    totp_secret_key: str | None = None
+
+
+class WorkflowParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.WORKFLOW] = ParameterType.WORKFLOW  # type: ignore
+    workflow_parameter_type: WorkflowParameterType
+    default_value: str | int | float | bool | dict | list | None = None
+
+
+class ContextParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.CONTEXT] = ParameterType.CONTEXT  # type: ignore
+    source_parameter_key: str
+
+
+class OutputParameterYAML(ParameterYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the ParameterType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    parameter_type: Literal[ParameterType.OUTPUT] = ParameterType.OUTPUT  # type: ignore
+
+
+class BlockYAML(BaseModel, abc.ABC):
+    block_type: BlockType
+    label: str = Field(description="Author-facing identifier; must be unique per workflow.")
+    next_block_label: str | None = Field(
+        default=None,
+        description="Optional pointer to the label of the next block. "
+        "When omitted, it will default to sequential order. See [[s-4bnl]].",
+    )
+    continue_on_failure: bool = False
+    model: dict[str, Any] | None = None
+    # Opt-out from workflow-level workflow_system_prompt inheritance (and, on a
+    # WorkflowTriggerBlock, from propagating the parent chain's prompt into the
+    # spawned child run). A no-op for deterministic blocks that don't call an LLM.
+    ignore_workflow_system_prompt: bool = False
+    # Only valid for blocks inside a for loop block
+    # Whether to continue to the next iteration when the block fails
+    next_loop_on_failure: bool = False
+
+    @field_validator("label")
+    @classmethod
+    def validate_label(cls, value: str) -> str:
+        """Validate that block label is a valid Python identifier.
+
+        Block labels are used to create output parameter keys (e.g., '{label}_output')
+        which are then used as Jinja2 template variable names. Therefore, block labels
+        must be valid Python identifiers.
+        """
+        if not value or not value.strip():
+            raise ValueError("Block labels cannot be empty.")
+        if not value.isidentifier():
+            raise ValueError(
+                f"Block label '{value}' is not a valid label. "
+                "Block labels must be valid Python identifiers "
+                "(only letters, digits, and underscores; cannot start with a digit). "
+                "Characters like '/', '-', '.', etc. are not allowed because they conflict with Jinja2 template syntax."
+            )
+        return value
+
+
+class TaskBlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.TASK] = BlockType.TASK  # type: ignore
+
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    navigation_goal: str | None = None
+    data_extraction_goal: str | None = None
+    data_schema: dict[str, Any] | list | str | None = None
+    error_code_mapping: dict[str, str] | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    complete_on_download: bool = False
+    download_suffix: str | None = (
+        None  # DEPRECATED: This field now sets the complete filename instead of appending to a random name
+    )
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    disable_cache: bool = False
+    complete_criterion: str | None = None
+    terminate_criterion: str | None = None
+    complete_verification: bool = True
+    include_action_history_in_verification: bool = False
+
+
+class ForLoopBlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.FOR_LOOP] = BlockType.FOR_LOOP  # type: ignore
+
+    loop_blocks: list["BLOCK_YAML_SUBCLASSES"]
+    loop_over_parameter_key: str = ""
+    loop_variable_reference: str | None = None
+    complete_if_empty: bool = False
+    data_schema: dict[str, Any] | str | None = None
+
+
+class BranchCriteriaYAML(BaseModel):
+    criteria_type: Literal["jinja2_template", "prompt"] = "jinja2_template"
+    expression: str
+    description: str | None = None
+
+
+class WhileLoopBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.WHILE_LOOP] = BlockType.WHILE_LOOP  # type: ignore
+
+    loop_blocks: list["BLOCK_YAML_SUBCLASSES"]
+    condition: BranchCriteriaYAML
+
+
+class BranchConditionYAML(BaseModel):
+    criteria: BranchCriteriaYAML | None = None
+    next_block_label: str | None = None
+    description: str | None = None
+    is_default: bool = False
+
+    @model_validator(mode="after")
+    def validate_condition(self) -> "BranchConditionYAML":
+        if self.criteria is None and not self.is_default:
+            raise ValueError("Branches without criteria must be marked as default.")
+        if self.criteria is not None and self.is_default:
+            raise ValueError("Default branches may not define criteria.")
+        return self
+
+
+class ConditionalBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.CONDITIONAL] = BlockType.CONDITIONAL  # type: ignore
+
+    branch_conditions: list[BranchConditionYAML] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_branches(self) -> "ConditionalBlockYAML":
+        if not self.branch_conditions:
+            raise ValueError("Conditional blocks require at least one branch.")
+
+        default_branches = [branch for branch in self.branch_conditions if branch.is_default]
+        if len(default_branches) > 1:
+            raise ValueError("Only one default branch is permitted per conditional block.")
+
+        return self
+
+
+class CodeBlockStepYAML(BaseModel):
+    description: str | None = None
+    # str (not ActionType) so this module does not import skyvern.webeye; the converter coerces to the enum.
+    action_type: str = "null_action"
+    line_start: int | None = None
+    line_end: int | None = None
+
+
+ERROR_CODE_MAX_LENGTH = 128
+ERROR_CODE_MAPPING_MAX_ENTRIES = 64
+ERROR_CODE_MAPPING_MAX_UTF8_BYTES = 32768
+
+
+def _contains_unicode_category_c(value: str) -> bool:
+    return any(unicodedata.category(character).startswith("C") for character in value)
+
+
+def error_code_key_error(code: Any) -> str | None:
+    """Whether a key is unusable, as a reason string.
+
+    Split out from the whole-entry check because a key and a description fail differently. A key IS
+    the identifier the model names and the customer matches on, so an unusable one cannot be repaired
+    and the entry has to go. A description is prose; see normalize_error_code_description.
+    """
+    if type(code) is not str or not code or code != code.strip() or len(code) > ERROR_CODE_MAX_LENGTH:
+        return "error code keys must be trimmed, non-empty strings of at most 128 characters"
+    if _contains_unicode_category_c(code):
+        return "error code keys must not contain Unicode category-C characters"
+    return None
+
+
+def normalize_error_code_description(description: Any) -> str | None:
+    """Make a rendered description usable, or None if there is nothing to salvage.
+
+    Repair rather than reject. These rules were written where the mapping feeds generated code; on a
+    task block the description is prose shown to a model, and prose legitimately carries newlines and
+    surrounding whitespace. Dropping the entry over that deletes a customer's error code -- and if it
+    was the only entry the mapping goes falsy, which turns error detection off silently. Measured on
+    production: 3,691 tasks in a week carry an untrimmed description and 90 would lose every entry.
+    """
+    if type(description) is not str:
+        return None
+    collapsed = "".join(
+        " " if unicodedata.category(character).startswith("C") else character for character in description
+    )
+    collapsed = collapsed.strip()
+    if not collapsed:
+        return None
+    return collapsed[:ERROR_CODE_REASONING_MAX_LENGTH]
+
+
+def error_code_mapping_entry_error(code: Any, description: Any) -> str | None:
+    """The per-entry rules, as a reason string rather than an exception.
+
+    Two callers need the same rules with opposite dispositions: the code-block schema rejects the
+    whole mapping at author time, while the runtime render path drops the offending entry. Both read
+    from here so a rule cannot be enforced in one place and quietly not the other.
+    """
+    key_reason = error_code_key_error(code)
+    if key_reason:
+        return key_reason
+    if (
+        type(description) is not str
+        or not description
+        or description != description.strip()
+        or len(description) > ERROR_CODE_REASONING_MAX_LENGTH
+    ):
+        return "error code descriptions must be trimmed, non-empty strings of at most 2000 characters"
+    if _contains_unicode_category_c(description):
+        return "error code descriptions must not contain Unicode category-C characters"
+    return None
+
+
+def _validate_code_block_error_code_mapping(mapping: Any) -> None:
+    if mapping is None:
+        return
+    if type(mapping) is not dict:
+        raise ValueError("error_code_mapping must be a dictionary")
+    if len(mapping) > ERROR_CODE_MAPPING_MAX_ENTRIES:
+        raise ValueError("error_code_mapping must contain at most 64 entries")
+    aggregate_size = 0
+    for code, description in mapping.items():
+        reason = error_code_mapping_entry_error(code, description)
+        if reason:
+            raise ValueError(reason)
+        aggregate_size += len(code.encode("utf-8")) + len(description.encode("utf-8"))
+    if aggregate_size > ERROR_CODE_MAPPING_MAX_UTF8_BYTES:
+        raise ValueError("error_code_mapping keys and values must total at most 32768 UTF-8 bytes")
+
+
+def _direct_code_block_error_code_raises(code: str) -> set[tuple[int, str]]:
+    sanitized = mask_jinja_control_blocks(textwrap.dedent(code))
+    try:
+        tree = ast.parse(sanitized)
+    except SyntaxError as exc:
+        raise ValueError(f"CodeBlock code is invalid Python: {exc.msg} at line {exc.lineno}") from exc
+    direct: set[tuple[int, str]] = set()
+    accepted: set[int] = set()
+    raises = [node for node in ast.walk(tree) if isinstance(node, ast.Raise)]
+    raise_count_by_line: dict[int, int] = {}
+    for raise_node in raises:
+        for line in range(raise_node.lineno, (raise_node.end_lineno or raise_node.lineno) + 1):
+            raise_count_by_line[line] = raise_count_by_line.get(line, 0) + 1
+    ambiguous_lines = {
+        line
+        for node in raises
+        if isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name) and node.exc.func.id == "ErrorCode"
+        for line in range(node.lineno, (node.end_lineno or node.lineno) + 1)
+        if raise_count_by_line[line] > 1
+    }
+    if ambiguous_lines:
+        raise ValueError("ErrorCode must be constructed directly in an unambiguous raise statement")
+    for node in ast.walk(tree):
+        if (
+            (isinstance(node, ast.Name) and node.id == "ErrorCode" and isinstance(node.ctx, ast.Store))
+            or (isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "ErrorCode")
+            or (isinstance(node, ast.arg) and node.arg == "ErrorCode")
+            or (isinstance(node, ast.ExceptHandler) and node.name == "ErrorCode")
+            or (isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == "ErrorCode")
+            or (isinstance(node, ast.MatchMapping) and node.rest == "ErrorCode")
+        ):
+            raise ValueError("ErrorCode cannot be shadowed")
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            alias.asname == "ErrorCode" or (alias.asname is None and alias.name == "ErrorCode") for alias in node.names
+        ):
+            raise ValueError("ErrorCode cannot be imported or aliased")
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Name) and node.exc.id == "ErrorCode":
+            raise ValueError("ErrorCode must be raised as ErrorCode('literal', reasoning)")
+        if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+            continue
+        call = node.exc
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "ErrorCode":
+            raise ValueError("ErrorCode must be constructed directly in a raise statement")
+        if isinstance(call.func, ast.Name) and call.func.id == "ErrorCode":
+            if call.keywords or len(call.args) != 2:
+                raise ValueError("ErrorCode requires exactly two positional arguments")
+            code_node = call.args[0]
+            if not isinstance(code_node, ast.Constant) or type(code_node.value) is not str:
+                raise ValueError("ErrorCode code must be a direct string literal")
+            direct.add((node.lineno, code_node.value))
+            accepted.add(id(call))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "ErrorCode":
+            if id(node) not in accepted:
+                raise ValueError("ErrorCode must be constructed directly in a raise statement")
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Name) and node.value.id == "ErrorCode":
+            raise ValueError("ErrorCode aliases are not allowed")
+    return direct
+
+
+def _validate_code_block_error_code_calls(code: str) -> set[tuple[int, str]]:
+    """Validate ErrorCode call shape at execution time, immediately before exec()."""
+    return _direct_code_block_error_code_raises(code)
+
+
+class CodeBlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.CODE] = BlockType.CODE  # type: ignore
+
+    code: str
+    error_code_mapping: dict[str, str] | None = None
+    parameter_keys: list[str] | None = None
+    prompt: str | None = Field(
+        default=None,
+        description="Plain-language goal of this code block, shown as the block's Goal in the editor",
+    )
+    steps: list[CodeBlockStepYAML] | None = Field(
+        default=None,
+        description="Plain-language step outline mapped to code line ranges; always rebuilt from the code on save, so any value sent is ignored",
+    )
+    data_schema: dict[str, Any] | list | str | None = Field(
+        default=None,
+        description="JSON schema of the object this block's return produces; keys match the return keys; null when the block returns nothing",
+    )
+    user_owned_goal: bool | None = Field(
+        default=None,
+        description="True when a person wrote this block's Goal, so copilot regenerations keep their text. Set by the editor or the workflow API; a value the copilot submits is ignored in favour of the stored one",
+    )
+    goal_needs_regeneration: bool | None = Field(
+        default=None,
+        description="True when a person edited the Goal and the code has not been rebuilt from it yet. Set by the editor or the workflow API; a value the copilot submits is ignored in favour of the stored one",
+    )
+    code_edited_by_hand: bool | None = Field(
+        default=None,
+        description="True when a person edited this block's code in the editor's code field since the Goal was last confirmed, so the Goal may no longer describe the code. Set by the editor; a value the copilot submits is ignored in favour of the stored one",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_parameters_field(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "error_code" in data:
+            raise ValueError("Code blocks do not accept 'error_code'; use 'error_code_mapping'")
+        if isinstance(data, dict) and "parameters" in data:
+            raise ValueError(
+                "Code blocks do not accept a 'parameters' field; use 'parameter_keys' "
+                "(a list of workflow parameter names) to inject parameters into the code block."
+            )
+        if isinstance(data, dict):
+            _validate_code_block_error_code_mapping(data.get("error_code_mapping"))
+            # Saves rebuild steps from the code, so malformed submitted steps must not reject valid code.
+            if data.get("steps") is not None:
+                try:
+                    _CODE_BLOCK_STEPS_ADAPTER.validate_python(data["steps"])
+                except ValidationError:
+                    data = {**data, "steps": None}
+        return data
+
+
+_CODE_BLOCK_STEPS_ADAPTER = TypeAdapter(list[CodeBlockStepYAML])
+
+
+class TextPromptBlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.TEXT_PROMPT] = BlockType.TEXT_PROMPT  # type: ignore
+
+    llm_key: str | None = None
+    prompt: str
+    parameter_keys: list[str] | None = None
+    json_schema: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def normalize_llm_selection(self) -> "TextPromptBlockYAML":
+        return _normalize_llm_selection(
+            self,
+            unrecognized_message=(
+                "Unrecognized text prompt llm_key; defaulting to Skyvern Optimized/default model path"
+            ),
+        )
+
+
+class DownloadToS3BlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.DOWNLOAD_TO_S3] = BlockType.DOWNLOAD_TO_S3  # type: ignore
+
+    url: str
+
+
+class UploadToS3BlockYAML(BlockYAML):
+    block_type: Literal[BlockType.UPLOAD_TO_S3] = BlockType.UPLOAD_TO_S3  # type: ignore
+
+    path: str | None = None
+
+
+class FileUploadBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.FILE_UPLOAD] = BlockType.FILE_UPLOAD  # type: ignore
+
+    storage_type: FileStorageType = FileStorageType.S3
+    s3_bucket: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    region_name: str | None = None
+    endpoint_url: str | None = None
+    azure_storage_account_name: str | None = None
+    azure_storage_account_key: str | None = None
+    azure_blob_container_name: str | None = None
+    azure_folder_path: str | None = None
+    google_credential_id: str | None = None
+    google_drive_folder_id: str | None = None
+    sftp_host: str | None = None
+    sftp_port: int | None = None
+    sftp_username: str | None = None
+    sftp_password: str | None = None
+    sftp_private_key: str | None = None
+    sftp_private_key_passphrase: str | None = None
+    sftp_remote_path: str | None = None
+    sftp_host_key: str | None = None
+    prompt: str | None = Field(
+        default=None,
+        description="Optional natural-language control over which downloaded files are uploaded; empty means upload all.",
+    )
+    path: str | None = None
+
+    _normalize_endpoint_url = field_validator("endpoint_url")(_normalize_optional_endpoint_url)
+
+
+class SendEmailBlockYAML(BlockYAML):
+    # There is a mypy bug with Literal. Without the type: ignore, mypy will raise an error:
+    # Parameter 1 of Literal[...] cannot be of type "Any"
+    # This pattern already works in block.py but since the BlockType is not defined in this file, mypy is not able
+    # to infer the type of the parameter_type attribute.
+    block_type: Literal[BlockType.SEND_EMAIL] = BlockType.SEND_EMAIL  # type: ignore
+
+    # On the platform path an omitted key is provisioned and a key that is set must name a
+    # declared AWS secret. With custom_smtp_host these are never read, so any key resolves to
+    # an inert placeholder.
+    smtp_host_secret_parameter_key: str | None = None
+    smtp_port_secret_parameter_key: str | None = None
+    smtp_username_secret_parameter_key: str | None = None
+    smtp_password_secret_parameter_key: str | None = None
+    custom_smtp_host: str | None = None
+    custom_smtp_port: int | None = Field(default=None, ge=1, le=65535)
+    custom_smtp_username: str | None = None
+    custom_smtp_password: str | None = None
+    sender: str = Field(default="", description="From address. Required unless transport is 'gmail'.")
+    recipients: list[str]
+    subject: str
+    body: str
+    body_format: EmailBodyFormat = EmailBodyFormat.TEXT
+    file_attachments: list[str] | None = None
+    transport: EmailTransport | None = Field(
+        default=None,
+        description="How the email is sent. Omit for SMTP. 'gmail' sends from the connected Google account named "
+        "by credential_id; sender and the SMTP settings are then unused.",
+    )
+    credential_id: str | None = Field(
+        default=None,
+        description="ID of a connected Google account that has send permission. Used only with transport 'gmail'.",
+    )
+    cc: list[str] = Field(default_factory=list, description="Cc recipients. Only with transport 'gmail'.")
+    bcc: list[str] = Field(default_factory=list, description="Bcc recipients. Only with transport 'gmail'.")
+
+    @model_validator(mode="after")
+    def _validate_transport_fields(self) -> "SendEmailBlockYAML":
+        if self.transport == EmailTransport.GMAIL:
+            custom_smtp_text = (self.custom_smtp_host, self.custom_smtp_username, self.custom_smtp_password)
+            if self.custom_smtp_port is not None or any(value and value.strip() for value in custom_smtp_text):
+                raise ValueError("custom SMTP settings cannot be combined with the gmail transport")
+        elif "sender" not in self.model_fields_set:
+            raise ValueError("sender is required unless the transport is gmail")
+        elif any(entry.strip() for entry in (*self.cc, *self.bcc)):
+            raise ValueError("cc and bcc are only supported with the gmail transport")
+        return self
+
+
+class FileParserBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.FILE_URL_PARSER] = BlockType.FILE_URL_PARSER  # type: ignore
+
+    file_url: str
+    file_type: FileType = FileType.AUTO_DETECT
+    json_schema: dict[str, Any] | None = None
+    worksheet: str | None = None
+    force_ocr: bool = Field(default=False, description=FORCE_OCR_DESCRIPTION)
+
+
+class PDFParserBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.PDF_PARSER] = BlockType.PDF_PARSER  # type: ignore
+
+    file_url: str
+    json_schema: dict[str, Any] | None = None
+
+
+class ValidationBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.VALIDATION] = BlockType.VALIDATION  # type: ignore
+
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    complete_criterion: str | None = None
+    terminate_criterion: str | None = None
+    error_code_mapping: dict[str, str] | None = None
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    disable_cache: bool = False
+    without_page_information: bool = False
+
+
+class ActionBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.ACTION] = BlockType.ACTION  # type: ignore
+
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    navigation_goal: str | None = None
+    selector: str | None = None
+    ai_fallback: AIFallbackMode = AIFallbackMode.FALLBACK
+    error_code_mapping: dict[str, str] | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    complete_on_download: bool = False
+    download_suffix: str | None = (
+        None  # DEPRECATED: This field now sets the complete filename instead of appending to a random name
+    )
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    disable_cache: bool = False
+
+
+class NavigationBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.NAVIGATION] = BlockType.NAVIGATION  # type: ignore
+
+    navigation_goal: str
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    error_code_mapping: dict[str, str] | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    complete_on_download: bool = False
+    download_suffix: str | None = (
+        None  # DEPRECATED: This field now sets the complete filename instead of appending to a random name
+    )
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    disable_cache: bool = False
+    complete_criterion: str | None = None
+    complete_criterion_is_untrusted: bool = False
+    terminate_criterion: str | None = None
+    complete_verification: bool = True
+    include_action_history_in_verification: bool = False
+
+
+class ExtractionBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.EXTRACTION] = BlockType.EXTRACTION  # type: ignore
+
+    data_extraction_goal: str
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    data_schema: dict[str, Any] | list | str | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    disable_cache: bool = False
+
+    # Export as a Parquet file, as an output option of this block rather than a
+    # separate Data Export block. See skyvern.forge.sdk.workflow.models.data_export_block.
+    export_enabled: bool = False
+    export_data_schema: dict[str, Any] | None = None
+    export_file_name: str | None = None
+    export_records: str | None = None
+
+
+class LoginBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.LOGIN] = BlockType.LOGIN  # type: ignore
+
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    navigation_goal: str | None = None
+    error_code_mapping: dict[str, str] | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    disable_cache: bool = False
+    complete_criterion: str | None = None
+    terminate_criterion: str | None = None
+    complete_verification: bool = True
+    include_action_history_in_verification: bool = False
+    skip_saved_profile: bool = False
+
+
+class WaitBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.WAIT] = BlockType.WAIT  # type: ignore
+    wait_sec: int = 0
+
+
+class HumanInteractionBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.HUMAN_INTERACTION] = BlockType.HUMAN_INTERACTION  # type: ignore
+
+    instructions: str = "Please review and approve or reject to continue the workflow."
+    positive_descriptor: str = "Approve"
+    negative_descriptor: str = "Reject"
+    timeout_seconds: int = 60 * 60 * 2
+
+    sender: str = "hello@skyvern.com"
+    recipients: list[str]
+    subject: str = "Human interaction required for workflow run"
+    body: str = "Your interaction is required for a workflow run!"
+    body_format: EmailBodyFormat = EmailBodyFormat.TEXT
+
+
+class DataExportBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.DATA_EXPORT] = BlockType.DATA_EXPORT  # type: ignore
+
+    data: str
+    data_schema: dict[str, Any]
+    file_name: str | None = None
+    parameter_keys: list[str] | None = None
+
+
+class TerminateBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.TERMINATE] = BlockType.TERMINATE  # type: ignore
+
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = Field(
+        description="Why the run ends here; supports Jinja templating."
+    )
+    error_code: str | None = Field(
+        default=None,
+        description=(
+            "Optional error code added to the run's error codes; supports Jinja templating. "
+            "A literal code must be at most 128 characters. The rendered code must be at most 128 characters "
+            "and may contain only ASCII letters, digits, underscores, periods, colons, and hyphens."
+        ),
+    )
+
+    @field_validator("error_code", mode="before")
+    @classmethod
+    def normalize_error_code(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if re.search(r"\{[{%#]", value):
+            if _contains_unicode_category_c(value):
+                raise ValueError("error code keys must not contain Unicode category-C characters")
+            return value
+        if unusable := error_code_key_error(value):
+            raise ValueError(unusable)
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]+", value):
+            raise ValueError(
+                "literal error codes may contain only ASCII letters, digits, underscores, periods, colons, and hyphens"
+            )
+        return value
+
+
+class FileDownloadBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.FILE_DOWNLOAD] = BlockType.FILE_DOWNLOAD  # type: ignore
+
+    download_target: FileDownloadTarget = FileDownloadTarget.WEBSITE
+    s3_bucket: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    region_name: str | None = None
+    endpoint_url: str | None = None
+    azure_storage_account_name: str | None = None
+    azure_storage_account_key: str | None = None
+    azure_blob_container_name: str | None = None
+    google_credential_id: str | None = None
+    google_drive_folder_id: str | None = None
+    sftp_host: str | None = None
+    sftp_port: int | None = None
+    sftp_username: str | None = None
+    sftp_password: str | None = None
+    sftp_private_key: str | None = None
+    sftp_private_key_passphrase: str | None = None
+    sftp_remote_path: str | None = None
+    sftp_host_key: str | None = None
+    sftp_source_path: str | None = None
+    path: str | None = None
+    prompt: str | None = None
+    continue_on_empty: bool = False
+    navigation_goal: str
+    url: str | None = None
+    title: str = ""
+    engine: RunEngine | None = None
+    engine_pinned: bool = Field(default=False, description=ENGINE_PINNED_DESCRIPTION)
+    error_code_mapping: dict[str, str] | None = None
+    max_retries: int = 0
+    max_steps_per_run: int | None = None
+    parameter_keys: list[str] | None = None
+    download_suffix: str | None = (
+        None  # DEPRECATED: This field now sets the complete filename instead of appending to a random name
+    )
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    disable_cache: bool = False
+    download_timeout: float | None = None
+
+    _normalize_endpoint_url = field_validator("endpoint_url")(_normalize_optional_endpoint_url)
+
+
+class UrlBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.GOTO_URL] = BlockType.GOTO_URL  # type: ignore
+    url: str
+
+
+class TaskV2BlockYAML(BlockYAML):
+    block_type: Literal[BlockType.TaskV2] = BlockType.TaskV2  # type: ignore
+    prompt: str
+    url: str | None = None
+    totp_verification_url: str | None = None
+    totp_identifier: str | None = None
+    # These documented defaults must stay literals; reading the setting here would put an
+    # environment value back into the published OpenAPI document.
+    max_iterations: int = Field(
+        default_factory=lambda: settings.MAX_ITERATIONS_PER_TASK_V2,
+        json_schema_extra={"default": 50},
+    )
+    max_steps: int = Field(
+        default_factory=lambda: settings.MAX_STEPS_PER_TASK_V2,
+        json_schema_extra={"default": 25},
+    )
+    disable_cache: bool = False
+
+
+def _normalize_outcome_error_code(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    if not value:
+        raise ValueError("Outcome error codes must not be blank.")
+    return value
+
+
+def _validate_no_match_error_code_prompt(no_match_error_code: str | None, prompt: str | None) -> None:
+    if no_match_error_code is not None and (prompt is None or not prompt.strip()):
+        raise ValueError("No Match Error Code requires a Prompt.")
+
+
+class WebSearchBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.WEB_SEARCH] = BlockType.WEB_SEARCH  # type: ignore
+    query: str = Field(min_length=1)
+    provider: Literal["auto", "google", "exa"] = "auto"
+    num_results: int = Field(default=10, ge=1, le=100, strict=True)
+    no_results_error_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Deprecated. Use error_code_mapping.",
+        json_schema_extra={"deprecated": True},
+    )
+    no_match_error_code: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Deprecated. Use error_code_mapping.",
+        json_schema_extra={"deprecated": True},
+    )
+    error_code_mapping: dict[str, str] | None = None
+    prompt: str | None = None
+    json_schema: dict[str, Any] | None = None
+    parameter_keys: list[str] | None = None
+
+    _normalize_outcome_error_codes = field_validator("no_results_error_code", "no_match_error_code", mode="before")(
+        _normalize_outcome_error_code
+    )
+
+    @model_validator(mode="after")
+    def validate_no_match_error_code_prompt(self) -> "WebSearchBlockYAML":
+        _validate_no_match_error_code_prompt(self.no_match_error_code, self.prompt)
+        return self
+
+    @field_validator("json_schema")
+    @classmethod
+    def validate_search_schema(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        def contains_template(item: Any) -> bool:
+            if isinstance(item, str):
+                return "{{" in item or "{%" in item
+            if isinstance(item, dict):
+                return any(contains_template(key) or contains_template(val) for key, val in item.items())
+            if isinstance(item, list):
+                return any(contains_template(val) for val in item)
+            return False
+
+        if value is not None and not contains_template(value):
+            try:
+                Draft202012Validator.check_schema(value)
+            except SchemaError as exc:
+                raise ValueError(f"The Data Schema is not a valid JSON Schema: {exc.message.rstrip('.')}.") from exc
+        return value
+
+
+class HttpRequestBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.HTTP_REQUEST] = BlockType.HTTP_REQUEST  # type: ignore
+
+    # Individual HTTP parameters
+    method: str = "GET"
+    url: str | None = None
+    headers: dict[str, str] | None = None
+    body: dict[str, Any] | None = None  # Changed to consistently be dict only
+    files: dict[str, str] | None = None  # Dictionary mapping field names to file paths/URLs for multipart file uploads
+    timeout: int = 30
+    follow_redirects: bool = True
+    download_filename: str | None = None
+    save_response_as_file: bool = False
+    secret_response_paths: list[str] | None = None
+
+    # Parameter keys for templating
+    parameter_keys: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_secret_response_paths_file_conflict(self) -> "HttpRequestBlockYAML":
+        if self.save_response_as_file and self.secret_response_paths:
+            raise ValueError("secret_response_paths cannot be combined with save_response_as_file")
+        return self
+
+
+class PrintPageBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.PRINT_PAGE] = BlockType.PRINT_PAGE  # type: ignore
+    include_timestamp: bool = True
+    custom_filename: str | None = None
+    format: PDFFormat = PDFFormat.A4
+    landscape: bool = False
+    print_background: bool = True
+    parameter_keys: list[str] | None = None
+
+
+class PdfFillBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.PDF_FILL] = BlockType.PDF_FILL  # type: ignore
+    file_url: str
+    prompt: str
+    payload: dict[str, Any] | list | str | None = None
+    llm_key: str | None = None
+    parameter_keys: list[str] | None = None
+
+    @model_validator(mode="after")
+    def normalize_llm_selection(self) -> "PdfFillBlockYAML":
+        return _normalize_llm_selection(
+            self,
+            unrecognized_message=("Unrecognized pdf fill llm_key; defaulting to Skyvern Optimized/default model path"),
+        )
+
+
+class SplitPdfBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.SPLIT_PDF] = BlockType.SPLIT_PDF  # type: ignore
+    file_url: str
+    prompt: str
+    llm_key: str | None = None
+    parameter_keys: list[str] | None = None
+
+    @model_validator(mode="after")
+    def normalize_llm_selection(self) -> "SplitPdfBlockYAML":
+        return _normalize_llm_selection(
+            self,
+            unrecognized_message=("Unrecognized split pdf llm_key; defaulting to Skyvern Optimized/default model path"),
+        )
+
+
+class WorkflowTriggerBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.WORKFLOW_TRIGGER] = BlockType.WORKFLOW_TRIGGER  # type: ignore
+
+    # The permanent ID of the target workflow to trigger
+    workflow_permanent_id: str
+    # Parameters/payload to pass to the triggered workflow (Jinja2 templates supported in values)
+    payload: dict[str, Any] | None = None
+    # Whether to wait for the triggered workflow to complete before continuing
+    wait_for_completion: bool = True
+    # Optional browser session ID for the triggered workflow
+    browser_session_id: str | None = None
+    # When True, the child workflow inherits the parent's browser session
+    use_parent_browser_session: bool = False
+    # Parameter keys for template interpolation
+    parameter_keys: list[str] | None = None
+
+
+class GoogleSheetsReadBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.GOOGLE_SHEETS_READ] = BlockType.GOOGLE_SHEETS_READ  # type: ignore
+    spreadsheet_url: str
+    sheet_name: str | None = None
+    range: str | None = None
+    credential_id: str | None = None
+    has_header_row: bool = True
+    parameter_keys: list[str] | None = None
+
+
+class EmailInboxBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.EMAIL_INBOX] = BlockType.EMAIL_INBOX  # type: ignore
+    email_client: Literal["gmail", "outlook"]
+    credential_id: str | None = None
+    folder: str | None = None
+    prompt: str | None = None
+    sender: str | None = None
+    subject: str | None = None
+    newer_than_days: int | None = None
+    max_results: int = 25
+    include_body: bool = True
+    download_attachments: bool = Field(
+        default=False, description="Download non-inline attachments from matched emails for downstream blocks."
+    )
+    parameter_keys: list[str] | None = None
+
+
+class GoogleSheetsWriteBlockYAML(BlockYAML):
+    block_type: Literal[BlockType.GOOGLE_SHEETS_WRITE] = BlockType.GOOGLE_SHEETS_WRITE  # type: ignore
+    spreadsheet_url: str
+    sheet_name: str | None = None
+    range: str | None = None
+    credential_id: str | None = None
+    write_mode: Literal["append", "update"] = "append"
+    values: str = ""
+    column_mapping: dict[str, str] | None = None
+    create_sheet_if_missing: bool = False
+    parameter_keys: list[str] | None = None
+
+
+PARAMETER_YAML_SUBCLASSES = (
+    AWSSecretParameterYAML
+    | BitwardenLoginCredentialParameterYAML
+    | BitwardenSensitiveInformationParameterYAML
+    | BitwardenCreditCardDataParameterYAML
+    | OnePasswordCredentialParameterYAML
+    | AzureVaultCredentialParameterYAML
+    | WorkflowParameterYAML
+    | ContextParameterYAML
+    | OutputParameterYAML
+    | CredentialParameterYAML
+)
+PARAMETER_YAML_TYPES = Annotated[PARAMETER_YAML_SUBCLASSES, Field(discriminator="parameter_type")]
+
+BLOCK_YAML_SUBCLASSES = (
+    TaskBlockYAML
+    | ForLoopBlockYAML
+    | WhileLoopBlockYAML
+    | CodeBlockYAML
+    | TextPromptBlockYAML
+    | DownloadToS3BlockYAML
+    | UploadToS3BlockYAML
+    | FileUploadBlockYAML
+    | SendEmailBlockYAML
+    | FileParserBlockYAML
+    | ValidationBlockYAML
+    | ActionBlockYAML
+    | NavigationBlockYAML
+    | ExtractionBlockYAML
+    | LoginBlockYAML
+    | WaitBlockYAML
+    | HumanInteractionBlockYAML
+    | FileDownloadBlockYAML
+    | DataExportBlockYAML
+    | TerminateBlockYAML
+    | UrlBlockYAML
+    | PDFParserBlockYAML
+    | TaskV2BlockYAML
+    | HttpRequestBlockYAML
+    | WebSearchBlockYAML
+    | ConditionalBlockYAML
+    | PrintPageBlockYAML
+    | PdfFillBlockYAML
+    | SplitPdfBlockYAML
+    | WorkflowTriggerBlockYAML
+    | GoogleSheetsReadBlockYAML
+    | EmailInboxBlockYAML
+    | GoogleSheetsWriteBlockYAML
+)
+BLOCK_YAML_TYPES = Annotated[BLOCK_YAML_SUBCLASSES, Field(discriminator="block_type")]
+
+
+def workflow_definition_has_v2_graph_constructs(blocks: list[BLOCK_YAML_SUBCLASSES]) -> bool:
+    """Whether top-level routing requires version 2: a conditional block or explicit next_block_label.
+
+    Loop interiors are not inspected - `version` describes only top-level routing, and loop bodies are
+    graph-built independently by Block._build_loop_graph regardless of the workflow version.
+    """
+    return any(isinstance(block, ConditionalBlockYAML) or block.next_block_label is not None for block in blocks)
+
+
+class WorkflowRetryRule(BaseModel):
+    status: Literal["completed", "failed", "terminated", "canceled", "timed_out"] = Field(
+        description=(
+            "Terminal status that triggers a retry rule; canceled is accepted for forward compatibility, "
+            "but a canceled run never retries in the current runtime, including explicit API/UI cancels."
+        )
+    )
+    error_codes: list[Annotated[str, Field(min_length=1)]] | None = Field(
+        default=None,
+        description="Optional error codes. The rule matches when any listed code is present.",
+    )
+
+    @field_validator("error_codes")
+    @classmethod
+    def deduplicate_error_codes(cls, error_codes: list[str] | None) -> list[str] | None:
+        if error_codes is None:
+            return None
+        return list(dict.fromkeys(error_codes))
+
+
+class WorkflowRetryPolicy(BaseModel):
+    max_retries: StrictInt = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Maximum number of retries after the initial attempt",
+    )
+    delay_seconds: StrictInt = Field(
+        default=0,
+        ge=0,
+        le=3600,
+        description="Fixed delay before the next attempt, in seconds",
+    )
+    webhook_on_retry: Literal["final_only", "every_attempt"] = Field(
+        default="final_only",
+        description="Whether to send a webhook for every attempt or only the final attempt",
+    )
+    retry_on: list[WorkflowRetryRule] = Field(
+        min_length=1,
+        description="Terminal status rules that enable retries",
+    )
+
+    @field_validator("retry_on")
+    @classmethod
+    def validate_unique_statuses(cls, retry_on: list[WorkflowRetryRule]) -> list[WorkflowRetryRule]:
+        statuses = [rule.status for rule in retry_on]
+        if len(statuses) != len(set(statuses)):
+            raise ValueError("retry_on must contain each status at most once")
+        return retry_on
+
+
+class WorkflowDefinitionYAML(BaseModel):
+    version: int | None = None
+    parameters: list[PARAMETER_YAML_TYPES]
+    blocks: list[BLOCK_YAML_TYPES]
+    finally_block_label: str | None = None
+    error_code_mapping: dict[str, str] | None = None
+    retry_policy: WorkflowRetryPolicy | None = Field(
+        default=None,
+        description="Optional policy for retrying eligible terminal workflow runs",
+    )
+    workflow_system_prompt: str | None = None
+    completion_contract: dict[str, Any] | None = Field(
+        default=None,
+        description="Copilot-managed: what a run of this workflow must produce, graded at run finalization. Derived from the request when a workflow is accepted; not intended to be authored by hand.",
+    )
+    browser_settings: BrowserSettings | None = Field(
+        default=None,
+        description="Settings applied to every browser this workflow version creates. Omit to keep the previous "
+        "version's settings; set to null to clear them.",
+    )
+
+    @field_validator("browser_settings")
+    @classmethod
+    def validate_browser_settings(cls, value: BrowserSettings | None) -> BrowserSettings | None:
+        return require_known_timezone(value)
+
+    @model_validator(mode="after")
+    def validate_unique_block_labels(self) -> "WorkflowDefinitionYAML":
+        labels = [block.label for block in self.blocks]
+        duplicates = [label for label in labels if labels.count(label) > 1]
+
+        if duplicates:
+            unique_duplicates = sorted(set(duplicates))
+            raise ValueError(
+                f"Block labels must be unique within a workflow. "
+                f"Found duplicate label(s): {', '.join(unique_duplicates)}"
+            )
+
+        if self.finally_block_label and self.finally_block_label not in labels:
+            raise ValueError(
+                f"finally_block_label '{self.finally_block_label}' does not reference a valid block. "
+                f"Available labels: {', '.join(labels) if labels else '(none)'}"
+            )
+
+        has_v2_graph_constructs = workflow_definition_has_v2_graph_constructs(self.blocks)
+        if self.version is None:
+            self.version = 2 if has_v2_graph_constructs else 1
+        elif self.version < 2 and has_v2_graph_constructs:
+            raise ValueError(
+                "workflow_definition.version must be 2 or greater when using conditional blocks "
+                "or explicit next_block_label routing."
+            )
+
+        return self
+
+
+class WorkflowCreateYAMLRequest(BaseModel):
+    title: str
+    description: str | None = None
+    proxy_location: ProxyLocation | GeoTarget | dict | None = Field(
+        default=None,
+        description="On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it.",
+    )
+    webhook_callback_url: str | None = Field(
+        default=None,
+        description=(
+            "On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it."
+            " URL validation errors identify the field and failure class without returning the URL or host."
+        ),
+    )
+    totp_verification_url: str | None = Field(
+        default=None,
+        description=(
+            "On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it."
+            " URL validation errors identify the field and failure class without returning the URL or host."
+        ),
+    )
+    totp_identifier: str | None = Field(
+        default=None,
+        description="On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it.",
+    )
+    persist_browser_session: bool = False
+    reuse_browser_session: bool = False
+    mask_secrets: bool | None = Field(
+        default=None,
+        title="Mask Secrets",
+        description="Mask secret values across this workflow's runs: hide them while they are typed (screenshots, recordings, live view) and redact them from stored artifacts, network logs, and LLM-bound text.",
+    )
+    pin_saved_session_ip: bool = False
+    browser_profile_id: str | None = None
+    browser_profile_key: str | None = None
+    model: dict[str, Any] | None = None
+    workflow_definition: WorkflowDefinitionYAML
+    is_saved_task: bool = False
+    max_screenshot_scrolls: MaxScreenshotScrolls = Field(default=None)
+    max_elapsed_time_minutes: int | None = Field(default=None, ge=1, le=WORKFLOW_RUN_MAX_ELAPSED_TIME_MINUTES)
+    extra_http_headers: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it. "
+            "An empty object ({}) clears the header map. Values, including ***, are literal."
+        ),
+    )
+    cdp_connect_headers: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "On PUT updates, omission keeps the stored value, null clears it, and a supplied value replaces it. "
+            "An empty object ({}) clears the header map; each masked *** entry keeps the stored value for that key."
+        ),
+    )
+    status: WorkflowStatus = WorkflowStatus.published
+    run_with: str = "agent"
+    browser_type: str | None = Field(
+        default=None,
+        description="Browser engine for runs of this workflow, one of the supported browser types "
+        "(e.g. msedge, chrome, stealth-chromium). A workflow-run setting overrides this. "
+        "Null means the system default.",
+    )
+    ai_fallback: bool = True
+    cache_key: str | None = "default"
+    adaptive_caching: bool = False
+    # Kept for compatibility and has no runtime effect; None keeps the stored value on update
+    # and is treated as False on first create.
+    enable_self_healing: bool | None = None
+    code_version: int | None = Field(default=None, ge=1, le=2)
+    generate_script_on_terminal: bool = False
+    run_sequentially: bool = Field(default=False, title="Prevent Overlapping Runs")
+    sequential_key: str | None = None
+    folder_id: str | None = None
+
+    @field_validator("max_elapsed_time_minutes", mode="before")
+    @classmethod
+    def validate_max_elapsed_time_minutes(cls, value: object) -> object:
+        return reject_bool_max_elapsed_time_minutes(value)
+
+    @field_validator("run_with", mode="before")
+    @classmethod
+    def _normalize_run_with(cls, v: str | None) -> str:
+        return normalize_run_with(v)
+
+    @field_validator("browser_type", mode="before")
+    @classmethod
+    def _normalize_browser_type(cls, v: str | None) -> str | None:
+        return normalize_browser_type(v)
+
+    @field_validator("browser_profile_key", mode="before")
+    @classmethod
+    def _normalize_browser_profile_key(cls, v: str | None) -> str | None:
+        return validate_browser_profile_key(v)
+
+    @field_serializer("cdp_connect_headers")
+    def _mask_cdp_connect_headers(self, headers: dict[str, str] | None) -> dict[str, str] | None:
+        return mask_header_values(headers)
+
+
+class WorkflowRequest(BaseModel):
+    json_definition: WorkflowCreateYAMLRequest | None = Field(
+        default=None,
+        description="Workflow definition in JSON format",
+    )
+    yaml_definition: str | None = Field(
+        default=None,
+        description="Workflow definition in YAML format",
+    )

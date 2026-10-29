@@ -1,0 +1,2270 @@
+import asyncio
+import io
+import os
+import time
+import weakref
+import zipfile
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
+from urllib.parse import urlencode
+
+import structlog
+from cachetools import TTLCache
+
+from skyvern.config import settings
+from skyvern.forge import app
+from skyvern.forge.sdk.api.files import create_named_temporary_file
+from skyvern.forge.sdk.artifact.models import Artifact, ArtifactType, LogEntityType
+from skyvern.forge.sdk.artifact.signing import (
+    ARTIFACT_URL_EXPIRY_SECONDS,
+    ParsedArtifactContentUrl,
+    artifact_url_expiry_seconds_for_type,
+    effective_artifact_url_expiry_seconds,
+    parse_keyring,
+    sign_artifact_url,
+    verify_artifact_signature,
+)
+from skyvern.forge.sdk.artifact.storage.base import artifact_filename_from_uri
+from skyvern.forge.sdk.artifact.utils import replace_file_extension
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.db.id import generate_artifact_id
+from skyvern.forge.sdk.db.models import ArtifactModel
+from skyvern.forge.sdk.models import Step
+from skyvern.forge.sdk.schemas.ai_suggestions import AISuggestion
+from skyvern.forge.sdk.schemas.task_v2 import TaskV2, Thought
+from skyvern.forge.sdk.schemas.workflow_runs import WorkflowRunBlock
+from skyvern.utils.secret_redaction import (
+    redact_har_bytes,
+    redact_multi_field_totp_artifact_bytes,
+    redact_secrets_from_bytes,
+)
+
+if TYPE_CHECKING:
+    from skyvern.schemas.action_log import ActionLogEvent
+
+LOG = structlog.get_logger(__name__)
+
+ARCHIVE_AGE_THRESHOLD = timedelta(days=90)
+# Long enough for slow storage that still progresses; bounds the archive bytes a stalled store keeps alive.
+BACKGROUND_FLUSH_TIMEOUT_SECONDS = 120.0
+ARTIFACT_URL_EXPIRY_CACHE_TTL_SECONDS = 60
+ARTIFACT_URL_EXPIRY_CACHE_MAX_ORGS = 1024
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _log_artifact_store_task_failure(task: asyncio.Future[None], artifact: Artifact) -> None:
+    if task.cancelled():
+        LOG.warning(
+            "Artifact store task cancelled",
+            artifact_id=artifact.artifact_id,
+            artifact_type=artifact.artifact_type,
+            uri=artifact.uri,
+        )
+        return
+
+    exception = task.exception()
+    if not exception:
+        return
+
+    LOG.warning(
+        "Artifact store task failed",
+        artifact_id=artifact.artifact_id,
+        artifact_type=artifact.artifact_type,
+        uri=artifact.uri,
+        exc_info=(type(exception), exception, exception.__traceback__),
+    )
+
+
+_SCREENSHOT_PREFIX_MAP: dict[ArtifactType, str] = {
+    ArtifactType.SCREENSHOT_LLM: "screenshot_llm",
+    ArtifactType.SCREENSHOT_ACTION: "screenshot_action",
+    ArtifactType.SCREENSHOT_FINAL: "screenshot_final",
+    ArtifactType.SCREENSHOT_PRE_SUBMIT: "screenshot_pre_submit",
+}
+
+_REDACTABLE_TEXT_ARTIFACT_TYPES: frozenset[ArtifactType] = frozenset(
+    {
+        ArtifactType.HTML,
+        ArtifactType.HTML_SCRAPE,
+        ArtifactType.HTML_ACTION,
+        ArtifactType.HTML_PRE_SUBMIT,
+        ArtifactType.VISIBLE_ELEMENTS_TREE,
+        ArtifactType.VISIBLE_ELEMENTS_TREE_TRIMMED,
+        ArtifactType.VISIBLE_ELEMENTS_TREE_IN_PROMPT,
+        ArtifactType.LLM_PROMPT,
+        ArtifactType.LLM_REQUEST,
+        ArtifactType.LLM_RESPONSE,
+        ArtifactType.LLM_RESPONSE_PARSED,
+        ArtifactType.LLM_RESPONSE_RENDERED,
+        ArtifactType.BROWSER_CONSOLE_LOG,
+        ArtifactType.SKYVERN_LOG,
+        ArtifactType.SKYVERN_LOG_RAW,
+        ArtifactType.HASHED_HREF_MAP,
+    }
+)
+
+
+_MULTI_FIELD_TOTP_TEXT_ARTIFACT_TYPES = _REDACTABLE_TEXT_ARTIFACT_TYPES | frozenset(
+    {
+        ArtifactType.HAR,
+        ArtifactType.BROWSER_SESSION_ACTION_LOG,
+        ArtifactType.VISIBLE_ELEMENTS_ID_CSS_MAP,
+        ArtifactType.VISIBLE_ELEMENTS_ID_FRAME_MAP,
+        ArtifactType.VISIBLE_ELEMENTS_ID_XPATH_MAP,
+        ArtifactType.EVAL_SCORE,
+        ArtifactType.EVAL_TRAJECTORY,
+        ArtifactType.EVAL_RUBRICS,
+        ArtifactType.SCRIPT_FILE,
+    }
+)
+
+
+def _maybe_redact_artifact_data(artifact_type: ArtifactType, data: bytes, workflow_run_id: str | None = None) -> bytes:
+    if artifact_type == ArtifactType.HAR:
+        if skyvern_context.multi_field_totp_masking_task_ids():
+            data = redact_har_bytes(data, set())
+    elif artifact_type in _MULTI_FIELD_TOTP_TEXT_ARTIFACT_TYPES:
+        data = redact_multi_field_totp_artifact_bytes(data)
+    if artifact_type not in _REDACTABLE_TEXT_ARTIFACT_TYPES and artifact_type != ArtifactType.HAR:
+        return data
+    try:
+        context = skyvern_context.current()
+        resolved_workflow_run_id = workflow_run_id or (context.workflow_run_id if context else None)
+        if not app.WORKFLOW_CONTEXT_MANAGER.artifact_redaction_enabled(resolved_workflow_run_id):
+            # Runtime-resolved secrets (e.g. verification codes) still redact from browser
+            # diagnostics under the global switch alone, matching the workflow-finalization floor.
+            if artifact_type not in (ArtifactType.HAR, ArtifactType.BROWSER_CONSOLE_LOG):
+                return data
+            secret_values = app.WORKFLOW_CONTEXT_MANAGER.runtime_secret_values_for_artifacts()
+            if not secret_values and not skyvern_context.multi_field_totp_masking_task_ids():
+                return data
+        else:
+            secret_values = app.WORKFLOW_CONTEXT_MANAGER.get_secret_values_for_run(resolved_workflow_run_id)
+    except Exception:
+        return data
+    # The prompt/response artifacts are the record of what crossed the model boundary, which exempts
+    # the run's placeholder ids; scrubbing one here would make the record disagree. Read separately
+    # from the secret lookup above: losing an exemption only widens the scrub, so it must not take
+    # the same bail-out that stops redacting altogether.
+    try:
+        placeholder_ids: frozenset[str] = app.WORKFLOW_CONTEXT_MANAGER.registered_placeholder_ids_for_run(
+            resolved_workflow_run_id
+        )
+    except Exception:
+        placeholder_ids = frozenset()
+    if artifact_type == ArtifactType.HAR:
+        return redact_har_bytes(data, secret_values, multi_field_totp=False, placeholder_ids=placeholder_ids)
+    if not secret_values and not skyvern_context.multi_field_totp_masking_task_ids():
+        return data
+    return redact_secrets_from_bytes(data, secret_values, multi_field_totp=False, placeholder_ids=placeholder_ids)
+
+
+def _safe_file_size_from_path(path: str | None) -> int | None:
+    if path is None:
+        return None
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        LOG.warning("Failed to get artifact file size", path=path, exc_info=True)
+        return None
+
+
+def _bundling_enabled() -> bool:
+    """Bundling and Skyvern-origin URLs are coupled: enabled together when HMAC signing is configured.
+
+    When unset, bundling is skipped at flush time so every artifact has its
+    own storage URI and can be served via a presigned URL — no Skyvern-origin
+    proxying, no HMAC, no API-key requirement.
+    """
+    return bool(settings.ARTIFACT_CONTENT_HMAC_KEYRING)
+
+
+@dataclass
+class ArtifactBatchData:
+    """
+    Data class for batch artifact creation.
+
+    Attributes:
+        artifact_model: The ArtifactModel instance to insert
+        data: Optional bytes data to upload
+        path: Optional file path to upload from
+    """
+
+    artifact_model: ArtifactModel
+    data: bytes | None = None
+    path: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate that exactly one of data or path is provided."""
+        if self.data is not None and self.path is not None:
+            raise ValueError("Cannot specify both data and path for artifact upload")
+
+
+@dataclass
+class BulkArtifactCreationRequest:
+    """
+    Request data for bulk artifact creation.
+
+    Attributes:
+        artifacts: List of artifact batch data to create
+        primary_key: Primary key for tracking upload tasks (e.g., task_id, cruise_id)
+    """
+
+    artifacts: list[ArtifactBatchData]
+    primary_key: str
+
+
+@dataclass
+class StepArchiveAccumulator:
+    """Accumulates all artifacts for a single step into one ZIP archive.
+
+    All artifacts produced during a step (scrape data, LLM call data, action HTML,
+    screenshots) are buffered here and flushed as a single S3 PUT at step completion.
+    entries maps filename-within-ZIP → raw bytes.
+    member_types records (artifact_type, filename, artifact_id) for each entry;
+    artifact_id is pre-generated so callers can immediately link DB foreign keys
+    (e.g. action.screenshot_artifact_id) before the archive is flushed.
+    """
+
+    step: Step
+    workflow_run_id: str | None
+    workflow_run_block_id: str | None
+    run_id: str | None
+    entries: dict[str, bytes] = field(default_factory=dict)
+    # (artifact_type, filename, pre-generated artifact_id)
+    member_types: list[tuple[ArtifactType, str, str]] = field(default_factory=list)
+    # incremented each time accumulate_llm_call_to_archive is called so that
+    # multiple LLM calls within one step produce distinct filenames instead of
+    # silently overwriting each other.
+    llm_call_count: int = 0
+    # Deferred action.screenshot_artifact_id DB writes. Populated by
+    # queue_action_screenshot_update() and applied in _flush_step_archive()
+    # *after* bulk_create_artifacts() so the artifact row always exists first.
+    pending_action_screenshot_updates: list[tuple[str, str, str]] = field(default_factory=list)
+    # (organization_id, action_id, artifact_id)
+
+
+class ArtifactManager:
+    def __init__(self) -> None:
+        # task_id -> list of aio_tasks for uploading artifacts
+        self.upload_aiotasks_map: dict[str, list[asyncio.Task[None]]] = defaultdict(list)
+        # step_id -> accumulator for step archive artifacts
+        self._step_archives: dict[str, StepArchiveAccumulator] = {}
+        self._background_flushes: set[asyncio.Task[None]] = set()
+        self._url_expiry_by_org: TTLCache[str, int] = TTLCache(
+            maxsize=ARTIFACT_URL_EXPIRY_CACHE_MAX_ORGS, ttl=ARTIFACT_URL_EXPIRY_CACHE_TTL_SECONDS
+        )
+        self._url_expiry_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+        self._url_expiry_generation = 0
+
+    def _track_upload_aiotask(
+        self,
+        primary_key: str,
+        aio_task: asyncio.Task[None],
+        artifact: Artifact | None = None,
+    ) -> None:
+        """Track a fire-and-forget upload so wait_for_upload_aiotasks can barrier on it.
+
+        Tasks self-discard on completion: writers key this map by ids no lifecycle ever
+        drains (script deploys, ai suggestions, SDK actions), so relying on
+        wait_for_upload_aiotasks as the sole reclaim path pins completed tasks — and, for
+        failed uploads, the artifact bytes their tracebacks retain — forever (SKY-12524).
+        """
+        self.upload_aiotasks_map[primary_key].append(aio_task)
+
+        def _discard(task: asyncio.Task[None]) -> None:
+            if artifact is not None:
+                _log_artifact_store_task_failure(task, artifact)
+            elif not task.cancelled() and (exc := task.exception()) is not None:
+                LOG.warning(
+                    "Artifact upload task failed",
+                    primary_key=primary_key,
+                    error_type=type(exc).__name__,
+                    error=str(exc)[:200],
+                )
+            tasks = self.upload_aiotasks_map.get(primary_key)
+            if tasks is None:
+                return
+            try:
+                tasks.remove(task)
+            except ValueError:
+                return
+            if not tasks:
+                self.upload_aiotasks_map.pop(primary_key, None)
+
+        aio_task.add_done_callback(_discard)
+
+    @staticmethod
+    def _build_artifact_model(
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        uri: str,
+        organization_id: str,
+        bundle_key: str | None = None,
+        file_size: int | None = None,
+        step_id: str | None = None,
+        task_id: str | None = None,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        thought_id: str | None = None,
+        task_v2_id: str | None = None,
+        run_id: str | None = None,
+        ai_suggestion_id: str | None = None,
+    ) -> ArtifactModel:
+        """
+        Helper function to build an ArtifactModel instance.
+
+        Args:
+            artifact_id: Unique artifact identifier
+            artifact_type: Type of the artifact
+            uri: Storage URI for the artifact
+            organization_id: Organization ID
+            step_id: Optional step ID
+            task_id: Optional task ID
+            workflow_run_id: Optional workflow run ID
+            workflow_run_block_id: Optional workflow run block ID
+            thought_id: Optional thought ID (stored as observer_thought_id)
+            task_v2_id: Optional task v2 ID (stored as observer_cruise_id)
+            run_id: Optional run ID
+            ai_suggestion_id: Optional AI suggestion ID
+
+        Returns:
+            ArtifactModel instance ready for database insertion
+        """
+        return ArtifactModel(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            bundle_key=bundle_key,
+            file_size=file_size,
+            organization_id=organization_id,
+            task_id=task_id,
+            step_id=step_id,
+            workflow_run_id=workflow_run_id,
+            workflow_run_block_id=workflow_run_block_id,
+            observer_cruise_id=task_v2_id,
+            observer_thought_id=thought_id,
+            run_id=run_id,
+            ai_suggestion_id=ai_suggestion_id,
+        )
+
+    async def _create_artifact(
+        self,
+        aio_task_primary_key: str,
+        artifact_id: str,
+        artifact_type: ArtifactType,
+        uri: str,
+        organization_id: str,
+        step_id: str | None = None,
+        task_id: str | None = None,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        thought_id: str | None = None,
+        task_v2_id: str | None = None,
+        run_id: str | None = None,
+        ai_suggestion_id: str | None = None,
+        file_size: int | None = None,
+        data: bytes | None = None,
+        path: str | None = None,
+    ) -> str:
+        if data is None and path is None:
+            raise ValueError("Either data or path must be provided to create an artifact.")
+        if data and path:
+            raise ValueError("Both data and path cannot be provided to create an artifact.")
+
+        context = skyvern_context.current()
+        if not workflow_run_id and context:
+            workflow_run_id = context.workflow_run_id
+        if not task_v2_id and context:
+            task_v2_id = context.task_v2_id
+        if not task_id and context:
+            task_id = context.task_id
+        if not run_id and context:
+            run_id = context.run_id
+        if not workflow_run_block_id and context:
+            workflow_run_block_id = context.parent_workflow_run_block_id
+
+        if data is not None:
+            data = _maybe_redact_artifact_data(artifact_type, data, workflow_run_id=workflow_run_id)
+            file_size = len(data)
+
+        if file_size is None:
+            file_size = _safe_file_size_from_path(path)
+
+        artifact = await app.DATABASE.artifacts.create_artifact(
+            artifact_id,
+            artifact_type,
+            uri,
+            step_id=step_id,
+            task_id=task_id,
+            workflow_run_id=workflow_run_id,
+            workflow_run_block_id=workflow_run_block_id,
+            thought_id=thought_id,
+            task_v2_id=task_v2_id,
+            run_id=run_id,
+            organization_id=organization_id,
+            ai_suggestion_id=ai_suggestion_id,
+            file_size=file_size,
+        )
+        if data:
+            # Fire and forget
+            aio_task = asyncio.create_task(app.STORAGE.store_artifact(artifact, data))
+            self._track_upload_aiotask(aio_task_primary_key, aio_task)
+        elif path:
+            # Fire and forget
+            aio_task = asyncio.create_task(app.STORAGE.store_artifact_from_path(artifact, path))
+            self._track_upload_aiotask(aio_task_primary_key, aio_task)
+
+        return artifact_id
+
+    async def create_artifact(
+        self,
+        step: Step,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+        file_extension: str | None = None,
+    ) -> str:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_uri(
+            organization_id=step.organization_id, artifact_id=artifact_id, step=step, artifact_type=artifact_type
+        )
+        if artifact_type == ArtifactType.RECORDING:
+            recording_extension = file_extension
+            if not recording_extension and path:
+                recording_extension = os.path.splitext(path)[1].lstrip(".").lower()
+            if recording_extension:
+                uri = replace_file_extension(uri, recording_extension)
+        file_size = len(data) if data is not None else _safe_file_size_from_path(path)
+        return await self._create_artifact(
+            aio_task_primary_key=step.task_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            step_id=step.step_id,
+            task_id=step.task_id,
+            organization_id=step.organization_id,
+            file_size=file_size,
+            data=data,
+            path=path,
+        )
+
+    async def create_log_artifact(
+        self,
+        *,
+        log_entity_type: LogEntityType,
+        log_entity_id: str,
+        artifact_type: ArtifactType,
+        organization_id: str,
+        step_id: str | None = None,
+        task_id: str | None = None,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        data: bytes | None = None,
+        path: str | None = None,
+        upload_key: str | None = None,
+    ) -> str:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_log_uri(
+            organization_id=organization_id,
+            log_entity_type=log_entity_type,
+            log_entity_id=log_entity_id,
+            artifact_type=artifact_type,
+        )
+        return await self._create_artifact(
+            # The entity id is a barrier every caller for that entity waits on; a caller that
+            # cancels its own upload passes a key of its own so the others never see it.
+            aio_task_primary_key=upload_key or log_entity_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            step_id=step_id,
+            task_id=task_id,
+            workflow_run_id=workflow_run_id,
+            workflow_run_block_id=workflow_run_block_id,
+            organization_id=organization_id,
+            file_size=len(data) if data is not None else _safe_file_size_from_path(path),
+            data=data,
+            path=path,
+        )
+
+    async def create_download_artifact(
+        self,
+        *,
+        organization_id: str,
+        run_id: str,
+        uri: str,
+        filename: str,
+        workflow_run_id: str | None = None,
+        checksum: str | None = None,
+        file_size: int | None = None,
+    ) -> str:
+        """Register a downloaded file as an Artifact row without re-uploading.
+
+        The bytes already live at ``uri`` (the uploads bucket). We only record a
+        row so the file can be served through the signed ``/v1/artifacts/{id}/content``
+        endpoint.
+        """
+        context = skyvern_context.current()
+        # Retry uploads use attempt-specific URIs; reuse within one attempt keeps loop URLs stable.
+        existing = await app.DATABASE.artifacts.find_download_artifact(
+            organization_id=organization_id,
+            run_id=run_id,
+            uri=uri,
+        )
+        if existing is not None:
+            if checksum is not None and existing.checksum != checksum:
+                await app.DATABASE.artifacts.refresh_download_artifact_content(
+                    artifact_id=existing.artifact_id,
+                    organization_id=organization_id,
+                    checksum=checksum,
+                    file_size=file_size,
+                )
+            return existing.artifact_id
+
+        artifact_id = generate_artifact_id()
+        if workflow_run_id is None and context is not None:
+            workflow_run_id = context.workflow_run_id
+        await app.DATABASE.artifacts.create_artifact(
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.DOWNLOAD,
+            uri=uri,
+            organization_id=organization_id,
+            run_id=run_id,
+            workflow_run_id=workflow_run_id,
+            checksum=checksum,
+            file_size=file_size,
+        )
+        LOG.debug(
+            "Registered downloaded file as artifact",
+            artifact_id=artifact_id,
+            run_id=run_id,
+            filename=filename,
+        )
+        return artifact_id
+
+    async def create_browser_session_download_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        uri: str,
+        filename: str,
+        checksum: str | None = None,
+        file_size: int | None = None,
+        run_id: str | None = None,
+    ) -> str:
+        """Register a session-scoped downloaded file as an Artifact row, idempotent on
+        ``(organization_id, browser_session_id, uri)`` because the watcher fires repeatedly as the
+        file grows. ``run_id`` is the run occupying the session when the download was observed and
+        must be resolved at that observation, not here, where a late write would name whichever run
+        holds the session now."""
+        return await self._create_browser_session_artifact(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            uri=uri,
+            filename=filename,
+            artifact_type=ArtifactType.DOWNLOAD,
+            checksum=checksum,
+            file_size=file_size,
+            run_id=run_id,
+        )
+
+    async def create_browser_session_recording_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        uri: str,
+        filename: str,
+        checksum: str | None = None,
+        file_size: int | None = None,
+    ) -> str:
+        """Register a session-scoped recording (video) as a RECORDING Artifact row.
+
+        Mirrors :meth:`create_browser_session_download_artifact`. Called from
+        ``S3Storage.sync_browser_session_file(artifact_type="videos")`` once
+        Playwright finalizes the recording at session close. Idempotent on
+        ``(organization_id, browser_session_id, uri)`` — re-runs of the
+        end-of-session sync are safe.
+        """
+        return await self._create_browser_session_artifact(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            uri=uri,
+            filename=filename,
+            artifact_type=ArtifactType.RECORDING,
+            checksum=checksum,
+            file_size=file_size,
+        )
+
+    async def create_run_recording_artifact(
+        self,
+        *,
+        organization_id: str,
+        run_id: str,
+        uri: str,
+        workflow_run_id: str | None = None,
+        checksum: str | None = None,
+        file_size: int | None = None,
+    ) -> str:
+        """Register a per-run clip as a RECORDING Artifact scoped to ``run_id`` (``browser_session_id``
+        unset). Idempotency is the caller's responsibility.
+        """
+        artifact_id = generate_artifact_id()
+        await app.DATABASE.artifacts.create_artifact(
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.RECORDING,
+            uri=uri,
+            organization_id=organization_id,
+            run_id=run_id,
+            workflow_run_id=workflow_run_id,
+            checksum=checksum,
+            file_size=file_size,
+        )
+        LOG.debug("Registered run-scoped recording artifact", artifact_id=artifact_id, run_id=run_id, uri=uri)
+        return artifact_id
+
+    async def create_browser_session_replay_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        uri: str,
+        filename: str,
+        checksum: str | None = None,
+        file_size: int | None = None,
+    ) -> str:
+        return await self._create_browser_session_artifact(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            uri=uri,
+            filename=filename,
+            artifact_type=ArtifactType.SESSION_REPLAY,
+            checksum=checksum,
+            file_size=file_size,
+        )
+
+    async def create_browser_session_data_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        artifact_type: ArtifactType,
+        filename: str,
+        data: bytes,
+    ) -> str:
+        """Upload browser-session file data and record an artifact row.
+
+        Except for action logs, rows are idempotent on ``(browser_session_id, uri, artifact_type)``.
+        """
+        if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename:
+            raise ValueError("filename must be a file name without path components")
+
+        temp_file = create_named_temporary_file(delete=False)
+        try:
+            temp_file.write(data)
+            temp_file.close()
+            uri = await app.STORAGE.sync_browser_session_file(
+                organization_id=organization_id,
+                browser_session_id=browser_session_id,
+                artifact_type=artifact_type.value,
+                local_file_path=temp_file.name,
+                remote_path=filename,
+            )
+        finally:
+            temp_file.close()
+            try:
+                os.remove(temp_file.name)
+            except FileNotFoundError:
+                pass
+
+        return await self._create_browser_session_artifact(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            uri=uri,
+            filename=filename,
+            artifact_type=artifact_type,
+            file_size=len(data),
+        )
+
+    async def create_browser_session_action_log_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        event: "ActionLogEvent",
+    ) -> str:
+        return await self.create_browser_session_data_artifact(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            artifact_type=ArtifactType.BROWSER_SESSION_ACTION_LOG,
+            filename=f"v1-{event.event_id}.json",
+            data=event.model_dump_json().encode(),
+        )
+
+    async def _create_browser_session_artifact(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        uri: str,
+        filename: str,
+        artifact_type: ArtifactType,
+        checksum: str | None = None,
+        file_size: int | None = None,
+        run_id: str | None = None,
+    ) -> str:
+        """Insert a browser-session artifact, deduplicating every type except action logs."""
+        if artifact_type != ArtifactType.BROWSER_SESSION_ACTION_LOG:
+            existing = await app.DATABASE.artifacts.find_artifact_for_browser_session(
+                organization_id=organization_id,
+                browser_session_id=browser_session_id,
+                uri=uri,
+                artifact_type=artifact_type,
+            )
+            if existing is not None:
+                if run_id is not None and existing.run_id is None:
+                    await app.DATABASE.artifacts.bind_session_download_artifact_producer(
+                        artifact_id=existing.artifact_id,
+                        organization_id=organization_id,
+                        run_id=run_id,
+                    )
+                return existing.artifact_id
+
+        artifact_id = generate_artifact_id()
+        await app.DATABASE.artifacts.create_artifact(
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            run_id=run_id,
+            checksum=checksum,
+            file_size=file_size,
+        )
+        LOG.debug(
+            "Registered session-scoped artifact",
+            artifact_id=artifact_id,
+            browser_session_id=browser_session_id,
+            filename=filename,
+            artifact_type=artifact_type.value,
+        )
+        return artifact_id
+
+    async def create_thought_artifact(
+        self,
+        thought: Thought,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+    ) -> str:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_thought_uri(
+            organization_id=thought.organization_id,
+            artifact_id=artifact_id,
+            thought=thought,
+            artifact_type=artifact_type,
+        )
+        return await self._create_artifact(
+            aio_task_primary_key=thought.observer_cruise_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            thought_id=thought.observer_thought_id,
+            task_v2_id=thought.observer_cruise_id,
+            workflow_run_id=thought.workflow_run_id,
+            workflow_run_block_id=thought.workflow_run_block_id,
+            organization_id=thought.organization_id,
+            data=data,
+            path=path,
+        )
+
+    async def create_task_v2_artifact(
+        self,
+        task_v2: TaskV2,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+    ) -> str:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_task_v2_uri(
+            organization_id=task_v2.organization_id,
+            artifact_id=artifact_id,
+            task_v2=task_v2,
+            artifact_type=artifact_type,
+        )
+        return await self._create_artifact(
+            aio_task_primary_key=task_v2.observer_cruise_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            task_v2_id=task_v2.observer_cruise_id,
+            workflow_run_id=task_v2.workflow_run_id,
+            organization_id=task_v2.organization_id,
+            data=data,
+            path=path,
+        )
+
+    async def _create_workflow_run_block_artifact_internal(
+        self,
+        workflow_run_block: WorkflowRunBlock,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+        file_extension: str | None = None,
+    ) -> tuple[str, str]:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_workflow_run_block_uri(
+            organization_id=workflow_run_block.organization_id,
+            artifact_id=artifact_id,
+            workflow_run_block=workflow_run_block,
+            artifact_type=artifact_type,
+        )
+        # Match create_artifact: an MP4 RECORDING must key under .mp4 so mid-run bytes serve video/mp4 (SKY-15466).
+        if file_extension and artifact_type == ArtifactType.RECORDING:
+            uri = replace_file_extension(uri, file_extension)
+        await self._create_artifact(
+            aio_task_primary_key=workflow_run_block.workflow_run_block_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            workflow_run_block_id=workflow_run_block.workflow_run_block_id,
+            workflow_run_id=workflow_run_block.workflow_run_id,
+            organization_id=workflow_run_block.organization_id,
+            data=data,
+            path=path,
+        )
+        return artifact_id, uri
+
+    async def create_workflow_run_block_artifact(
+        self,
+        workflow_run_block: WorkflowRunBlock,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+        file_extension: str | None = None,
+    ) -> str:
+        artifact_id, _ = await self._create_workflow_run_block_artifact_internal(
+            workflow_run_block=workflow_run_block,
+            artifact_type=artifact_type,
+            data=data,
+            path=path,
+            file_extension=file_extension,
+        )
+        return artifact_id
+
+    async def create_workflow_run_block_artifact_with_uri(
+        self,
+        workflow_run_block: WorkflowRunBlock,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+    ) -> tuple[str, str]:
+        return await self._create_workflow_run_block_artifact_internal(
+            workflow_run_block=workflow_run_block,
+            artifact_type=artifact_type,
+            data=data,
+            path=path,
+        )
+
+    async def create_workflow_run_block_artifacts(
+        self,
+        workflow_run_block: WorkflowRunBlock,
+        artifacts: list[tuple[ArtifactType, bytes]],
+    ) -> list[str]:
+        """
+        Bulk-create artifacts for a workflow run block in a single DB round-trip.
+        """
+        if not artifacts:
+            return []
+
+        artifact_batch: list[ArtifactBatchData] = []
+        for artifact_type, data in artifacts:
+            artifact_id = generate_artifact_id()
+            uri = app.STORAGE.build_workflow_run_block_uri(
+                organization_id=workflow_run_block.organization_id,
+                artifact_id=artifact_id,
+                workflow_run_block=workflow_run_block,
+                artifact_type=artifact_type,
+            )
+            artifact_batch.append(
+                ArtifactBatchData(
+                    artifact_model=self._build_artifact_model(
+                        artifact_id=artifact_id,
+                        artifact_type=artifact_type,
+                        uri=uri,
+                        organization_id=workflow_run_block.organization_id,
+                        workflow_run_block_id=workflow_run_block.workflow_run_block_id,
+                        workflow_run_id=workflow_run_block.workflow_run_id,
+                    ),
+                    data=data,
+                )
+            )
+
+        request = BulkArtifactCreationRequest(
+            artifacts=artifact_batch, primary_key=workflow_run_block.workflow_run_block_id
+        )
+        return await self._bulk_create_artifacts(request)
+
+    async def create_ai_suggestion_artifact(
+        self,
+        ai_suggestion: AISuggestion,
+        artifact_type: ArtifactType,
+        data: bytes | None = None,
+        path: str | None = None,
+    ) -> str:
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_ai_suggestion_uri(
+            organization_id=ai_suggestion.organization_id,
+            artifact_id=artifact_id,
+            ai_suggestion=ai_suggestion,
+            artifact_type=artifact_type,
+        )
+        return await self._create_artifact(
+            aio_task_primary_key=ai_suggestion.ai_suggestion_id,
+            artifact_id=artifact_id,
+            artifact_type=artifact_type,
+            uri=uri,
+            ai_suggestion_id=ai_suggestion.ai_suggestion_id,
+            organization_id=ai_suggestion.organization_id,
+            data=data,
+            path=path,
+        )
+
+    async def create_script_file_artifact(
+        self,
+        *,
+        organization_id: str,
+        script_id: str,
+        script_version: int,
+        file_path: str,
+        data: bytes,
+    ) -> str:
+        """Create an artifact for a script file.
+
+        Args:
+            organization_id: The organization ID
+            script_id: The script ID
+            script_version: The script version
+            file_path: The file path relative to script root
+            data: The file content as bytes
+
+        Returns:
+            The artifact ID
+        """
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_script_file_uri(
+            organization_id=organization_id,
+            script_id=script_id,
+            script_version=script_version,
+            file_path=file_path,
+        )
+        return await self._create_artifact(
+            aio_task_primary_key=f"{script_id}_{script_version}",
+            artifact_id=artifact_id,
+            artifact_type=ArtifactType.SCRIPT_FILE,
+            uri=uri,
+            organization_id=organization_id,
+            file_size=len(data),
+            data=data,
+        )
+
+    async def bulk_create_artifacts(
+        self,
+        requests: list[BulkArtifactCreationRequest | None],
+    ) -> list[str]:
+        artifacts: list[ArtifactBatchData] = []
+        primary_key: str | None = None
+        for request in requests:
+            if request:
+                artifacts.extend(request.artifacts)
+                primary_key = request.primary_key
+
+        if primary_key is None or not artifacts:
+            return []
+
+        return await self._bulk_create_artifacts(
+            BulkArtifactCreationRequest(artifacts=artifacts, primary_key=primary_key)
+        )
+
+    async def _bulk_create_artifacts(
+        self,
+        request: BulkArtifactCreationRequest,
+    ) -> list[str]:
+        """
+        Bulk create multiple artifacts in a single database transaction.
+
+        Args:
+            request: BulkArtifactCreationRequest containing artifacts and primary key
+
+        Returns:
+            List of artifact IDs
+        """
+        if not request.artifacts:
+            return []
+
+        for artifact_data in request.artifacts:
+            if artifact_data.data is not None:
+                artifact_type = ArtifactType(artifact_data.artifact_model.artifact_type)
+                artifact_data.data = _maybe_redact_artifact_data(
+                    artifact_type,
+                    artifact_data.data,
+                    workflow_run_id=artifact_data.artifact_model.workflow_run_id,
+                )
+                artifact_data.artifact_model.file_size = len(artifact_data.data)
+
+        # Extract models for bulk insert
+        artifact_models = [artifact_data.artifact_model for artifact_data in request.artifacts]
+
+        # Bulk insert artifacts
+        artifacts = await app.DATABASE.artifacts.bulk_create_artifacts(artifact_models)
+
+        # Fire and forget upload tasks
+        for artifact, artifact_data in zip(artifacts, request.artifacts):
+            if artifact_data.data is not None:
+                aio_task = asyncio.create_task(app.STORAGE.store_artifact(artifact, artifact_data.data))
+                self._track_upload_aiotask(request.primary_key, aio_task)
+            elif artifact_data.path is not None:
+                aio_task = asyncio.create_task(app.STORAGE.store_artifact_from_path(artifact, artifact_data.path))
+                self._track_upload_aiotask(request.primary_key, aio_task)
+
+        return [artifact.artifact_id for artifact in artifacts]
+
+    def _prepare_step_artifacts(
+        self,
+        step: Step,
+        artifact_type: ArtifactType,
+        data: bytes,
+        screenshots: list[bytes] | None = None,
+    ) -> BulkArtifactCreationRequest:
+        """Helper to prepare artifact batch request for Step-based artifacts."""
+        artifacts = []
+
+        # Main artifact
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_uri(
+            organization_id=step.organization_id,
+            artifact_id=artifact_id,
+            step=step,
+            artifact_type=artifact_type,
+        )
+        artifacts.append(
+            ArtifactBatchData(
+                artifact_model=self._build_artifact_model(
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    organization_id=step.organization_id,
+                    step_id=step.step_id,
+                    task_id=step.task_id,
+                ),
+                data=data,
+            )
+        )
+
+        # Screenshot artifacts
+        for screenshot in screenshots or []:
+            screenshot_id = generate_artifact_id()
+            screenshot_uri = app.STORAGE.build_uri(
+                organization_id=step.organization_id,
+                artifact_id=screenshot_id,
+                step=step,
+                artifact_type=ArtifactType.SCREENSHOT_LLM,
+            )
+            artifacts.append(
+                ArtifactBatchData(
+                    artifact_model=self._build_artifact_model(
+                        artifact_id=screenshot_id,
+                        artifact_type=ArtifactType.SCREENSHOT_LLM,
+                        uri=screenshot_uri,
+                        organization_id=step.organization_id,
+                        step_id=step.step_id,
+                        task_id=step.task_id,
+                    ),
+                    data=screenshot,
+                )
+            )
+
+        return BulkArtifactCreationRequest(artifacts=artifacts, primary_key=step.task_id)
+
+    def _prepare_task_v2_artifacts(
+        self,
+        task_v2: TaskV2,
+        artifact_type: ArtifactType,
+        data: bytes,
+        screenshots: list[bytes] | None = None,
+    ) -> BulkArtifactCreationRequest:
+        """Helper to prepare artifact batch request for TaskV2-based artifacts."""
+        context = skyvern_context.current()
+        workflow_run_id = context.workflow_run_id if context else task_v2.workflow_run_id
+        workflow_run_block_id = context.parent_workflow_run_block_id if context else None
+
+        artifacts = []
+
+        # Main artifact
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_task_v2_uri(
+            organization_id=task_v2.organization_id,
+            artifact_id=artifact_id,
+            task_v2=task_v2,
+            artifact_type=artifact_type,
+        )
+        artifacts.append(
+            ArtifactBatchData(
+                artifact_model=self._build_artifact_model(
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    organization_id=task_v2.organization_id,
+                    task_v2_id=task_v2.observer_cruise_id,
+                    workflow_run_id=workflow_run_id,
+                    workflow_run_block_id=workflow_run_block_id,
+                ),
+                data=data,
+            )
+        )
+
+        # Screenshot artifacts
+        for screenshot in screenshots or []:
+            screenshot_id = generate_artifact_id()
+            screenshot_uri = app.STORAGE.build_task_v2_uri(
+                organization_id=task_v2.organization_id,
+                artifact_id=screenshot_id,
+                task_v2=task_v2,
+                artifact_type=ArtifactType.SCREENSHOT_LLM,
+            )
+            artifacts.append(
+                ArtifactBatchData(
+                    artifact_model=self._build_artifact_model(
+                        artifact_id=screenshot_id,
+                        artifact_type=ArtifactType.SCREENSHOT_LLM,
+                        uri=screenshot_uri,
+                        organization_id=task_v2.organization_id,
+                        task_v2_id=task_v2.observer_cruise_id,
+                        workflow_run_id=workflow_run_id,
+                        workflow_run_block_id=workflow_run_block_id,
+                    ),
+                    data=screenshot,
+                )
+            )
+
+        return BulkArtifactCreationRequest(artifacts=artifacts, primary_key=task_v2.observer_cruise_id)
+
+    def _prepare_thought_artifacts(
+        self,
+        thought: Thought,
+        artifact_type: ArtifactType,
+        data: bytes,
+        screenshots: list[bytes] | None = None,
+    ) -> BulkArtifactCreationRequest:
+        """Helper to prepare artifact batch request for Thought-based artifacts."""
+        artifacts = []
+
+        # Main artifact
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_thought_uri(
+            organization_id=thought.organization_id,
+            artifact_id=artifact_id,
+            thought=thought,
+            artifact_type=artifact_type,
+        )
+        artifacts.append(
+            ArtifactBatchData(
+                artifact_model=self._build_artifact_model(
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    organization_id=thought.organization_id,
+                    thought_id=thought.observer_thought_id,
+                    task_v2_id=thought.observer_cruise_id,
+                    workflow_run_id=thought.workflow_run_id,
+                    workflow_run_block_id=thought.workflow_run_block_id,
+                ),
+                data=data,
+            )
+        )
+
+        # Screenshot artifacts
+        for screenshot in screenshots or []:
+            screenshot_id = generate_artifact_id()
+            screenshot_uri = app.STORAGE.build_thought_uri(
+                organization_id=thought.organization_id,
+                artifact_id=screenshot_id,
+                thought=thought,
+                artifact_type=ArtifactType.SCREENSHOT_LLM,
+            )
+            artifacts.append(
+                ArtifactBatchData(
+                    artifact_model=self._build_artifact_model(
+                        artifact_id=screenshot_id,
+                        artifact_type=ArtifactType.SCREENSHOT_LLM,
+                        uri=screenshot_uri,
+                        organization_id=thought.organization_id,
+                        thought_id=thought.observer_thought_id,
+                        task_v2_id=thought.observer_cruise_id,
+                        workflow_run_id=thought.workflow_run_id,
+                        workflow_run_block_id=thought.workflow_run_block_id,
+                    ),
+                    data=screenshot,
+                )
+            )
+
+        return BulkArtifactCreationRequest(artifacts=artifacts, primary_key=thought.observer_cruise_id)
+
+    def _prepare_ai_suggestion_artifacts(
+        self,
+        ai_suggestion: AISuggestion,
+        artifact_type: ArtifactType,
+        data: bytes,
+        screenshots: list[bytes] | None = None,
+    ) -> BulkArtifactCreationRequest:
+        """Helper to prepare artifact batch request for AISuggestion-based artifacts."""
+        artifacts = []
+
+        # Main artifact
+        artifact_id = generate_artifact_id()
+        uri = app.STORAGE.build_ai_suggestion_uri(
+            organization_id=ai_suggestion.organization_id,
+            artifact_id=artifact_id,
+            ai_suggestion=ai_suggestion,
+            artifact_type=artifact_type,
+        )
+        artifacts.append(
+            ArtifactBatchData(
+                artifact_model=self._build_artifact_model(
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    organization_id=ai_suggestion.organization_id,
+                    ai_suggestion_id=ai_suggestion.ai_suggestion_id,
+                ),
+                data=data,
+            )
+        )
+
+        # Screenshot artifacts
+        for screenshot in screenshots or []:
+            screenshot_id = generate_artifact_id()
+            screenshot_uri = app.STORAGE.build_ai_suggestion_uri(
+                organization_id=ai_suggestion.organization_id,
+                artifact_id=screenshot_id,
+                ai_suggestion=ai_suggestion,
+                artifact_type=ArtifactType.SCREENSHOT_LLM,
+            )
+            artifacts.append(
+                ArtifactBatchData(
+                    artifact_model=self._build_artifact_model(
+                        artifact_id=screenshot_id,
+                        artifact_type=ArtifactType.SCREENSHOT_LLM,
+                        uri=screenshot_uri,
+                        organization_id=ai_suggestion.organization_id,
+                        ai_suggestion_id=ai_suggestion.ai_suggestion_id,
+                    ),
+                    data=screenshot,
+                )
+            )
+
+        return BulkArtifactCreationRequest(artifacts=artifacts, primary_key=ai_suggestion.ai_suggestion_id)
+
+    async def prepare_llm_artifact(
+        self,
+        data: bytes,
+        artifact_type: ArtifactType,
+        screenshots: list[bytes] | None = None,
+        step: Step | None = None,
+        thought: Thought | None = None,
+        task_v2: TaskV2 | None = None,
+        ai_suggestion: AISuggestion | None = None,
+    ) -> BulkArtifactCreationRequest | None:
+        if step:
+            return self._prepare_step_artifacts(
+                step=step,
+                artifact_type=artifact_type,
+                data=data,
+                screenshots=screenshots,
+            )
+
+        elif task_v2:
+            return self._prepare_task_v2_artifacts(
+                task_v2=task_v2,
+                artifact_type=artifact_type,
+                data=data,
+                screenshots=screenshots,
+            )
+
+        elif thought:
+            return self._prepare_thought_artifacts(
+                thought=thought,
+                artifact_type=artifact_type,
+                data=data,
+                screenshots=screenshots,
+            )
+
+        elif ai_suggestion:
+            return self._prepare_ai_suggestion_artifacts(
+                ai_suggestion=ai_suggestion,
+                artifact_type=artifact_type,
+                data=data,
+                screenshots=screenshots,
+            )
+        else:
+            return None
+
+    async def update_artifact_data(
+        self,
+        artifact_id: str | None,
+        organization_id: str | None,
+        data: bytes,
+        primary_key: str = "task_id",
+        file_extension: str | None = None,
+        supersede_queued_prefixes: bool = False,
+    ) -> str | None:
+        if not artifact_id or not organization_id:
+            return None
+        artifact = await app.DATABASE.artifacts.get_artifact_by_id(artifact_id, organization_id)
+        if not artifact:
+            return None
+        if artifact.artifact_type == ArtifactType.UNKNOWN:
+            # This image cannot tell whether the row's type is redactable; fail closed, write nothing.
+            LOG.warning("Refusing to update data of an artifact of unknown type", artifact_id=artifact_id)
+            return None
+        data = _maybe_redact_artifact_data(
+            ArtifactType(artifact.artifact_type),
+            data,
+            workflow_run_id=artifact.workflow_run_id,
+        )
+        prefix_uri: str | None = None
+        if file_extension and artifact.artifact_type == ArtifactType.RECORDING:
+            old_uri = artifact.uri
+            next_uri = replace_file_extension(old_uri, file_extension)
+            file_size = len(data)
+            if next_uri != old_uri or artifact.file_size != file_size:
+                updated_artifact = await app.DATABASE.artifacts.update_artifact_uri(
+                    artifact_id=artifact.artifact_id,
+                    organization_id=organization_id,
+                    uri=next_uri,
+                    file_size=file_size,
+                )
+                if not updated_artifact:
+                    # Avoid writing prepared bytes under stale metadata, which can create
+                    # content/extension mismatches for recording artifacts.
+                    raise RuntimeError(
+                        f"Failed to update recording artifact metadata before upload: {artifact.artifact_id}"
+                    )
+                artifact = updated_artifact
+            if next_uri != old_uri:
+                # The finalize renamed the object (e.g. .webm -> .mp4); the per-step prefixes queued to the
+                # pre-rename key, so pass it as prefix_uri to seal/supersede THAT key rather than the new one
+                # nothing queued to.
+                prefix_uri = old_uri
+
+        # Fire and forget. Only a terminal recording finalize (supersede_queued_prefixes=True, passed by
+        # the terminal persistence sites) supersedes queued prefixes; the generic path — including the
+        # mid-step byte fallback in _sync_video_artifact_after_step — must not seal.
+        aio_task = asyncio.create_task(
+            app.STORAGE.store_artifact(
+                artifact, data, supersede_queued_prefixes=supersede_queued_prefixes, prefix_uri=prefix_uri
+            )
+        )
+
+        # A code-block recording artifact is workflow-run-block-scoped rather than task-scoped, so
+        # key the upload tracking on the first available scope id instead of failing on a null task_id.
+        aio_task_key = artifact[primary_key] or artifact["workflow_run_block_id"] or artifact["run_id"]
+        if not aio_task_key:
+            raise ValueError("artifact must have a task_id, workflow_run_block_id, or run_id to track its upload.")
+        self._track_upload_aiotask(aio_task_key, aio_task, artifact=artifact)
+        return aio_task_key
+
+    async def stream_artifact_prefix_from_path(
+        self,
+        artifact_id: str | None,
+        organization_id: str | None,
+        path: str,
+        length: int,
+        primary_key: str = "task_id",
+    ) -> str | None:
+        """Per-step recording sync: upload exactly ``[0, length)`` of ``path`` by streaming it, without
+        buffering the whole growing prefix as ``bytes``. RECORDING is not redactable, so (unlike
+        ``update_artifact_data``) no redaction pass is needed."""
+        if not artifact_id or not organization_id:
+            return None
+        artifact = await app.DATABASE.artifacts.get_artifact_by_id(artifact_id, organization_id)
+        if not artifact:
+            return None
+        if artifact.artifact_type == ArtifactType.UNKNOWN:
+            LOG.warning("Refusing to stream data for an artifact of unknown type", artifact_id=artifact_id)
+            return None
+
+        async def _store_prefix() -> None:
+            # The recording file can be removed concurrently; the read now happens in this fire-and-forget
+            # task (not the caller's try/except), so swallow a vanished/unreadable file the way the old
+            # synchronous per-step read did, rather than let it surface unhandled in wait_for_upload_aiotasks.
+            try:
+                await app.STORAGE.store_artifact_prefix_from_path(artifact, path, length)
+            except OSError:
+                LOG.warning(
+                    "Skipping recording prefix upload; file unavailable",
+                    artifact_id=artifact_id,
+                    path=path,
+                    exc_info=True,
+                )
+
+        # Fire and forget
+        aio_task = asyncio.create_task(_store_prefix())
+
+        aio_task_key = artifact[primary_key] or artifact["workflow_run_block_id"] or artifact["run_id"]
+        if not aio_task_key:
+            raise ValueError("artifact must have a task_id, workflow_run_block_id, or run_id to track its upload.")
+        self._track_upload_aiotask(aio_task_key, aio_task, artifact=artifact)
+        return aio_task_key
+
+    async def retrieve_artifact(self, artifact: Artifact) -> bytes | None:
+        return await app.STORAGE.retrieve_artifact(artifact)
+
+    def build_signed_content_url(
+        self,
+        artifact_id: str,
+        artifact_name: str | None = None,
+        artifact_type: str | None = None,
+        expiry_seconds: int | None = None,
+    ) -> str:
+        """Return a signed ``/v1/artifacts/{id}/content`` URL for any artifact.
+
+        Non-bundled artifacts normally get a presigned S3 URL from
+        ``STORAGE.get_share_link``. This method always builds the Skyvern-origin
+        signed URL regardless of ``bundle_key`` — used for DOWNLOAD artifacts
+        so webhook payloads stay short and clients hit our origin.
+
+        ``expiry_seconds`` overrides the URL's TTL; when None, the global
+        default applies. Callers with an organization in scope should resolve
+        the per-org override via :meth:`resolve_artifact_url_expiry_seconds`
+        once and pass the result here.
+        """
+        return self._bundle_content_url(
+            artifact_id=artifact_id,
+            artifact_name=artifact_name,
+            artifact_type=artifact_type,
+            expiry_seconds=expiry_seconds,
+        )
+
+    async def resolve_artifact_url_expiry_seconds(self, organization_id: str | None) -> int:
+        """Look up the org's artifact-URL TTL override; fall back to the global default.
+
+        Cached per org for ``ARTIFACT_URL_EXPIRY_CACHE_TTL_SECONDS``, so a change written by another process
+        reaches this one within that time. Concurrent misses for one org share a single read.
+        """
+        if organization_id is None:
+            return ARTIFACT_URL_EXPIRY_SECONDS
+        cached = self._url_expiry_by_org.get(organization_id)
+        if cached is not None:
+            return cached
+        lock = self._url_expiry_locks.get(organization_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._url_expiry_locks[organization_id] = lock
+        async with lock:
+            cached = self._url_expiry_by_org.get(organization_id)
+            if cached is not None:
+                return cached
+            generation = self._url_expiry_generation
+            org = await app.DATABASE.organizations.get_organization(organization_id=organization_id)
+            expiry_seconds = effective_artifact_url_expiry_seconds(org.artifact_url_expiry_seconds if org else None)
+            # A read that raced an invalidation may hold the old value, so only an unraced read is cached.
+            if generation == self._url_expiry_generation:
+                self._url_expiry_by_org[organization_id] = expiry_seconds
+            return expiry_seconds
+
+    def invalidate_cached_artifact_url_expiry(self, organization_id: str) -> None:
+        self._url_expiry_generation += 1
+        self._url_expiry_by_org.pop(organization_id, None)
+
+    def _bundle_content_url(
+        self,
+        artifact_id: str,
+        artifact_name: str | None = None,
+        artifact_type: str | None = None,
+        expiry_seconds: int | None = None,
+    ) -> str:
+        """Return an absolute URL for a bundled artifact served via the content endpoint.
+
+        When ARTIFACT_CONTENT_HMAC_KEYRING is configured the URL is HMAC-SHA256 signed
+        and carries expiry/kid/sig query parameters so the endpoint can authenticate
+        requests without an org-level API key.
+
+        Metadata query parameters are retained only on the API-authenticated unsigned
+        fallback. Signed URLs carry authorization fields only.
+        """
+        base = settings.SKYVERN_BASE_URL.rstrip("/")
+        if settings.ARTIFACT_CONTENT_HMAC_KEYRING:
+            keyring = parse_keyring(settings.ARTIFACT_CONTENT_HMAC_KEYRING)
+            return sign_artifact_url(
+                base_url=base,
+                artifact_id=artifact_id,
+                keyring=keyring,
+                expiry_seconds=expiry_seconds,
+            )
+        path = f"{base}/v1/artifacts/{artifact_id}/content"
+        extra: dict[str, str] = {}
+        if artifact_name is not None:
+            extra["artifact_name"] = artifact_name
+        if artifact_type is not None:
+            extra["artifact_type"] = artifact_type
+        return f"{path}?{urlencode(extra)}" if extra else path
+
+    async def resolve_share_url(
+        self,
+        artifact: Artifact,
+        expiry_seconds: int | None = None,
+    ) -> str | None:
+        """Return the customer-facing URL for an artifact.
+
+        Skyvern-origin signed URL when HMAC signing is configured *or* when the
+        artifact is a bundled member (its URI points at the parent ZIP, so a
+        storage presigned URL would download the wrong bytes — fall through to
+        the endpoint, which knows how to extract the member). Otherwise the
+        storage backend's presigned URL (S3 / Azure SAS / local URI).
+
+        Screenshot and recording URLs are capped to
+        ``SENSITIVE_ARTIFACT_URL_EXPIRY_SECONDS`` regardless of the caller's
+        value (SKY-12527).
+        """
+        expiry_seconds = artifact_url_expiry_seconds_for_type(artifact.artifact_type, expiry_seconds)
+        if _bundling_enabled() or artifact.bundle_key:
+            # Legacy unsigned URLs expose ``artifact_name`` for download display.
+            # Bundled members carry the in-ZIP filename
+            # in ``bundle_key``; non-bundled artifacts have it as the URI
+            # basename. Without this fallback the path basename is just
+            # "content" and the UI falls back to a literal "download" label.
+            artifact_name = artifact.bundle_key or artifact_filename_from_uri(artifact.uri) or None
+            return self._bundle_content_url(
+                artifact.artifact_id,
+                artifact_name=artifact_name,
+                artifact_type=artifact.artifact_type,
+                expiry_seconds=expiry_seconds,
+            )
+        return await app.STORAGE.get_share_link(artifact)
+
+    async def remint_content_url_if_unverified(
+        self, parsed: ParsedArtifactContentUrl, organization_id: str | None
+    ) -> str | None:
+        """Re-sign a first-party artifact content URL whose signature is missing or does not verify.
+
+        ``sig`` is a 43-character capability token that has to survive the whole workflow
+        value plane verbatim; one dropped character turns a readable artifact into a 403
+        (SKY-13575). The server can always re-derive it, so when the carried signature
+        fails to verify — corrupted, absent, or expired — and the run's organization owns
+        the artifact, hand back a freshly signed URL.
+
+        Returns None when the signature still verifies or the URL names an artifact this
+        organization cannot read; the caller then keeps the URL it already had.
+        """
+        if not organization_id:
+            return None
+        # With the keyring unset there is nothing to verify against, and the only first-party
+        # content URLs still in circulation are legacy bundled rows — remint those unconditionally.
+        if settings.ARTIFACT_CONTENT_HMAC_KEYRING and parsed.expiry and parsed.kid and parsed.sig:
+            if verify_artifact_signature(
+                artifact_id=parsed.artifact_id,
+                expiry=parsed.expiry,
+                kid=parsed.kid,
+                sig=parsed.sig,
+                keyring=parse_keyring(settings.ARTIFACT_CONTENT_HMAC_KEYRING),
+            ):
+                return None
+
+        artifact = await app.DATABASE.artifacts.get_artifact_by_id(
+            artifact_id=parsed.artifact_id,
+            organization_id=organization_id,
+        )
+        if artifact is None:
+            return None
+        expiry_seconds = await self.resolve_artifact_url_expiry_seconds(organization_id)
+        reminted = await self.resolve_share_url(artifact, expiry_seconds=expiry_seconds)
+        if reminted is None:
+            return None
+        LOG.warning(
+            "Re-signed a first-party artifact URL with a missing or unverifiable signature",
+            artifact_id=parsed.artifact_id,
+            organization_id=organization_id,
+            signature_length=len(parsed.sig) if parsed.sig else 0,
+        )
+        return reminted
+
+    async def get_share_link(self, artifact: Artifact) -> str | None:
+        """Return a customer-facing URL for one artifact.
+
+        HMAC keyring set: Skyvern signed ``/v1/artifacts/{id}/content`` URL.
+        HMAC keyring unset: storage backend's presigned URL, except for
+        legacy bundled rows which still route through the endpoint.
+        """
+        expiry_seconds = await self.resolve_artifact_url_expiry_seconds(artifact.organization_id)
+        return await self.resolve_share_url(artifact, expiry_seconds=expiry_seconds)
+
+    async def get_share_links(self, artifacts: list[Artifact]) -> list[str | None]:
+        """Return URLs for a batch of artifacts."""
+        return await self.get_share_links_with_bundle_support(artifacts)
+
+    async def get_share_links_with_bundle_support(self, artifacts: list[Artifact]) -> list[str | None]:
+        """Mint a customer-facing URL for every artifact in the batch.
+
+        HMAC keyring set: every artifact → Skyvern signed URL.
+        HMAC keyring unset: non-bundled artifacts → one batched
+        ``STORAGE.get_share_links`` call (single backend round-trip). Bundled
+        legacy rows → individual Skyvern unsigned URL each (still requires
+        API-key auth on fetch; see safety-net rationale in `resolve_share_url`).
+        """
+        if not artifacts:
+            return []
+
+        organization_id = artifacts[0].organization_id
+        expiry_seconds = await self.resolve_artifact_url_expiry_seconds(organization_id)
+
+        if _bundling_enabled():
+            return [
+                self._bundle_content_url(
+                    artifact.artifact_id,
+                    artifact_name=artifact.bundle_key,
+                    artifact_type=artifact.artifact_type,
+                    expiry_seconds=artifact_url_expiry_seconds_for_type(artifact.artifact_type, expiry_seconds),
+                )
+                for artifact in artifacts
+            ]
+
+        bundled_indices = [i for i, a in enumerate(artifacts) if a.bundle_key]
+        non_bundled_indices = [i for i, a in enumerate(artifacts) if not a.bundle_key]
+        non_bundled = [artifacts[i] for i in non_bundled_indices]
+
+        presigned: list[str] | None = await app.STORAGE.get_share_links(non_bundled) if non_bundled else []
+
+        result: list[str | None] = [None] * len(artifacts)
+        if presigned is None:
+            for idx in non_bundled_indices:
+                result[idx] = None
+        else:
+            for idx, presigned_url in zip(non_bundled_indices, presigned, strict=True):
+                result[idx] = presigned_url
+        for idx in bundled_indices:
+            a = artifacts[idx]
+            result[idx] = self._bundle_content_url(
+                a.artifact_id,
+                artifact_name=a.bundle_key,
+                artifact_type=a.artifact_type,
+                expiry_seconds=artifact_url_expiry_seconds_for_type(a.artifact_type, expiry_seconds),
+            )
+
+        LOG.debug(
+            "get_share_links_with_bundle_support",
+            total=len(artifacts),
+            bundled=len(bundled_indices),
+            non_bundled=len(non_bundled_indices),
+            keyring_set=_bundling_enabled(),
+        )
+        return result
+
+    async def mark_archived_artifacts(self, artifacts: list[Artifact]) -> None:
+        """Set ``archived = True`` on artifacts whose S3 objects are in GLACIER or DEEP_ARCHIVE.
+
+        Skips artifacts newer than ARCHIVE_AGE_THRESHOLD (90 days) to avoid unnecessary
+        head_object calls. Deduplicates by URI so bundle members sharing the same ZIP
+        only trigger one check.
+        """
+        now = datetime.now(UTC)
+        candidates: list[Artifact] = [
+            a for a in artifacts if (now - _ensure_aware_utc(a.created_at)) > ARCHIVE_AGE_THRESHOLD
+        ]
+        if not candidates:
+            return
+
+        unique_uris = list({a.uri for a in candidates})
+        try:
+            archived_map = await app.STORAGE.check_archived_uris(unique_uris)
+        except Exception:
+            LOG.warning("check_archived_uris failed; skipping archived marking", exc_info=True)
+            return
+
+        for artifact in candidates:
+            if archived_map.get(artifact.uri, False):
+                artifact.archived = True
+
+    async def is_recording_archived(self, artifact: Artifact | None) -> bool:
+        if artifact is None:
+            return False
+        now = datetime.now(UTC)
+        if (now - _ensure_aware_utc(artifact.created_at)) <= ARCHIVE_AGE_THRESHOLD:
+            return False
+        try:
+            archived_map = await app.STORAGE.check_archived_uris([artifact.uri])
+        except Exception:
+            LOG.warning("is_recording_archived failed; assuming not archived", exc_info=True)
+            return False
+        return archived_map.get(artifact.uri, False)
+
+    # ---------------------------------------------------------------------------
+    # Step-archive accumulation helpers
+    # ---------------------------------------------------------------------------
+
+    def _get_or_create_step_archive(
+        self,
+        step: Step,
+        workflow_run_id: str | None,
+        workflow_run_block_id: str | None,
+        run_id: str | None,
+    ) -> StepArchiveAccumulator:
+        if step.step_id not in self._step_archives:
+            context = skyvern_context.current()
+            self._step_archives[step.step_id] = StepArchiveAccumulator(
+                step=step,
+                workflow_run_id=workflow_run_id or (context.workflow_run_id if context else None),
+                workflow_run_block_id=workflow_run_block_id
+                or (context.workflow_run_block_id if context else None)
+                or (context.parent_workflow_run_block_id if context else None),
+                run_id=run_id or (context.run_id if context else None),
+            )
+        return self._step_archives[step.step_id]
+
+    def _add_to_step_archive(
+        self,
+        acc: StepArchiveAccumulator,
+        filename: str,
+        data: bytes,
+        artifact_type: ArtifactType,
+        artifact_id: str | None = None,
+    ) -> str:
+        """Add a single file to the accumulator, deduplicating by filename.
+
+        Returns the artifact_id (pre-generated or provided) so callers can link it
+        in DB foreign keys (e.g. action.screenshot_artifact_id) before flush.
+        """
+        acc.entries[filename] = _maybe_redact_artifact_data(artifact_type, data, workflow_run_id=acc.workflow_run_id)
+        # Deduplicate by filename — update in place if it already exists
+        for i, (_, fn, existing_id) in enumerate(acc.member_types):
+            if fn == filename:
+                acc.member_types[i] = (artifact_type, filename, existing_id)
+                return existing_id
+        aid = artifact_id or generate_artifact_id()
+        acc.member_types.append((artifact_type, filename, aid))
+        return aid
+
+    def accumulate_scrape_to_archive(
+        self,
+        step: Step,
+        html: bytes,
+        id_css_map: bytes,
+        id_frame_map: bytes,
+        element_tree: bytes,
+        element_tree_trimmed: bytes,
+        element_tree_in_prompt: bytes,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Accumulate scrape artifacts into the step archive (replaces 6 individual S3 PUTs)."""
+        acc = self._get_or_create_step_archive(step, workflow_run_id, workflow_run_block_id, run_id)
+        self._add_to_step_archive(acc, "scrape.html", html, ArtifactType.HTML_SCRAPE)
+        self._add_to_step_archive(acc, "id_css_map.json", id_css_map, ArtifactType.VISIBLE_ELEMENTS_ID_CSS_MAP)
+        self._add_to_step_archive(acc, "id_frame_map.json", id_frame_map, ArtifactType.VISIBLE_ELEMENTS_ID_FRAME_MAP)
+        self._add_to_step_archive(acc, "element_tree.json", element_tree, ArtifactType.VISIBLE_ELEMENTS_TREE)
+        self._add_to_step_archive(
+            acc, "element_tree_trimmed.json", element_tree_trimmed, ArtifactType.VISIBLE_ELEMENTS_TREE_TRIMMED
+        )
+        self._add_to_step_archive(
+            acc, "element_tree_in_prompt.txt", element_tree_in_prompt, ArtifactType.VISIBLE_ELEMENTS_TREE_IN_PROMPT
+        )
+
+    def accumulate_llm_call_to_archive(
+        self,
+        step: Step,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        run_id: str | None = None,
+        hashed_href_map: bytes | None = None,
+        prompt: bytes | None = None,
+        request: bytes | None = None,
+        response: bytes | None = None,
+        parsed_response: bytes | None = None,
+        rendered_response: bytes | None = None,
+    ) -> None:
+        """Accumulate LLM call artifacts into the step archive (replaces up to 6 individual S3 PUTs).
+
+        Uses a per-step call counter (llm_call_count) so that multiple LLM calls within
+        the same step (e.g. extract-actions + check-user-goal) produce distinct filenames
+        (llm_prompt_0.txt, llm_prompt_1.txt, …) instead of silently overwriting each other.
+        """
+        acc = self._get_or_create_step_archive(step, workflow_run_id, workflow_run_block_id, run_id)
+        idx = acc.llm_call_count
+        if hashed_href_map is not None:
+            self._add_to_step_archive(acc, f"hashed_href_map_{idx}.json", hashed_href_map, ArtifactType.HASHED_HREF_MAP)
+        if prompt is not None:
+            self._add_to_step_archive(acc, f"llm_prompt_{idx}.txt", prompt, ArtifactType.LLM_PROMPT)
+        if request is not None:
+            self._add_to_step_archive(acc, f"llm_request_{idx}.json", request, ArtifactType.LLM_REQUEST)
+        if response is not None:
+            self._add_to_step_archive(acc, f"llm_response_{idx}.json", response, ArtifactType.LLM_RESPONSE)
+        if parsed_response is not None:
+            self._add_to_step_archive(
+                acc, f"llm_response_parsed_{idx}.json", parsed_response, ArtifactType.LLM_RESPONSE_PARSED
+            )
+        if rendered_response is not None:
+            self._add_to_step_archive(
+                acc, f"llm_response_rendered_{idx}.json", rendered_response, ArtifactType.LLM_RESPONSE_RENDERED
+            )
+        acc.llm_call_count += 1
+
+    def accumulate_action_html_to_archive(
+        self,
+        step: Step,
+        html_action: bytes,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Accumulate an HTML_ACTION into the step archive (replaces 1 individual S3 PUT per action)."""
+        acc = self._get_or_create_step_archive(step, workflow_run_id, workflow_run_block_id, run_id)
+        action_idx = sum(1 for k in acc.entries if k.startswith("html_action_"))
+        filename = f"html_action_{action_idx}.html"
+        self._add_to_step_archive(acc, filename, html_action, ArtifactType.HTML_ACTION)
+
+    def accumulate_html_scrape_to_archive(self, step: Step, html: bytes) -> str:
+        acc = self._get_or_create_step_archive(step, None, None, None)
+        return self._add_to_step_archive(acc, "scrape.html", html, ArtifactType.HTML_SCRAPE)
+
+    def accumulate_screenshot_to_step_archive(
+        self,
+        step: Step,
+        screenshots: list[bytes],
+        artifact_type: ArtifactType,
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[str]:
+        """Accumulate screenshots into the step archive (replaces 1 individual S3 PUT per screenshot).
+
+        Returns the pre-generated artifact_ids so callers can immediately link DB foreign keys
+        (e.g. action.screenshot_artifact_id) before the archive is flushed.
+        """
+        acc = self._get_or_create_step_archive(step, workflow_run_id, workflow_run_block_id, run_id)
+        prefix = _SCREENSHOT_PREFIX_MAP.get(artifact_type, "screenshot_action")
+        artifact_ids: list[str] = []
+        for screenshot_bytes in screenshots:
+            idx = sum(1 for k in acc.entries if k.startswith(f"{prefix}_"))
+            filename = f"{prefix}_{idx}.png"
+            aid = self._add_to_step_archive(acc, filename, screenshot_bytes, artifact_type)
+            artifact_ids.append(aid)
+        return artifact_ids
+
+    def queue_action_screenshot_update(
+        self,
+        step: Step,
+        organization_id: str,
+        action_id: str,
+        artifact_id: str,
+    ) -> None:
+        """Defer action.screenshot_artifact_id DB write until _flush_step_archive.
+
+        This ensures the artifact row (created by bulk_create_artifacts inside the flush)
+        exists in the DB before the action row references it, preventing dangling foreign
+        keys when a task fails between accumulation and flushing.
+        """
+        acc = self._step_archives.get(step.step_id)
+        if acc is None:
+            LOG.warning(
+                "queue_action_screenshot_update called but no step archive found; skipping",
+                step_id=step.step_id,
+                action_id=action_id,
+            )
+            return
+        acc.pending_action_screenshot_updates.append((organization_id, action_id, artifact_id))
+
+    @staticmethod
+    def _build_zip(entries: dict[str, bytes]) -> bytes:
+        """Build an in-memory ZIP from a filename → bytes mapping.
+
+        Text files (html, json, txt) are deflate-compressed; binary files (png, zip) are stored as-is.
+        """
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for filename, data in entries.items():
+                ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                compress = zipfile.ZIP_STORED if ext in ("png", "zip", "webm") else zipfile.ZIP_DEFLATED
+                zf.writestr(zipfile.ZipInfo(filename), data, compress_type=compress)
+        return buf.getvalue()
+
+    async def flush_step_archive(self, step_id: str) -> None:
+        """Persist the step's accumulated artifacts.
+
+        Bundled mode (HMAC keyring set): one ZIP storage object, one parent
+        STEP_ARCHIVE row, N member rows with ``bundle_key``.
+        Unbundled mode (HMAC keyring unset): one storage object per member,
+        one ArtifactModel per member with no ``bundle_key``, no parent row.
+
+        Call this as soon as a step finishes executing so the in-memory buffer
+        is released. Safe to call multiple times — subsequent calls are
+        no-ops because the accumulator is popped on the first flush.
+        """
+        accumulator = self._step_archives.pop(step_id, None)
+        if not accumulator or not accumulator.entries or not accumulator.member_types:
+            return
+
+        LOG.debug(
+            "Flushing step archive",
+            step_id=step_id,
+            artifact_types=[t.value for t, _, _ in accumulator.member_types],
+            entry_count=len(accumulator.entries),
+            bundled=_bundling_enabled(),
+        )
+
+        if _bundling_enabled():
+            await self._flush_step_archives_bundled(accumulator.step, [accumulator])
+        else:
+            await self._flush_step_archive_unbundled(accumulator)
+        await self._apply_pending_action_screenshot_updates(accumulator)
+
+    def flush_step_archive_in_background(self, step: Step) -> None:
+        # wait_for_upload_aiotasks cancels what it tracks at its timeout, and a flush cancelled after it popped the
+        # accumulator loses the archive, so the flush itself is shielded and held here until it ends.
+        async def _flush() -> None:
+            try:
+                async with asyncio.timeout(BACKGROUND_FLUSH_TIMEOUT_SECONDS):
+                    await self.flush_step_archive(step.step_id)
+            except Exception:
+                LOG.warning("Failed to flush step archive", step_id=step.step_id, exc_info=True)
+
+        flush = asyncio.create_task(_flush())
+        self._background_flushes.add(flush)
+        flush.add_done_callback(self._background_flushes.discard)
+
+        async def _shielded() -> None:
+            await asyncio.shield(flush)
+
+        self._track_upload_aiotask(step.task_id, asyncio.create_task(_shielded()))
+
+    async def flush_task_step_archives_as_one(self, owner: Step) -> None:
+        """Persist every buffered archive of ``owner``'s task as one ZIP owned by ``owner``.
+
+        One storage PUT for the task instead of one per step; each member row keeps the step that produced it.
+        Unbundled mode has no ZIP, so each step flushes on its own there.
+        """
+        step_ids = [sid for sid, acc in list(self._step_archives.items()) if acc.step.task_id == owner.task_id]
+        if not _bundling_enabled():
+            for step_id in step_ids:
+                await self.flush_step_archive(step_id)
+            return
+        accumulators = [
+            acc
+            for step_id in step_ids
+            if (acc := self._step_archives.pop(step_id, None)) is not None and acc.entries and acc.member_types
+        ]
+        if not accumulators:
+            return
+        accumulators.sort(key=lambda acc: (acc.step.order, acc.step.retry_index))
+        await self._flush_step_archives_bundled(owner, accumulators)
+        for accumulator in accumulators:
+            await self._apply_pending_action_screenshot_updates(accumulator)
+
+    async def _apply_pending_action_screenshot_updates(self, accumulator: StepArchiveAccumulator) -> None:
+        for organization_id, action_id, artifact_id in accumulator.pending_action_screenshot_updates:
+            try:
+                await app.DATABASE.artifacts.update_action_screenshot_artifact_id(
+                    organization_id=organization_id,
+                    action_id=action_id,
+                    screenshot_artifact_id=artifact_id,
+                )
+            except Exception:
+                LOG.warning(
+                    "Failed to update action with screenshot artifact id after archive flush",
+                    action_id=action_id,
+                    artifact_id=artifact_id,
+                    exc_info=True,
+                )
+
+    async def _flush_step_archives_bundled(self, owner: Step, accumulators: list[StepArchiveAccumulator]) -> None:
+        """Bundle the accumulators' entries into one ZIP owned by ``owner``: one storage PUT, parent + member rows."""
+        run_scope = accumulators[0]
+        archive_artifact_id = generate_artifact_id()
+        archive_uri = app.STORAGE.build_uri(
+            organization_id=owner.organization_id,
+            artifact_id=archive_artifact_id,
+            step=owner,
+            artifact_type=ArtifactType.STEP_ARCHIVE,
+        )
+
+        now = datetime.now(UTC)
+        archive_artifact = Artifact(
+            artifact_id=archive_artifact_id,
+            artifact_type=ArtifactType.STEP_ARCHIVE,
+            uri=archive_uri,
+            organization_id=owner.organization_id,
+            step_id=owner.step_id,
+            task_id=owner.task_id,
+            workflow_run_id=run_scope.workflow_run_id,
+            workflow_run_block_id=run_scope.workflow_run_block_id,
+            run_id=run_scope.run_id,
+            created_at=now,
+            modified_at=now,
+        )
+
+        entries: dict[str, bytes] = {}
+        members: list[tuple[StepArchiveAccumulator, ArtifactType, str, str]] = []
+        for accumulator in accumulators:
+            # Every step numbers its files from 0, so another step's files get its step id as a prefix in the ZIP.
+            prefix = "" if accumulator.step.step_id == owner.step_id else f"{accumulator.step.step_id}_"
+            for artifact_type, filename, artifact_id in accumulator.member_types:
+                entries[prefix + filename] = accumulator.entries[filename]
+                members.append((accumulator, artifact_type, prefix + filename, artifact_id))
+
+        # Deflating a block's raw DOM takes long enough to stall every run on this worker's event loop; zlib releases
+        # the GIL, so a thread keeps the loop free.
+        zip_bytes = await asyncio.to_thread(self._build_zip, entries)
+        await app.STORAGE.store_artifact(archive_artifact, zip_bytes)
+
+        # Parent archive row (no bundle_key — represents the ZIP object itself)
+        parent_model = self._build_artifact_model(
+            artifact_id=archive_artifact_id,
+            artifact_type=ArtifactType.STEP_ARCHIVE,
+            uri=archive_uri,
+            organization_id=owner.organization_id,
+            step_id=owner.step_id,
+            task_id=owner.task_id,
+            workflow_run_id=run_scope.workflow_run_id,
+            workflow_run_block_id=run_scope.workflow_run_block_id,
+            run_id=run_scope.run_id,
+        )
+        # Member rows (bundle_key points to the filename inside the ZIP)
+        member_models = [
+            self._build_artifact_model(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                uri=archive_uri,
+                bundle_key=filename,
+                organization_id=accumulator.step.organization_id,
+                step_id=accumulator.step.step_id,
+                task_id=accumulator.step.task_id,
+                workflow_run_id=accumulator.workflow_run_id,
+                workflow_run_block_id=accumulator.workflow_run_block_id,
+                run_id=accumulator.run_id,
+            )
+            for accumulator, artifact_type, filename, artifact_id in members
+        ]
+        await app.DATABASE.artifacts.bulk_create_artifacts([parent_model, *member_models])
+
+    async def _flush_step_archive_unbundled(self, accumulator: StepArchiveAccumulator) -> None:
+        """Persist each accumulated entry as its own storage object + ArtifactModel row.
+
+        No STEP_ARCHIVE parent — the ZIP doesn't exist in this mode. Storage
+        PUTs are sequenced; the member count per step is small (typically < 20).
+        """
+        step = accumulator.step
+        now = datetime.now(UTC)
+        member_models: list[ArtifactModel] = []
+        for artifact_type, filename, artifact_id in accumulator.member_types:
+            data = accumulator.entries[filename]
+            uri = app.STORAGE.build_uri(
+                organization_id=step.organization_id,
+                artifact_id=artifact_id,
+                step=step,
+                artifact_type=artifact_type,
+            )
+            artifact = Artifact(
+                artifact_id=artifact_id,
+                artifact_type=artifact_type,
+                uri=uri,
+                organization_id=step.organization_id,
+                step_id=step.step_id,
+                task_id=step.task_id,
+                workflow_run_id=accumulator.workflow_run_id,
+                workflow_run_block_id=accumulator.workflow_run_block_id,
+                run_id=accumulator.run_id,
+                created_at=now,
+                modified_at=now,
+            )
+            await app.STORAGE.store_artifact(artifact, data)
+            member_models.append(
+                self._build_artifact_model(
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    file_size=len(data),
+                    organization_id=step.organization_id,
+                    step_id=step.step_id,
+                    task_id=step.task_id,
+                    workflow_run_id=accumulator.workflow_run_id,
+                    workflow_run_block_id=accumulator.workflow_run_block_id,
+                    run_id=accumulator.run_id,
+                )
+            )
+        await app.DATABASE.artifacts.bulk_create_artifacts(member_models)
+
+    async def create_task_archive(
+        self,
+        step: Step,
+        entries: dict[str, tuple[ArtifactType, bytes]],
+        workflow_run_id: str | None = None,
+        workflow_run_block_id: str | None = None,
+        run_id: str | None = None,
+    ) -> None:
+        """Build and upload a task-level cleanup archive (HAR, console log, trace, final screenshot).
+
+        entries maps filename → (ArtifactType, raw_bytes).
+        """
+        if not entries:
+            return
+
+        context = skyvern_context.current()
+        resolved_workflow_run_id = workflow_run_id or (context.workflow_run_id if context else None)
+        resolved_workflow_run_block_id = workflow_run_block_id or (
+            context.parent_workflow_run_block_id if context else None
+        )
+        resolved_run_id = run_id or (context.run_id if context else None)
+        if not _bundling_enabled():
+            for _, (artifact_type, data) in entries.items():
+                # Callers redact before archiving, but route through the gate anyway (idempotent) so
+                # no archive path can persist an unredacted browser diagnostic.
+                data = _maybe_redact_artifact_data(artifact_type, data, resolved_workflow_run_id)
+                artifact_id = generate_artifact_id()
+                uri = app.STORAGE.build_uri(
+                    organization_id=step.organization_id,
+                    artifact_id=artifact_id,
+                    step=step,
+                    artifact_type=artifact_type,
+                )
+                await self._create_artifact(
+                    aio_task_primary_key=step.task_id,
+                    artifact_id=artifact_id,
+                    artifact_type=artifact_type,
+                    uri=uri,
+                    step_id=step.step_id,
+                    task_id=step.task_id,
+                    workflow_run_id=resolved_workflow_run_id,
+                    workflow_run_block_id=resolved_workflow_run_block_id,
+                    run_id=resolved_run_id,
+                    organization_id=step.organization_id,
+                    file_size=len(data),
+                    data=data,
+                )
+            return
+
+        archive_artifact_id = generate_artifact_id()
+        archive_uri = app.STORAGE.build_uri(
+            organization_id=step.organization_id,
+            artifact_id=archive_artifact_id,
+            step=step,
+            artifact_type=ArtifactType.TASK_ARCHIVE,
+        )
+
+        now = datetime.now(UTC)
+        archive_artifact = Artifact(
+            artifact_id=archive_artifact_id,
+            artifact_type=ArtifactType.TASK_ARCHIVE,
+            uri=archive_uri,
+            organization_id=step.organization_id,
+            step_id=step.step_id,
+            task_id=step.task_id,
+            workflow_run_id=resolved_workflow_run_id,
+            workflow_run_block_id=resolved_workflow_run_block_id,
+            run_id=resolved_run_id,
+            created_at=now,
+            modified_at=now,
+        )
+
+        zip_entries = {
+            filename: _maybe_redact_artifact_data(artifact_type, data, workflow_run_id=archive_artifact.workflow_run_id)
+            for filename, (artifact_type, data) in entries.items()
+        }
+        zip_bytes = await asyncio.to_thread(self._build_zip, zip_entries)
+        await app.STORAGE.store_artifact(archive_artifact, zip_bytes)
+
+        # Parent archive row (no bundle_key — represents the ZIP object itself)
+        parent_model = self._build_artifact_model(
+            artifact_id=archive_artifact_id,
+            artifact_type=ArtifactType.TASK_ARCHIVE,
+            uri=archive_uri,
+            organization_id=step.organization_id,
+            step_id=step.step_id,
+            task_id=step.task_id,
+            workflow_run_id=archive_artifact.workflow_run_id,
+            workflow_run_block_id=archive_artifact.workflow_run_block_id,
+            run_id=archive_artifact.run_id,
+        )
+        # Member rows (bundle_key points to the filename inside the ZIP)
+        member_models = [
+            self._build_artifact_model(
+                artifact_id=generate_artifact_id(),
+                artifact_type=artifact_type,
+                uri=archive_uri,
+                bundle_key=filename,
+                organization_id=step.organization_id,
+                step_id=step.step_id,
+                task_id=step.task_id,
+                workflow_run_id=archive_artifact.workflow_run_id,
+                workflow_run_block_id=archive_artifact.workflow_run_block_id,
+                run_id=archive_artifact.run_id,
+            )
+            for filename, (artifact_type, _) in entries.items()
+        ]
+        await app.DATABASE.artifacts.bulk_create_artifacts([parent_model, *member_models])
+
+    async def wait_for_upload_aiotasks(self, primary_keys: list[str]) -> None:
+        try:
+            st = time.time()
+            async with asyncio.timeout(30):
+                await asyncio.gather(
+                    *[
+                        aio_task
+                        for primary_key in primary_keys
+                        for aio_task in self.upload_aiotasks_map.get(primary_key, ())
+                        if not aio_task.done()
+                    ]
+                )
+            LOG.info(
+                f"Saving artifacts - aio tasks for primary_keys={primary_keys} completed in {time.time() - st:.2f}s",
+                primary_keys=primary_keys,
+                duration=time.time() - st,
+            )
+        except asyncio.TimeoutError:
+            LOG.error(
+                f"Timeout (30s) while waiting for upload aio tasks for primary_keys={primary_keys}",
+                primary_keys=primary_keys,
+            )
+        finally:
+            # Release tracking refs on every exit path — including caller cancellation and
+            # non-timeout gather errors — so an orphaned entry can't pin a completed upload Task
+            # and the artifact bytes its traceback retains. pop() keeps overlapping waits on the
+            # same key idempotent (no KeyError).
+            for primary_key in primary_keys:
+                self.upload_aiotasks_map.pop(primary_key, None)
+
+        # Flush any accumulated step archives for the given task IDs
+        primary_key_set = set(primary_keys)
+        step_ids_to_flush = [
+            step_id for step_id, acc in list(self._step_archives.items()) if acc.step.task_id in primary_key_set
+        ]
+        for step_id in step_ids_to_flush:
+            try:
+                await self.flush_step_archive(step_id)
+            except Exception:
+                LOG.error("Failed to flush step archive", step_id=step_id, exc_info=True)
+
+    def discard_step_archives(self, task_id: str) -> None:
+        """Discard (without uploading) any buffered step archives for a task.
+
+        Call this from exception/cancellation handlers to prevent the class-level
+        dict from growing unbounded when a task fails before wait_for_upload_aiotasks.
+        Logs a warning for each discarded archive so dropped data is visible in logs.
+        """
+        step_ids = [sid for sid, acc in list(self._step_archives.items()) if acc.step.task_id == task_id]
+        for step_id in step_ids:
+            acc = self._step_archives.pop(step_id, None)
+            if acc:
+                LOG.warning(
+                    "Discarding unflushed step archive due to task failure or cancellation",
+                    step_id=step_id,
+                    task_id=task_id,
+                    entry_count=len(acc.entries),
+                    artifact_count=len(acc.member_types),
+                )

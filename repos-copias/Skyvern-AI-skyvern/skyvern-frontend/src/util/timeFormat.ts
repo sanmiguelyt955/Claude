@@ -1,0 +1,168 @@
+function normalizeUtcTimestamp(time: string): string {
+  // Adjust the fractional seconds to milliseconds (3 digits)
+  time = time.replace(/\.(\d{3})\d*/, ".$1");
+
+  // Timezone-less timestamps are UTC (the backend serializes naive UTC
+  // datetimes); append 'Z' unless an offset is already present.
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/.test(time)) {
+    time += "Z";
+  }
+
+  return time;
+}
+
+function basicLocalTimeFormat(time: string): string {
+  time = normalizeUtcTimestamp(time);
+
+  const date = new Date(time);
+  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Format the date and time in the local time zone
+  const dateString = date.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: localTimezone,
+  });
+  const timeString = date.toLocaleTimeString("en-US", {
+    timeZone: localTimezone,
+  });
+
+  return `${dateString} at ${timeString}`;
+}
+
+const compactDateFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
+const compactDateWithYearFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+const compactTimeFormat = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function compactLocalDateTime(time: string): string {
+  time = normalizeUtcTimestamp(time);
+
+  const date = new Date(time);
+  if (isNaN(date.getTime())) {
+    return "";
+  }
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+
+  const dateString = (
+    sameYear ? compactDateFormat : compactDateWithYearFormat
+  ).format(date);
+  const timeString = compactTimeFormat.format(date);
+
+  return `${dateString}, ${timeString}`;
+}
+
+function basicTimeFormat(time: string): string {
+  time = normalizeUtcTimestamp(time);
+
+  const date = new Date(time);
+
+  // Render in UTC to match the "UTC" label; this is the hover companion to
+  // basicLocalTimeFormat, which shows the same instant in the local time zone.
+  const dateString = date.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  const timeString = date.toLocaleTimeString("en-US", {
+    timeZone: "UTC",
+  });
+  return `${dateString} at ${timeString} UTC`;
+}
+
+function timeFormatWithShortDate(time: string): string {
+  const date = new Date(time);
+  const dateString =
+    date.getMonth() + 1 + "/" + date.getDate() + "/" + date.getFullYear();
+  const timeString = date.toLocaleTimeString("en-US");
+  return `${dateString} at ${timeString} UTC`;
+}
+
+function localTimeFormatWithShortDate(time: string): string {
+  time = normalizeUtcTimestamp(time);
+
+  const date = new Date(time);
+  const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const dateString =
+    date.getMonth() + 1 + "/" + date.getDate() + "/" + date.getFullYear();
+
+  const timeString = date.toLocaleTimeString("en-US", {
+    timeZone: localTimezone,
+  });
+
+  return `${dateString} at ${timeString}`;
+}
+
+function formatTimeRemaining(seconds: number): string {
+  if (seconds <= 0) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function formatExecutionTime(
+  createdAt: string,
+  finishedAt: string | null,
+): string | null {
+  if (!finishedAt) {
+    return null;
+  }
+  const start = new Date(normalizeUtcTimestamp(createdAt));
+  const end = new Date(normalizeUtcTimestamp(finishedAt));
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return null;
+  }
+  const totalSeconds = Math.max(
+    0,
+    Math.round((end.getTime() - start.getTime()) / 1000),
+  );
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+  if (minutes > 0) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
+function formatDurationSeconds(seconds: number | null | undefined): string {
+  if (seconds == null || seconds < 0 || !Number.isFinite(seconds)) {
+    return "—";
+  }
+
+  const total = Math.round(seconds);
+  if (total < 60) {
+    return `${total}s`;
+  }
+
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
+export {
+  normalizeUtcTimestamp,
+  basicLocalTimeFormat,
+  compactLocalDateTime,
+  basicTimeFormat,
+  timeFormatWithShortDate,
+  localTimeFormatWithShortDate,
+  formatTimeRemaining,
+  formatExecutionTime,
+  formatDurationSeconds,
+};

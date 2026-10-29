@@ -1,0 +1,2211 @@
+from __future__ import annotations
+
+import hashlib
+import os
+import unicodedata
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import urlparse
+
+import pytest
+
+from skyvern.config import settings
+from skyvern.exceptions import AzureConfigurationError, BlockedHost, DownloadSaveIncompleteError, UnresolvableHost
+from skyvern.forge.sdk.api.llm.api_handler_factory import LLMAPIHandlerFactory
+from skyvern.forge.sdk.schemas.files import FileInfo
+from skyvern.forge.sdk.services import google_drive_service, google_oauth_service, sftp_service
+from skyvern.forge.sdk.workflow.models.block import BaseTaskBlock, FileDownloadBlock
+from skyvern.forge.sdk.workflow.models.parameter import OutputParameter
+from skyvern.forge.sdk.workflow.workflow_definition_converter import block_yaml_to_block
+from skyvern.schemas.workflows import (
+    BlockResult,
+    BlockStatus,
+    BlockType,
+    FileDownloadBlockYAML,
+    FileDownloadTarget,
+    FileStorageType,
+)
+
+
+def _output_parameter() -> OutputParameter:
+    now = datetime.now(UTC)
+    return OutputParameter(
+        output_parameter_id="download-output-id",
+        workflow_id="workflow-id",
+        key="download_output",
+        created_at=now,
+        modified_at=now,
+    )
+
+
+def _file_download_block(download_target: FileDownloadTarget, **kwargs: object) -> FileDownloadBlock:
+    return FileDownloadBlock(
+        label="download",
+        output_parameter=_output_parameter(),
+        navigation_goal="Download the requested files.",
+        download_target=download_target,
+        **kwargs,
+    )
+
+
+def _browser_result(
+    block: FileDownloadBlock,
+    *,
+    success: bool = True,
+    downloaded_filenames: tuple[str, ...] = (),
+) -> BlockResult:
+    return BlockResult(
+        success=success,
+        output_parameter=block.output_parameter,
+        output_parameter_value={
+            "task_id": "task-id",
+            "downloaded_files": [
+                {"filename": filename, "checksum": f"checksum-{filename}"} for filename in downloaded_filenames
+            ],
+        },
+        status=BlockStatus.completed if success else BlockStatus.failed,
+        failure_reason=None if success else "Browser download failed",
+    )
+
+
+def _write_downloads(directory: Path, *names: str) -> list[Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    files = [directory / name for name in names]
+    for file in files:
+        file.write_text(file.name)
+    return files
+
+
+async def _execute_file_download(
+    block: FileDownloadBlock,
+    browser_result: BlockResult,
+    download_dir: Path,
+    *,
+    selection_result: tuple[list[str], str] | None = None,
+    upload_side_effect: BaseException | None = None,
+    secret_values: dict[str, str] | None = None,
+    downloads_during_execute: tuple[str, ...] = (),
+    during_execute: Callable[[], None] | None = None,
+    drive_download_side_effect: Callable[..., object] | BaseException | None = None,
+    downloaded_file_infos: list[FileInfo] | None = None,
+    storage_save_side_effect: BaseException | None = None,
+    blocked_endpoint_hosts: tuple[str, ...] = (),
+    unresolvable_endpoint_hosts: tuple[str, ...] = (),
+    endpoint_host_ips: tuple[str, ...] = ("203.0.113.10",),
+) -> SimpleNamespace:
+    workflow_run_context = MagicMock()
+    workflow_run_context.organization_id = "organization-id"
+    workflow_run_context.values = {}
+    workflow_run_context.secrets = {}
+    workflow_run_context.include_secrets_in_templates = False
+    workflow_run_context.get_block_metadata.return_value = {}
+    workflow_run_context.has_parameter.return_value = False
+    workflow_run_context.has_value.return_value = False
+    if secret_values is None:
+        secret_values = {
+            value: value
+            for value in (
+                block.aws_secret_access_key,
+                block.azure_storage_account_key,
+                block.sftp_password,
+                block.sftp_private_key,
+                block.sftp_private_key_passphrase,
+                block.sftp_host,
+                block.sftp_username,
+                block.sftp_host_key,
+                block.sftp_source_path,
+                block.sftp_remote_path,
+                block.google_credential_id,
+            )
+            if value
+        }
+    workflow_run_context.get_original_secret_value_or_none.side_effect = secret_values.get
+    upload = AsyncMock(return_value="customer://uploaded-file", side_effect=upload_side_effect)
+    select_files = AsyncMock()
+    drive_download = AsyncMock(side_effect=drive_download_side_effect)
+    if selection_result is not None:
+        select_files.return_value = selection_result
+    recorded_output = SimpleNamespace(value=None)
+
+    async def record_output_parameter_value(
+        _workflow_context: MagicMock,
+        _workflow_id: str,
+        value: object = None,
+    ) -> None:
+        recorded_output.value = value
+
+    record_output = AsyncMock(side_effect=record_output_parameter_value)
+
+    def fake_resolve_fetch_host_ips(host: str) -> tuple[str, ...]:
+        # Keeps endpoint validation off real DNS; the guard is what's under test, not resolution.
+        if host in blocked_endpoint_hosts:
+            raise BlockedHost(host=host)
+        if host in unresolvable_endpoint_hosts:
+            raise UnresolvableHost(host=host)
+        return endpoint_host_ips
+
+    async def execute_browser(*args: object, **kwargs: object) -> BlockResult:
+        if during_execute is None:
+            _write_downloads(download_dir, *downloads_during_execute)
+        else:
+            during_execute()
+        await block.record_output_parameter_value(
+            workflow_run_context,
+            "workflow-run-id",
+            browser_result.output_parameter_value,
+        )
+        return browser_result
+
+    with (
+        patch.object(BaseTaskBlock, "execute", new_callable=AsyncMock, side_effect=execute_browser) as browser_execute,
+        patch.object(FileDownloadBlock, "record_output_parameter_value", record_output),
+        patch.object(FileDownloadBlock, "get_workflow_run_context", return_value=workflow_run_context),
+        patch.object(FileDownloadBlock, "_format_destination_template_parameters", return_value=None),
+        patch.object(FileDownloadBlock, "_select_files_to_upload_with_prompt", select_files),
+        patch(
+            "skyvern.forge.sdk.workflow.models.block.get_path_for_workflow_download_directory",
+            return_value=download_dir,
+        ),
+        patch("skyvern.forge.sdk.workflow.models.block.skyvern_context.current", return_value=None),
+        patch(
+            "skyvern.forge.sdk.workflow.models.block.resolve_fetch_host_ips",
+            side_effect=fake_resolve_fetch_host_ips,
+        ) as resolve_endpoint_host,
+        patch.object(google_drive_service, "download_file", drive_download),
+        patch("skyvern.forge.sdk.workflow.models.block.app") as mock_app,
+    ):
+        mock_app.AGENT_FUNCTION.upload_file_to_customer_storage = upload
+        mock_app.AGENT_FUNCTION.get_google_workspace_credentials = AsyncMock(
+            return_value=SimpleNamespace(token="google-access-token")
+        )
+        mock_app.DATABASE.observer.update_workflow_run_block = AsyncMock()
+        mock_app.STORAGE.save_downloaded_files = AsyncMock(side_effect=storage_save_side_effect)
+        mock_app.STORAGE.get_downloaded_files = AsyncMock(return_value=downloaded_file_infos or [])
+        mock_app.STORAGE.get_current_attempt_downloaded_files = mock_app.STORAGE.get_downloaded_files
+        result = await block.execute(
+            workflow_run_id="workflow-run-id",
+            workflow_run_block_id="workflow-run-block-id",
+            organization_id="organization-id",
+        )
+
+    return SimpleNamespace(
+        result=result,
+        browser_execute=browser_execute,
+        upload=upload,
+        select_files=select_files,
+        workflow_run_context=workflow_run_context,
+        record_output=record_output,
+        recorded_output=recorded_output,
+        drive_download=drive_download,
+        resolve_endpoint_host=resolve_endpoint_host,
+        storage_save=mock_app.STORAGE.save_downloaded_files,
+        get_google_workspace_credentials=mock_app.AGENT_FUNCTION.get_google_workspace_credentials,
+    )
+
+
+@pytest.mark.asyncio
+async def test_website_target_returns_browser_result_without_dispatch(tmp_path: Path) -> None:
+    block = _file_download_block(FileDownloadTarget.WEBSITE)
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(block, browser_result, tmp_path / "downloads")
+
+    assert execution.result is browser_result
+    execution.browser_execute.assert_awaited_once()
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_google_drive_target_downloads_private_drive_source_without_browser(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        url="https://drive.google.com/file/d/file_123/view?resourcekey=resource_key_123",
+        google_credential_id="google-credential-id",
+        google_drive_folder_id="folder-id",
+    )
+    downloaded_file = FileInfo(
+        url="https://app.example.test/artifacts/private",
+        filename="private.pdf",
+        file_size=13,
+        artifact_id="artifact-private",
+    )
+
+    async def download_private_file(**kwargs: object) -> str:
+        assert kwargs["access_token"] == "google-access-token"
+        assert kwargs["file_id"] == "file_123"
+        assert kwargs["resource_key"] == "resource_key_123"
+        target = Path(str(kwargs["output_dir"])) / "private.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"private-drive")
+        return str(target)
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        download_dir,
+        drive_download_side_effect=download_private_file,
+        downloaded_file_infos=[downloaded_file],
+    )
+
+    assert execution.result.success is True
+    assert execution.result.output_parameter_value is not None
+    assert execution.result.output_parameter_value["file_name"] == "private.pdf"
+    assert execution.result.output_parameter_value["downloaded_files"][0]["filename"] == "private.pdf"
+    execution.browser_execute.assert_not_awaited()
+    execution.drive_download.assert_awaited_once()
+    execution.get_google_workspace_credentials.assert_awaited_once_with(
+        organization_id="organization-id",
+        credential_id="google-credential-id",
+        required_scopes=list(google_oauth_service.GOOGLE_DRIVE_SCOPES),
+    )
+    execution.storage_save.assert_awaited_once_with(
+        organization_id="organization-id",
+        run_id="workflow-run-id",
+    )
+    execution.upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sftp_target_downloads_private_drive_source_without_browser(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        url="https://drive.google.com/file/d/file_123/view",
+        google_credential_id="google-credential-id",
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    payload = b"private-drive"
+    downloaded_file = FileInfo(
+        url="https://app.example.test/artifacts/private",
+        checksum=hashlib.sha256(payload).hexdigest(),
+        filename="private.pdf",
+        file_size=len(payload),
+        artifact_id="artifact-private",
+    )
+
+    async def download_private_file(**kwargs: object) -> str:
+        target = Path(str(kwargs["output_dir"])) / "private.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        return str(target)
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        download_dir,
+        drive_download_side_effect=download_private_file,
+        downloaded_file_infos=[downloaded_file],
+    )
+
+    assert execution.result.success is True
+    execution.browser_execute.assert_not_awaited()
+    execution.drive_download.assert_awaited_once()
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["destination"].storage_type == FileStorageType.SFTP
+
+
+@pytest.mark.asyncio
+async def test_google_drive_registration_prefers_exact_checksum_over_legacy_same_name(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        url="https://drive.google.com/file/d/file_123/view",
+        google_credential_id="google-credential-id",
+        google_drive_folder_id="folder-id",
+    )
+    payload = b"private-drive"
+    stale_file = FileInfo(
+        url="https://app.example.test/artifacts/stale",
+        filename="private.pdf",
+        artifact_id="artifact-stale",
+    )
+    current_file = FileInfo(
+        url="https://app.example.test/artifacts/current",
+        checksum=hashlib.sha256(payload).hexdigest(),
+        filename="private.pdf",
+        artifact_id="artifact-current",
+    )
+
+    async def download_private_file(**kwargs: object) -> str:
+        target = Path(str(kwargs["output_dir"])) / "private.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        return str(target)
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        tmp_path / "downloads",
+        drive_download_side_effect=download_private_file,
+        downloaded_file_infos=[stale_file, current_file],
+    )
+
+    assert execution.result.success is True
+    assert execution.result.output_parameter_value["downloaded_file_urls"] == [current_file.url]
+    assert execution.result.output_parameter_value["downloaded_file_artifact_ids"] == [current_file.artifact_id]
+
+
+@pytest.mark.asyncio
+async def test_google_drive_partial_registration_still_delivers_file_for_finalization_retry(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        url="https://drive.google.com/file/d/file_123/view",
+        google_credential_id="google-credential-id",
+        google_drive_folder_id="folder-id",
+    )
+
+    async def download_private_file(**kwargs: object) -> str:
+        target = Path(str(kwargs["output_dir"])) / "private.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"private-drive")
+        return str(target)
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        tmp_path / "downloads",
+        drive_download_side_effect=download_private_file,
+        storage_save_side_effect=DownloadSaveIncompleteError(["private.pdf"]),
+    )
+
+    assert execution.result.success is True
+    assert execution.result.output_parameter_value == {"file_name": "private.pdf"}
+    execution.browser_execute.assert_not_awaited()
+    execution.upload.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_google_drive_native_document_falls_back_to_browser(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        url="https://drive.google.com/file/d/native_123/view",
+        google_credential_id="google-credential-id",
+        google_drive_folder_id="folder-id",
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        tmp_path / "downloads",
+        drive_download_side_effect=google_drive_service.GoogleDriveNativeDocumentError(),
+    )
+
+    assert execution.result is browser_result
+    execution.drive_download.assert_awaited_once()
+    execution.browser_execute.assert_awaited_once()
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_google_drive_api_file_not_downloadable_does_not_fall_back_to_browser(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        url="https://drive.google.com/file/d/file_123/view",
+        google_credential_id="google-credential-id",
+        google_drive_folder_id="folder-id",
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        tmp_path / "downloads",
+        drive_download_side_effect=google_drive_service.GoogleDriveAPIError(
+            status=403,
+            code="fileNotDownloadable",
+            message="Drive rejected a regular blob download",
+        ),
+    )
+
+    assert execution.result.success is False
+    assert execution.result.failure_reason is not None
+    assert "Drive rejected a regular blob download" in execution.result.failure_reason
+    execution.browser_execute.assert_not_awaited()
+    execution.record_output.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sftp_source_downloads_without_browser_and_binds_registered_file(tmp_path: Path) -> None:
+    payload = b"id,value\n1,ok\n"
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.WEBSITE,
+        sftp_host="host-ref",
+        sftp_port=2222,
+        sftp_username="username-ref",
+        sftp_password="password-ref",
+        sftp_source_path="path-ref",
+        sftp_host_key="host-key-ref",
+    )
+    downloaded_file = FileInfo(
+        url="https://app.example.test/artifacts/private",
+        checksum=hashlib.sha256(payload).hexdigest(),
+        filename="report.csv",
+        file_size=len(payload),
+        artifact_id="artifact-private",
+    )
+
+    async def download_source(**kwargs: object) -> str:
+        assert kwargs["host"] == "resolved-host"
+        assert kwargs["remote_path"] == "/reports/report.csv"
+        assert kwargs["username"] == "resolved-user"
+        assert kwargs["password"] == "resolved-password"
+        assert kwargs["host_key"] == "resolved-host-key"
+        path = Path(str(kwargs["output_dir"])) / "report.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        return str(path)
+
+    with patch(
+        "skyvern.forge.sdk.workflow.models.block.sftp_service.download_file",
+        new_callable=AsyncMock,
+        side_effect=download_source,
+    ) as sftp_download:
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block),
+            download_dir,
+            secret_values={
+                "host-ref": "resolved-host",
+                "path-ref": "/reports/report.csv",
+                "username-ref": "resolved-user",
+                "password-ref": "resolved-password",
+                "host-key-ref": "resolved-host-key",
+            },
+            downloaded_file_infos=[downloaded_file],
+        )
+
+    assert execution.result.success is True
+    assert execution.result.output_parameter_value["file_name"] == "report.csv"
+    assert execution.result.output_parameter_value["downloaded_files"][0]["filename"] == "report.csv"
+    execution.browser_execute.assert_not_awaited()
+    execution.storage_save.assert_awaited_once_with(organization_id="organization-id", run_id="workflow-run-id")
+    execution.upload.assert_not_awaited()
+    sftp_download.assert_awaited_once()
+
+
+def test_file_download_sftp_source_is_optional_and_round_trips_yaml() -> None:
+    base = {
+        "block_type": BlockType.FILE_DOWNLOAD,
+        "label": "download",
+        "navigation_goal": "Download the requested file.",
+    }
+    legacy_yaml = FileDownloadBlockYAML(**base)
+    legacy_block = block_yaml_to_block(legacy_yaml, {"download_output": _output_parameter()}, workflow_id="workflow-id")
+    assert legacy_yaml.sftp_source_path is None
+    assert legacy_block.sftp_source_path is None
+
+    source_yaml = FileDownloadBlockYAML(**base, sftp_source_path="/reports/report.csv")
+    source_block = block_yaml_to_block(source_yaml, {"download_output": _output_parameter()}, workflow_id="workflow-id")
+    assert source_block.sftp_source_path == "/reports/report.csv"
+
+
+@pytest.mark.asyncio
+async def test_sftp_source_failure_does_not_fall_back_to_browser(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.WEBSITE,
+        sftp_host="sftp.example.test",
+        sftp_username="user",
+        sftp_password="password",
+        sftp_source_path="/reports/report.csv",
+    )
+    error = sftp_service.SFTPDownloadError(sftp_service.SFTPDownloadErrorCategory.HOST_KEY_MISMATCH)
+
+    with patch(
+        "skyvern.forge.sdk.workflow.models.block.sftp_service.download_file",
+        new_callable=AsyncMock,
+        side_effect=error,
+    ):
+        execution = await _execute_file_download(block, _browser_result(block), tmp_path / "downloads")
+
+    assert execution.result.success is False
+    assert execution.result.failure_reason == "Failed to download file from SFTP: host_key_mismatch"
+    execution.browser_execute.assert_not_awaited()
+    execution.record_output.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sftp_source_template_failure_is_configuration_error(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.WEBSITE,
+        sftp_host="sftp.example.test",
+        sftp_username="user",
+        sftp_password="password",
+        sftp_source_path="/reports/report.csv",
+    )
+
+    with patch.object(FileDownloadBlock, "render_templatable_field", side_effect=ValueError("invalid template")):
+        execution = await _execute_file_download(block, _browser_result(block), tmp_path / "downloads")
+
+    assert execution.result.success is False
+    assert execution.result.failure_reason == "Failed to download file from SFTP: configuration"
+    execution.browser_execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sftp_target_dispatches_each_download_and_preserves_browser_result(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    downloaded_files = [download_dir / "invoice.pdf", download_dir / "report.csv"]
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_port=2222,
+        sftp_username="skyvern",
+        sftp_password="password",
+        sftp_remote_path="incoming",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("invoice.pdf", "report.csv"))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=("invoice.pdf", "report.csv"),
+    )
+
+    assert execution.result is browser_result
+    assert execution.result.output_parameter_value == {
+        "task_id": "task-id",
+        "downloaded_files": [
+            {"filename": "invoice.pdf", "checksum": "checksum-invoice.pdf"},
+            {"filename": "report.csv", "checksum": "checksum-report.csv"},
+        ],
+    }
+    assert execution.upload.await_count == 2
+    assert {Path(call.kwargs["file_path"]) for call in execution.upload.await_args_list} == set(downloaded_files)
+    assert all(
+        call.kwargs["destination"].storage_type == FileStorageType.SFTP for call in execution.upload.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_prior_block_downloads_are_not_dispatched(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior_block.pdf")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("this_block.pdf",))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=("this_block.pdf",),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert Path(execution.upload.await_args.kwargs["file_path"]).name == "this_block.pdf"
+
+
+@pytest.mark.asyncio
+async def test_download_scope_loss_does_not_deliver_prior_block_files(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior_block.pdf")[0]
+    current_file = download_dir / "this_block.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=(current_file.name,),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+    assert all(call.kwargs["file_path"] != str(prior_file) for call in execution.upload.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_new_name_file_delivered_even_if_its_hash_fails(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior_block.pdf")[0]
+    current_file = download_dir / "this_block.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    def calculate_hash(file_path: str) -> str:
+        if file_path == str(current_file):
+            raise OSError("current hash failed")
+        return hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
+
+    with patch("skyvern.forge.sdk.workflow.models.block.calculate_sha256_for_file", side_effect=calculate_hash):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block),
+            download_dir,
+            downloads_during_execute=(current_file.name,),
+        )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+    assert all(call.kwargs["file_path"] != str(prior_file) for call in execution.upload.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_baseline_listdir_failure_fails_closed(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior_block.pdf")[0]
+    current_file = download_dir / "this_block.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    real_listdir = os.listdir
+    baseline_list_attempted = False
+
+    def listdir(path: os.PathLike[str] | str) -> list[str]:
+        nonlocal baseline_list_attempted
+        if not baseline_list_attempted:
+            baseline_list_attempted = True
+            raise OSError("baseline list failed")
+        return real_listdir(path)
+
+    with patch("skyvern.forge.sdk.workflow.models.block.os.listdir", side_effect=listdir):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block),
+            download_dir,
+            downloads_during_execute=(current_file.name,),
+        )
+
+    assert baseline_list_attempted is True
+    assert execution.result.success is False
+    assert execution.result.status == BlockStatus.failed
+    assert "pre-download baseline" in (execution.result.failure_reason or "")
+    assert "sftp" in (execution.result.failure_reason or "").lower()
+    execution.upload.assert_not_awaited()
+    assert prior_file.exists()
+    # Fail fast: a failed baseline scan is rejected before the browser download runs.
+    execution.browser_execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_download_listdir_failure_fails_closed(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior_block.pdf")
+    current_file = download_dir / "this_block.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    real_listdir = os.listdir
+    post_download = False
+
+    def during_execute() -> None:
+        nonlocal post_download
+        _write_downloads(download_dir, current_file.name)
+        post_download = True
+
+    def listdir(path: os.PathLike[str] | str) -> list[str]:
+        if post_download:
+            raise OSError("post-download list failed")
+        return real_listdir(path)
+
+    with patch("skyvern.forge.sdk.workflow.models.block.os.listdir", side_effect=listdir):
+        execution = await _execute_file_download(
+            block, _browser_result(block), download_dir, during_execute=during_execute
+        )
+
+    assert post_download is True
+    assert execution.result.success is False
+    assert execution.result.status == BlockStatus.failed
+    execution.upload.assert_not_awaited()
+    assert execution.recorded_output.value is None
+
+
+@pytest.mark.asyncio
+async def test_unhashable_prior_file_is_not_delivered(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior_block.pdf")[0]
+    current_file = download_dir / "this_block.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    baseline_hash_failed = False
+
+    def calculate_hash(file_path: str) -> str:
+        nonlocal baseline_hash_failed
+        if file_path == str(prior_file) and not baseline_hash_failed:
+            baseline_hash_failed = True
+            raise OSError("baseline hash failed")
+        return hashlib.sha256(Path(file_path).read_bytes()).hexdigest()
+
+    with patch("skyvern.forge.sdk.workflow.models.block.calculate_sha256_for_file", side_effect=calculate_hash):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block),
+            download_dir,
+            downloads_during_execute=(current_file.name,),
+        )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+    assert all(call.kwargs["file_path"] != str(prior_file) for call in execution.upload.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_attributable_file_delivered_even_if_scope_list_incomplete(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    current_file = download_dir / "current.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("stale.pdf",)),
+        download_dir,
+        downloads_during_execute=(current_file.name,),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+
+
+@pytest.mark.asyncio
+async def test_no_new_local_files_is_noop_even_if_scoped_list_nonempty(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior_block.pdf")[0]
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=(prior_file.name,))
+
+    execution = await _execute_file_download(block, browser_result, download_dir)
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_prior_files_do_not_consume_current_block_upload_limit(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior.pdf")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    with patch("skyvern.forge.sdk.workflow.models.block.MAX_UPLOAD_FILE_COUNT", 1):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block, downloaded_filenames=("current.pdf",)),
+            download_dir,
+            downloads_during_execute=("current.pdf",),
+        )
+
+    execution.upload.assert_awaited_once()
+    assert Path(execution.upload.await_args.kwargs["file_path"]).name == "current.pdf"
+
+
+@pytest.mark.asyncio
+async def test_same_basename_with_wrong_checksum_never_dispatches_prior_block_file(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "invoice.pdf")[0]
+    prior_file.write_bytes(b"prior block contents")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("invoice.pdf",))
+    assert isinstance(browser_result.output_parameter_value, dict)
+    browser_result.output_parameter_value["downloaded_files"] = [
+        {
+            "filename": "invoice.pdf",
+            "checksum": hashlib.sha256(b"this block contents").hexdigest(),
+        }
+    ]
+
+    execution = await _execute_file_download(block, browser_result, download_dir)
+
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_same_name_overwrite_new_content_is_delivered(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    report_file, unchanged_file = _write_downloads(download_dir, "report.pdf", "unchanged.pdf")
+    report_file.write_bytes(b"before-data")
+    unchanged_file.write_bytes(b"unchanged-data")
+    original_stat = report_file.stat()
+    new_contents = b"after-data!"
+    assert len(new_contents) == original_stat.st_size
+
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block)
+    assert isinstance(browser_result.output_parameter_value, dict)
+    browser_result.output_parameter_value["downloaded_files"] = [
+        {"filename": report_file.name, "checksum": hashlib.sha256(new_contents).hexdigest()},
+        {"filename": unchanged_file.name, "checksum": hashlib.sha256(unchanged_file.read_bytes()).hexdigest()},
+    ]
+
+    def overwrite_report() -> None:
+        report_file.write_bytes(new_contents)
+        os.utime(report_file, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        during_execute=overwrite_report,
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(report_file)
+    assert all(call.kwargs["file_path"] != str(unchanged_file) for call in execution.upload.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_same_name_identical_redownload_with_new_mtime_is_delivered(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    report_file = _write_downloads(download_dir, "report.pdf")[0]
+    report_file.write_bytes(b"same-bytes")
+    original_stat = report_file.stat()
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    def overwrite_report() -> None:
+        report_file.write_bytes(b"same-bytes")
+        os.utime(report_file, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns + 1_000_000_000))
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        download_dir,
+        during_execute=overwrite_report,
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(report_file)
+
+
+@pytest.mark.asyncio
+async def test_same_name_identical_content_frozen_mtime_is_not_delivered(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    report_file = _write_downloads(download_dir, "report.pdf")[0]
+    report_file.write_bytes(b"same-bytes")
+    original_stat = report_file.stat()
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    def overwrite_report() -> None:
+        report_file.write_bytes(b"same-bytes")
+        os.utime(report_file, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        download_dir,
+        during_execute=overwrite_report,
+    )
+
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attempt_number", [1, 2])
+@pytest.mark.parametrize("change", ["content", "mtime"])
+async def test_retry_download_delivers_proven_rewrite_with_old_mtime(
+    tmp_path: Path, attempt_number: int, change: str
+) -> None:
+    download_dir = tmp_path / "downloads"
+    rewritten, unchanged = _write_downloads(download_dir, "report.pdf", "unchanged.pdf")
+    rewritten.write_bytes(b"before")
+    old_time = datetime(2026, 1, 1, tzinfo=UTC).timestamp()
+    for file in (rewritten, unchanged):
+        os.utime(file, (old_time, old_time))
+    late_stale = download_dir / "late.pdf"
+    fresh = download_dir / "fresh.pdf"
+    cutoff = datetime(2026, 1, 2, tzinfo=UTC)
+
+    def produce_downloads() -> None:
+        rewritten.write_bytes(b"after!" if change == "content" else b"before")
+        rewritten_time = old_time if change == "content" else old_time + 1
+        os.utime(rewritten, (rewritten_time, rewritten_time))
+        late_stale.write_bytes(b"previous attempt")
+        os.utime(late_stale, (old_time, old_time))
+        fresh.write_bytes(b"new download")
+        os.utime(fresh, (cutoff.timestamp(), cutoff.timestamp()))
+
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    with patch(
+        "skyvern.forge.sdk.artifact.storage.base.resolve_download_attempt",
+        AsyncMock(return_value=("wr_1", attempt_number, cutoff)),
+    ):
+        execution = await _execute_file_download(
+            block, _browser_result(block), download_dir, during_execute=produce_downloads
+        )
+
+    delivered = {call.kwargs["file_path"] for call in execution.upload.await_args_list}
+    expected = {str(rewritten), str(fresh)}
+    if attempt_number == 1:
+        expected.add(str(late_stale))
+    assert execution.result.success
+    assert delivered == expected
+    assert unchanged.read_bytes() == b"unchanged.pdf"
+    assert late_stale.read_bytes() == b"previous attempt"
+
+
+@pytest.mark.asyncio
+async def test_nonempty_scoped_download_missing_locally_is_noop(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("missing.pdf",))
+
+    execution = await _execute_file_download(block, browser_result, tmp_path / "downloads")
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_download_suffix_renamed_scoped_file_is_dispatched(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    renamed_file = download_dir / "quarterly-report.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        download_suffix="quarterly-report",
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("quarterly-report.pdf",))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=("quarterly-report.pdf",),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(renamed_file)
+
+
+@pytest.mark.asyncio
+async def test_scope_matching_normalizes_unicode_filename(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    nfc_name = "r\N{LATIN SMALL LETTER E WITH ACUTE}sume.pdf"
+    nfd_name = unicodedata.normalize("NFD", nfc_name)
+    assert nfc_name != nfd_name
+    local_file = download_dir / nfd_name
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=(nfc_name,))
+    assert isinstance(browser_result.output_parameter_value, dict)
+    browser_result.output_parameter_value["downloaded_files"] = [
+        {"filename": nfc_name, "checksum": hashlib.sha256(nfd_name.encode()).hexdigest()}
+    ]
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=(nfd_name,),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(local_file)
+
+
+@pytest.mark.asyncio
+async def test_nfc_nfd_identical_leftovers_are_not_leaked_by_mtime(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    nfc_name = "r\N{LATIN SMALL LETTER E WITH ACUTE}sum\N{LATIN SMALL LETTER E WITH ACUTE}.pdf"
+    nfd_name = unicodedata.normalize("NFD", nfc_name)
+    assert nfc_name != nfd_name
+    nfc_file = download_dir / nfc_name
+    nfd_file = download_dir / nfd_name
+    nfc_file.write_bytes(b"identical-leftover")
+    nfd_file.write_bytes(b"identical-leftover")
+    if len(os.listdir(download_dir)) < 2:
+        pytest.skip("filesystem normalizes unicode filenames; NFC/NFD collision is not reproducible here")
+    os.utime(nfc_file, ns=(0, 1_000_000_000))
+    os.utime(nfd_file, ns=(0, 9_000_000_000))
+
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    real_listdir = os.listdir
+
+    # Force the adversarial order (nfc last): a reverted normalized-key baseline would then hold
+    # nfc's smaller mtime, so nfd's larger mtime would leak. The raw-key fix must skip both.
+    def ordered_listdir(path: os.PathLike[str] | str) -> list[str]:
+        entries = real_listdir(path)
+        if set(entries) == {nfc_name, nfd_name}:
+            return [nfd_name, nfc_name]
+        return entries
+
+    with patch("skyvern.forge.sdk.workflow.models.block.os.listdir", side_effect=ordered_listdir):
+        execution = await _execute_file_download(block, _browser_result(block), download_dir)
+
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_nfc_nfd_different_content_leftovers_are_not_leaked(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    nfc_name = "caf\N{LATIN SMALL LETTER E WITH ACUTE}.pdf"
+    nfd_name = unicodedata.normalize("NFD", nfc_name)
+    assert nfc_name != nfd_name
+    (download_dir / nfc_name).write_bytes(b"aws-key-one")
+    (download_dir / nfd_name).write_bytes(b"totally-different")
+    if len(os.listdir(download_dir)) < 2:
+        pytest.skip("filesystem normalizes unicode filenames; NFC/NFD collision is not reproducible here")
+
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+
+    execution = await _execute_file_download(block, _browser_result(block), download_dir)
+
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed_entry", [{}, {"filename": None}, None, "invoice.pdf"])
+async def test_malformed_scoped_download_entry_is_ignored_without_hiding_valid_file(
+    tmp_path: Path, malformed_entry: object
+) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior.pdf")
+    valid_file = download_dir / "valid.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block)
+    assert isinstance(browser_result.output_parameter_value, dict)
+    browser_result.output_parameter_value["downloaded_files"] = [malformed_entry, {"filename": "valid.pdf"}]
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=("valid.pdf",),
+    )
+
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(valid_file)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_failure_returns_failed_result_and_clears_output(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, downloaded_filenames=("invoice.pdf",))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        upload_side_effect=RuntimeError("upload failed"),
+        downloads_during_execute=("invoice.pdf",),
+    )
+
+    assert execution.result.success is False
+    assert execution.result.status == BlockStatus.failed
+    assert "sftp" in (execution.result.failure_reason or "").lower()
+    assert execution.record_output.await_count == 2
+    assert execution.record_output.await_args_list[0].args[2] == browser_result.output_parameter_value
+    execution.record_output.assert_awaited_with(execution.workflow_run_context, "workflow-run-id", None)
+    assert execution.recorded_output.value is None
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_and_empty_download_dir_is_noop(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir)
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(block, browser_result, download_dir)
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_with_only_unchanged_prior_files_is_noop(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior.pdf")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        continue_on_empty=False,
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(block, browser_result, download_dir)
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_delivers_new_file_from_this_block(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior.pdf")[0]
+    current_file = download_dir / "current.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        continue_on_empty=False,
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block),
+        download_dir,
+        downloads_during_execute=(current_file.name,),
+    )
+
+    assert execution.result.success is True
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+    assert all(call.kwargs["file_path"] != str(prior_file) for call in execution.upload.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_pre_download_snapshot_tolerates_file_deleted_during_stat(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    vanishing_file = _write_downloads(download_dir, "vanishing.pdf")[0]
+    current_file = download_dir / "current.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    real_stat = os.stat
+    deleted = False
+
+    def delete_during_stat(path: os.PathLike[str] | str, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal deleted
+        if not deleted and os.fspath(path) == str(vanishing_file):
+            deleted = True
+            vanishing_file.unlink()
+            raise FileNotFoundError(str(vanishing_file))
+        return real_stat(path, *args, **kwargs)
+
+    with patch("skyvern.forge.sdk.workflow.models.block.os.stat", side_effect=delete_during_stat):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block, downloaded_filenames=(current_file.name,)),
+            download_dir,
+            downloads_during_execute=(current_file.name,),
+        )
+
+    assert execution.result.success is True
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+
+
+@pytest.mark.asyncio
+async def test_empty_scope_with_local_files_and_continue_on_empty_is_noop(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    _write_downloads(download_dir, "prior.pdf")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        continue_on_empty=True,
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(block, browser_result, download_dir)
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("download_target", "destination_fields", "expected_storage_type"),
+    [
+        (
+            FileDownloadTarget.S3,
+            {
+                "s3_bucket": "bucket",
+                "aws_access_key_id": "access-key",
+                "aws_secret_access_key": "secret-key",
+            },
+            FileStorageType.S3,
+        ),
+        (
+            FileDownloadTarget.AZURE,
+            {
+                "azure_storage_account_name": "account",
+                "azure_storage_account_key": "account-key",
+                "azure_blob_container_name": "container",
+            },
+            FileStorageType.AZURE,
+        ),
+        (
+            FileDownloadTarget.GOOGLE_DRIVE,
+            {
+                "google_credential_id": "google-credential-id",
+                "google_drive_folder_id": "https://drive.google.com/drive/folders/folder-id",
+            },
+            FileStorageType.GOOGLE_DRIVE,
+        ),
+    ],
+    ids=["s3", "azure", "google-drive"],
+)
+async def test_external_target_dispatches_download_file(
+    tmp_path: Path,
+    download_target: FileDownloadTarget,
+    destination_fields: dict[str, object],
+    expected_storage_type: FileStorageType,
+) -> None:
+    download_dir = tmp_path / "downloads"
+    downloaded_file = download_dir / "statement.pdf"
+    block = _file_download_block(download_target, **destination_fields)
+    browser_result = _browser_result(block, downloaded_filenames=("statement.pdf",))
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result is browser_result
+    execution.upload.assert_awaited_once()
+    assert execution.upload.await_args.kwargs["file_path"] == str(downloaded_file)
+    assert execution.upload.await_args.kwargs["destination"].storage_type == expected_storage_type
+    if download_target == FileDownloadTarget.GOOGLE_DRIVE:
+        execution.get_google_workspace_credentials.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_s3_destination_unwraps_secret_values(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="{{aws_key}}",
+        aws_secret_access_key="{{aws_secret}}",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={"{{aws_key}}": "actual-key", "{{aws_secret}}": "actual-secret"},
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.storage_type == FileStorageType.S3
+    assert destination.aws_access_key_id == "actual-key"
+    assert destination.aws_secret_access_key == "actual-secret"
+
+
+@pytest.mark.asyncio
+async def test_s3_destination_carries_endpoint_url(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url="https://storage.example.com",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.storage_type == FileStorageType.S3
+    assert destination.endpoint_url == "https://storage.example.com"
+
+
+@pytest.mark.asyncio
+async def test_s3_destination_without_endpoint_url_defaults_to_none(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.endpoint_url is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint_url", ["", "   "], ids=["empty", "whitespace"])
+async def test_s3_blank_endpoint_url_behaves_exactly_like_unset(tmp_path: Path, endpoint_url: str) -> None:
+    """A block persisted with endpoint_url="" must still upload to real AWS S3.
+
+    The editor used to serialize an unset endpoint as "", and botocore raises
+    ``ValueError: Invalid endpoint:`` on an empty endpoint rather than defaulting to AWS.
+    """
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url=endpoint_url,
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is True
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.endpoint_url is None
+    assert destination.endpoint_resolved_ips is None
+    execution.resolve_endpoint_host.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint_url",
+    ["storage.example.com", "http://storage.example.com", "ftp://storage.example.com"],
+    ids=["no-scheme", "http", "ftp"],
+)
+async def test_s3_dispatch_rejects_non_https_endpoint_before_upload(tmp_path: Path, endpoint_url: str) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url=endpoint_url,
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is False
+    assert "endpoint_url" in execution.result.failure_reason
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("endpoint_url", "blocked_host"),
+    [
+        ("https://169.254.169.254/", "169.254.169.254"),
+        ("https://localhost:9000/", "localhost"),
+        ("https://storage.example.com/", "storage.example.com"),
+    ],
+    ids=["metadata-ip", "localhost", "public-name-resolving-private"],
+)
+async def test_s3_dispatch_rejects_internal_endpoint_host_before_upload(
+    tmp_path: Path, endpoint_url: str, blocked_host: str
+) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url=endpoint_url,
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+        blocked_endpoint_hosts=(blocked_host,),
+    )
+
+    assert execution.result.success is False
+    assert "private or internal address" in execution.result.failure_reason
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_s3_endpoint_resolution_is_pinned_against_rebinding(tmp_path: Path) -> None:
+    """The validated addresses travel to the S3 client, so it never re-resolves the name."""
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url="https://storage.example.com/",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+        endpoint_host_ips=("198.51.100.7", "203.0.113.10"),
+    )
+
+    assert execution.result.success is True
+    execution.resolve_endpoint_host.assert_called_once_with("storage.example.com")
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.endpoint_url == "https://storage.example.com/"
+    assert destination.endpoint_resolved_ips == ("198.51.100.7", "203.0.113.10")
+
+
+@pytest.mark.asyncio
+async def test_s3_dispatch_rejects_unresolvable_endpoint_host_before_upload(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url="https://nowhere.example.com/",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        downloads_during_execute=("statement.pdf",),
+        unresolvable_endpoint_hosts=("nowhere.example.com",),
+    )
+
+    assert execution.result.success is False
+    assert "could not be resolved" in execution.result.failure_reason
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_s3_internal_endpoint_allowed_without_pinning_when_setting_enabled(tmp_path: Path) -> None:
+    """Self-hosted deployments opt into an internal object store, plaintext included."""
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="access-key",
+        aws_secret_access_key="secret-key",
+        endpoint_url="http://minio.internal:9000/",
+    )
+    with patch.object(settings, "ALLOW_S3_ENDPOINT_INTERNAL_HOSTS", True):
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block, downloaded_filenames=("statement.pdf",)),
+            download_dir,
+            downloads_during_execute=("statement.pdf",),
+            blocked_endpoint_hosts=("minio.internal",),
+        )
+
+    assert execution.result.success is True
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.endpoint_url == "http://minio.internal:9000/"
+    assert destination.endpoint_resolved_ips is None
+    execution.resolve_endpoint_host.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_s3_dispatch_rejects_empty_resolved_credentials_before_upload(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    resolved_credential = "\t"
+    block = _file_download_block(
+        FileDownloadTarget.S3,
+        s3_bucket="bucket",
+        aws_access_key_id="{{aws_key}}",
+        aws_secret_access_key="{{aws_secret}}",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={
+            "{{aws_key}}": resolved_credential,
+            "{{aws_secret}}": resolved_credential,
+        },
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is False
+    assert "not configured" in execution.result.failure_reason
+    assert resolved_credential not in execution.result.failure_reason
+    assert execution.recorded_output.value is None
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_azure_destination_unwraps_secret_values(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.AZURE,
+        azure_storage_account_name="{{azure_account}}",
+        azure_storage_account_key="{{azure_key}}",
+        azure_blob_container_name="container",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={"{{azure_account}}": "actualaccount", "{{azure_key}}": "actual-key"},
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.storage_type == FileStorageType.AZURE
+    assert destination.azure_storage_account_name == "actualaccount"
+    assert destination.azure_storage_account_key == "actual-key"
+    parsed_customer_uri = urlparse(destination.customer_uri)
+    assert parsed_customer_uri.scheme == "https"
+    assert parsed_customer_uri.hostname == "actualaccount.blob.core.windows.net"
+    assert parsed_customer_uri.path.startswith("/container/")
+
+
+@pytest.mark.asyncio
+async def test_azure_dispatch_rejects_invalid_resolved_account_name_before_building_uri(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.AZURE,
+        azure_storage_account_name="{{azure_account}}",
+        azure_storage_account_key="{{azure_key}}",
+        azure_blob_container_name="container",
+    )
+
+    with patch.object(block, "_get_azure_blob_uri", wraps=block._get_azure_blob_uri) as get_azure_blob_uri:
+        execution = await _execute_file_download(
+            block,
+            _browser_result(block, downloaded_filenames=("statement.pdf",)),
+            download_dir,
+            secret_values={"{{azure_account}}": "127.0.0.1#", "{{azure_key}}": "actual-key"},
+            downloads_during_execute=("statement.pdf",),
+        )
+
+    assert execution.result.success is False
+    assert "account name" in execution.result.failure_reason
+    get_azure_blob_uri.assert_not_called()
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resolved_account_name", "resolved_account_key"),
+    [
+        ("", "actual-key"),
+        ("actualaccount", ""),
+        ("  ", "actual-key"),
+        ("actualaccount", "\t"),
+    ],
+    ids=["empty-account-name", "empty-account-key", "whitespace-account-name", "whitespace-account-key"],
+)
+async def test_azure_dispatch_rejects_empty_resolved_credentials_before_upload(
+    tmp_path: Path,
+    resolved_account_name: str,
+    resolved_account_key: str,
+) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.AZURE,
+        azure_storage_account_name="{{azure_account}}",
+        azure_storage_account_key="{{azure_key}}",
+        azure_blob_container_name="container",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={
+            "{{azure_account}}": resolved_account_name,
+            "{{azure_key}}": resolved_account_key,
+        },
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is False
+    assert "not configured" in execution.result.failure_reason
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_azure_dispatch_without_resolved_configuration_raises_before_upload(tmp_path: Path) -> None:
+    local_file = tmp_path / "statement.pdf"
+    local_file.write_bytes(b"statement")
+    block = FileDownloadBlock.model_construct(
+        label="download",
+        output_parameter=None,
+        download_target=FileDownloadTarget.AZURE,
+        azure_storage_account_name=None,
+        azure_storage_account_key=None,
+        azure_blob_container_name="container",
+        path=None,
+    )
+    workflow_run_context = MagicMock()
+    workflow_run_context.get_original_secret_value_or_none.return_value = None
+
+    with patch("skyvern.forge.sdk.workflow.models.block.app") as mock_app:
+        mock_app.AGENT_FUNCTION.upload_file_to_customer_storage = AsyncMock()
+        with pytest.raises(AzureConfigurationError, match="not configured"):
+            await block._dispatch_files_to_storage(
+                storage_type=FileStorageType.AZURE,
+                files_to_upload=[str(local_file)],
+                workflow_run_id="workflow-run-id",
+                workflow_run_block_id="workflow-run-block-id",
+                organization_id="organization-id",
+                workflow_run_context=workflow_run_context,
+            )
+
+    mock_app.AGENT_FUNCTION.upload_file_to_customer_storage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_google_drive_unwraps_credential_id_and_requests_drive_scopes(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        google_credential_id="{{google_credential}}",
+        google_drive_folder_id="https://drive.google.com/drive/folders/folder-id",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={"{{google_credential}}": "actual-google-credential"},
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    execution.get_google_workspace_credentials.assert_awaited_once_with(
+        organization_id="organization-id",
+        credential_id="actual-google-credential",
+        required_scopes=list(google_oauth_service.GOOGLE_DRIVE_SCOPES),
+    )
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.storage_type == FileStorageType.GOOGLE_DRIVE
+    assert destination.google_access_token == "google-access-token"
+    assert destination.google_drive_folder_id == "folder-id"
+
+
+@pytest.mark.asyncio
+async def test_google_drive_without_folder_id_uploads_to_my_drive_root(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.GOOGLE_DRIVE,
+        google_credential_id="google-credential",
+        google_drive_folder_id=None,
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        tmp_path / "downloads",
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is True
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.google_drive_folder_id is None
+
+
+@pytest.mark.asyncio
+async def test_sftp_unwraps_secrets_and_defaults_port_to_22(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="{{sftp_user}}",
+        sftp_password="{{sftp_password}}",
+        sftp_private_key="{{sftp_key}}",
+        sftp_private_key_passphrase="{{sftp_passphrase}}",
+    )
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={
+            "{{sftp_user}}": "actual-user",
+            "{{sftp_password}}": "actual-password",
+            "{{sftp_key}}": "actual-private-key",
+            "{{sftp_passphrase}}": "actual-passphrase",
+        },
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.storage_type == FileStorageType.SFTP
+    assert destination.sftp_port == 22
+    assert destination.sftp_username == "actual-user"
+    assert destination.sftp_password == "actual-password"
+    assert destination.sftp_private_key == "actual-private-key"
+    assert destination.sftp_private_key_passphrase == "actual-passphrase"
+
+
+@pytest.mark.asyncio
+async def test_sftp_identity_fields_bound_to_secret_parameters_reach_the_real_server(tmp_path: Path) -> None:
+    """A file_download block renders templates with secrets masked, so the host, remote directory
+    and host key arrive as placeholders and must be mapped back before connecting."""
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="{{sftp_host}}",
+        sftp_username="skyvern",
+        sftp_password="password",
+        sftp_remote_path="{{sftp_remote_path}}",
+        sftp_host_key="{{sftp_host_key}}",
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={
+            "{{sftp_host}}": "sftp.example.com",
+            "{{sftp_remote_path}}": "/inbound/claims",
+            "{{sftp_host_key}}": "ssh-ed25519 AAAAC3Nz",
+        },
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is True
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.sftp_host == "sftp.example.com"
+    assert destination.sftp_remote_path == "/inbound/claims"
+    assert destination.sftp_host_key == "ssh-ed25519 AAAAC3Nz"
+    # The uri is recorded as the block output, so a secret-bound host and remote path
+    # stay masked there even though the connection above uses the real values.
+    assert destination.customer_uri == "sftp://{{sftp_host}}:22/{{sftp_remote_path}}/statement.pdf"
+    assert destination.sdk_uri == destination.customer_uri
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("download_target", "destination_fields", "sensitive_field", "literal_secret"),
+    [
+        (
+            FileDownloadTarget.SFTP,
+            {
+                "sftp_host": "sftp.example.com",
+                "sftp_username": "skyvern",
+                "sftp_password": "literal-sftp-password",
+            },
+            "sftp_password",
+            "literal-sftp-password",
+        ),
+        (
+            FileDownloadTarget.S3,
+            {
+                "s3_bucket": "bucket",
+                "aws_access_key_id": "access-key-id",
+                "aws_secret_access_key": "literal-aws-secret-access-key",
+            },
+            "aws_secret_access_key",
+            "literal-aws-secret-access-key",
+        ),
+        (
+            FileDownloadTarget.AZURE,
+            {
+                "azure_storage_account_name": "storageaccount",
+                "azure_storage_account_key": "literal-azure-storage-account-key",
+                "azure_blob_container_name": "container",
+            },
+            "azure_storage_account_key",
+            "literal-azure-storage-account-key",
+        ),
+    ],
+    ids=["sftp-password", "aws-secret-access-key", "azure-storage-account-key"],
+)
+async def test_literal_destination_secret_dispatches_unchanged_when_encryption_is_disabled(
+    tmp_path: Path,
+    download_target: FileDownloadTarget,
+    destination_fields: dict[str, object],
+    sensitive_field: str,
+    literal_secret: str,
+) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(download_target, **destination_fields)
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={},
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    assert execution.result.success is True
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert getattr(destination, sensitive_field) == literal_secret
+
+
+@pytest.mark.asyncio
+async def test_unset_optional_sftp_secret_fields_do_not_block_dispatch(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="{{sftp_password}}",
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("statement.pdf",)),
+        download_dir,
+        secret_values={"{{sftp_password}}": "resolved-sftp-password"},
+        downloads_during_execute=("statement.pdf",),
+    )
+
+    destination = execution.upload.await_args.kwargs["destination"]
+    assert destination.sftp_password == "resolved-sftp-password"
+    assert destination.sftp_private_key is None
+    assert destination.sftp_private_key_passphrase is None
+    resolver_calls = execution.workflow_run_context.get_original_secret_value_or_none.call_args_list
+    assert all(call.args[0] is not None for call in resolver_calls)
+
+
+@pytest.mark.asyncio
+async def test_missing_sftp_host_fails_without_dispatch(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block)
+
+    execution = await _execute_file_download(block, browser_result, tmp_path / "downloads")
+
+    assert execution.result.success is False
+    assert execution.result.status == BlockStatus.failed
+    assert "sftp_host" in (execution.result.failure_reason or "")
+    execution.upload.assert_not_awaited()
+    # Fail fast: a misconfigured destination is rejected before the browser download runs.
+    execution.browser_execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("download_target", "destination_fields", "missing_field"),
+    [
+        (FileDownloadTarget.S3, {"aws_access_key_id": "key", "aws_secret_access_key": "secret"}, "s3_bucket"),
+        (
+            FileDownloadTarget.AZURE,
+            {"azure_storage_account_name": "account", "azure_storage_account_key": "key"},
+            "azure_blob_container_name",
+        ),
+        (
+            FileDownloadTarget.GOOGLE_DRIVE,
+            {"google_drive_folder_id": "folder-id"},
+            "google_credential_id",
+        ),
+        (FileDownloadTarget.SFTP, {"sftp_host": "host", "sftp_username": "user"}, "sftp_password"),
+    ],
+    ids=["s3", "azure", "google-drive", "sftp"],
+)
+async def test_missing_required_destination_field_fails_without_dispatch(
+    tmp_path: Path,
+    download_target: FileDownloadTarget,
+    destination_fields: dict[str, object],
+    missing_field: str,
+) -> None:
+    block = _file_download_block(download_target, **destination_fields)
+
+    execution = await _execute_file_download(block, _browser_result(block), tmp_path / "downloads")
+
+    assert execution.result.success is False
+    assert execution.result.status == BlockStatus.failed
+    assert missing_field in (execution.result.failure_reason or "")
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_prompt_dispatches_only_selected_downloads(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    downloaded_files = [download_dir / "invoice-1.pdf", download_dir / "invoice-2.pdf", download_dir / "report.csv"]
+    selected_files = [str(downloaded_files[0]), str(downloaded_files[1])]
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        prompt="only the invoices",
+    )
+    browser_result = _browser_result(
+        block,
+        downloaded_filenames=("invoice-1.pdf", "invoice-2.pdf", "report.csv"),
+    )
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        selection_result=(selected_files, "The invoice files match."),
+        downloads_during_execute=("invoice-1.pdf", "invoice-2.pdf", "report.csv"),
+    )
+
+    assert execution.result is browser_result
+    execution.select_files.assert_awaited_once()
+    assert set(execution.select_files.await_args.kwargs["files_to_upload"]) == {str(file) for file in downloaded_files}
+    assert execution.upload.await_count == 2
+    assert {call.kwargs["file_path"] for call in execution.upload.await_args_list} == set(selected_files)
+
+
+@pytest.mark.asyncio
+async def test_prompt_selector_only_receives_current_block_scope(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file = _write_downloads(download_dir, "prior.pdf")[0]
+    current_file = download_dir / "current.pdf"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        prompt="upload the requested file",
+    )
+
+    execution = await _execute_file_download(
+        block,
+        _browser_result(block, downloaded_filenames=("current.pdf",)),
+        download_dir,
+        selection_result=([str(current_file)], "Current file matches."),
+        downloads_during_execute=("current.pdf",),
+    )
+
+    execution.select_files.assert_awaited_once()
+    assert execution.select_files.await_args.kwargs["files_to_upload"] == [str(current_file)]
+    assert str(prior_file) not in execution.select_files.await_args.kwargs["files_to_upload"]
+    assert execution.upload.await_args.kwargs["file_path"] == str(current_file)
+
+
+@pytest.mark.asyncio
+async def test_prompt_selector_rejects_prior_block_filename_not_in_candidates(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    prior_file, current_file = _write_downloads(download_dir, "prior.pdf", "current.pdf")
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        prompt="upload prior.pdf",
+    )
+    handler = AsyncMock(
+        return_value={"reasoning": "The user requested the prior file.", "files_to_upload": [prior_file.name]}
+    )
+
+    with (
+        patch.object(LLMAPIHandlerFactory, "get_override_llm_api_handler", return_value=handler),
+        patch("skyvern.forge.sdk.workflow.models.block.app") as mock_app,
+    ):
+        mock_app.DATABASE.observer.get_workflow_run_block = AsyncMock(return_value=None)
+        with pytest.raises(ValueError, match="not candidate files"):
+            await block._select_files_to_upload_with_prompt(
+                prompt=block.prompt or "",
+                files_to_upload=[str(current_file)],
+                workflow_run_block_id="workflow-run-block-id",
+                organization_id="organization-id",
+            )
+
+
+@pytest.mark.asyncio
+async def test_prompt_selecting_no_downloads_is_successful_noop(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloads"
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+        prompt="only the invoices",
+    )
+    browser_result = _browser_result(
+        block,
+        downloaded_filenames=("invoice.pdf", "report.csv", "notes.txt"),
+    )
+
+    execution = await _execute_file_download(
+        block,
+        browser_result,
+        download_dir,
+        selection_result=([], "No files match."),
+        downloads_during_execute=("invoice.pdf", "report.csv", "notes.txt"),
+    )
+
+    assert execution.result is browser_result
+    assert execution.result.success is True
+    execution.select_files.assert_awaited_once()
+    execution.upload.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_browser_download_returns_without_dispatch(tmp_path: Path) -> None:
+    block = _file_download_block(
+        FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_username="skyvern",
+        sftp_password="password",
+    )
+    browser_result = _browser_result(block, success=False)
+
+    execution = await _execute_file_download(block, browser_result, tmp_path / "downloads")
+
+    assert execution.result is browser_result
+    execution.upload.assert_not_awaited()
+
+
+def test_file_download_yaml_conversion_preserves_destination_fields() -> None:
+    yaml_block = FileDownloadBlockYAML(
+        label="download",
+        navigation_goal="Download the requested files.",
+        download_target=FileDownloadTarget.SFTP,
+        sftp_host="sftp.example.com",
+        sftp_port=2222,
+        sftp_remote_path="incoming/reports",
+    )
+
+    block = block_yaml_to_block(yaml_block, {"download_output": _output_parameter()})
+
+    assert isinstance(block, FileDownloadBlock)
+    assert block.download_target == FileDownloadTarget.SFTP
+    assert block.sftp_host == "sftp.example.com"
+    assert block.sftp_port == 2222
+    assert block.sftp_remote_path == "incoming/reports"
+
+
+@pytest.mark.asyncio
+async def test_non_cached_script_download_threads_destination_into_single_block_execution() -> None:
+    validation_output = SimpleNamespace(
+        label="download",
+        output_parameter=_output_parameter(),
+        workflow_run_id="workflow-run-id",
+        organization_id="organization-id",
+        browser_session_id="browser-session-id",
+        context=SimpleNamespace(parent_workflow_run_block_id="parent-block-id"),
+        workflow=SimpleNamespace(workflow_definition=SimpleNamespace(blocks=[])),
+    )
+
+    with (
+        patch("skyvern.services.script_service.script_run_context_manager.get_cached_fn", return_value=None),
+        patch(
+            "skyvern.services.script_service._validate_and_get_output_parameter",
+            new_callable=AsyncMock,
+            return_value=validation_output,
+        ),
+        patch.object(FileDownloadBlock, "execute_safe", autospec=True) as execute_safe,
+    ):
+        from skyvern.services.script_service import download
+
+        await download(
+            prompt="Only upload invoices.",
+            navigation_goal="Download all reports.",
+            label="download",
+            download_target="sftp",
+            sftp_host="sftp.example.com",
+            sftp_username="user",
+            sftp_password="password",
+        )
+
+    execute_safe.assert_awaited_once()
+    block = execute_safe.await_args.args[0]
+    assert block.download_target == FileDownloadTarget.SFTP
+    assert block.navigation_goal == "Download all reports."
+    assert block.prompt == "Only upload invoices."
+    assert block.sftp_host == "sftp.example.com"
+    assert block.sftp_username == "user"
+    assert block.sftp_password == "password"
+    assert execute_safe.await_args.kwargs == {
+        "workflow_run_id": "workflow-run-id",
+        "parent_workflow_run_block_id": "parent-block-id",
+        "organization_id": "organization-id",
+        "browser_session_id": "browser-session-id",
+    }
