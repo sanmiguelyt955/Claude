@@ -3,6 +3,21 @@
 Instrucciones para Claude Code en todo este repositorio. Cada proyecto puede
 tener su propio CLAUDE.md (por ejemplo `video-analyzer/CLAUDE.md`).
 
+## REA: SIEMPRE (regla del usuario)
+
+Para revisar, medir, explorar sitios o APIs, recorrer la app en un navegador
+y capturar lo que hace un comando, usa **REA** (`morluto/rea`, paquete
+`rea-agents`), **siempre**, no solo cuando sea cómodo. Lo pidió el usuario
+varias veces ("Usa REA para todo", "haz REA, SIEMPRE").
+
+- Instalar si falta: `cd /tmp/claude-0/rea && npm install rea-agents@6.8.0`
+  (en una sesión nueva `/tmp` está vacío; si el disco está lleno, limpiar cachés primero).
+- Recorrer una web o la app: `npx rea capture-browser-scenario escenario.json --format json`
+  (Chromium en `/opt/pw-browsers/chromium-1194/chrome-linux/chrome`; pasos `goto`,
+  `click`, `fill`, `press`, `wait_for`; `capture.events: ["console","page-errors","network"]`).
+- Capturar un comando y resumirlo: `node video-analyzer/scripts/rea-capture.mjs -- <comando>`.
+- Si REA no puede con algo, dilo y explica por qué; no lo saltes en silencio.
+
 ## Memoria: no olvidar entre sesiones
 
 La memoria permanente del usuario y de Claude vive en **Memoria**
