@@ -33,6 +33,14 @@ Cuando el usuario pida «ingeniería inversa» de una app, página o función:
 Solo objetivos autorizados; se estudia el comportamiento, no se copia código ni se quitan protecciones.
 Detalle y mapa de recursos: nota «Flujo de ingeniería inversa con REA» en la memoria.
 
+## Repos que menciona el usuario: buscar al autor
+
+Cuando el usuario nombre un repositorio sin dueño (por ejemplo «Claude-Mem»),
+**busca tú al autor** (`search_repositories`, la web) antes de usarlo; el
+usuario solo da el nombre para que lo busques. No asumas que es suyo:
+confirma de quién es y di el dueño completo (`autor/repo`).
+Ejemplo ya resuelto: «Claude-Mem» es `thedotmack/claude-mem` (de otra persona).
+
 ## Memoria: no olvidar entre sesiones
 
 La memoria permanente del usuario y de Claude vive en **Memoria**
