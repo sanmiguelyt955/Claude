@@ -4,7 +4,10 @@
 #   stop : sube a GitHub lo que se haya escrito en la memoria durante la sesión.
 # Nunca falla la sesión: si algo sale mal, lo dice en una línea y sigue.
 REPO_URL="${MEMORIA_REPO_URL:-https://github.com/sanmiguelyt955/memoria-claude}"
-DIR="${MEMORIA_DIR:-$HOME/memoria-claude}"
+# La carpeta donde la sesión clona los repositorios agregados; si no está, la del usuario.
+if [ -n "${MEMORIA_DIR:-}" ]; then DIR="$MEMORIA_DIR"
+elif [ -d /home/user/memoria-claude/.git ]; then DIR=/home/user/memoria-claude
+else DIR="$HOME/memoria-claude"; fi
 BRANCH="${MEMORIA_BRANCH:-main}"
 
 case "${1:-}" in
