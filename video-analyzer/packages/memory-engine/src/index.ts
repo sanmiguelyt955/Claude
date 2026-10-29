@@ -116,3 +116,5 @@ export {
 export type { SkillImprovementInput } from './repo/skill-improvements.js'
 export { listChatMessages, addChatMessage, clearChatMessages, chatToMarkdown } from './repo/chat.js'
 export type { ChatMessageRow } from './repo/chat.js'
+export { saveMusicTrack, listMusicTracks, getMusicTrack, getMusicTrackBySource, deleteMusicTrack } from './repo/music.js'
+export type { MusicTrackRow, SaveMusicTrackInput } from './repo/music.js'

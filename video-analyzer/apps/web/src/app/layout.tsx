@@ -29,6 +29,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/" className="hidden rounded-full px-3 py-1.5 text-(--color-ink-soft) hover:bg-(--color-surface-2) hover:text-(--color-ink) sm:inline-flex">
                 Biblioteca
               </Link>
+              <Link href="/musica" className="hidden rounded-full px-3 py-1.5 text-(--color-ink-soft) hover:bg-(--color-surface-2) hover:text-(--color-ink) sm:inline-flex">
+                Música
+              </Link>
               <Link href="/cargar" className="btn-primary whitespace-nowrap !py-1.5">
                 <span aria-hidden>+</span>
                 <span>

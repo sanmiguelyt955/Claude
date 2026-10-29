@@ -166,3 +166,17 @@ Worker"); si algo falla, ábrelas para ver el error.
 
 Videos, análisis y conversaciones se guardan en `video-analyzer\data\`, en tu
 computadora. No se suben a GitHub y las actualizaciones no los borran.
+
+## Música libre
+
+En **Música** (barra de arriba) buscas música por estilo, instrumento o ánimo
+(«piano», «medieval», «tranquila») en Incompetech, Internet Archive y, si
+configuras la clave, Openverse y Jamendo. Solo salen piezas con licencia que
+permite uso comercial (CC0, dominio público, BY); las de uso no comercial no
+aparecen y BY-SA sale con aviso. Puedes escucharlas, guardarlas en tu
+biblioteca (se descargan a `data/music/`) y copiar el **crédito** listo para
+pegar en la descripción del video.
+
+- **Jamendo** necesita una clave gratuita: ponla como `JAMENDO_CLIENT_ID` en `.env.local`.
+- La licencia de Internet Archive y Openverse la declara quien subió la pieza y puede estar mal: la página lo avisa y enlaza a la pieza. Incompetech la publica el propio autor.
+- No busca canciones comerciales (artistas famosos): esas tienen derechos de autor y no se pueden descargar.
