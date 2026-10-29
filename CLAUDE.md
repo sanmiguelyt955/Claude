@@ -18,6 +18,21 @@ varias veces ("Usa REA para todo", "haz REA, SIEMPRE").
 - Capturar un comando y resumirlo: `node video-analyzer/scripts/rea-capture.mjs -- <comando>`.
 - Si REA no puede con algo, dilo y explica por qué; no lo saltes en silencio.
 
+### Ingeniería inversa: siempre este flujo, siempre con REA
+
+Cuando el usuario pida «ingeniería inversa» de una app, página o función:
+
+1. Investigar **una función** (no la app entera) con REA.
+2. Reunir **Evidencia** (red, DOM, archivos, binario).
+3. Rastrear la función completa.
+4. Escribir una **especificación clean-room** (en palabras propias, sin pegar código del original).
+5. Construir una **implementación independiente** a partir de ella.
+6. **Compararla** con el original autorizado (REA `compare` / `environment-compare`).
+7. Dejar **a la vista cada fallo e incógnita**; lo que no se pudo comprobar, se dice.
+
+Solo objetivos autorizados; se estudia el comportamiento, no se copia código ni se quitan protecciones.
+Detalle y mapa de recursos: nota «Flujo de ingeniería inversa con REA» en la memoria.
+
 ## Memoria: no olvidar entre sesiones
 
 La memoria permanente del usuario y de Claude vive en **Memoria**
@@ -35,5 +50,10 @@ La memoria permanente del usuario y de Claude vive en **Memoria**
   - Notas completas con `agregar_a_nota` o `escribir_nota`, con `[[enlaces]]`
     a las notas relacionadas (`brain/Key Decisions`, `brain/Gotchas`, la nota del proyecto).
 - Nunca guardes claves, tokens ni contraseñas.
-- Si el conector no está disponible, dilo una vez y sigue. Lo que había que
-  guardar, ponlo al final de tu respuesta para que el usuario lo vea.
+- Si el conector no está disponible, usa la copia en GitHub: al empezar
+  `bash scripts/memoria-sync.sh start` (baja `sanmiguelyt955/memoria-claude` a
+  `~/memoria-claude` y muestra lo esencial); escribe las notas en esa carpeta
+  (Markdown con `[[enlaces]]`); y al terminar cada trabajo
+  `bash scripts/memoria-sync.sh stop` (la sube a GitHub). Necesita que
+  `memoria-claude` esté agregado a la sesión; si no puede subir, lo dice.
+- Si ni eso es posible, dilo una vez y ponlo al final de tu respuesta.
