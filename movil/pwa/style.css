@@ -1,0 +1,19 @@
+:root{color-scheme:dark;--bg:#0f1115;--card:#1a1d24;--txt:#f2f4f8;--mut:#8b93a3;--acc:#5b9dff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:17px/1.4 -apple-system,system-ui,sans-serif;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+main{max-width:520px;margin:0 auto;padding:16px}
+.card{background:var(--card);border-radius:16px;padding:16px;margin-bottom:16px}
+h1{font-size:22px;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}
+ul{list-style:none;margin:0;padding:0}
+#lineas li{padding:4px 0}
+.mini{color:var(--mut);font-size:13px;margin:8px 0 0}
+.badge{background:var(--acc);color:#fff;border-radius:99px;padding:1px 9px;font-size:14px;margin-left:6px}
+form{display:flex;gap:8px;margin-bottom:8px}
+input{flex:1;min-width:0;background:#0f1115;border:1px solid #2a2f3a;border-radius:10px;color:var(--txt);padding:12px;font-size:16px}
+button{background:var(--acc);border:0;border-radius:10px;color:#fff;padding:0 16px;font-size:16px}
+#tareas li{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #2a2f3a}
+#tareas li.hecha span{text-decoration:line-through;color:var(--mut)}
+#tareas span{flex:1;word-break:break-word}
+#tareas input[type=checkbox]{flex:none;width:22px;height:22px;padding:0}
+#tareas button{background:transparent;color:var(--mut);font-size:22px;padding:0 6px}

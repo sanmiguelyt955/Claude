@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mi panel</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Panel">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1115">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <section class="card" id="estado">
+    <h1 id="titulo">Cargando…</h1>
+    <ul id="lineas"></ul>
+    <p class="mini" id="actualizado"></p>
+  </section>
+
+  <section class="card">
+    <h2>Tareas <span id="cuenta" class="badge">0</span></h2>
+    <form id="form">
+      <input id="nueva" placeholder="Nueva tarea" autocomplete="off" maxlength="120">
+      <button type="submit">Añadir</button>
+    </form>
+    <ul id="tareas"></ul>
+  </section>
+
+  <p class="mini" id="ayuda" hidden>Para instalarla: toca Compartir y luego «Añadir a pantalla de inicio».</p>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
