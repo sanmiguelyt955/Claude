@@ -1,4 +1,0 @@
-{
-  "max_agent_steps": 60,
-  "max_tool_result_bytes": 262144
-}

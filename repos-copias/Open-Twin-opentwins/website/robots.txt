@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: https://opentwins.ai/sitemap.xml
