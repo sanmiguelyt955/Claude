@@ -1,0 +1,1212 @@
+import socket
+from collections.abc import Generator
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+import structlog
+
+from skyvern.config import settings
+from skyvern.exceptions import BlockedHost, SkyvernHTTPException
+from skyvern.forge.sdk.api.llm import custom_llm_registry
+from skyvern.forge.sdk.api.llm.api_handler_factory import LLMAPIHandlerFactory
+from skyvern.forge.sdk.api.llm.config_registry import LLMConfigRegistry
+from skyvern.forge.sdk.api.llm.custom_llm_registry import (
+    custom_llm_key,
+    custom_llm_model_name,
+    deregister_custom_llm_config,
+    get_custom_llm_model_mappings,
+    register_custom_llm_config,
+)
+from skyvern.forge.sdk.core import skyvern_context
+from skyvern.forge.sdk.db.enums import OrganizationAuthTokenType
+from skyvern.forge.sdk.db.exceptions import NotFoundError
+from skyvern.forge.sdk.encrypt.base import EncryptMethod
+from skyvern.forge.sdk.routes import agent_protocol
+from skyvern.forge.sdk.routes import custom_llms as routes
+from skyvern.forge.sdk.schemas.custom_llms import (
+    CUSTOM_LLM_API_KEY_MASK,
+    CustomLLMConfig,
+    CustomLLMCreateRequest,
+    CustomLLMUpdateRequest,
+)
+from skyvern.forge.sdk.schemas.organizations import Organization, OrganizationAuthToken, OrganizationUpdate
+from skyvern.forge.sdk.schemas.task_v2 import TaskV2, TaskV2Status
+from skyvern.forge.sdk.settings_manager import SettingsManager
+from skyvern.services import task_v1_service, task_v2_service
+
+
+class FakeOrganizationsRepository:
+    def __init__(self) -> None:
+        self.tokens: list[OrganizationAuthToken] = []
+        self.next_id = 1
+        self.created_encrypted_methods: list[EncryptMethod | None] = []
+        self.updated_encrypted_methods: list[EncryptMethod | None] = []
+        self.update_organization = AsyncMock()
+
+    async def get_organization(self, organization_id: str) -> Organization | None:
+        return None
+
+    async def get_valid_org_auth_tokens(
+        self,
+        organization_id: str,
+        token_type: OrganizationAuthTokenType,
+    ) -> list[OrganizationAuthToken]:
+        return [
+            token
+            for token in self.tokens
+            if token.organization_id == organization_id and token.token_type == token_type and token.valid
+        ]
+
+    async def get_valid_org_auth_tokens_by_type(
+        self,
+        token_type: OrganizationAuthTokenType,
+    ) -> list[OrganizationAuthToken]:
+        return [token for token in self.tokens if token.token_type == token_type and token.valid]
+
+    async def create_org_auth_token(
+        self,
+        organization_id: str,
+        token_type: OrganizationAuthTokenType,
+        token: str,
+        encrypted_method: EncryptMethod | None = None,
+    ) -> OrganizationAuthToken:
+        self.created_encrypted_methods.append(encrypted_method)
+        now = datetime.now(timezone.utc)
+        auth_token = OrganizationAuthToken(
+            id=f"oat_custom_{self.next_id}",
+            organization_id=organization_id,
+            token_type=token_type,
+            token=token,
+            valid=True,
+            created_at=now,
+            modified_at=now,
+        )
+        self.next_id += 1
+        self.tokens.append(auth_token)
+        return auth_token
+
+    async def update_org_auth_token(
+        self,
+        organization_id: str,
+        token_type: OrganizationAuthTokenType,
+        token_id: str,
+        token: str,
+        encrypted_method: EncryptMethod | None = None,
+    ) -> OrganizationAuthToken:
+        self.updated_encrypted_methods.append(encrypted_method)
+        for auth_token in self.tokens:
+            if (
+                auth_token.id == token_id
+                and auth_token.organization_id == organization_id
+                and auth_token.token_type == token_type
+                and auth_token.valid
+            ):
+                auth_token.token = token
+                auth_token.modified_at = datetime.now(timezone.utc)
+                return auth_token
+        raise NotFoundError("Organization auth token not found")
+
+    async def invalidate_org_auth_token(
+        self,
+        organization_id: str,
+        token_type: OrganizationAuthTokenType,
+        token_id: str,
+    ) -> None:
+        for auth_token in self.tokens:
+            if (
+                auth_token.id == token_id
+                and auth_token.organization_id == organization_id
+                and auth_token.token_type == token_type
+                and auth_token.valid
+            ):
+                auth_token.valid = False
+                return
+        raise NotFoundError("Organization auth token not found")
+
+
+def _org(organization_id: str = "o_test") -> Organization:
+    now = datetime.now(timezone.utc)
+    return Organization(organization_id=organization_id, organization_name="Test Org", created_at=now, modified_at=now)
+
+
+@pytest.fixture(autouse=True)
+def base_settings_manager() -> Generator[None, None, None]:
+    previous_settings = SettingsManager.get_settings()
+    SettingsManager.set_settings(settings)
+    yield
+    SettingsManager.set_settings(previous_settings)
+
+
+@pytest.fixture
+def fake_organizations(monkeypatch: pytest.MonkeyPatch) -> FakeOrganizationsRepository:
+    organizations = FakeOrganizationsRepository()
+    fake_database = SimpleNamespace(organizations=organizations)
+    monkeypatch.setattr(routes.app, "DATABASE", fake_database)
+    monkeypatch.setattr(agent_protocol.app, "DATABASE", fake_database)
+    monkeypatch.setattr(task_v1_service.app, "DATABASE", fake_database)
+    monkeypatch.setattr(task_v2_service.app, "DATABASE", fake_database)
+    return organizations
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("created_at", [datetime.now(timezone.utc), None], ids=["with-timestamp", "none-timestamp"])
+async def test_prepare_org_llm_runtime_creates_context_and_stamps_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    created_at: datetime | None,
+) -> None:
+    organization = _org("o_runtime").model_copy(
+        update={
+            "created_at": created_at,
+            "default_llm_key": "CUSTOM_LLM_oat_smart",
+            "default_secondary_llm_key": "CUSTOM_LLM_oat_fast",
+        }
+    )
+    get_organization = AsyncMock(return_value=organization)
+    load_configs = AsyncMock()
+    monkeypatch.setattr(custom_llm_registry, "load_custom_llm_configs_for_organization", load_configs)
+    database = SimpleNamespace(organizations=SimpleNamespace(get_organization=get_organization))
+    skyvern_context.reset()
+
+    try:
+        await custom_llm_registry.prepare_org_llm_runtime(database, organization.organization_id)
+        context = skyvern_context.current()
+    finally:
+        skyvern_context.reset()
+
+    assert context is not None
+    assert context.organization_id == organization.organization_id
+    assert context.org_default_llm_key == "CUSTOM_LLM_oat_smart"
+    assert context.org_default_secondary_llm_key == "CUSTOM_LLM_oat_fast"
+    assert context.org_age == (None if created_at is None else 0)
+    get_organization.assert_awaited_once_with(organization.organization_id)
+    load_configs.assert_awaited_once_with(database, organization.organization_id)
+
+
+@pytest.mark.asyncio
+async def test_custom_llm_routes_register_update_and_delete_config(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org()
+    create_response = await routes.create_custom_llm(
+        CustomLLMCreateRequest(
+            config=CustomLLMConfig(
+                display_name="OpenRouter Claude",
+                provider="openrouter",
+                model_name="anthropic/claude-3.5-sonnet",
+                api_key="sk-or",
+            )
+        ),
+        org,
+    )
+
+    custom_llm_id = create_response.custom_llm.id
+    llm_key = custom_llm_key(custom_llm_id)
+    assert fake_organizations.created_encrypted_methods == [None]
+    assert LLMConfigRegistry.is_registered(llm_key)
+    registered_config = LLMConfigRegistry.get_config(llm_key)
+    assert registered_config.model_name == "openrouter/anthropic/claude-3.5-sonnet"
+    assert registered_config.litellm_params
+    assert registered_config.litellm_params["api_key"] == "sk-or"
+    assert create_response.custom_llm.config.api_key == CUSTOM_LLM_API_KEY_MASK
+    assert custom_llm_model_name(custom_llm_id) in settings.get_model_name_to_llm_key(
+        organization_id=org.organization_id
+    )
+
+    list_response = await routes.list_custom_llms(org)
+    assert [custom_llm.id for custom_llm in list_response.custom_llms] == [custom_llm_id]
+    assert list_response.custom_llms[0].config.api_key == CUSTOM_LLM_API_KEY_MASK
+
+    update_response = await routes.update_custom_llm(
+        CustomLLMUpdateRequest(
+            config=CustomLLMConfig(
+                display_name="Local Llama",
+                provider="ollama",
+                model_name="llama3.1",
+            )
+        ),
+        custom_llm_id,
+        org,
+    )
+
+    assert fake_organizations.updated_encrypted_methods == [None]
+    assert update_response.custom_llm.id == custom_llm_id
+    assert LLMConfigRegistry.get_config(llm_key).model_name == "ollama_chat/llama3.1"
+
+    delete_response = await routes.delete_custom_llm(custom_llm_id, org)
+    assert delete_response.success is True
+    assert not LLMConfigRegistry.is_registered(llm_key)
+    assert fake_organizations.tokens[0].valid is False
+
+
+@pytest.mark.asyncio
+async def test_update_custom_llm_preserves_masked_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    validate_api_base = AsyncMock()
+    monkeypatch.setattr(routes, "_validate_custom_llm_api_base", validate_api_base)
+    org = _org()
+    create_response = await routes.create_custom_llm(
+        CustomLLMCreateRequest(
+            config=CustomLLMConfig(
+                display_name="OpenRouter Claude",
+                provider="openrouter",
+                model_name="anthropic/claude-3.5-sonnet",
+                api_key="sk-or",
+            )
+        ),
+        org,
+    )
+    custom_llm_id = create_response.custom_llm.id
+
+    update_response = await routes.update_custom_llm(
+        CustomLLMUpdateRequest(
+            config=CustomLLMConfig(
+                display_name="OpenRouter GPT",
+                provider="openrouter",
+                model_name="openai/gpt-4.1",
+                api_key=CUSTOM_LLM_API_KEY_MASK,
+            )
+        ),
+        custom_llm_id,
+        org,
+    )
+
+    assert update_response.custom_llm.config.api_key == CUSTOM_LLM_API_KEY_MASK
+    stored_config = CustomLLMConfig.model_validate_json(fake_organizations.tokens[0].token)
+    assert stored_config.api_key == "sk-or"
+    registered_config = LLMConfigRegistry.get_config(custom_llm_key(custom_llm_id))
+    assert registered_config.litellm_params
+    assert registered_config.litellm_params["api_key"] == "sk-or"
+    assert validate_api_base.await_count == 2
+
+    deregister_custom_llm_config(custom_llm_id)
+
+
+@pytest.mark.asyncio
+async def test_custom_llm_masks_and_preserves_secret_extra_headers(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org()
+    secret_headers = {"Authorization": "Bearer super-secret", "X-API-Key": "sk-nested"}
+    masked_headers = {name: CUSTOM_LLM_API_KEY_MASK for name in secret_headers}
+
+    create_response = await routes.create_custom_llm(
+        CustomLLMCreateRequest(
+            config=CustomLLMConfig(
+                display_name="Gemini Flex",
+                provider="gemini",
+                model_name="gemini-3-flash-preview",
+                api_key="test-key",
+                extra_parameters={"service_tier": "flex", "extra_headers": dict(secret_headers)},
+            )
+        ),
+        org,
+    )
+    custom_llm_id = create_response.custom_llm.id
+
+    try:
+        # Nested header credentials are masked on output, non-secret passthrough stays visible.
+        assert create_response.custom_llm.config.extra_parameters["extra_headers"] == masked_headers
+        assert create_response.custom_llm.config.extra_parameters["service_tier"] == "flex"
+        assert create_response.custom_llm.config.api_key == CUSTOM_LLM_API_KEY_MASK
+
+        list_response = await routes.list_custom_llms(org)
+        assert list_response.custom_llms[0].config.extra_parameters["extra_headers"] == masked_headers
+
+        # The registry keeps the real credentials so requests actually authenticate.
+        registered = LLMConfigRegistry.get_config(custom_llm_key(custom_llm_id))
+        assert registered.litellm_params
+        assert registered.litellm_params["extra_headers"] == secret_headers
+
+        # A no-op save that echoes the masked headers back restores the stored credentials.
+        update_response = await routes.update_custom_llm(
+            CustomLLMUpdateRequest(
+                config=CustomLLMConfig(
+                    display_name="Gemini Flex",
+                    provider="gemini",
+                    model_name="gemini-3-flash-preview",
+                    api_key=CUSTOM_LLM_API_KEY_MASK,
+                    extra_parameters={"service_tier": "flex", "extra_headers": dict(masked_headers)},
+                )
+            ),
+            custom_llm_id,
+            org,
+        )
+        assert update_response.custom_llm.config.extra_parameters["extra_headers"] == masked_headers
+
+        stored_config = CustomLLMConfig.model_validate_json(fake_organizations.tokens[0].token)
+        assert stored_config.extra_parameters["extra_headers"] == secret_headers
+        assert stored_config.api_key == "test-key"
+        registered_after = LLMConfigRegistry.get_config(custom_llm_key(custom_llm_id))
+        assert registered_after.litellm_params
+        assert registered_after.litellm_params["extra_headers"] == secret_headers
+    finally:
+        deregister_custom_llm_config(custom_llm_id)
+
+
+@pytest.mark.asyncio
+async def test_models_route_lists_only_current_org_custom_llms_with_unique_labels(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org("o_models_1")
+    other_org = _org("o_models_2")
+    custom_llm_ids: set[str] = set()
+
+    try:
+        first_response = await routes.create_custom_llm(
+            CustomLLMCreateRequest(
+                config=CustomLLMConfig(
+                    display_name="Local Llama",
+                    provider="ollama",
+                    model_name="llama3.1",
+                )
+            ),
+            org,
+        )
+        second_response = await routes.create_custom_llm(
+            CustomLLMCreateRequest(
+                config=CustomLLMConfig(
+                    display_name="Local Llama",
+                    provider="ollama",
+                    model_name="mistral",
+                )
+            ),
+            org,
+        )
+        other_response = await routes.create_custom_llm(
+            CustomLLMCreateRequest(
+                config=CustomLLMConfig(
+                    display_name="Other Org Llama",
+                    provider="ollama",
+                    model_name="llama3.1",
+                )
+            ),
+            other_org,
+        )
+        custom_llm_ids = {
+            first_response.custom_llm.id,
+            second_response.custom_llm.id,
+            other_response.custom_llm.id,
+        }
+
+        response = await agent_protocol.models(org)
+
+        first_model_name = custom_llm_model_name(first_response.custom_llm.id)
+        second_model_name = custom_llm_model_name(second_response.custom_llm.id)
+        other_model_name = custom_llm_model_name(other_response.custom_llm.id)
+        assert first_model_name in response.models
+        assert second_model_name in response.models
+        assert other_model_name not in response.models
+        first_label = response.models[first_model_name]
+        second_label = response.models[second_model_name]
+        assert first_response.custom_llm.id in first_label
+        assert second_response.custom_llm.id in second_label
+        assert first_label != second_label
+    finally:
+        for custom_llm_id in custom_llm_ids:
+            deregister_custom_llm_config(custom_llm_id)
+
+
+@pytest.mark.asyncio
+async def test_update_organization_accepts_valid_custom_llm_defaults(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org("o_defaults")
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="Default Llama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+    fake_organizations.update_organization = AsyncMock(
+        return_value=org.model_copy(
+            update={
+                "default_llm_key": custom_llm_key(token.id),
+                "default_secondary_llm_key": custom_llm_key(token.id),
+            }
+        )
+    )
+
+    try:
+        updated = await agent_protocol.update_organization(
+            OrganizationUpdate(
+                default_llm_key=custom_llm_key(token.id),
+                default_secondary_llm_key=custom_llm_key(token.id),
+            ),
+            org,
+        )
+    finally:
+        deregister_custom_llm_config(token.id)
+
+    assert updated.default_llm_key == custom_llm_key(token.id)
+    assert updated.default_secondary_llm_key == custom_llm_key(token.id)
+    update_args = fake_organizations.update_organization.await_args
+    assert update_args is not None
+    assert update_args.kwargs["default_llm_key"] == custom_llm_key(token.id)
+    assert update_args.kwargs["default_secondary_llm_key"] == custom_llm_key(token.id)
+
+
+@pytest.mark.asyncio
+async def test_update_organization_allows_unchanged_legacy_webhook_url(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    legacy_url = "https://service-123.us-east-1.elb.amazonaws.com/hook"
+    org = _org("o_legacy_webhook").model_copy(update={"webhook_callback_url": legacy_url})
+    fake_organizations.update_organization = AsyncMock(return_value=org)
+    update = OrganizationUpdate(webhook_callback_url=legacy_url, max_steps_per_run=10)
+
+    await agent_protocol.update_organization(update, org)
+
+    update_args = fake_organizations.update_organization.await_args
+    assert update_args is not None
+    assert update_args.kwargs["webhook_callback_url"] == legacy_url
+    assert update_args.kwargs["max_steps_per_run"] == 10
+
+
+@pytest.mark.asyncio
+async def test_update_organization_rejects_changed_raw_load_balancer_webhook_url(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org("o_changed_webhook")
+    update = OrganizationUpdate(webhook_callback_url="https://service-456.us-east-1.elb.amazonaws.com/hook")
+
+    with pytest.raises(SkyvernHTTPException, match="stable custom hostname"):
+        await agent_protocol.update_organization(update, org)
+
+    fake_organizations.update_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value_field", "clear_field"),
+    [
+        ("default_llm_key", "clear_default_llm_key"),
+        ("default_secondary_llm_key", "clear_default_secondary_llm_key"),
+    ],
+)
+async def test_update_organization_accepts_default_llm_clear(
+    fake_organizations: FakeOrganizationsRepository,
+    value_field: str,
+    clear_field: str,
+) -> None:
+    org = _org("o_clear_defaults")
+    fake_organizations.update_organization = AsyncMock(return_value=org)
+
+    await agent_protocol.update_organization(OrganizationUpdate(**{clear_field: True}), org)
+
+    update_args = fake_organizations.update_organization.await_args
+    assert update_args is not None
+    assert update_args.kwargs[value_field] is None
+    assert update_args.kwargs[clear_field] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value_field", "clear_field"),
+    [
+        ("default_llm_key", "clear_default_llm_key"),
+        ("default_secondary_llm_key", "clear_default_secondary_llm_key"),
+    ],
+)
+async def test_update_organization_rejects_default_llm_value_with_clear(
+    fake_organizations: FakeOrganizationsRepository,
+    value_field: str,
+    clear_field: str,
+) -> None:
+    org = _org("o_ambiguous_defaults")
+    fake_organizations.update_organization = AsyncMock(return_value=org)
+
+    with pytest.raises(agent_protocol.HTTPException) as exc_info:
+        await agent_protocol.update_organization(
+            OrganizationUpdate(**{value_field: "CUSTOM_LLM_oat_custom", clear_field: True}),
+            org,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert clear_field in exc_info.value.detail
+    fake_organizations.update_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_organization_rejects_custom_llm_from_another_org(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    owner_org = _org("o_default_owner")
+    requester_org = _org("o_default_requester")
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=owner_org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="Owner Llama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+    fake_organizations.update_organization = AsyncMock(return_value=requester_org)
+
+    with pytest.raises(agent_protocol.HTTPException) as exc_info:
+        await agent_protocol.update_organization(
+            OrganizationUpdate(default_llm_key=custom_llm_key(token.id)),
+            requester_org,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "default_llm_key" in exc_info.value.detail
+    fake_organizations.update_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_update_organization_rejects_garbage_default_llm_key(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org("o_garbage_default")
+    fake_organizations.update_organization = AsyncMock(return_value=org)
+
+    with pytest.raises(agent_protocol.HTTPException) as exc_info:
+        await agent_protocol.update_organization(
+            OrganizationUpdate(default_secondary_llm_key="not-a-custom-llm"),
+            org,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "default_secondary_llm_key" in exc_info.value.detail
+    fake_organizations.update_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_custom_llm_routes_allow_multiple_registered_configs(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org()
+    custom_llm_ids: set[str] = set()
+
+    try:
+        ollama_response = await routes.create_custom_llm(
+            CustomLLMCreateRequest(
+                config=CustomLLMConfig(
+                    display_name="Local Llama",
+                    provider="ollama",
+                    model_name="llama3.1",
+                )
+            ),
+            org,
+        )
+        openrouter_response = await routes.create_custom_llm(
+            CustomLLMCreateRequest(
+                config=CustomLLMConfig(
+                    display_name="OpenRouter Claude",
+                    provider="openrouter",
+                    model_name="anthropic/claude-3.5-sonnet",
+                    api_key="sk-or",
+                )
+            ),
+            org,
+        )
+
+        custom_llm_ids = {ollama_response.custom_llm.id, openrouter_response.custom_llm.id}
+        list_response = await routes.list_custom_llms(org)
+        assert {custom_llm.id for custom_llm in list_response.custom_llms} == custom_llm_ids
+
+        mapping = settings.get_model_name_to_llm_key(organization_id=org.organization_id)
+        for custom_llm_id in custom_llm_ids:
+            llm_key = custom_llm_key(custom_llm_id)
+            assert LLMConfigRegistry.is_registered(llm_key)
+            assert custom_llm_model_name(custom_llm_id) in mapping
+            assert mapping[custom_llm_model_name(custom_llm_id)]["llm_key"] == llm_key
+
+        assert LLMConfigRegistry.get_config(custom_llm_key(ollama_response.custom_llm.id)).model_name == (
+            "ollama_chat/llama3.1"
+        )
+        assert LLMConfigRegistry.get_config(custom_llm_key(openrouter_response.custom_llm.id)).model_name == (
+            "openrouter/anthropic/claude-3.5-sonnet"
+        )
+    finally:
+        for custom_llm_id in custom_llm_ids:
+            deregister_custom_llm_config(custom_llm_id)
+
+
+def test_custom_llm_model_mappings_require_organization_scope() -> None:
+    org_custom_llm_id = "oat_custom_mapping_org"
+    other_custom_llm_id = "oat_custom_mapping_other"
+    register_custom_llm_config(
+        org_custom_llm_id,
+        "o_mapping_org",
+        CustomLLMConfig(
+            display_name="Org Llama",
+            provider="ollama",
+            model_name="llama3.1",
+        ),
+    )
+    register_custom_llm_config(
+        other_custom_llm_id,
+        "o_mapping_other",
+        CustomLLMConfig(
+            display_name="Other Llama",
+            provider="ollama",
+            model_name="mistral",
+        ),
+    )
+
+    try:
+        assert get_custom_llm_model_mappings() == {}
+        org_mapping = get_custom_llm_model_mappings("o_mapping_org")
+        assert custom_llm_model_name(org_custom_llm_id) in org_mapping
+        assert custom_llm_model_name(other_custom_llm_id) not in org_mapping
+    finally:
+        deregister_custom_llm_config(org_custom_llm_id)
+        deregister_custom_llm_config(other_custom_llm_id)
+
+
+def test_cloud_custom_llm_api_base_blocks_local_targets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(SettingsManager.get_settings(), "ALLOW_CUSTOM_LLM_LOCAL_API_BASES", False, raising=False)
+
+    with pytest.raises(ValueError, match="blocked"):
+        CustomLLMConfig(
+            display_name="Cloud Ollama",
+            provider="ollama",
+            model_name="llama3.1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_cloud_custom_llm_create_blocks_private_dns_answer_before_write(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    monkeypatch.setattr(SettingsManager.get_settings(), "ALLOW_CUSTOM_LLM_LOCAL_API_BASES", False, raising=False)
+    resolver = MagicMock(return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("172.16.0.42", 443))])
+    monkeypatch.setattr("skyvern.utils.url_validators.socket.getaddrinfo", resolver)
+
+    request = CustomLLMCreateRequest(
+        config=CustomLLMConfig(
+            display_name="Cloud endpoint",
+            provider="openai_compatible",
+            model_name="example-model",
+            api_base="https://llm.example.test/v1",
+            api_key="test-key",
+        )
+    )
+    resolver.assert_not_called()
+
+    with pytest.raises(BlockedHost):
+        await routes.create_custom_llm(request, _org())
+
+    assert fake_organizations.tokens == []
+
+
+def test_stored_custom_llm_validation_allows_legacy_api_base_without_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(SettingsManager.get_settings(), "ALLOW_CUSTOM_LLM_LOCAL_API_BASES", False, raising=False)
+    resolver = MagicMock(side_effect=AssertionError("stored custom LLM reads must not resolve DNS"))
+    monkeypatch.setattr("skyvern.utils.url_validators.socket.getaddrinfo", resolver)
+
+    CustomLLMConfig.model_validate_json(
+        '{"display_name":"Stored endpoint","provider":"openrouter","model_name":"example/model",'
+        '"api_base":"https://gateway.example.test/v1","api_key":"test-key"}'
+    )
+
+    resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "api_base", "error"),
+    [
+        ("openai_compatible", "http://llm.example.test/v1", "Cloud api_base must use HTTPS on port 443"),
+        ("openai_compatible", "https://llm.example.test:8443/v1", "Cloud api_base must use HTTPS on port 443"),
+        ("openrouter", "https://gateway.example.test/v1", "OpenRouter api_base must use openrouter.ai"),
+    ],
+)
+async def test_cloud_custom_llm_api_base_restrictions_apply_only_at_write_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    api_base: str,
+    error: str,
+) -> None:
+    monkeypatch.setattr(SettingsManager.get_settings(), "ALLOW_CUSTOM_LLM_LOCAL_API_BASES", False, raising=False)
+    config = CustomLLMConfig(
+        display_name="Cloud endpoint",
+        provider=provider,  # type: ignore[arg-type]
+        model_name="example/model",
+        api_base=api_base,
+        api_key="test-key",
+    )
+    with pytest.raises(routes.HTTPException, match=error):
+        await routes._validate_custom_llm_api_base(config)
+
+
+def test_custom_llm_api_base_allows_local_targets_for_self_hosted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(SettingsManager.get_settings(), "ALLOW_CUSTOM_LLM_LOCAL_API_BASES", True, raising=False)
+
+    config = CustomLLMConfig(
+        display_name="Local Ollama",
+        provider="ollama",
+        model_name="llama3.1",
+    )
+
+    assert config.api_base == "http://localhost:11434"
+
+
+@pytest.mark.asyncio
+async def test_task_v2_metadata_uses_selected_custom_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    monkeypatch.setattr(
+        "skyvern.utils.url_validators.socket.getaddrinfo",
+        lambda host, port, *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", port or 0))],
+    )
+    org = _org()
+    custom_llm_id = "oat_custom_metadata"
+    register_custom_llm_config(
+        custom_llm_id,
+        org.organization_id,
+        CustomLLMConfig(
+            display_name="Metadata Ollama",
+            provider="ollama",
+            model_name="llama3.1",
+        ),
+    )
+    now = datetime.now(timezone.utc)
+    task_v2 = TaskV2(
+        task_id="tsk_v2_custom",
+        status=TaskV2Status.created,
+        organization_id=org.organization_id,
+        workflow_run_id="wr_custom",
+        workflow_id="wf_custom",
+        workflow_permanent_id="wpid_custom",
+        prompt="Use the selected model",
+        url=None,
+        model={"model_name": custom_llm_model_name(custom_llm_id)},
+        created_at=now,
+        modified_at=now,
+    )
+    workflow = SimpleNamespace(workflow_id="wf_custom", workflow_permanent_id="wpid_custom")
+    workflow_run = SimpleNamespace(workflow_run_id="wr_custom")
+    thought = SimpleNamespace(observer_thought_id="ot_custom")
+    observer = SimpleNamespace(
+        create_thought=AsyncMock(return_value=thought),
+        update_thought=AsyncMock(),
+        update_task_v2=AsyncMock(return_value=task_v2),
+    )
+    fake_db = SimpleNamespace(
+        organizations=fake_organizations,
+        observer=observer,
+        workflows=SimpleNamespace(update_workflow=AsyncMock()),
+        tasks=SimpleNamespace(get_run=AsyncMock(return_value=None), update_task_run=AsyncMock()),
+    )
+    default_handler = AsyncMock(side_effect=AssertionError("default LLM handler should not be used"))
+    custom_handler = AsyncMock(
+        return_value={
+            "url": "https://example.com",
+            "title": "Custom metadata",
+            "thoughts": "Used selected custom model",
+        }
+    )
+
+    def fake_get_override_llm_api_handler(override_llm_key: str | None, *, default: object) -> object:
+        assert override_llm_key == custom_llm_key(custom_llm_id)
+        assert default is default_handler
+        return custom_handler
+
+    monkeypatch.setattr(task_v2_service.app, "DATABASE", fake_db)
+    monkeypatch.setattr(task_v2_service.app, "LLM_API_HANDLER", default_handler)
+    monkeypatch.setattr(
+        task_v2_service.LLMAPIHandlerFactory,
+        "get_override_llm_api_handler",
+        fake_get_override_llm_api_handler,
+    )
+
+    try:
+        await task_v2_service.initialize_task_v2_metadata(
+            organization=org,
+            task_v2=task_v2,
+            workflow=workflow,
+            workflow_run=workflow_run,
+            user_prompt="Use the selected model",
+            current_browser_url=None,
+            user_url="https://example.com",
+        )
+    finally:
+        deregister_custom_llm_config(custom_llm_id)
+
+    custom_handler.assert_awaited_once()
+    default_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_task_v2_validation_registers_custom_llm_on_demand(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org()
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="On Demand Ollama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+    deregister_custom_llm_config(token.id)
+
+    await task_v2_service._validate_task_v2_model_for_org(org, {"model_name": custom_llm_model_name(token.id)})
+
+    assert LLMConfigRegistry.is_registered(custom_llm_key(token.id))
+    deregister_custom_llm_config(token.id)
+
+
+@pytest.mark.asyncio
+async def test_task_v1_validation_registers_custom_llm_on_demand(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    org = _org()
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="Task V1 Ollama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+    deregister_custom_llm_config(token.id)
+
+    await task_v1_service._validate_task_v1_model_for_org(org, {"model_name": custom_llm_model_name(token.id)})
+
+    assert LLMConfigRegistry.is_registered(custom_llm_key(token.id))
+    deregister_custom_llm_config(token.id)
+
+
+@pytest.mark.asyncio
+async def test_task_v1_rejects_custom_llm_from_another_org(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    owner_org = _org("o_task_v1_owner")
+    requester_org = _org("o_task_v1_requester")
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=owner_org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="Task V1 Owner Llama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+
+    with pytest.raises(task_v1_service.InvalidTaskV1ModelError):
+        await task_v1_service._validate_task_v1_model_for_org(
+            requester_org,
+            {"model_name": custom_llm_model_name(token.id)},
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_v2_rejects_custom_llm_from_another_org(
+    fake_organizations: FakeOrganizationsRepository,
+) -> None:
+    owner_org = _org("o_owner")
+    requester_org = _org("o_requester")
+    token = await fake_organizations.create_org_auth_token(
+        organization_id=owner_org.organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=CustomLLMConfig(
+            display_name="Owner Llama",
+            provider="ollama",
+            model_name="llama3.1",
+        ).model_dump_json(),
+    )
+
+    with pytest.raises(task_v2_service.InvalidTaskV2ModelError):
+        await task_v2_service._validate_task_v2_model_for_org(
+            requester_org,
+            {"model_name": custom_llm_model_name(token.id)},
+        )
+
+
+def test_task_v2_selected_non_custom_model_override_is_intentional(monkeypatch: pytest.MonkeyPatch) -> None:
+    org = _org()
+    now = datetime.now(timezone.utc)
+    task_v2 = TaskV2(
+        task_id="tsk_v2_non_custom",
+        status=TaskV2Status.created,
+        organization_id=org.organization_id,
+        workflow_run_id="wr_non_custom",
+        workflow_id="wf_non_custom",
+        workflow_permanent_id="wpid_non_custom",
+        prompt="Use the selected non-custom model",
+        url=None,
+        model={"model_name": "gemini-3.0-flash"},
+        created_at=now,
+        modified_at=now,
+    )
+    default_handler = object()
+    selected_handler = object()
+
+    def fake_get_override_llm_api_handler(override_llm_key: str | None, *, default: object) -> object:
+        assert override_llm_key == task_v2.llm_key
+        assert override_llm_key is not None
+        assert default is default_handler
+        return selected_handler
+
+    monkeypatch.setattr(task_v2_service.app, "LLM_API_HANDLER", default_handler)
+    monkeypatch.setattr(
+        task_v2_service.LLMAPIHandlerFactory,
+        "get_override_llm_api_handler",
+        fake_get_override_llm_api_handler,
+    )
+
+    assert task_v2_service._get_task_v2_llm_api_handler(task_v2) is selected_handler
+
+
+def test_custom_llm_extra_parameters_flow_into_litellm_params() -> None:
+    custom_llm_id = "oat_custom_extra_params"
+    register_custom_llm_config(
+        custom_llm_id,
+        "o_test",
+        CustomLLMConfig(
+            display_name="Gemini Flex",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+            api_key="test-key",
+            extra_parameters={
+                "service_tier": "flex",
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+                "extra_headers": {"X-Trace": "on"},
+            },
+        ),
+    )
+
+    try:
+        llm_config = LLMConfigRegistry.get_config(custom_llm_key(custom_llm_id))
+    finally:
+        deregister_custom_llm_config(custom_llm_id)
+
+    assert llm_config.model_name == "gemini/gemini-3-flash-preview"
+    assert llm_config.litellm_params
+    assert llm_config.litellm_params["service_tier"] == "flex"
+    assert llm_config.litellm_params["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert llm_config.litellm_params["extra_headers"] == {"X-Trace": "on"}
+    # Provider-managed connection params survive the passthrough merge.
+    assert llm_config.litellm_params["api_key"] == "test-key"
+
+
+def test_gemini_provider_requires_api_key() -> None:
+    with pytest.raises(ValueError, match="api_key is required for Gemini"):
+        CustomLLMConfig(
+            display_name="Gemini",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+        )
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    ["model", "api_key", "api_base", "messages", "MODEL_INFO", " api_key ", "drop_params", "stream", "tools"],
+)
+def test_custom_llm_extra_parameters_reject_reserved_keys(reserved_key: str) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        CustomLLMConfig(
+            display_name="Reserved",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+            api_key="test-key",
+            extra_parameters={reserved_key: "value"},
+        )
+
+
+def test_custom_llm_extra_parameters_reject_too_many() -> None:
+    with pytest.raises(ValueError, match="at most 30 keys"):
+        CustomLLMConfig(
+            display_name="Too Many",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+            api_key="test-key",
+            extra_parameters={f"param_{index}": index for index in range(31)},
+        )
+
+
+def test_custom_llm_extra_parameters_reject_oversized() -> None:
+    with pytest.raises(ValueError, match="bytes"):
+        CustomLLMConfig(
+            display_name="Too Big",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+            api_key="test-key",
+            extra_parameters={"blob": "x" * 11_000},
+        )
+
+
+def test_custom_llm_passthrough_parameters_excludes_connection_keys() -> None:
+    from skyvern.forge.sdk.api.llm.custom_llm_registry import custom_llm_passthrough_parameters
+
+    params = {
+        "api_key": "k",
+        "api_base": "https://openrouter.ai/api/v1",
+        "api_version": "v",
+        "model_info": {"model_name": "m"},
+        "top_p": 0.2,
+        "extra_headers": {"X-Trace": "on"},
+    }
+    assert custom_llm_passthrough_parameters(params) == {"top_p": 0.2, "extra_headers": {"X-Trace": "on"}}
+    assert custom_llm_passthrough_parameters(None) == {}
+
+
+def test_custom_gemini_thinking_budget_is_owned_and_not_overwritten() -> None:
+    custom_llm_id = "oat_custom_gemini_thinking"
+    register_custom_llm_config(
+        custom_llm_id,
+        "o_test",
+        CustomLLMConfig(
+            display_name="Gemini Thinking",
+            provider="gemini",
+            model_name="gemini-3-flash-preview",
+            api_key="test-key",
+            extra_parameters={"thinking": {"type": "enabled", "budget_tokens": 4096}},
+        ),
+    )
+
+    try:
+        llm_key = custom_llm_key(custom_llm_id)
+        llm_config = LLMConfigRegistry.get_config(llm_key)
+        # Replicate the single-handler merge: get_api_parameters + the shallow litellm_params update
+        # that shares the nested thinking dict retained on the frozen config.
+        active_parameters: dict = {}
+        active_parameters.update(LLMAPIHandlerFactory.get_api_parameters(llm_config))
+        active_parameters.update(llm_config.litellm_params)
+
+        # The guard recognizes the customer-owned budget, so the handler skips the default
+        # optimization and the customer's 4096 budget reaches the provider unchanged.
+        assert LLMAPIHandlerFactory._custom_llm_owns_thinking(llm_key, active_parameters) is True
+        assert active_parameters["thinking"]["budget_tokens"] == 4096
+
+        # Sanity: had the optimization run, it would both clobber the budget and mutate the shared
+        # dict retained on llm_config.litellm_params — which is exactly what the guard prevents.
+        LLMAPIHandlerFactory._apply_gemini_thinking_optimization(active_parameters, 128, llm_config, "extract-action")
+        assert active_parameters["thinking"]["budget_tokens"] == 128
+        assert llm_config.litellm_params["thinking"]["budget_tokens"] == 128
+    finally:
+        deregister_custom_llm_config(custom_llm_id)
+
+
+def test_non_custom_key_never_owns_thinking() -> None:
+    assert (
+        LLMAPIHandlerFactory._custom_llm_owns_thinking("GEMINI_3_0_FLASH", {"thinking": {"budget_tokens": 1}}) is False
+    )
+
+
+def test_custom_ollama_chat_models_skip_max_token_parameters() -> None:
+    custom_llm_id = "oat_custom_ollama_params"
+    register_custom_llm_config(
+        custom_llm_id,
+        "o_test",
+        CustomLLMConfig(
+            display_name="Ollama Params",
+            provider="ollama",
+            model_name="llama3.1",
+            max_completion_tokens=1024,
+            temperature=0.1,
+        ),
+    )
+
+    try:
+        llm_config = LLMConfigRegistry.get_config(custom_llm_key(custom_llm_id))
+        params = LLMAPIHandlerFactory.get_api_parameters(llm_config)
+    finally:
+        deregister_custom_llm_config(custom_llm_id)
+
+    assert "max_completion_tokens" not in params
+    assert "max_tokens" not in params
+    assert params["temperature"] == 0.1
+
+
+_LEAK_CANARY = "custom-llm-leak-canary"
+_INVALID_CONFIG_JSON = '{"provider": "gemini", "api_key": "' + _LEAK_CANARY + '"}'
+_ALLOWED_WARNING_KEYS = {"event", "log_level", "custom_llm_id", "organization_id", "error_type"}
+
+
+def _invalid_custom_llm_token(token_id: str, organization_id: str) -> OrganizationAuthToken:
+    now = datetime.now(timezone.utc)
+    return OrganizationAuthToken(
+        id=token_id,
+        organization_id=organization_id,
+        token_type=OrganizationAuthTokenType.custom_llm,
+        token=_INVALID_CONFIG_JSON,
+        valid=True,
+        created_at=now,
+        modified_at=now,
+    )
+
+
+def _skipping_warnings(logs: list[dict]) -> list[dict]:
+    return [entry for entry in logs if entry.get("event") == "Skipping invalid custom LLM config"]
+
+
+def _assert_no_payload_leak(logs: list[dict]) -> None:
+    assert _LEAK_CANARY not in repr(logs)
+    for entry in _skipping_warnings(logs):
+        assert set(entry) <= _ALLOWED_WARNING_KEYS
+        for forbidden in ("token", "api_key", "api_base", "config", "exception", "exc_info", "traceback"):
+            assert forbidden not in entry
+
+
+@pytest.mark.asyncio
+async def test_load_all_orgs_warns_with_organization_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(custom_llm_registry, "_custom_llm_configs", {})
+    organizations = FakeOrganizationsRepository()
+    organizations.tokens.append(_invalid_custom_llm_token("oat_batch_invalid", "o_batch"))
+    database = SimpleNamespace(organizations=organizations)
+
+    with structlog.testing.capture_logs() as logs:
+        await custom_llm_registry.load_custom_llm_configs_from_database(database)
+
+    warnings = _skipping_warnings(logs)
+    assert len(warnings) == 1
+    assert warnings[0]["organization_id"] == "o_batch"
+    assert warnings[0]["custom_llm_id"] == "oat_batch_invalid"
+    assert warnings[0]["error_type"] == "ValidationError"
+    _assert_no_payload_leak(logs)
+
+
+@pytest.mark.asyncio
+async def test_load_org_configs_warns_with_organization_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(custom_llm_registry, "_custom_llm_configs", {})
+    organizations = FakeOrganizationsRepository()
+    organizations.tokens.append(_invalid_custom_llm_token("oat_org_invalid", "o_single"))
+    database = SimpleNamespace(organizations=organizations)
+
+    with structlog.testing.capture_logs() as logs:
+        await custom_llm_registry.load_custom_llm_configs_for_organization(database, "o_single")
+
+    warnings = _skipping_warnings(logs)
+    assert len(warnings) == 1
+    assert warnings[0]["organization_id"] == "o_single"
+    assert warnings[0]["custom_llm_id"] == "oat_org_invalid"
+    assert warnings[0]["error_type"] == "ValidationError"
+    _assert_no_payload_leak(logs)
+
+
+@pytest.mark.asyncio
+async def test_ensure_registered_warns_with_organization_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(custom_llm_registry, "_custom_llm_configs", {})
+    organizations = FakeOrganizationsRepository()
+    organizations.tokens.append(_invalid_custom_llm_token("oat_ensure_invalid", "o_ensure"))
+    database = SimpleNamespace(organizations=organizations)
+
+    with structlog.testing.capture_logs() as logs:
+        registered = await custom_llm_registry.ensure_custom_llm_registered_for_org(
+            "oat_ensure_invalid", "o_ensure", database
+        )
+
+    assert registered is False
+    warnings = _skipping_warnings(logs)
+    assert len(warnings) == 1
+    assert warnings[0]["organization_id"] == "o_ensure"
+    assert warnings[0]["custom_llm_id"] == "oat_ensure_invalid"
+    assert warnings[0]["error_type"] == "ValidationError"
+    _assert_no_payload_leak(logs)

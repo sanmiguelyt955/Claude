@@ -1,0 +1,1202 @@
+// @vitest-environment jsdom
+
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { WorkflowScopeContext } from "@/routes/workflows/editor/WorkflowScopeContext";
+import { useCopilotActionStore } from "@/store/useCopilotActionStore";
+import {
+  beginCopilotAcceptance,
+  beginSaveTransaction,
+  createYamlCommitOwner,
+  finishCopilotAcceptance,
+  finishSaveTransaction,
+  registerEditorOwner,
+  useWorkflowYamlEditorStore,
+} from "@/store/WorkflowYamlEditorStore";
+import {
+  getWorkflowBlocks,
+  getWorkflowErrors,
+} from "@/routes/workflows/editor/workflowEditorUtils";
+
+import { CodeBlockEditor } from "./CodeBlockEditor";
+import { codeBlockNodeDefaultData, type CodeBlockNodeData } from "./types";
+import { navigationNodeDefaultData } from "../NavigationNode/types";
+import type { WorkflowStartNodeData } from "../StartNode/types";
+
+const baseData: CodeBlockNodeData = {
+  debuggable: true,
+  editable: true,
+  label: "code_block",
+  code: "print(1)",
+  continueOnFailure: false,
+  parameterKeys: [],
+  errorCodeMapping: "null",
+  prompt: null,
+  steps: null,
+  dataSchema: "null",
+  userOwnedGoal: null,
+  goalNeedsRegeneration: null,
+  codeEditedByHand: null,
+  model: null,
+};
+
+const node = {
+  id: "cb1",
+  type: "codeBlock",
+  data: { ...baseData },
+};
+
+const updateNodeData = vi.fn();
+let workflowErrorCodeMapping: Record<string, string> | null = null;
+
+vi.mock("@xyflow/react", () => ({
+  useNodes: () => [
+    {
+      id: "start",
+      type: "start",
+      data: { errorCodeMapping: workflowErrorCodeMapping },
+    },
+    node,
+  ],
+  useReactFlow: () => ({
+    getNode: () => node,
+    updateNodeData,
+  }),
+}));
+
+vi.mock("..", () => ({
+  errorMappingExampleValue: {
+    sample_invalid_credentials: "if the credentials are incorrect, terminate",
+  },
+  isWorkflowBlockNode: () => true,
+}));
+
+vi.mock("@/routes/workflows/editor/ErrorCodeMappingEditor", () => ({
+  ErrorCodeMappingEditor: ({
+    value,
+    onChange,
+  }: {
+    value: string;
+    onChange: (value: string) => void;
+  }) => (
+    <textarea
+      data-testid="error-code-mapping-editor"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
+}));
+
+vi.mock("@/components/WorkflowBlockInputSet", () => ({
+  WorkflowBlockInputSet: () => null,
+}));
+
+vi.mock(
+  "@/components/DataSchemaInputGroup/WorkflowDataSchemaInputGroup",
+  () => ({
+    WorkflowDataSchemaInputGroup: () => (
+      <div data-testid="data-schema-input-group" />
+    ),
+  }),
+);
+
+vi.mock("@/components/WorkflowBlockInputTextarea", () => ({
+  WorkflowBlockInputTextarea: ({
+    value,
+    onChange,
+    disabled,
+  }: {
+    value?: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+  }) => (
+    <textarea
+      data-testid="block-input-textarea"
+      value={value ?? ""}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
+}));
+
+vi.mock("@/routes/workflows/components/CodeEditor", () => ({
+  CodeEditor: ({
+    readOnly,
+    extraExtensions,
+    value,
+    onChange,
+  }: {
+    readOnly?: boolean;
+    extraExtensions?: Array<unknown>;
+    value?: string;
+    onChange?: (value: string) => void;
+  }) => (
+    <textarea
+      data-testid="code-editor"
+      data-readonly={String(Boolean(readOnly))}
+      data-extension-count={String(extraExtensions?.length ?? 0)}
+      value={value ?? ""}
+      onChange={(event) => onChange?.(event.target.value)}
+    />
+  ),
+}));
+
+beforeEach(() => {
+  useWorkflowYamlEditorStore.setState(
+    useWorkflowYamlEditorStore.getInitialState(),
+  );
+  useCopilotActionStore.setState(useCopilotActionStore.getInitialState());
+  node.data = { ...baseData };
+  updateNodeData.mockClear();
+  workflowErrorCodeMapping = null;
+});
+
+afterEach(cleanup);
+afterEach(() => {
+  useCopilotActionStore.setState({
+    pendingBuild: null,
+    generatingBlockLabel: null,
+    queuedBuilds: [],
+  });
+});
+
+describe("save-time error code mapping validation", () => {
+  const createCodeBlock = (
+    errorCodeMapping: string,
+    code: string = baseData.code,
+  ) => ({
+    id: "code-1",
+    type: "codeBlock" as const,
+    position: { x: 0, y: 0 },
+    data: {
+      ...baseData,
+      label: "code_block",
+      errorCodeMapping,
+      code,
+    },
+  });
+
+  const createWorkflowStart = (
+    errorCodeMapping: Record<string, string> | null,
+  ) => ({
+    id: "start",
+    type: "start" as const,
+    position: { x: 0, y: 0 },
+    data: {
+      withWorkflowSettings: true as const,
+      errorCodeMapping,
+    } as WorkflowStartNodeData,
+  });
+
+  test("rejects malformed JSON with the same error as Navigation", () => {
+    const malformedMapping = "{not json";
+    const codeErrors = getWorkflowErrors([createCodeBlock(malformedMapping)]);
+    const navigationErrors = getWorkflowErrors([
+      {
+        id: "navigation-1",
+        type: "navigation",
+        position: { x: 0, y: 0 },
+        data: {
+          ...navigationNodeDefaultData,
+          label: "code_block",
+          navigationGoal: "Navigate",
+          errorCodeMapping: malformedMapping,
+        },
+      },
+    ]);
+
+    expect(codeErrors).toEqual(navigationErrors);
+    expect(codeErrors).toHaveLength(1);
+    expect(codeErrors[0]).toContain("code_block");
+    expect(codeErrors[0]).toContain("Error messages are not valid JSON");
+  });
+
+  test.each(["null", ""])(
+    "allows a cleared mapping (%j) and serializes it to null",
+    (errorCodeMapping) => {
+      const codeBlock = createCodeBlock(errorCodeMapping);
+
+      expect(getWorkflowErrors([codeBlock])).toEqual([]);
+      expect(getWorkflowBlocks([codeBlock], [])[0]).toMatchObject({
+        error_code_mapping: null,
+      });
+    },
+  );
+
+  test("allows a valid mapping and round-trips it unchanged", () => {
+    const mapping = { FAILED: "the code failed" };
+    const codeBlock = createCodeBlock(JSON.stringify(mapping));
+
+    expect(getWorkflowErrors([codeBlock])).toEqual([]);
+    expect(getWorkflowBlocks([codeBlock], [])[0]).toMatchObject({
+      error_code_mapping: mapping,
+    });
+  });
+
+  test("rejects an undeclared raised error code", () => {
+    const errors = getWorkflowErrors([
+      createCodeBlock("null", "raise ErrorCode('NEW_CODE', 'reason')"),
+    ]);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("code_block");
+    expect(errors[0]).toContain("NEW_CODE");
+  });
+
+  test("allows a declared but unused error code", () => {
+    expect(
+      getWorkflowErrors([
+        createCodeBlock(JSON.stringify({ UNUSED: "draft description" })),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("rejects malformed ErrorCode usage", () => {
+    const errors = getWorkflowErrors([
+      createCodeBlock("null", "raise ErrorCode(code, 'reason')"),
+    ]);
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("code_block");
+    expect(errors[0]).toContain("line 1");
+  });
+
+  test("allows a declared and raised error code", () => {
+    expect(
+      getWorkflowErrors([
+        createCodeBlock(
+          JSON.stringify({ DECLARED: "known failure" }),
+          "raise ErrorCode('DECLARED', 'reason')",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("allows a raise declared in the workflow-level manifest", () => {
+    expect(
+      getWorkflowErrors([
+        createWorkflowStart({ INHERITED: "workflow failure" }),
+        createCodeBlock("null", "raise ErrorCode('INHERITED', 'reason')"),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("CodeBlockEditor returned data schema", () => {
+  test("shows a copilot-authored schema read-only under the Goal", () => {
+    const schema = JSON.stringify(
+      { type: "object", properties: { total: { type: "string" } } },
+      null,
+      2,
+    );
+    node.data = { ...baseData, ...codeFirstData, dataSchema: schema };
+    renderEditor();
+
+    const pre = screen.getByTestId("code-block-data-schema");
+    expect(pre.textContent).toBe(schema);
+    expect(pre.tagName).toBe("PRE");
+  });
+
+  test("renders nothing for a block without a schema", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    expect(screen.queryByTestId("code-block-data-schema")).toBeNull();
+  });
+});
+
+function renderEditor(readOnly: boolean = false) {
+  return render(
+    <WorkflowScopeContext.Provider value={{ workflowId: "w", readOnly }}>
+      <CodeBlockEditor blockId="cb1" />
+    </WorkflowScopeContext.Provider>,
+  );
+}
+
+function switchToCode() {
+  fireEvent.click(screen.getByRole("button", { name: /Code/ }));
+}
+
+const codeFirstData: Partial<CodeBlockNodeData> = {
+  prompt: "Open {{ url }}",
+  steps: [{ description: "Open the page", action_type: "goto_url" }],
+};
+
+describe("CodeBlockEditor in a read-only scope", () => {
+  test("keeps the code editor editable in the live editor scope", () => {
+    renderEditor(false);
+
+    expect(
+      screen.getByTestId("code-editor").getAttribute("data-readonly"),
+    ).toBe("false");
+  });
+
+  // CodeMirror buffers edits locally, so the displayed historical code must be read-only here.
+  test("renders the code editor read-only in a read-only comparison scope", () => {
+    renderEditor(true);
+
+    expect(
+      screen.getByTestId("code-editor").getAttribute("data-readonly"),
+    ).toBe("true");
+  });
+});
+
+test("wires Jinja highlighting and Python syntax diagnostics into the code editor", () => {
+  renderEditor();
+
+  // Jinja contributes 2 extensions; Python diagnostics add a linter and gutter.
+  expect(
+    screen.getByTestId("code-editor").getAttribute("data-extension-count"),
+  ).toBe("4");
+});
+
+describe("CodeBlockEditor error messages", () => {
+  const sampleMapping = JSON.stringify(
+    {
+      sample_invalid_credentials: "if the credentials are incorrect, terminate",
+    },
+    null,
+    2,
+  );
+
+  const expectToRenderBefore = (first: HTMLElement, second: HTMLElement) => {
+    expect(
+      first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  };
+
+  test("renders error messages below the code in the code view", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+    switchToCode();
+
+    expectToRenderBefore(
+      screen.getByText("Code Input"),
+      screen.getByText("Error Messages"),
+    );
+  });
+
+  test("renders error messages below the steps card in the plain view", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    expectToRenderBefore(
+      screen.getByText("Open the page"),
+      screen.getByText("Error Messages"),
+    );
+  });
+
+  test("toggles the Navigation-compatible editor", () => {
+    renderEditor();
+    expect(screen.getByText("Error Messages")).toBeTruthy();
+    expect(screen.queryByTestId("error-code-mapping-editor")).toBeNull();
+
+    fireEvent.click(screen.getByRole("switch"));
+    expect(updateNodeData).toHaveBeenLastCalledWith("cb1", {
+      errorCodeMapping: sampleMapping,
+    });
+
+    node.data = { ...baseData, errorCodeMapping: sampleMapping };
+    cleanup();
+    renderEditor();
+    expect(screen.getByTestId("error-code-mapping-editor")).toBeTruthy();
+    fireEvent.click(screen.getByRole("switch"));
+    expect(updateNodeData).toHaveBeenLastCalledWith("cb1", {
+      errorCodeMapping: "null",
+    });
+  });
+
+  test("renders the editor in both views", () => {
+    node.data = {
+      ...baseData,
+      ...codeFirstData,
+      errorCodeMapping: sampleMapping,
+    };
+    renderEditor();
+    expect(screen.getByTestId("error-code-mapping-editor")).toBeTruthy();
+    switchToCode();
+    expect(screen.getByTestId("error-code-mapping-editor")).toBeTruthy();
+  });
+
+  test("shows effective-manifest advisory statuses without disabling Generate", () => {
+    workflowErrorCodeMapping = {
+      workflow_only: "workflow declaration",
+      matched: "workflow value overridden by block",
+    };
+    node.data = {
+      ...baseData,
+      ...codeFirstData,
+      code: [
+        'raise ErrorCode("matched", "reason")',
+        'raise ErrorCode("raised_only", "reason")',
+        'raise ErrorCode("workflow_only", "reason")',
+        "raise ErrorCode(dynamic_code, 'reason')",
+      ].join("\n"),
+      errorCodeMapping: JSON.stringify({
+        matched: "block override",
+        declared_only: "unused block entry",
+      }),
+    };
+    renderEditor();
+
+    expect(screen.getByText("matched — raised on line 1")).toBeTruthy();
+    expect(screen.getByText("workflow_only — raised on line 3")).toBeTruthy();
+    expect(
+      screen.getByText("declared_only — declared, not raised"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("raised_only — raised on line 2, not declared"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Malformed/nonliteral ErrorCode raises (ErrorCode cannot be imported or aliased) — line 4",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Regenerate block",
+      }).disabled,
+    ).toBe(false);
+  });
+
+  test("caps rendered synchronization diagnostics", () => {
+    node.data = {
+      ...baseData,
+      ...codeFirstData,
+      code: "return {'ok': True}",
+      errorCodeMapping: JSON.stringify(
+        Object.fromEntries(
+          Array.from({ length: 55 }, (_, index) => [
+            `unused_${index}`,
+            `condition ${index}`,
+          ]),
+        ),
+      ),
+    };
+
+    renderEditor();
+
+    const status = screen.getByLabelText(
+      "Error message synchronization status",
+    );
+    expect(status.querySelectorAll("li")).toHaveLength(51);
+    expect(screen.getByText("+5 more")).toBeTruthy();
+    expect(screen.queryByText("unused_54 — declared, not raised")).toBeNull();
+  });
+
+  test("caps line numbers inside the malformed diagnostic row", () => {
+    node.data = {
+      ...baseData,
+      code: Array.from(
+        { length: 25 },
+        (_, index) => `raise ErrorCode(dynamic_${index}, 'reason')`,
+      ).join("\n"),
+    };
+
+    renderEditor();
+
+    const status = screen.getByLabelText(
+      "Error message synchronization status",
+    );
+    const malformedRow = status.querySelector("li");
+    expect(malformedRow?.textContent).toContain("1, 2, 3, 4, 5");
+    expect(malformedRow?.textContent).toContain("20 … and 5 more");
+    expect(malformedRow?.textContent).not.toContain("21, 22");
+    expect(malformedRow?.textContent.length).toBeLessThan(250);
+  });
+});
+
+describe("CodeBlockEditor for a code-first block", () => {
+  test("defaults to the plain view: goal and steps, no inputs or code editor", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    expect(screen.getByText("Goal")).toBeTruthy();
+    expect(screen.getByText("Open the page")).toBeTruthy();
+    // The readable action label is the per-step subtitle.
+    expect(screen.getByText("Goto URL")).toBeTruthy();
+    // Inputs and the code editor live in the code view, not the plain view.
+    expect(screen.queryByText("Inputs")).toBeNull();
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+  });
+
+  test("exposes the inputs selector and code panel in the code view", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+    switchToCode();
+
+    expect(screen.getByText("Inputs")).toBeTruthy();
+    expect(screen.getByText("Code Input")).toBeTruthy();
+    expect(screen.getByTestId("code-editor")).toBeTruthy();
+    // The goal lives in the plain view only.
+    expect(screen.queryByText("Goal")).toBeNull();
+  });
+
+  test("uses the parameter-autocomplete textarea for the goal", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    const textareas = screen.getAllByTestId<HTMLTextAreaElement>(
+      "block-input-textarea",
+    );
+    expect(textareas.map((textarea) => textarea.value)).toEqual([
+      "Open {{ url }}",
+    ]);
+  });
+
+  const pendingGoalData = {
+    ...baseData,
+    ...codeFirstData,
+    prompt: "Open {{ link }}",
+    userOwnedGoal: true,
+    goalNeedsRegeneration: true,
+    goalBeforeEdit: {
+      prompt: "Open {{ url }}",
+      userOwnedGoal: null,
+      goalNeedsRegeneration: null,
+    },
+  };
+
+  test("editing the goal records the goal it replaced and starts nothing", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "Open {{ link }}" } });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      prompt: "Open {{ link }}",
+      userOwnedGoal: true,
+      goalNeedsRegeneration: true,
+      goalBeforeEdit: {
+        prompt: "Open {{ url }}",
+        userOwnedGoal: null,
+        goalNeedsRegeneration: null,
+      },
+    });
+    expect(useCopilotActionStore.getState().pendingBuild).toBeNull();
+  });
+
+  test("a further edit keeps the goal the first edit replaced", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "Open {{ other }}" } });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      prompt: "Open {{ other }}",
+      userOwnedGoal: true,
+      goalNeedsRegeneration: true,
+    });
+  });
+
+  test("typing the old goal back undoes the change", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "Open {{ url }}" } });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      prompt: "Open {{ url }}",
+      userOwnedGoal: null,
+      goalNeedsRegeneration: null,
+      goalBeforeEdit: null,
+    });
+  });
+
+  test("a pending goal change shows the banner, and Apply asks the copilot to follow it", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    expect(screen.getByTestId("goal-change-banner").textContent).toContain(
+      "Goal changed — not applied yet",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Regenerate block" }),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply new Goal" }));
+
+    expect(useCopilotActionStore.getState().pendingBuild).toEqual({
+      blockLabel: "code_block",
+      prompt: "Open {{ link }}",
+      applyingGoalChange: true,
+    });
+  });
+
+  test("Undo restores the goal the change replaced", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      prompt: "Open {{ url }}",
+      userOwnedGoal: null,
+      goalNeedsRegeneration: null,
+      goalBeforeEdit: null,
+    });
+  });
+
+  test("a Goal typed after a hand code edit offers Keep my code, which keeps both", () => {
+    node.data = { ...pendingGoalData, codeEditedByHand: true };
+    renderEditor();
+
+    expect(screen.getByTestId("goal-change-banner").textContent).toContain(
+      "The code was also edited by hand",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Keep my code" }));
+
+    expect(updateNodeData).toHaveBeenLastCalledWith("cb1", {
+      goalNeedsRegeneration: false,
+      codeEditedByHand: false,
+      goalBeforeEdit: null,
+    });
+  });
+
+  test("a pending change without a hand code edit offers no Keep my code", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    expect(screen.queryByRole("button", { name: "Keep my code" })).toBeNull();
+  });
+
+  test("a pending change with no record of the old goal offers Apply but no Undo", () => {
+    node.data = { ...pendingGoalData, goalBeforeEdit: undefined };
+    renderEditor();
+
+    expect(screen.getByRole("button", { name: "Apply new Goal" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  });
+
+  test("Apply while another block is generating waits its turn", () => {
+    node.data = pendingGoalData;
+    useCopilotActionStore.setState({ generatingBlockLabel: "other" });
+    renderEditor();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply new Goal" }));
+
+    expect(useCopilotActionStore.getState().pendingBuild).toBeNull();
+    expect(screen.getByTestId("goal-change-banner").textContent).toContain(
+      "Waiting to apply the new Goal",
+    );
+
+    act(() => {
+      useCopilotActionStore.getState().finishGenerating();
+    });
+
+    expect(useCopilotActionStore.getState().pendingBuild).toEqual({
+      blockLabel: "code_block",
+      prompt: "Open {{ link }}",
+      applyingGoalChange: true,
+    });
+  });
+
+  test.each([
+    ["applying", { generatingBlockLabel: "code_block" }],
+    [
+      "waiting to apply",
+      {
+        generatingBlockLabel: "other",
+        queuedBuilds: [{ blockLabel: "code_block", prompt: "Open {{ link }}" }],
+      },
+    ],
+  ])("the goal cannot be edited while the block is %s", (_, state) => {
+    node.data = pendingGoalData;
+    useCopilotActionStore.setState(state);
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    expect((goalTextarea as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  test("writes nothing when the goal text did not change", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "Open {{ url }}" } });
+
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  test("clearing the goal hands ownership back", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "   " } });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      prompt: "   ",
+      userOwnedGoal: false,
+      goalNeedsRegeneration: false,
+      goalBeforeEdit: null,
+    });
+  });
+
+  test("clearing a goal the person never owned writes no ownership fields", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+
+    const [goalTextarea] = screen.getAllByTestId("block-input-textarea");
+    fireEvent.change(goalTextarea!, { target: { value: "" } });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", { prompt: "" });
+  });
+
+  test("with no goal change pending there is no banner and the build button is back", () => {
+    node.data = {
+      ...baseData,
+      ...codeFirstData,
+      userOwnedGoal: true,
+      goalNeedsRegeneration: false,
+    };
+    renderEditor();
+
+    expect(screen.queryByTestId("goal-change-banner")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Regenerate block" }),
+    ).toBeTruthy();
+  });
+
+  test("editing the code clears the pending goal change", () => {
+    node.data = pendingGoalData;
+    renderEditor();
+    switchToCode();
+
+    fireEvent.change(screen.getByTestId("code-editor"), {
+      target: { value: "await page.goto(url)" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      code: "await page.goto(url)",
+      codeEditedByHand: true,
+      goalNeedsRegeneration: false,
+      goalBeforeEdit: null,
+    });
+  });
+
+  test("a hand edit to the code of a block with a Goal records that the code changed", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+    switchToCode();
+
+    fireEvent.change(screen.getByTestId("code-editor"), {
+      target: { value: "await page.goto(url)" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      code: "await page.goto(url)",
+      codeEditedByHand: true,
+    });
+  });
+
+  test("a hand edit to the code of a block without a Goal writes only the code", () => {
+    renderEditor();
+
+    fireEvent.change(screen.getByTestId("code-editor"), {
+      target: { value: "await page.goto(url)" },
+    });
+
+    expect(updateNodeData).toHaveBeenCalledWith("cb1", {
+      code: "await page.goto(url)",
+    });
+  });
+
+  test("collapses and expands the step list in the code view", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor();
+    switchToCode();
+
+    const toggle = () => screen.getByRole("button", { name: /Steps \(1\)/ });
+    expect(screen.getByText("Open the page")).toBeTruthy();
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(toggle());
+    expect(screen.queryByText("Open the page")).toBeNull();
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(toggle());
+    expect(screen.getByText("Open the page")).toBeTruthy();
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+  });
+
+  test("omits the code-view step list when the block has no steps", () => {
+    node.data = { ...baseData, ...codeFirstData, steps: [] };
+    renderEditor();
+    switchToCode();
+
+    expect(screen.getByText("Code Input")).toBeTruthy();
+    expect(screen.queryByText(/Steps \(/)).toBeNull();
+  });
+});
+
+describe("CodeBlockEditor after a hand code edit", () => {
+  const codeEditedData = {
+    ...baseData,
+    ...codeFirstData,
+    code: "return {'total': 1, 'currency': 'USD'}",
+    codeEditedByHand: true,
+  };
+  const actions = {
+    updateGoal: vi.fn(),
+    keepGoal: vi.fn(),
+    acceptGoal: vi.fn(),
+  };
+
+  beforeEach(() => {
+    node.data = { ...codeEditedData };
+    actions.updateGoal.mockClear();
+    actions.keepGoal.mockClear();
+    actions.acceptGoal.mockClear();
+    useCopilotActionStore.setState(actions);
+  });
+
+  test("in the code view the banner sits below the code so typing does not shift the editor", () => {
+    renderEditor();
+    switchToCode();
+
+    expect(
+      screen
+        .getByTestId("code-editor")
+        .compareDocumentPosition(screen.getByTestId("goal-change-banner")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  test("the banner says the Goal may be out of date and offers Update Goal and Keep Goal", () => {
+    renderEditor();
+
+    expect(screen.getByTestId("goal-change-banner").textContent).toContain(
+      "Code changed — Goal may be out of date",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Update Goal" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep Goal" }));
+
+    expect(actions.updateGoal).toHaveBeenCalledWith("code_block");
+    expect(actions.keepGoal).toHaveBeenCalledWith("code_block");
+    expect(updateNodeData).not.toHaveBeenCalled();
+  });
+
+  test("a suggestion for the current code and Goal is shown for acceptance", () => {
+    useCopilotActionStore.setState({
+      goalSuggestions: {
+        code_block: {
+          forCode: codeEditedData.code,
+          forGoal: "Open {{ url }}",
+          goal: "The order page shows its total and currency.",
+        },
+      },
+    });
+    renderEditor();
+
+    expect(
+      screen.getByText("The order page shows its total and currency."),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Accept" }));
+
+    expect(actions.acceptGoal).toHaveBeenCalledWith("code_block");
+  });
+
+  test.each([
+    ["the code changed after it was requested", { forCode: "print(2)" }],
+    ["the Goal changed after it was requested", { forGoal: "Open the page" }],
+  ])("a suggestion is not offered when %s", (_, stale) => {
+    useCopilotActionStore.setState({
+      goalSuggestions: {
+        code_block: {
+          forCode: codeEditedData.code,
+          forGoal: "Open {{ url }}",
+          goal: "The order page shows its total and currency.",
+          ...stale,
+        },
+      },
+    });
+    renderEditor();
+
+    expect(screen.queryByRole("button", { name: "Accept" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Update Goal" })).toBeTruthy();
+  });
+
+  test.each([
+    ["generating", { generatingBlockLabel: "code_block" }],
+    [
+      "queued",
+      {
+        generatingBlockLabel: "other",
+        queuedBuilds: [{ blockLabel: "code_block", prompt: "Open {{ url }}" }],
+      },
+    ],
+  ])(
+    "Update Goal and Keep Goal are disabled while the block is %s",
+    (_, state) => {
+      useCopilotActionStore.setState(state);
+      renderEditor();
+
+      for (const name of ["Update Goal", "Keep Goal"]) {
+        expect(
+          (screen.getByRole("button", { name }) as HTMLButtonElement).disabled,
+        ).toBe(true);
+      }
+    },
+  );
+
+  test("a pending Goal change shows its own banner instead", () => {
+    node.data = {
+      ...codeEditedData,
+      userOwnedGoal: true,
+      goalNeedsRegeneration: true,
+    };
+    renderEditor();
+
+    expect(screen.getByTestId("goal-change-banner").textContent).toContain(
+      "Goal changed — not applied yet",
+    );
+  });
+});
+
+describe("CodeBlockEditor step-to-code highlighting", () => {
+  const steppedData: Partial<CodeBlockNodeData> = {
+    prompt: "Search and open",
+    steps: [
+      {
+        description: "Open the page",
+        action_type: "goto_url",
+        line_start: 2,
+        line_end: 3,
+      },
+      {
+        description: "Read the title",
+        action_type: "extract",
+        line_start: 5,
+        line_end: 5,
+      },
+    ],
+  };
+
+  test("shows each step's line range in the code view", () => {
+    node.data = { ...baseData, ...steppedData };
+    renderEditor();
+    switchToCode();
+
+    expect(screen.getByText("L2-3")).toBeTruthy();
+    expect(screen.getByText("L5")).toBeTruthy();
+  });
+
+  test("highlights the clicked step's lines and toggles off", () => {
+    node.data = { ...baseData, ...steppedData };
+    renderEditor();
+    switchToCode();
+
+    const editor = () => screen.getByTestId("code-editor");
+    // Baseline: Jinja (2) + Python syntax diagnostics (2), no active step.
+    expect(editor().getAttribute("data-extension-count")).toBe("4");
+
+    const stepButton = screen.getByRole("button", { name: /Open the page/ });
+    fireEvent.click(stepButton);
+    // Baseline (4) + lineHighlight field + theme (2) = 6.
+    expect(editor().getAttribute("data-extension-count")).toBe("6");
+    expect(stepButton.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(stepButton);
+    expect(editor().getAttribute("data-extension-count")).toBe("4");
+    expect(stepButton.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("CodeBlockEditor for a block without a goal", () => {
+  test("still gets the code-first layout, opened on its code", () => {
+    renderEditor();
+
+    // The view toggle is the code-first layout; a goal-less block reaches it.
+    expect(screen.getByText("View")).toBeTruthy();
+    expect(screen.getByText("Inputs")).toBeTruthy();
+    expect(screen.getByText("Code Input")).toBeTruthy();
+    expect(screen.queryByText("Goal")).toBeNull();
+  });
+
+  test("reaches the goal and steps by switching to the plain view", () => {
+    renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Plain" }));
+
+    expect(screen.getByText("Goal")).toBeTruthy();
+    expect(screen.getByText(/No steps yet/)).toBeTruthy();
+  });
+
+  test("opens on the code even when a goal-less block carries derived steps", () => {
+    node.data = { ...baseData, steps: codeFirstData.steps! };
+    renderEditor();
+
+    expect(screen.getByTestId("code-editor")).toBeTruthy();
+    expect(screen.queryByTitle("Open the page")).toBeNull();
+  });
+
+  test("treats a block missing the goal field entirely the same as null", () => {
+    // Simulates pre-migration node data where the field is absent, not null.
+    node.data = {
+      ...baseData,
+      prompt: undefined,
+    } as unknown as CodeBlockNodeData;
+    renderEditor();
+
+    expect(screen.getByText("Code Input")).toBeTruthy();
+    expect(screen.getByText("Inputs")).toBeTruthy();
+    expect(screen.queryByText("Goal")).toBeNull();
+  });
+});
+
+describe("CodeBlockEditor for a newly-added block from the node adder", () => {
+  test("renders the code-first plain view because the default goal is non-null", () => {
+    node.data = { ...codeBlockNodeDefaultData, label: "code_block" };
+    renderEditor();
+
+    expect(screen.getByText("Goal")).toBeTruthy();
+    expect(screen.getByText("View")).toBeTruthy();
+    // Steps are copilot-authored annotations, so a hand-added block has none yet.
+    expect(screen.getByText(/No steps yet/)).toBeTruthy();
+  });
+});
+
+describe("CodeBlockEditor view toggle", () => {
+  test("switches between the plain and code views", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor(false);
+
+    // Plain by default.
+    expect(screen.getByTitle("Open the page")).toBeTruthy();
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+
+    switchToCode();
+    expect(screen.getByTestId("code-editor")).toBeTruthy();
+    expect(screen.getByText("Inputs")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Plain" }));
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+    expect(screen.getByText("Goal")).toBeTruthy();
+  });
+
+  test("shows an empty hint in the plain view when there are no steps", () => {
+    node.data = { ...baseData, ...codeFirstData, steps: [] };
+    renderEditor(false);
+
+    expect(screen.getByText("Goal")).toBeTruthy();
+    expect(screen.getByText(/No steps yet/)).toBeTruthy();
+    expect(screen.queryByTestId("code-editor")).toBeNull();
+  });
+});
+
+describe("CodeBlockEditor generate gating", () => {
+  test.each([
+    { lock: "save", generated: false },
+    { lock: "save", generated: true },
+    { lock: "copilot", generated: false },
+    { lock: "copilot", generated: true },
+  ] as const)(
+    "disables block generation during a $lock transaction (generated=$generated)",
+    ({ lock, generated }) => {
+      node.data = {
+        ...baseData,
+        prompt: "Read the page title",
+        steps: generated ? codeFirstData.steps! : null,
+      };
+      const owner = createYamlCommitOwner("w");
+      registerEditorOwner(owner);
+      renderEditor();
+      const button = screen.getByRole<HTMLButtonElement>("button", {
+        name: generated ? "Regenerate block" : "Generate block",
+      });
+      expect(button.disabled).toBe(false);
+      let reservation: symbol | null = null;
+      act(() => {
+        if (lock === "save") expect(beginSaveTransaction(owner)).toBe(true);
+        else {
+          reservation = beginCopilotAcceptance();
+          expect(reservation).not.toBeNull();
+        }
+      });
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(useCopilotActionStore.getState().pendingBuild).toBeNull();
+      expect(useCopilotActionStore.getState().generatingBlockLabel).toBeNull();
+
+      act(() => {
+        if (lock === "save") finishSaveTransaction(owner);
+        else finishCopilotAcceptance(reservation!);
+      });
+      expect(button.disabled).toBe(false);
+      fireEvent.click(button);
+      expect(useCopilotActionStore.getState().pendingBuild).toEqual({
+        blockLabel: "code_block",
+        prompt: "Read the page title",
+      });
+    },
+  );
+
+  test("enables regenerate in the editable live scope", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor(false);
+
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Regenerate block",
+    });
+    expect(button.disabled).toBe(false);
+  });
+
+  test("disables regenerate in a read-only comparison scope", () => {
+    node.data = { ...baseData, ...codeFirstData };
+    renderEditor(true);
+
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Regenerate block",
+    });
+    expect(button.disabled).toBe(true);
+  });
+
+  test("disables generate when the node is not editable", () => {
+    node.data = { ...baseData, prompt: "Do a thing", steps: null };
+    node.data.editable = false;
+    renderEditor(false);
+
+    const button = screen.getByRole<HTMLButtonElement>("button", {
+      name: "Generate block",
+    });
+    expect(button.disabled).toBe(true);
+  });
+});
+
+describe("code block goal ownership serialization", () => {
+  test("round-trips the Goal ownership fields through the saved workflow blocks", () => {
+    const [saved] = getWorkflowBlocks(
+      [
+        {
+          id: "code-1",
+          type: "codeBlock" as const,
+          position: { x: 0, y: 0 },
+          data: {
+            ...baseData,
+            userOwnedGoal: true,
+            goalNeedsRegeneration: true,
+            codeEditedByHand: true,
+          },
+        },
+      ],
+      [],
+    );
+
+    expect(saved).toMatchObject({
+      user_owned_goal: true,
+      goal_needs_regeneration: true,
+      code_edited_by_hand: true,
+    });
+  });
+});

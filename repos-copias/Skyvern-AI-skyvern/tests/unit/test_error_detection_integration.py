@@ -1,0 +1,833 @@
+"""
+Integration tests for error detection across different failure scenarios.
+
+Tests the complete flow from task failure to error detection and storage.
+"""
+
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from skyvern.errors.errors import ReachMaxRetriesError, UserDefinedError
+from skyvern.forge.agent import ForgeAgent
+from skyvern.forge.failure_classifier import FailureCategory
+from skyvern.forge.sdk.models import StepStatus
+from skyvern.forge.sdk.schemas.tasks import TaskStatus
+from skyvern.schemas.steps import AgentStepOutput
+from skyvern.utils.prompt_engine import MaxStepsReasonResponse
+from skyvern.utils.secret_redaction import REDACTED_SECRET_PLACEHOLDER
+from skyvern.webeye.actions.actions import TerminateAction
+from skyvern.webeye.actions.handler import handle_terminate_action
+from skyvern.webeye.actions.models import DetailedAgentStepOutput
+from skyvern.webeye.actions.multi_field_totp import RetryOutcome
+from skyvern.webeye.actions.responses import ActionSuccess
+from tests.unit.helpers import make_organization, make_step, make_task
+
+
+@pytest.fixture
+def agent():
+    """Create a ForgeAgent instance."""
+    return ForgeAgent()
+
+
+@pytest.fixture
+def mock_browser_state():
+    """Create a complete mock browser state."""
+    browser_state = MagicMock()
+    page = MagicMock()
+    page.url = "https://example.com/checkout"
+
+    # Use AsyncMock so "await browser_state.get_working_page()" never hits a MagicMock
+    browser_state.get_working_page = AsyncMock(return_value=page)
+    browser_state.cleanup_element_tree = MagicMock()
+
+    # Mock scrape_website
+    scraped_page = MagicMock()
+    scraped_page.url = "https://example.com/checkout"
+    scraped_page.build_element_tree = MagicMock(
+        return_value='<html><body><div class="error">Payment failed</div></body></html>'
+    )
+    scraped_page.screenshots = [b"screenshot_data"]
+
+    async def scrape_website(**kwargs):
+        return scraped_page
+
+    browser_state.scrape_website = scrape_website
+
+    return browser_state
+
+
+def create_error_detection_mocks(detected_errors):
+    """Helper to create standard error detection mocks."""
+    # Mock the top-level detect_user_defined_errors_for_task function
+    return patch(
+        "skyvern.forge.agent.detect_user_defined_errors_for_task",
+        new_callable=AsyncMock,
+        return_value=detected_errors,
+    )
+
+
+@pytest.mark.asyncio
+async def test_navigate_failure_with_error_detection(agent, mock_browser_state):
+    """Test error detection when navigation fails."""
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "page_not_found": "The requested page does not exist",
+            "server_error": "Server is experiencing issues",
+        },
+    )
+    step = make_step(now, task, step_id="step-1", status=StepStatus.running, order=1, output=None)
+
+    detected_errors = [
+        UserDefinedError(error_code="page_not_found", reasoning="404 error page shown", confidence_float=0.95)
+    ]
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+
+            with create_error_detection_mocks(detected_errors):
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.DATABASE.tasks.update_task = AsyncMock()
+
+                    # Simulate FailedToNavigateToUrl scenario
+                    from skyvern.exceptions import FailedToNavigateToUrl
+
+                    try:
+                        raise FailedToNavigateToUrl(url=task.url, error_message="Navigation timeout")
+                    except FailedToNavigateToUrl:
+                        # Call fail_task as the exception handler would
+                        result = await agent.fail_task(
+                            task,
+                            step,
+                            f"Failed to navigate to URL. URL:{task.url}, Error:Navigation timeout",
+                            mock_browser_state,
+                        )
+
+                        assert result is True
+
+                        # Verify errors were stored
+                        mock_app.DATABASE.tasks.update_task.assert_called_once()
+                        call_kwargs = mock_app.DATABASE.tasks.update_task.call_args[1]
+                        assert len(call_kwargs["errors"]) == 1
+                        assert call_kwargs["errors"][0]["error_code"] == "page_not_found"
+
+
+@pytest.mark.asyncio
+async def test_failed_step_with_user_defined_error_does_not_retry(agent):
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={"data_not_downloadable": "Download error displayed"},
+    )
+    detected_error = UserDefinedError(
+        error_code="data_not_downloadable",
+        reasoning="Detected user-defined error: Download error displayed",
+        confidence_float=1.0,
+    )
+    step = make_step(
+        now,
+        task,
+        step_id="step-user-error",
+        status=StepStatus.failed,
+        order=1,
+        retry_index=0,
+        output=AgentStepOutput(
+            action_results=[],
+            actions_and_results=[],
+            errors=[detected_error],
+            terminal_user_errors=True,
+        ),
+    )
+
+    with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+        mock_update_task.return_value = task
+
+        result = await agent.handle_failed_step(organization, task, step)
+
+        assert result is None
+        mock_update_task.assert_awaited_once()
+        call_task, call_status = mock_update_task.call_args.args
+        assert call_task == task
+        assert call_status == TaskStatus.failed
+        call_kwargs = mock_update_task.call_args.kwargs
+        assert call_kwargs["failure_reason"] == detected_error.reasoning
+        assert call_kwargs["errors"][0]["error_code"] == "data_not_downloadable"
+
+
+@pytest.mark.asyncio
+async def test_failed_step_with_duplicate_user_defined_error_preserves_empty_update(agent):
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    detected_error = UserDefinedError(
+        error_code="data_not_downloadable",
+        reasoning="Detected user-defined error: Download error displayed",
+        confidence_float=0.9,
+    )
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={"data_not_downloadable": "Download error displayed"},
+        errors=[detected_error.model_dump()],
+    )
+    step = make_step(
+        now,
+        task,
+        step_id="step-user-error",
+        status=StepStatus.failed,
+        order=1,
+        retry_index=0,
+        output=AgentStepOutput(
+            action_results=[],
+            actions_and_results=[],
+            errors=[detected_error],
+            terminal_user_errors=True,
+        ),
+    )
+
+    with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+        mock_update_task.return_value = task
+
+        result = await agent.handle_failed_step(organization, task, step)
+
+        assert result is None
+        mock_update_task.assert_awaited_once()
+        assert mock_update_task.call_args.kwargs["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_failed_step_with_non_terminal_output_errors_uses_retry_budget(agent):
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={"inline_form_error": "Inline form error"},
+    )
+    detected_error = UserDefinedError(
+        error_code="inline_form_error",
+        reasoning="Inline validation text was visible",
+        confidence_float=0.9,
+    )
+    step = make_step(
+        now,
+        task,
+        step_id="step-non-terminal-error",
+        status=StepStatus.failed,
+        order=1,
+        retry_index=0,
+        output=AgentStepOutput(action_results=[], actions_and_results=[], errors=[detected_error]),
+    )
+    next_step = make_step(
+        now,
+        task,
+        step_id="step-retry",
+        status=StepStatus.created,
+        order=step.order,
+        retry_index=step.retry_index + 1,
+        output=None,
+    )
+
+    with patch("skyvern.forge.agent.app") as mock_app:
+        mock_app.DATABASE.tasks.create_step = AsyncMock(return_value=next_step)
+
+        result = await agent.handle_failed_step(organization, task, step)
+
+        assert result == next_step
+        mock_app.DATABASE.tasks.create_step.assert_awaited_once_with(
+            task_id=task.task_id,
+            organization_id=task.organization_id,
+            order=step.order,
+            retry_index=step.retry_index + 1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_planned_termination_persists_the_mapped_user_defined_error(agent):
+    """handle_terminate_action resolves the block's error_code_mapping against the page and leaves the
+    code on the action; the terminal write has to ship it like every other terminal path does.
+    Customers route on errors[0], and the status alone cannot separate a mapped "no record found"
+    from an unmapped stop."""
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(now, organization, error_code_mapping={"profile_not_found": "No profile for the member"})
+    mapped = UserDefinedError(
+        error_code="profile_not_found",
+        reasoning="no profile listed for sk4829137765; terminating task",
+        confidence_float=1.0,
+    )
+    terminate = TerminateAction(reasoning="No profile found for the specific individual", errors=[mapped])
+    step = make_step(
+        now,
+        task,
+        step_id="step-terminated",
+        status=StepStatus.completed,
+        order=1,
+        output=AgentStepOutput(action_results=[], actions_and_results=[(terminate, [ActionSuccess()])]),
+    )
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+            with patch.object(
+                agent, "_maybe_retry_multi_field_totp_after_rejection", new_callable=AsyncMock
+            ) as mock_retry:
+                mock_retry.return_value = RetryOutcome.NO_RETRY
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.WORKFLOW_CONTEXT_MANAGER.artifact_redaction_enabled.return_value = True
+                    mock_app.WORKFLOW_CONTEXT_MANAGER.get_secret_values_for_run.return_value = {"sk4829137765"}
+
+                    is_completed, _last_step, next_step = await agent.handle_completed_step(
+                        organization, task, step, None, complete_verification=False
+                    )
+
+    assert (is_completed, next_step) == (False, None)
+    call_kwargs = mock_update_task.call_args.kwargs
+    assert call_kwargs["status"] == TaskStatus.terminated
+    # The agent's own reasoning still owns the customer-visible reason; only `errors` is added.
+    assert call_kwargs["failure_reason"] == terminate.reasoning
+    (persisted,) = call_kwargs["errors"]
+    assert persisted["error_code"] == "profile_not_found"
+    assert "sk4829137765" not in persisted["reasoning"]
+    assert REDACTED_SECRET_PLACEHOLDER in persisted["reasoning"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action_starts_with_mapped_error",
+    [False, True],
+    ids=["handler-maps-before-write", "action-already-mapped"],
+)
+async def test_agent_planned_termination_does_not_append_step_errors_twice(agent, action_starts_with_mapped_error):
+    now = datetime.now(UTC)
+    organization = make_organization(now)
+    task = make_task(now, organization, error_code_mapping={"profile_not_found": "No profile for the member"})
+    run_secret = "private-run-secret-12345"
+    mapped = UserDefinedError(
+        error_code="profile_not_found",
+        reasoning=f"No matching profile was found for {run_secret}",
+        confidence_float=1.0,
+    )
+    terminate = TerminateAction(
+        reasoning="No profile found for the specific individual",
+        errors=[mapped] if action_starts_with_mapped_error else [],
+    )
+    step = make_step(
+        now,
+        task,
+        step_id="step-terminated",
+        status=StepStatus.completed,
+        order=1,
+        output=AgentStepOutput(action_results=[], actions_and_results=[(terminate, [ActionSuccess()])]),
+    )
+
+    if not action_starts_with_mapped_error:
+        with patch(
+            "skyvern.webeye.actions.handler.extract_user_defined_errors",
+            new_callable=AsyncMock,
+            return_value=[mapped],
+        ):
+            await handle_terminate_action(terminate, MagicMock(), MagicMock(), task, step)
+
+    detailed_output = DetailedAgentStepOutput(
+        scraped_page=None,
+        extract_action_prompt=None,
+        llm_response=None,
+        actions=[terminate],
+        action_results=[ActionSuccess()],
+        actions_and_results=[(terminate, [ActionSuccess()])],
+    )
+    stored_errors = []
+
+    async def append_step_errors(**kwargs):
+        stored_errors.extend(kwargs["errors"])
+        return task.model_copy(update={"errors": list(stored_errors)})
+
+    async def append_terminal_errors(task_arg, **kwargs):
+        stored_errors.extend(kwargs["errors"] or [])
+        return task_arg.model_copy(update={"errors": list(stored_errors)})
+
+    with patch("skyvern.forge.agent.app") as mock_app:
+        mock_app.DATABASE.tasks.update_task = AsyncMock(side_effect=append_step_errors)
+        mock_app.WORKFLOW_CONTEXT_MANAGER.artifact_redaction_enabled.return_value = True
+        mock_app.WORKFLOW_CONTEXT_MANAGER.get_secret_values_for_run.return_value = {run_secret}
+        task = await agent.update_task_errors_from_detailed_output(task, detailed_output)
+
+        with (
+            patch.object(agent, "update_step", new_callable=AsyncMock),
+            patch.object(
+                agent, "update_task", new_callable=AsyncMock, side_effect=append_terminal_errors
+            ) as mock_update,
+            patch.object(agent, "_maybe_retry_multi_field_totp_after_rejection", new_callable=AsyncMock) as mock_retry,
+        ):
+            mock_retry.return_value = RetryOutcome.NO_RETRY
+            is_completed, _last_step, next_step = await agent.handle_completed_step(
+                organization, task, step, None, complete_verification=False
+            )
+
+    assert (is_completed, next_step) == (False, None)
+    expected_error = mapped.model_dump()
+    expected_error["reasoning"] = f"No matching profile was found for {REDACTED_SECRET_PLACEHOLDER}"
+    assert stored_errors == [expected_error]
+    assert run_secret not in repr(stored_errors)
+    assert mock_update.call_args.kwargs["errors"] is None
+    assert task.to_task_response().errors == [expected_error]
+
+
+@pytest.mark.asyncio
+async def test_max_retries_with_error_detection(agent, mock_browser_state):
+    """Test error detection when max retries are exceeded."""
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "captcha_failed": "CAPTCHA verification failed",
+            "rate_limited": "Too many requests",
+        },
+    )
+    step = make_step(now, task, step_id="step-3", status=StepStatus.failed, order=1, retry_index=3, output=None)
+
+    detected_errors = [
+        UserDefinedError(error_code="rate_limited", reasoning="Rate limit message displayed", confidence_float=0.90)
+    ]
+
+    # Mock summary_failure_reason_for_max_retries to return MaxStepsReasonResponse with detected errors
+    async def mock_summary(*args, **kwargs):
+        return MaxStepsReasonResponse(
+            page_info="",
+            reasoning="Multiple retry failures",
+            errors=detected_errors,
+        )
+
+    with patch("skyvern.forge.agent.app") as mock_app:
+        mock_app.BROWSER_MANAGER.get_for_task.return_value = mock_browser_state
+        mock_app.DATABASE.tasks.get_task_steps = AsyncMock(return_value=[step, step, step])
+        mock_app.DATABASE.tasks.get_task = AsyncMock(return_value=task)
+        mock_app.DATABASE.tasks.update_task = AsyncMock(return_value=task)
+        # create_step is awaited in handle_failed_step retry branch; avoid MagicMock in await
+        next_step = make_step(
+            now,
+            task,
+            step_id="step-next",
+            status=StepStatus.running,
+            order=step.order,
+            retry_index=step.retry_index + 1,
+            output=None,
+        )
+        mock_app.DATABASE.tasks.create_step = AsyncMock(return_value=next_step)
+
+        # Async mock that forwards to mock_app.DATABASE.tasks.update_task so we never await MagicMock inside real update_task
+        async def mock_update_task(
+            _self,
+            task,
+            status,
+            extracted_information=None,
+            failure_reason=None,
+            webhook_failure_reason=None,
+            errors=None,
+            failure_category=None,
+        ):
+            updates = {}
+            if status is not None:
+                updates["status"] = status
+            if failure_reason is not None:
+                updates["failure_reason"] = failure_reason
+            if errors is not None:
+                updates["errors"] = errors
+            if failure_category is not None:
+                updates["failure_category"] = failure_category
+            return await mock_app.DATABASE.tasks.update_task(
+                task.task_id, organization_id=task.organization_id, **updates
+            )
+
+        with patch.object(ForgeAgent, "summary_failure_reason_for_max_retries", mock_summary):
+            with patch.object(ForgeAgent, "update_task", mock_update_task):
+                result = await agent.handle_failed_step(organization, task, step)
+
+                assert result is None  # No next step when max retries exceeded
+
+                # Verify errors include both system and user-defined errors
+                mock_app.DATABASE.tasks.update_task.assert_called_once()
+                call_kwargs = mock_app.DATABASE.tasks.update_task.call_args[1]
+
+                assert call_kwargs["status"] == TaskStatus.terminated
+                assert [error["error_code"] for error in call_kwargs["errors"]] == ["rate_limited"]
+
+
+async def _run_max_retries(agent, mock_browser_state, summary: MaxStepsReasonResponse) -> dict:
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "website_down": "The site is down or under maintenance",
+            "ELEMENT_NOT_FOUND": "continue",
+        },
+    )
+    step = make_step(now, task, step_id="step-3", status=StepStatus.failed, order=1, retry_index=3, output=None)
+    captured: dict = {}
+
+    async def mock_summary(*args, **kwargs):
+        return summary
+
+    async def mock_update_task(_self, task, status, **kwargs):
+        captured.update(kwargs, status=status)
+        return task
+
+    with (
+        patch("skyvern.forge.agent.app") as mock_app,
+        patch.object(ForgeAgent, "summary_failure_reason_for_max_retries", mock_summary),
+        patch.object(ForgeAgent, "update_task", mock_update_task),
+    ):
+        mock_app.BROWSER_MANAGER.get_for_task.return_value = mock_browser_state
+        assert await agent.handle_failed_step(organization, task, step) is None
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_max_retries_recovers_mapped_code_misfiled_as_failure_category(agent, mock_browser_state):
+    summary = MaxStepsReasonResponse(
+        page_info="",
+        reasoning="The site shows a maintenance page",
+        errors=[],
+        failure_categories=[
+            {"category": "WEBSITE_DOWN", "confidence_float": 0.9, "reasoning": "Down after entering code 918273"}
+        ],
+    )
+
+    captured = await _run_max_retries(agent, mock_browser_state, summary)
+
+    assert captured["status"] == TaskStatus.terminated
+    assert [error["error_code"] for error in captured["errors"]] == ["website_down"]
+    assert all("918273" not in error["reasoning"] for error in captured["errors"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "summary",
+    [
+        MaxStepsReasonResponse(
+            page_info="",
+            reasoning="The agent could not find the login form",
+            errors=[],
+            failure_categories=[{"category": "login_form_missing", "confidence_float": 0.9, "reasoning": "No form"}],
+        ),
+        # A mapping key may reuse a built-in category name; the summarizer's own classification is not that code.
+        MaxStepsReasonResponse(
+            page_info="",
+            reasoning="The agent could not find the login form",
+            errors=[],
+            failure_categories=[{"category": "ELEMENT_NOT_FOUND", "confidence_float": 0.9, "reasoning": "No form"}],
+        ),
+    ],
+)
+async def test_max_retries_without_mapped_code_still_fails_with_reach_max_retries(agent, mock_browser_state, summary):
+    captured = await _run_max_retries(agent, mock_browser_state, summary)
+
+    assert captured["status"] == TaskStatus.failed
+    assert [error["error_code"] for error in captured["errors"]] == [ReachMaxRetriesError().error_code]
+    # Whatever is persisted is a category every reader can match, even when the model named none.
+    assert all(entry["category"] in FailureCategory.__members__ for entry in captured["failure_category"])
+
+
+@pytest.mark.asyncio
+async def test_max_retries_does_not_map_case_variant_of_builtin_category(agent, mock_browser_state):
+    summary = MaxStepsReasonResponse(
+        page_info="",
+        reasoning="The agent could not find the login form",
+        errors=[],
+        failure_categories=[{"category": "element_not_found", "confidence_float": 0.9, "reasoning": "No form"}],
+    )
+
+    captured = await _run_max_retries(agent, mock_browser_state, summary)
+
+    assert captured["status"] == TaskStatus.failed
+    assert [error["error_code"] for error in captured["errors"]] == [ReachMaxRetriesError().error_code]
+    assert captured["failure_category"][0]["category"] == FailureCategory.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_max_retries_does_not_persist_a_failure_category_the_model_invented(agent, mock_browser_state):
+    """SKY-17368: every reader of failure_category matches the literal exactly, so an invented
+    name is a classification nothing can read. Known categories are persisted untouched."""
+    known = {"category": "ELEMENT_NOT_FOUND", "confidence_float": 0.8, "reasoning": "No login form"}
+    summary = MaxStepsReasonResponse.model_validate(
+        {
+            "page_info": "",
+            "reasoning": "The agent could not find the login form",
+            "errors": [],
+            "failure_categories": [
+                {"category": "LOGIN_FORM_MISSING", "confidence_float": 0.9, "reasoning": "Invented by the model"},
+                known,
+            ],
+        }
+    )
+
+    captured = await _run_max_retries(agent, mock_browser_state, summary)
+
+    assert captured["failure_category"] == [known]
+
+
+@pytest.mark.asyncio
+async def test_max_retries_blank_reasoning_surfaces_meaningful_failure_reason(agent, mock_browser_state):
+    """When the summary returns an empty reasoning, the failure_reason must not have a dangling
+    'Possible failure reasons: ' tail — it must surface a meaningful message (SKY-11547)."""
+    now = datetime.now()
+    organization = make_organization(now).model_copy(update={"max_retries_per_step": 3})
+    task = make_task(now, organization)
+    step = make_step(now, task, step_id="step-3", status=StepStatus.failed, order=1, retry_index=3, output=None)
+
+    async def mock_summary(*args, **kwargs):
+        return MaxStepsReasonResponse(page_info="", reasoning="", errors=[])
+
+    captured = {}
+
+    async def mock_update_task(_self, task, status, failure_reason=None, **kwargs):
+        captured["failure_reason"] = failure_reason
+        return task
+
+    with patch("skyvern.forge.agent.app") as mock_app:
+        mock_app.BROWSER_MANAGER.get_for_task.return_value = mock_browser_state
+        with patch.object(ForgeAgent, "summary_failure_reason_for_max_retries", mock_summary):
+            with patch.object(ForgeAgent, "update_task", mock_update_task):
+                result = await agent.handle_failed_step(organization, task, step)
+
+    assert result is None
+    failure_reason = captured["failure_reason"]
+    assert "Max retries per step (3) exceeded" in failure_reason
+    assert not failure_reason.rstrip().endswith(":")
+    assert ReachMaxRetriesError().reasoning in failure_reason
+
+
+@pytest.mark.asyncio
+async def test_scraping_failure_with_error_detection(agent, mock_browser_state):
+    """Test error detection when page scraping fails."""
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "login_required": "User must be logged in",
+            "access_denied": "Access to resource denied",
+        },
+    )
+    step = make_step(now, task, step_id="step-1", status=StepStatus.running, order=1, output=None)
+
+    detected_errors = [
+        UserDefinedError(error_code="login_required", reasoning="Login prompt detected", confidence_float=0.85)
+    ]
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+
+            with create_error_detection_mocks(detected_errors):
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.DATABASE.tasks.update_task = AsyncMock()
+
+                    # Simulate ScrapingFailed scenario
+                    from skyvern.exceptions import ScrapingFailed
+
+                    try:
+                        raise ScrapingFailed(reason="Failed to scrape page elements")
+                    except ScrapingFailed as e:
+                        result = await agent.fail_task(task, step, e.reason, mock_browser_state)
+
+                        assert result is True
+
+                        # Verify errors were stored
+                        mock_app.DATABASE.tasks.update_task.assert_called_once()
+                        call_kwargs = mock_app.DATABASE.tasks.update_task.call_args[1]
+                        assert len(call_kwargs["errors"]) == 1
+                        assert call_kwargs["errors"][0]["error_code"] == "login_required"
+
+
+@pytest.mark.asyncio
+async def test_multiple_failures_accumulate_errors(agent, mock_browser_state):
+    """Test that errors accumulate across multiple failures."""
+    now = datetime.now()
+    organization = make_organization(now)
+
+    # Start with an existing error
+    initial_errors = [{"error_code": "initial_error", "reasoning": "First error"}]
+
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "payment_failed": "Payment declined",
+            "address_invalid": "Invalid address",
+        },
+        errors=initial_errors,
+    )
+    step = make_step(now, task, step_id="step-1", status=StepStatus.running, order=1, output=None)
+
+    # First failure detects payment error
+    first_detected = [UserDefinedError(error_code="payment_failed", reasoning="Card declined", confidence_float=0.92)]
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+
+            with create_error_detection_mocks(first_detected):
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.DATABASE.tasks.update_task = AsyncMock()
+
+                    await agent.fail_task(task, step, "First failure", mock_browser_state)
+
+                    # Only new errors are passed — DB handles appending to existing ones
+                    call_kwargs = mock_app.DATABASE.tasks.update_task.call_args[1]
+                    assert len(call_kwargs["errors"]) == 1
+                    assert call_kwargs["errors"][0]["error_code"] == "payment_failed"
+
+
+@pytest.mark.asyncio
+async def test_error_detection_with_workflow_task(agent, mock_browser_state):
+    """Test error detection works for workflow tasks."""
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        workflow_run_id="wr-123",
+        workflow_permanent_id="wp-456",
+        error_code_mapping={
+            "workflow_error": "Workflow-specific error",
+        },
+    )
+    step = make_step(now, task, step_id="step-1", status=StepStatus.running, order=1, output=None)
+
+    detected_errors = [
+        UserDefinedError(error_code="workflow_error", reasoning="Workflow condition not met", confidence_float=0.88)
+    ]
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+
+            with create_error_detection_mocks(detected_errors):
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.DATABASE.tasks.update_task = AsyncMock()
+
+                    result = await agent.fail_task(task, step, "Workflow task failed", mock_browser_state)
+
+                    assert result is True
+
+                    # Verify errors were stored for workflow task
+                    mock_app.DATABASE.tasks.update_task.assert_called_once()
+                    call_kwargs = mock_app.DATABASE.tasks.update_task.call_args[1]
+                    assert call_kwargs["task_id"] == task.task_id
+                    # workflow_run_id is not passed in the update call, only task_id and errors
+                    assert "workflow_run_id" not in call_kwargs
+
+
+def test_response_error_filter_drops_hallucinated_failure_category_codes(agent):
+    """SKY-9425: LLM summarization can mix failure_categories codes (LLM_REASONING_ERROR)
+    into the user-defined errors array. _filter_response_errors must drop any code that
+    isn't a key in error_code_mapping so only customer-declared codes leak to the user.
+    """
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "DATA_UNAVAILABLE": "if the required month and year is not present in the dropdown, terminate"
+        },
+    )
+    step = make_step(now, task, step_id="step-9425", status=StepStatus.failed, order=1, output=None)
+
+    hallucinated = [
+        UserDefinedError(
+            error_code="LLM_REASONING_ERROR",
+            reasoning="The LLM misinterpreted the action type",
+            confidence_float=0.8,
+        ),
+        UserDefinedError(
+            error_code="DATA_UNAVAILABLE",
+            reasoning="April 2026 not in dropdown",
+            confidence_float=0.9,
+        ),
+    ]
+
+    kept = agent._filter_response_errors(task=task, step=step, errors=hallucinated)
+
+    assert [e.error_code for e in kept] == ["DATA_UNAVAILABLE"]
+
+
+def test_response_error_filter_keeps_case_variant_under_the_mapping_key(agent):
+    # The max-retries status is chosen from these kept errors, so a dropped variant ends the task failed.
+    now = datetime.now()
+    task = make_task(now, make_organization(now), error_code_mapping={"website_down": "The site is down"})
+    step = make_step(now, task, step_id="step-1", status=StepStatus.failed, order=1, output=None)
+    errors = [UserDefinedError(error_code="WEBSITE_DOWN", reasoning="Maintenance page", confidence_float=0.9)]
+
+    kept = agent._filter_response_errors(task=task, step=step, errors=errors)
+
+    assert [e.error_code for e in kept] == ["website_down"]
+
+
+@pytest.mark.asyncio
+async def test_slow_error_detection_runs_once_after_the_failure_is_saved(agent, mock_browser_state):
+    """The failure is saved before slow error detection starts, and detection is awaited exactly once."""
+    now = datetime.now()
+    organization = make_organization(now)
+    task = make_task(
+        now,
+        organization,
+        error_code_mapping={
+            "timeout": "Operation timed out",
+        },
+    )
+    step = make_step(now, task, step_id="step-1", status=StepStatus.running, order=1, output=None)
+
+    with patch.object(agent, "update_step", new_callable=AsyncMock):
+        with patch.object(agent, "update_task", new_callable=AsyncMock) as mock_update_task:
+            mock_update_task.return_value = task
+
+            # Simulate slow error detection
+            import asyncio
+
+            detection_finished = asyncio.Event()
+            saves_before_detection: list[int] = []
+
+            async def slow_detection(*args, **kwargs):
+                # fail_task swallows detection errors, so the save count is checked after it returns.
+                saves_before_detection.append(mock_update_task.await_count)
+                await asyncio.sleep(0.1)  # Simulate some delay
+                detection_finished.set()
+                return [UserDefinedError(error_code="timeout", reasoning="Timeout detected", confidence_float=0.80)]
+
+            with patch(
+                "skyvern.forge.agent.detect_user_defined_errors_for_task",
+                new_callable=AsyncMock,
+            ) as mock_detect:
+                mock_detect.side_effect = slow_detection
+
+                with patch("skyvern.forge.agent.app") as mock_app:
+                    mock_app.DATABASE.tasks.update_task = AsyncMock()
+
+                    # The wait_for only turns a hang into a failure; counts, not wall time, show there is no retry loop.
+                    result = await asyncio.wait_for(
+                        agent.fail_task(task, step, "Task timeout", mock_browser_state), timeout=30
+                    )
+
+                    assert result is True
+                    assert detection_finished.is_set()
+                    assert saves_before_detection == [1]
+                    assert mock_detect.await_count == 1
+                    mock_app.DATABASE.tasks.update_task.assert_awaited_once()
+                    assert [
+                        e["error_code"] for e in mock_app.DATABASE.tasks.update_task.call_args.kwargs["errors"]
+                    ] == ["timeout"]

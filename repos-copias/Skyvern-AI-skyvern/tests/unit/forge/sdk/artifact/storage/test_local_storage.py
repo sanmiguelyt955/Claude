@@ -1,0 +1,205 @@
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from freezegun import freeze_time
+
+from skyvern.config import settings
+from skyvern.forge.sdk.artifact.models import ArtifactType, LogEntityType
+from skyvern.forge.sdk.artifact.storage.local import LocalStorage
+from tests.unit.forge.sdk.artifact.storage.test_helpers import (
+    create_fake_for_ai_suggestion,
+    create_fake_step,
+    create_fake_task_v2,
+    create_fake_thought,
+    create_fake_workflow_run_block,
+)
+
+# Test constants
+TEST_BUCKET = "test-skyvern-bucket"
+TEST_ORGANIZATION_ID = "test-org-123"
+TEST_TASK_ID = "tsk_123456789"
+TEST_STEP_ID = "step_123456789"
+TEST_WORKFLOW_RUN_ID = "wfr_123456789"
+TEST_BLOCK_ID = "block_123456789"
+TEST_AI_SUGGESTION_ID = "ai_sugg_test_123"
+
+
+@pytest.fixture
+def local_storage() -> LocalStorage:
+    return LocalStorage()
+
+
+@freeze_time("2025-06-09T12:00:00")
+class TestLocalStorageBuildURIs:
+    def test_build_uri(self, local_storage: LocalStorage) -> None:
+        step = create_fake_step(TEST_STEP_ID)
+        uri = local_storage.build_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            artifact_id="artifact123",
+            step=step,
+            artifact_type=ArtifactType.LLM_PROMPT,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/{TEST_ORGANIZATION_ID}/{TEST_TASK_ID}/01_0_{TEST_STEP_ID}/2025-06-09T12:00:00_artifact123_llm_prompt.txt"
+        )
+
+    def test_build_log_uri(self, local_storage: LocalStorage) -> None:
+        uri = local_storage.build_log_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            log_entity_type=LogEntityType.WORKFLOW_RUN_BLOCK,
+            log_entity_id="log_id",
+            artifact_type=ArtifactType.SKYVERN_LOG,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/logs/workflow_run_block/log_id/2025-06-09T12:00:00_skyvern_log.log"
+        )
+
+    def test_build_thought_uri(self, local_storage: LocalStorage) -> None:
+        thought = create_fake_thought("cruise123", "thought123")
+        uri = local_storage.build_thought_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            artifact_id="artifact123",
+            thought=thought,
+            artifact_type=ArtifactType.VISIBLE_ELEMENTS_TREE,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/{settings.ENV}/{TEST_ORGANIZATION_ID}/tasks/cruise123/thought123/2025-06-09T12:00:00_artifact123_visible_elements_tree.json"
+        )
+
+    def test_build_task_v2_uri(self, local_storage: LocalStorage) -> None:
+        task_v2 = create_fake_task_v2("cruise123")
+        uri = local_storage.build_task_v2_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            artifact_id="artifact123",
+            task_v2=task_v2,
+            artifact_type=ArtifactType.HTML_ACTION,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/{settings.ENV}/{TEST_ORGANIZATION_ID}/observers/cruise123/2025-06-09T12:00:00_artifact123_html_action.html"
+        )
+
+    def test_build_workflow_run_block_uri(self, local_storage: LocalStorage) -> None:
+        workflow_run_block = create_fake_workflow_run_block(TEST_WORKFLOW_RUN_ID, TEST_BLOCK_ID)
+        uri = local_storage.build_workflow_run_block_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            artifact_id="artifact123",
+            workflow_run_block=workflow_run_block,
+            artifact_type=ArtifactType.HAR,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/{settings.ENV}/{TEST_ORGANIZATION_ID}/workflow_runs/{TEST_WORKFLOW_RUN_ID}/{TEST_BLOCK_ID}/2025-06-09T12:00:00_artifact123_har.har"
+        )
+
+    def test_build_ai_suggestion_uri(self, local_storage: LocalStorage) -> None:
+        ai_suggestion = create_fake_for_ai_suggestion(TEST_AI_SUGGESTION_ID)
+        uri = local_storage.build_ai_suggestion_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            artifact_id="artifact123",
+            ai_suggestion=ai_suggestion,
+            artifact_type=ArtifactType.SCREENSHOT_LLM,
+        )
+        assert (
+            uri
+            == f"file://{local_storage.artifact_path}/{settings.ENV}/{TEST_ORGANIZATION_ID}/ai_suggestions/{TEST_AI_SUGGESTION_ID}/2025-06-09T12:00:00_artifact123_screenshot_llm.png"
+        )
+
+
+@pytest.mark.asyncio
+async def test_delete_browser_profile_hard_delete_raises_on_failure(
+    local_storage: LocalStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "BROWSER_SESSION_BASE_PATH", str(tmp_path))
+    (tmp_path / TEST_ORGANIZATION_ID / "profiles" / "bp_1").mkdir(parents=True)
+    with patch("skyvern.forge.sdk.artifact.storage.local.shutil.rmtree", side_effect=OSError("disk")):
+        # hard_delete surfaces the failure so the caller reports reap_failed, not a false erasure.
+        with pytest.raises(OSError):
+            await local_storage.delete_browser_profile(TEST_ORGANIZATION_ID, "bp_1", hard_delete=True)
+        # default delete stays best-effort (swallowed).
+        await local_storage.delete_browser_profile(TEST_ORGANIZATION_ID, "bp_1", hard_delete=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("read_only", "stored_after"), [(False, "session=rotated"), (True, "session=original")])
+async def test_only_a_read_only_browser_leaves_the_stored_profile_unchanged(
+    local_storage: LocalStorage, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, read_only: bool, stored_after: str
+) -> None:
+    monkeypatch.setattr(settings, "BROWSER_SESSION_BASE_PATH", str(tmp_path / "sessions"))
+    monkeypatch.setattr(settings, "TEMP_PATH", str(tmp_path / "temp"))
+    stored = tmp_path / "sessions" / TEST_ORGANIZATION_ID / "profiles" / "bp_1"
+    (stored / "Default").mkdir(parents=True)
+    (stored / "Default" / "Cookies").write_text("session=original")
+    retrieve = local_storage.retrieve_browser_profile_copy if read_only else local_storage.retrieve_browser_profile
+
+    browser_dir = await retrieve(TEST_ORGANIZATION_ID, "bp_1")
+    assert browser_dir is not None
+    (Path(browser_dir) / "Default" / "Cookies").write_text("session=rotated")
+
+    assert (stored / "Default" / "Cookies").read_text() == stored_after
+
+
+@pytest.mark.asyncio
+async def test_delete_legacy_file_deletes_managed_artifact(tmp_path: Path) -> None:
+    storage = LocalStorage(artifact_path=str(tmp_path))
+    artifact_paths = [
+        tmp_path / TEST_ORGANIZATION_ID / "tasks" / "legacy-artifact.png",
+        tmp_path / settings.ENV / TEST_ORGANIZATION_ID / "tasks" / "artifact.png",
+    ]
+    for artifact_path in artifact_paths:
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_bytes(b"artifact")
+        await storage.delete_legacy_file(organization_id=TEST_ORGANIZATION_ID, uri=f"file://{artifact_path}")
+        await storage.delete_legacy_file(organization_id=TEST_ORGANIZATION_ID, uri=f"file://{artifact_path}")
+
+    assert not any(artifact_path.exists() for artifact_path in artifact_paths)
+
+
+@pytest.mark.asyncio
+async def test_delete_legacy_file_rejects_other_organization_path(tmp_path: Path) -> None:
+    storage = LocalStorage(artifact_path=str(tmp_path))
+    artifact_path = tmp_path / "other-organization" / "tasks" / "artifact.png"
+    artifact_path.parent.mkdir(parents=True)
+    artifact_path.write_bytes(b"artifact")
+
+    with pytest.raises(PermissionError):
+        await storage.delete_legacy_file(organization_id=TEST_ORGANIZATION_ID, uri=f"file://{artifact_path}")
+
+    assert artifact_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_get_downloaded_files_carries_local_artifact_attribution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = TEST_WORKFLOW_RUN_ID
+    download_path = tmp_path / run_id / "report.pdf"
+    download_path.parent.mkdir(parents=True)
+    download_path.write_bytes(b"report")
+    uri = f"file://{download_path}"
+    artifact = SimpleNamespace(
+        artifact_id="artifact_download_1",
+        uri=uri,
+        modified_at=None,
+    )
+    list_artifacts = AsyncMock(return_value=[artifact])
+    monkeypatch.setattr(settings, "DOWNLOAD_PATH", str(tmp_path))
+
+    with patch("skyvern.forge.sdk.artifact.storage.local.app") as mock_app:
+        mock_app.DATABASE.artifacts.list_artifacts_for_run_by_type = list_artifacts
+        files = await LocalStorage().get_downloaded_files(TEST_ORGANIZATION_ID, run_id)
+
+    assert len(files) == 1
+    assert files[0].artifact_id == "artifact_download_1"
+    assert files[0].modified_at is not None
+    list_artifacts.assert_awaited_once_with(
+        run_id=run_id,
+        organization_id=TEST_ORGANIZATION_ID,
+        artifact_type=ArtifactType.DOWNLOAD,
+    )

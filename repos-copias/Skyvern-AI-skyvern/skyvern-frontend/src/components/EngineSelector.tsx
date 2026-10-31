@@ -1,0 +1,129 @@
+import type { ReactNode } from "react";
+
+import { RunEngine } from "@/api/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { BadgeLabel, type BadgeVariant } from "./BadgeLabel";
+
+const DEFAULT_ENGINE_VALUE = "default";
+
+type EngineOption = {
+  value: RunEngine | typeof DEFAULT_ENGINE_VALUE;
+  label: ReactNode;
+  badge?: string;
+  badgeVariant?: BadgeVariant;
+};
+
+type Props = {
+  value: RunEngine | null;
+  onChange: (value: RunEngine | null) => void;
+  className?: string;
+  availableEngines?: Array<RunEngine>;
+};
+
+const engineOptions: Array<EngineOption & { value: RunEngine }> = [
+  {
+    value: RunEngine.SkyvernV3,
+    label: "Skyvern 3.0",
+    badge: "Recommended",
+    badgeVariant: "success",
+  },
+  {
+    value: RunEngine.SkyvernV1,
+    label: "Skyvern 1.0",
+    badge: "Legacy",
+    badgeVariant: "default",
+  },
+  {
+    value: RunEngine.SkyvernV2,
+    label: "Skyvern 2.0",
+    badge: "Legacy",
+    badgeVariant: "default",
+  },
+  {
+    value: RunEngine.OpenaiCua,
+    label: "OpenAI CUA",
+    badge: "Enterprise",
+    badgeVariant: "warning",
+  },
+  {
+    value: RunEngine.AnthropicCua,
+    label: "Anthropic CUA",
+    badge: "Enterprise",
+    badgeVariant: "warning",
+  },
+  {
+    value: RunEngine.YutoriNavigator,
+    label: "Yutori Navigator",
+    badge: "Deprecated",
+    badgeVariant: "default",
+  },
+];
+
+const defaultEngines: Array<RunEngine> = [
+  RunEngine.SkyvernV1,
+  RunEngine.SkyvernV3,
+  RunEngine.OpenaiCua,
+  RunEngine.AnthropicCua,
+];
+
+const defaultOption: EngineOption = {
+  value: DEFAULT_ENGINE_VALUE,
+  label: "Default",
+};
+
+function RunEngineSelector({
+  value,
+  onChange,
+  className,
+  availableEngines,
+}: Props) {
+  const engines = availableEngines ?? defaultEngines;
+  const visibleEngines =
+    value && !engines.includes(value) ? [...engines, value] : engines;
+  const options: Array<EngineOption> = [
+    defaultOption,
+    ...engineOptions.filter((opt) => visibleEngines.includes(opt.value)),
+  ];
+  const selectValue = value ?? DEFAULT_ENGINE_VALUE;
+  const selectedOption = options.find((opt) => opt.value === selectValue);
+
+  return (
+    <Select
+      value={selectValue}
+      onValueChange={(next) =>
+        onChange(next === DEFAULT_ENGINE_VALUE ? null : (next as RunEngine))
+      }
+    >
+      <SelectTrigger className={className}>
+        <SelectValue>
+          {selectedOption && (
+            <BadgeLabel
+              label={selectedOption.label}
+              badge={selectedOption.badge}
+              badgeVariant={selectedOption.badgeVariant}
+            />
+          )}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            <BadgeLabel
+              label={option.label}
+              badge={option.badge}
+              badgeVariant={option.badgeVariant}
+            />
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+export { RunEngineSelector };

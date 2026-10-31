@@ -1,0 +1,231 @@
+# BROWSER-engage.md - Search, Compose, Quote, Retweet & Trending
+
+## Reply Quality Rules
+
+### A. Don't Default to "Reframe + Professional Angle" (per-reply check)
+
+Before writing each promo or strategic reply, ask: **"Am I about to reframe their point with a professional angle and expand?"** If yes, consider instead:
+- A **short punch** ("this. the coordination tax is the whole job now", "governance before autonomy. full stop.")
+- A **personal fragment** ("ngl my agents broke for this exact reason last week", "honestly ran into this yesterday")
+- A **disagree** ("hot take: this is fine actually", "idk I think the harder problem is...")
+
+Pick whichever fits the tweet naturally. Not every reply needs to be an insight.
+
+**Per-batch rule:** If you just wrote an insight-style reply, make the next one in this heartbeat shorter or structurally different.
+
+Does NOT apply to non-promo replies — those already work well.
+
+### B. Hard Word Cap (MANDATORY)
+
+- **Promo replies:** Max 30 words. No exceptions.
+- **Strategic replies:** Max 35 words.
+- **High-engagement tweets (200+ likes):** Max 20 words. Your reply competes with hundreds — punch, don't lecture.
+- **Quote tweets:** Max 25 words (the quoted tweet does the heavy lifting).
+
+If your draft exceeds the cap, cut it. The best-performing karma comments were 8-11 words — apply that discipline.
+
+### C. Ban AI Rhythm Constructions
+
+🚨 **NEVER use these:**
+- "X is the new Y" — any "[thing] is the new [other thing]" variant
+- "X isn't Y - it's Z" / "isn't ... it's" / "doesn't ... it does"
+- Aphoristic closers: "that's the bet", "that's the signal", "wrong bet", "full stop", "that's what matters"
+- Tricolons citing a known 3-item source list — compress to 1-2 items unless the target tweet references all three
+
+### E. Quote Tweet Quality Rules
+
+Quote tweets MUST include at least one of:
+- A **personal experience** or specific story ("broke 3 agents last week because of this exact thing")
+- A **strong disagreement** ("hard disagree on the last part though")
+- A **disagree** that adds something the original didn't say
+
+**Do NOT write quote tweets that are:**
+- "agree + but the bigger X" formula ("the creativity bottleneck is real. but the bigger bottleneck I see...")
+- Pure reframes with no personal angle
+- Generic industry commentary
+
+### F. Anti-AI Check + Company Ban
+
+Before posting ANY promo, strategic, or quote reply:
+
+1. **Structure check:** If your last 2-3 promo replies all follow "reframe + professional angle + insight" — rewrite as short punch, disagreement, or personal fragment
+2. **"Would someone think AI wrote this?"** — if yes, cut a sentence or start mid-thought
+
+🚨 **NEVER mention company.** No "at my company", "at my org", "a large company", "at work we", "managing a team at". Frame as individual: "I've seen this", "in my setup", "ran into this myself".
+
+### G. Hard Disagreement Rule (per-batch)
+
+🚨 **In every heartbeat with 3+ promo/strategic replies, at least 1 MUST disagree with or challenge the tweet's premise.** Not "I'd add..." — actual pushback: "I think the real problem is different", "hot take: this is fine actually", "nah, seen the opposite play out." Check before finishing the batch.
+
+### H. Topic Diversity
+
+🚨 **1 in 5 non-promo replies should be on a topic that has NOTHING to do with PM/AI.** Sports, design, music, developer life, random observations. Real Twitter accounts tweet about everything, not just their professional niche.
+
+### I. Platform Voice (Twitter-specific)
+
+- **Confidence wins.** Statement > question. Don't hedge — just say it.
+- **1-sentence promo replies on tweets with 200+ likes** — your reply competes with hundreds. Punch hard.
+- **Hot takes get engagement** — on Twitter, being wrong and interesting beats being right and boring.
+- **Don't sound like LinkedIn** — no "I think we can all agree", no diplomatic framing. Direct and opinionated.
+
+### J. Pre-Post Self-Review (concrete checklist)
+
+Re-read your text before submitting. Check these 4 things:
+1. **Sentence structure:** Do all sentences follow the same grammatical pattern? → rewrite one differently
+2. **Sentence length:** Are all sentences roughly the same length? → shorten or lengthen one
+3. **Originality:** Did you just rephrase what the author already said? → add something new or just react instead
+4. **Natural voice:** Would you send this exact text to a friend? → if too formal or structured, loosen it
+5. **Structure:** Does your reply have intro-body-conclusion? → cut the intro or conclusion. Just start in the middle.
+6. **Dashes:** Replace every `—` and `--` with ` - `. No exceptions.
+7. **Opener dedup:** Does your comment start similarly to `last_snippet` in today_summary.json? → rewrite the opener.
+
+---
+
+## § 3 — Extract Search Tweets
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); const tweets = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const parseCount = (label) => { if (!label) return 0; const match = label.match(/^(\\d+)/); return match ? parseInt(match[1]) : 0; }; const now = Date.now(); return tweets.slice(0, 10).map(t => { const user = t.querySelector('[data-testid=\"User-Name\"]'); const text = t.querySelector('[data-testid=\"tweetText\"]'); const link = t.querySelector('a[href*=\"/status/\"]'); const likeBtn = t.querySelector('[data-testid=\"like\"]'); const replyBtn = t.querySelector('[data-testid=\"reply\"]'); const retweetBtn = t.querySelector('[data-testid=\"retweet\"]'); const viewSpan = t.querySelector('a[href*=\"/analytics\"] span'); const time = t.querySelector('time')?.getAttribute('datetime'); const ageMin = time ? Math.round((now - new Date(time).getTime()) / 60000) : 999; return { url: link ? 'https://x.com' + link.getAttribute('href') : '', author: user ? user.innerText.split(String.fromCharCode(10))[0] : '', handle: user ? (user.innerText.split(String.fromCharCode(10)).find(l => l.startsWith('@')) || '') : '', text: text ? text.innerText.slice(0, 200) : '', likes: parseCount(likeBtn?.getAttribute('aria-label')), replies: parseCount(replyBtn?.getAttribute('aria-label')), retweets: parseCount(retweetBtn?.getAttribute('aria-label')), views: viewSpan ? viewSpan.innerText : '0', ageMin: ageMin }; }).filter(t => t.url && t.text); }"}
+ENDJSON
+```
+
+## § 4 — Extract Strategic Tweets
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); const tweets = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const parseCount = (label) => { if (!label) return 0; const match = label.match(/^(\\d+)/); return match ? parseInt(match[1]) : 0; }; const now = Date.now(); return tweets.slice(0, 10).map(t => { const user = t.querySelector('[data-testid=\"User-Name\"]'); const text = t.querySelector('[data-testid=\"tweetText\"]'); const link = t.querySelector('a[href*=\"/status/\"]'); const likeBtn = t.querySelector('[data-testid=\"like\"]') || t.querySelector('[data-testid=\"unlike\"]'); const replyBtn = t.querySelector('[data-testid=\"reply\"]'); const time = t.querySelector('time')?.getAttribute('datetime'); const ageHours = time ? (now - new Date(time).getTime()) / (1000*60*60) : 999; var hasMedia = !!t.querySelector('[data-testid=\"tweetPhoto\"]') || !!t.querySelector('[data-testid=\"videoPlayer\"]') || !!t.querySelector('[data-testid=\"tweetGif\"]'); var textLen = text ? text.innerText.length : 0; return { url: link ? 'https://x.com' + link.getAttribute('href') : '', handle: user ? (user.innerText.split(String.fromCharCode(10)).find(l => l.startsWith('@')) || '') : '', text: text ? text.innerText.slice(0, 200) : '', likes: parseCount(likeBtn?.getAttribute('aria-label')), replies: parseCount(replyBtn?.getAttribute('aria-label')), ageHours: Math.round(ageHours), hasMedia: hasMedia, isMemeLikely: hasMedia && textLen < 80 }; }).filter(t => t.url && t.likes >= 10 && t.replies < 50 && t.ageHours < 48); }"}
+ENDJSON
+```
+
+## § 7 — Compose / Original Tweet
+
+```bash
+# Step 1: Navigate to home
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/navigate -H 'Content-Type: application/json' -d '{"url":"https://x.com/home"}' 2>&1
+
+# Step 2: Click compose button
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); const btn = document.querySelector('a[href=\"/compose/tweet\"]') || document.querySelector('[data-testid=\"SideNav_NewTweet_Button\"]'); if (!btn) return { error: 'compose button not found' }; btn.click(); return { clicked: true }; }"}
+ENDJSON
+
+# Step 3: Use BROWSER-core.md § 1 compose dialog pattern (clipboard paste + submit)
+# 🚨 MUST use dialog-scoped selectors: [role="dialog"] [data-testid="tweetTextarea_0"]
+# 🚨 NEVER use bare [data-testid="tweetTextarea_0"] — home page has TWO textareas (feed + dialog)
+```
+
+## § 7b — Compose with Image
+
+Use when `content-ready/{today_date}/twitter-post-image.spec.json` exists. Inserts image upload between compose-open and Post click.
+
+### Step 0: Render spec to PNG
+
+```bash
+mkdir -p /tmp/opentwins-uploads
+SPEC={{pipeline_workspace}}/content-ready/{today_date}/twitter-post-image.spec.json
+LAYOUT=$(jq -r .type "$SPEC")
+node {{pipeline_workspace}}/image-core/cli.mjs render \
+  --platform twitter --layout "$LAYOUT" \
+  --data "$SPEC" \
+  --out /tmp/opentwins-uploads/twitter-post-image.png
+```
+
+🚨 If render exits non-zero, skip image stage. Fall through to § 7 text-only. Never block the post.
+
+### Step 1: Open compose + type text (§ 7 flow: navigate /home → click compose button → wait 1s → CDP type into `[role="dialog"] [data-testid="tweetTextarea_0"]`). **Do NOT click Post yet.**
+
+### Step 2: Attach image via selector-mode upload
+
+```bash
+curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/upload -H 'Content-Type: application/json' \
+  -d '{"filePath":"/tmp/opentwins-uploads/twitter-post-image.png","selector":"[role=\"dialog\"] [data-testid=\"fileInput\"]","timeoutMs":10000}'
+```
+
+Wait 3s.
+
+### Step 3: Verify attach
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"() => !!document.querySelector('[role=\"dialog\"] [data-testid=\"attachments\"]')"}
+ENDJSON
+```
+
+If `false` → dismiss dialog (click close X, confirm Discard if prompted), fall through to § 7 text-only.
+
+### Step 4: Click Post — `[role="dialog"] [data-testid="tweetButton"]`, verify post landed + extract tweet ID from profile URL (same as § 7 closing pattern).
+
+🚨 **Failure recovery:** any failure in Step 0, 2, or 3 → fall through to § 7 text-only. Log as `Image: false, Reason: <why>`.
+
+## § 8 — Quote Tweet
+
+```bash
+# Step 1: On tweet page, click retweet button
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { const btn = document.querySelector('[data-testid=\"retweet\"]'); if (!btn) return { error: 'retweet button not found' }; btn.click(); return { clicked: true }; }"}
+ENDJSON
+
+# Step 2: Click "Quote" from menu
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); const items = Array.from(document.querySelectorAll('[role=\"menuitem\"]')); const quoteBtn = items.find(i => i.innerText.includes('Quote')); if (!quoteBtn) return { error: 'quote option not found' }; quoteBtn.click(); return { clicked: true }; }"}
+ENDJSON
+
+# Step 3: Use BROWSER-core.md § 1 compose dialog pattern (clipboard paste + submit)
+# 🚨 Quote opens a dialog — MUST use dialog-scoped selectors
+```
+
+## § 9 — Retweet (Batch from Feed)
+
+Retweet multiple tweets from the feed in a SINGLE evaluate. No per-tweet navigation needed.
+Replace `${targetUrls}` with a JSON array of href paths (e.g. `["/user/status/123"]`).
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { const targetUrls = window.__data.urls; const tweets = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const results = []; for (const url of targetUrls) { const target = tweets.find(t => { const link = t.querySelector('a[href*=\"/status/\"]'); return link && link.getAttribute('href') === url; }); if (!target) { results.push({ url, error: 'not found' }); continue; } const btn = target.querySelector('[data-testid=\"retweet\"]'); if (!btn) { results.push({ url, already: !!target.querySelector('[data-testid=\"unretweet\"]') }); continue; } btn.click(); await new Promise(r => setTimeout(r, 1000)); const items = Array.from(document.querySelectorAll('[role=\"menuitem\"]')); const repostBtn = items.find(i => i.innerText.includes('Repost')); if (!repostBtn) { results.push({ url, error: 'no repost option' }); continue; } repostBtn.click(); await new Promise(r => setTimeout(r, 1500)); results.push({ url, retweeted: !!target.querySelector('[data-testid=\"unretweet\"]') }); } return { results, count: results.filter(r => r.retweeted).length }; }", "data": {"urls": ["/user/status/123"]}}
+ENDJSON
+```
+
+Returns `{ results: [...], count: N }`. Each result has `url` + `retweeted: true/false`.
+🚨 Do NOT navigate to individual tweets for retweeting — batch from feed is 1 step instead of 21.
+
+## § 10 — Thread (Hook-then-Reply)
+
+🚨 **NEVER use the multi-textarea thread composer** — it is broken. The hook-then-reply approach is the ONLY supported thread method.
+
+### Pattern: post hook → navigate to it → reply sequentially
+
+**Step 1 — Post hook tweet via compose dialog (§ 7 pattern)**
+
+**Step 2 — Get hook tweet URL from profile:**
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/navigate -H 'Content-Type: application/json' -d '{"url":"https://x.com/{{handle_slug}}"}' 2>&1
+
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); const articles = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const first = articles[0]; if (!first) return { error: 'no tweets' }; const link = first.querySelector('a[href*=\"/status/\"]'); const text = (first.querySelector('[data-testid=\"tweetText\"]') || {}).innerText?.slice(0, 80) || ''; return { url: link ? 'https://x.com' + link.getAttribute('href') : '', text }; }"}
+ENDJSON
+```
+
+**Step 3 — Reply chain (repeat for each body tweet + CTA):**
+Navigate to hook tweet URL, then use BROWSER-core.md § 1 reply evaluate (clipboard paste + click submit). Verify via evaluate that articles contain @{{handle_slug}} reply.
+
+For tweet 3+: navigate to the PREVIOUS reply URL (not the hook), so the chain stays linear.
+Get each reply URL after posting:
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1500)); const articles = Array.from(document.querySelectorAll('article[data-testid=\"tweet\"]')); const ours = articles.filter(a => { const h = (a.querySelector('[data-testid=\"User-Name\"]') || {}).innerText?.split(String.fromCharCode(10)).find(l => l.startsWith('@')); return h === '@{{handle_slug}}'; }); const latest = ours[ours.length - 1]; const link = latest?.querySelector('a[href*=\"/status/\"]'); return { count: ours.length, latestUrl: link ? 'https://x.com' + link.getAttribute('href') : '' }; }"}
+ENDJSON
+```
+
+### Cost: ~18 steps for 5-tweet thread (~$1.00) vs 68 steps with broken composer (~$9.00).
+
+## § 11 — Publish Article
+
+**See BROWSER-article.md** for the full article publish flow.
+
+---
+
+## § 12 — Check Trending
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/navigate -H 'Content-Type: application/json' -d '{"url":"https://x.com/explore/tabs/trending"}' 2>&1
+# Extract trending topics in next evaluate, match against product areas per TOOLS.md
+```

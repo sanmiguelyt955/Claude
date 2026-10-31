@@ -1,0 +1,541 @@
+import hashlib
+import os
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+import skyvern.forge.sdk.artifact.storage.azure as azure_module
+import skyvern.forge.sdk.artifact.storage.base as base_module
+from skyvern.config import settings
+from skyvern.exceptions import DownloadSaveIncompleteError
+from skyvern.forge.sdk.api.azure import StandardBlobTier
+from skyvern.forge.sdk.api.real_azure import RealAsyncAzureStorageClient
+from skyvern.forge.sdk.artifact.models import Artifact, ArtifactType
+from skyvern.forge.sdk.artifact.storage.azure import AzureStorage
+from skyvern.forge.sdk.artifact.storage.base import SENSITIVE_SHARE_URL_EXPIRY_HOURS
+from skyvern.forge.sdk.artifact.storage.recording_test_helpers import fake_prepared_recording
+from skyvern.forge.sdk.workflow.context_manager import WorkflowContextManager
+from skyvern.forge.sdk.workflow.service import WorkflowService
+from tests.unit.conftest import FakeWorkflowRunAttemptsRepository
+
+# Test constants
+TEST_CONTAINER = "test-azure-container"
+TEST_ORGANIZATION_ID = "test-org-123"
+TEST_BROWSER_SESSION_ID = "bs_test_123"
+
+
+class AzureStorageForTests(AzureStorage):
+    """Test subclass that overrides org-specific methods and bypasses client init."""
+
+    async_client: Any  # Allow mock attribute access
+
+    def __init__(self, container: str) -> None:
+        # Don't call super().__init__ to avoid creating real RealAsyncAzureStorageClient
+        self.container = container
+        self.async_client = AsyncMock()
+
+    async def _get_storage_tier_for_org(self, organization_id: str) -> StandardBlobTier:
+        return StandardBlobTier.HOT
+
+    async def _get_tags_for_org(self, organization_id: str) -> dict[str, str]:
+        return {"test": "tag"}
+
+
+@pytest.fixture
+def azure_storage() -> AzureStorageForTests:
+    """Create AzureStorage with mocked async_client."""
+    return AzureStorageForTests(container=TEST_CONTAINER)
+
+
+@pytest.fixture(autouse=True)
+def mock_browser_session_artifact_create(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub out the DB-side artifact-row inserts for browser-session files.
+
+    Mirrors the s3 storage test fixture — see SKY-8861 follow-up. Patches
+    the module-level ``app`` reference in ``azure.py`` because the forge
+    app isn't initialized in these storage-only tests. Covers both
+    download and recording artifact creators.
+    """
+
+    fake_app = MagicMock()
+    fake_app.ARTIFACT_MANAGER.create_browser_session_download_artifact = AsyncMock(return_value="a_test")
+    fake_app.ARTIFACT_MANAGER.create_browser_session_recording_artifact = AsyncMock(return_value="a_test")
+    fake_app.ARTIFACT_MANAGER.create_download_artifact = AsyncMock(return_value="a_test")
+    fake_app.WORKFLOW_CONTEXT_MANAGER = WorkflowContextManager()
+    fake_app.DATABASE.workflow_run_attempts = FakeWorkflowRunAttemptsRepository()
+    monkeypatch.setattr(azure_module, "app", fake_app)
+
+
+@pytest.mark.asyncio
+class TestAzureStorageBrowserSessionFiles:
+    """Test AzureStorage browser session file methods."""
+
+    async def test_sync_browser_session_file_with_date(
+        self, azure_storage: AzureStorageForTests, tmp_path: Path
+    ) -> None:
+        """Test syncing a file with date in path (videos/har)."""
+        test_file = tmp_path / "recording.webm"
+        test_file.write_bytes(b"fake video data")
+        prepared_file = tmp_path / "recording.mp4"
+        prepared_file.write_bytes(b"fake mp4 data")
+
+        with patch(
+            "skyvern.forge.sdk.artifact.storage.azure.prepare_recording_for_upload",
+            lambda path: fake_prepared_recording(path, str(prepared_file)),
+        ):
+            with patch("skyvern.forge.sdk.artifact.storage.azure.sync_run_recording_clips", new=AsyncMock()):
+                uri = await azure_storage.sync_browser_session_file(
+                    organization_id=TEST_ORGANIZATION_ID,
+                    browser_session_id=TEST_BROWSER_SESSION_ID,
+                    artifact_type="videos",
+                    local_file_path=str(test_file),
+                    remote_path="recording.webm",
+                    date="2025-01-15",
+                )
+
+        expected_uri = f"azure://{TEST_CONTAINER}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/browser_sessions/{TEST_BROWSER_SESSION_ID}/videos/2025-01-15/recording.mp4"
+        assert uri == expected_uri
+        azure_storage.async_client.upload_file_from_path.assert_called_once_with(
+            expected_uri, str(prepared_file), tier=StandardBlobTier.HOT, tags={"test": "tag"}
+        )
+
+    async def test_sync_browser_session_file_without_date(
+        self, azure_storage: AzureStorageForTests, tmp_path: Path
+    ) -> None:
+        """Test syncing a file without date (downloads category)."""
+        test_file = tmp_path / "document.pdf"
+        test_file.write_bytes(b"fake download data")
+
+        uri = await azure_storage.sync_browser_session_file(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="downloads",
+            local_file_path=str(test_file),
+            remote_path="document.pdf",
+            date=None,
+        )
+
+        expected_uri = f"azure://{TEST_CONTAINER}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/browser_sessions/{TEST_BROWSER_SESSION_ID}/downloads/document.pdf"
+        assert uri == expected_uri
+
+    async def test_browser_session_file_exists_returns_true(self, azure_storage: AzureStorageForTests) -> None:
+        """Test browser_session_file_exists returns True when file exists."""
+        azure_storage.async_client.get_object_info.return_value = {"LastModified": "2025-01-15"}
+
+        exists = await azure_storage.browser_session_file_exists(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="videos",
+            remote_path="exists.webm",
+            date="2025-01-15",
+        )
+
+        assert exists is True
+
+    async def test_browser_session_file_exists_returns_false_on_exception(
+        self, azure_storage: AzureStorageForTests
+    ) -> None:
+        """Test browser_session_file_exists returns False when exception is raised."""
+        azure_storage.async_client.get_object_info.side_effect = Exception("Not found")
+
+        exists = await azure_storage.browser_session_file_exists(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="videos",
+            remote_path="nonexistent.webm",
+            date="2025-01-15",
+        )
+
+        assert exists is False
+
+    async def test_delete_browser_session_file(self, azure_storage: AzureStorageForTests) -> None:
+        """Test deleting a browser session file."""
+        await azure_storage.delete_browser_session_file(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="videos",
+            remote_path="to_delete.webm",
+            date="2025-01-15",
+        )
+
+        expected_uri = f"azure://{TEST_CONTAINER}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/browser_sessions/{TEST_BROWSER_SESSION_ID}/videos/2025-01-15/to_delete.webm"
+        azure_storage.async_client.delete_file.assert_called_once_with(expected_uri)
+
+    async def test_file_exists_returns_true(self, azure_storage: AzureStorageForTests) -> None:
+        """Test file_exists returns True when file exists."""
+        azure_storage.async_client.get_object_info.return_value = {"LastModified": "2025-01-15"}
+        uri = f"azure://{TEST_CONTAINER}/test/file.txt"
+
+        exists = await azure_storage.file_exists(uri)
+
+        assert exists is True
+
+    async def test_file_exists_returns_false_on_exception(self, azure_storage: AzureStorageForTests) -> None:
+        """Test file_exists returns False when exception is raised (404)."""
+        azure_storage.async_client.get_object_info.side_effect = Exception("Not found")
+        uri = f"azure://{TEST_CONTAINER}/nonexistent/file.txt"
+
+        exists = await azure_storage.file_exists(uri)
+
+        assert exists is False
+
+    async def test_assert_managed_file_access_accepts_org_scoped_uploads(
+        self, azure_storage: AzureStorageForTests
+    ) -> None:
+        legacy_uri = (
+            f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{settings.ENV}/{TEST_ORGANIZATION_ID}/file.pdf"
+        )
+        downloads_uri = (
+            f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/"
+            f"downloads/{settings.ENV}/{TEST_ORGANIZATION_ID}/wr_123/file.pdf"
+        )
+
+        azure_storage.assert_managed_file_access(legacy_uri, TEST_ORGANIZATION_ID)
+        azure_storage.assert_managed_file_access(downloads_uri, TEST_ORGANIZATION_ID)
+
+    async def test_assert_managed_file_access_accepts_artifact_container(
+        self, azure_storage: AzureStorageForTests
+    ) -> None:
+        artifact_uri = (
+            f"azure://{settings.AZURE_STORAGE_CONTAINER_ARTIFACTS}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/"
+            "workflow_runs/wr_123/wrb_456/2026-03-23T17:57:58.370827_a_789_pdf.pdf"
+        )
+        azure_storage.assert_managed_file_access(artifact_uri, TEST_ORGANIZATION_ID)
+
+    async def test_assert_managed_file_access_rejects_other_org(self, azure_storage: AzureStorageForTests) -> None:
+        uri = f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{settings.ENV}/o_other/file.pdf"
+        with pytest.raises(PermissionError, match="No permission to access storage URI"):
+            azure_storage.assert_managed_file_access(uri, TEST_ORGANIZATION_ID)
+
+    async def test_assert_managed_file_access_rejects_other_org_artifact_container(
+        self, azure_storage: AzureStorageForTests
+    ) -> None:
+        uri = (
+            f"azure://{settings.AZURE_STORAGE_CONTAINER_ARTIFACTS}/v1/{settings.ENV}/o_other/"
+            "workflow_runs/wr_123/wrb_456/artifact.pdf"
+        )
+        with pytest.raises(PermissionError, match="No permission to access storage URI"):
+            azure_storage.assert_managed_file_access(uri, TEST_ORGANIZATION_ID)
+
+    async def test_download_managed_file(self, azure_storage: AzureStorageForTests) -> None:
+        """Test downloading a managed file."""
+        test_data = b"uploaded file content"
+        azure_storage.async_client.download_file.return_value = test_data
+        uri = f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{settings.ENV}/{TEST_ORGANIZATION_ID}/file.pdf"
+
+        downloaded = await azure_storage.download_managed_file(uri, TEST_ORGANIZATION_ID)
+
+        assert downloaded == test_data
+        azure_storage.async_client.download_file.assert_called_once_with(uri, log_exception=False)
+
+    async def test_download_managed_file_returns_none(self, azure_storage: AzureStorageForTests) -> None:
+        """Test downloading a non-existent managed file returns None."""
+        azure_storage.async_client.download_file.return_value = None
+        uri = (
+            f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{settings.ENV}/{TEST_ORGANIZATION_ID}/"
+            "nonexistent/file.txt"
+        )
+
+        downloaded = await azure_storage.download_managed_file(uri, TEST_ORGANIZATION_ID)
+
+        assert downloaded is None
+
+    async def test_download_managed_file_rejects_other_org(self, azure_storage: AzureStorageForTests) -> None:
+        uri = f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{settings.ENV}/o_other/file.pdf"
+
+        with pytest.raises(PermissionError, match="No permission to access storage URI"):
+            await azure_storage.download_managed_file(uri, TEST_ORGANIZATION_ID)
+
+    async def test_storage_type_property(self, azure_storage: AzureStorageForTests) -> None:
+        """Test storage_type returns 'azure'."""
+        assert azure_storage.storage_type == "azure"
+
+
+class TestAzureStorageBuildUri:
+    """Test Azure URI building methods."""
+
+    def test_build_browser_session_uri_with_date(self, azure_storage: AzureStorageForTests) -> None:
+        """Test building URI with date."""
+        uri = azure_storage._build_browser_session_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="videos",
+            remote_path="file.webm",
+            date="2025-01-15",
+        )
+
+        expected = f"azure://{TEST_CONTAINER}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/browser_sessions/{TEST_BROWSER_SESSION_ID}/videos/2025-01-15/file.webm"
+        assert uri == expected
+
+    def test_build_browser_session_uri_without_date(self, azure_storage: AzureStorageForTests) -> None:
+        """Test building URI without date."""
+        uri = azure_storage._build_browser_session_uri(
+            organization_id=TEST_ORGANIZATION_ID,
+            browser_session_id=TEST_BROWSER_SESSION_ID,
+            artifact_type="downloads",
+            remote_path="file.pdf",
+            date=None,
+        )
+
+        expected = f"azure://{TEST_CONTAINER}/v1/{settings.ENV}/{TEST_ORGANIZATION_ID}/browser_sessions/{TEST_BROWSER_SESSION_ID}/downloads/file.pdf"
+        assert uri == expected
+
+
+@pytest.mark.asyncio
+async def test_get_downloaded_files_legacy_listing_attributes_and_scopes_attempt_files(
+    azure_storage: AzureStorageForTests, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "wr_retry"
+    attempt_one_modified_at = datetime(2026, 9, 7, 11, 0, tzinfo=UTC)
+    attempt_two_started_at = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    blob_modified_at = datetime(2026, 9, 7, 12, 1, tzinfo=UTC)
+    old_key = f"downloads/local/{settings.ENV}/{TEST_ORGANIZATION_ID}/{run_id}/old.pdf"
+    current_key = f"downloads/local/{settings.ENV}/{TEST_ORGANIZATION_ID}/{run_id}/current.pdf"
+    old_uri = f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/{old_key}"
+    old_artifact = Artifact(
+        artifact_id="a_old",
+        artifact_type=ArtifactType.DOWNLOAD,
+        uri=old_uri,
+        organization_id=TEST_ORGANIZATION_ID,
+        run_id=run_id,
+        workflow_run_id=run_id,
+        created_at=attempt_one_modified_at,
+        modified_at=attempt_one_modified_at,
+    )
+
+    async def get_object_info(uri: str) -> dict[str, Any]:
+        return {
+            "Metadata": {"sha256_checksum": f"sha-{uri.rsplit('/', 1)[-1]}"},
+            "ContentLength": 10,
+            "LastModified": blob_modified_at,
+        }
+
+    azure_storage.async_client.list_files = AsyncMock(return_value=[old_key, current_key])
+    azure_storage.async_client.get_object_info = AsyncMock(side_effect=get_object_info)
+    azure_storage.async_client.create_sas_urls = AsyncMock(
+        side_effect=lambda uris: [f"https://signed.test/{uri.rsplit('/', 1)[-1]}" for uri in uris]
+    )
+    rows = AsyncMock(return_value=[old_artifact])
+    monkeypatch.setattr(
+        "skyvern.forge.sdk.artifact.storage.azure.app.DATABASE.artifacts.list_artifacts_for_run_by_type", rows
+    )
+
+    with patch.object(settings, "ARTIFACT_CONTENT_HMAC_KEYRING", None):
+        files = await azure_storage.get_downloaded_files(TEST_ORGANIZATION_ID, run_id)
+
+    assert len(files) == 2
+    old_file, current_file = files
+    assert old_file.artifact_id == "a_old"
+    assert old_file.modified_at == attempt_one_modified_at
+    assert current_file.artifact_id is None
+    assert current_file.modified_at == blob_modified_at
+    rows.assert_awaited_once_with(
+        run_id=run_id,
+        organization_id=TEST_ORGANIZATION_ID,
+        artifact_type=ArtifactType.DOWNLOAD,
+    )
+
+    scoped = WorkflowService()._filter_downloaded_files_to_attempt(
+        files,
+        attempt_rows=[SimpleNamespace(attempt_number=2, started_at=attempt_two_started_at)],
+        attempt_number=2,
+        artifact_ids=set(),
+    )
+    assert [file_info.filename for file_info in scoped] == ["current.pdf"]
+
+
+AZURE_CONTENT_TYPE_TEST_CASES = [
+    # (filename, expected_content_type, artifact_type, date)
+    ("video.webm", "video/webm", "videos", "2025-01-15"),
+    ("data.json", "application/json", "har", "2025-01-15"),
+    ("network.har", "application/json", "har", "2025-01-15"),
+    ("screenshot.png", "image/png", "downloads", None),
+    ("output.txt", "text/plain", "downloads", None),
+    ("debug.log", "text/plain", "downloads", None),
+]
+
+
+@pytest.mark.asyncio
+class TestAzureStorageContentType:
+    """Test Azure Storage content type guessing.
+
+    Tests at two levels:
+    1. High-level: sync_browser_session_file interface with artifact_type/date
+    2. Low-level: RealAsyncAzureStorageClient to verify ContentSettings is passed
+    """
+
+    @pytest.mark.parametrize("filename,expected_content_type,artifact_type,date", AZURE_CONTENT_TYPE_TEST_CASES)
+    async def test_content_type_guessing(
+        self,
+        tmp_path: Path,
+        filename: str,
+        expected_content_type: str,
+        artifact_type: str,
+        date: str | None,
+    ) -> None:
+        """Test that RealAsyncAzureStorageClient sets correct content type based on extension."""
+        test_file = tmp_path / filename
+        test_file.write_bytes(b"test content")
+
+        with patch.object(RealAsyncAzureStorageClient, "_get_blob_service_client") as mock_get_client:
+            mock_container_client = MagicMock()
+            mock_container_client.upload_blob = AsyncMock()
+            mock_container_client.exists = AsyncMock(return_value=True)
+            mock_blob_service = MagicMock()
+            mock_blob_service.get_container_client.return_value = mock_container_client
+            mock_get_client.return_value = mock_blob_service
+
+            client = RealAsyncAzureStorageClient(account_name="test", account_key="testkey")
+            client._verified_containers.add("test-container")
+
+            await client.upload_file_from_path(
+                uri=f"azure://test-container/path/{filename}",
+                file_path=str(test_file),
+            )
+
+            call_kwargs = mock_container_client.upload_blob.call_args.kwargs
+            assert call_kwargs["content_settings"] is not None
+            assert call_kwargs["content_settings"].content_type == expected_content_type
+
+
+def make_artifact(uri: str, artifact_type: ArtifactType = ArtifactType.SCREENSHOT) -> Artifact:
+    return Artifact(
+        artifact_id="a_1",
+        artifact_type=artifact_type,
+        uri=uri,
+        organization_id=TEST_ORGANIZATION_ID,
+        created_at=datetime.utcnow(),
+        modified_at=datetime.utcnow(),
+    )
+
+
+@pytest.mark.asyncio
+class TestAzureShareLinkSensitiveCap:
+    """Sensitive artifact types get hour-capped SAS URLs (SKY-12527)."""
+
+    async def test_share_links_route_sensitive_types_to_capped_expiry(
+        self, azure_storage: AzureStorageForTests
+    ) -> None:
+        recording = make_artifact(f"azure://{TEST_CONTAINER}/rec.webm", artifact_type=ArtifactType.RECORDING)
+        download = make_artifact(f"azure://{TEST_CONTAINER}/file.pdf", artifact_type=ArtifactType.DOWNLOAD)
+
+        async def fake_sas(uris: list[str], expiry_hours: int = 24) -> list[str]:
+            return [f"{uri}?h={expiry_hours}" for uri in uris]
+
+        azure_storage.async_client.create_sas_urls = AsyncMock(side_effect=fake_sas)
+        urls = await azure_storage.get_share_links([recording, download])
+        assert urls == [
+            f"{recording.uri}?h={SENSITIVE_SHARE_URL_EXPIRY_HOURS}",
+            f"{download.uri}?h=24",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_save_downloaded_files_partial_upload_failure_raises_after_saving_the_rest(
+    azure_storage: AzureStorageForTests, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = tmp_path / "downloads" / "wr_partial"
+    run_dir.mkdir(parents=True)
+    (run_dir / "a.pdf").write_bytes(b"first")
+    (run_dir / "b.pdf").write_bytes(b"second")
+    monkeypatch.setattr("skyvern.forge.sdk.api.files.settings.DOWNLOAD_PATH", str(tmp_path / "downloads"))
+
+    uploaded: list[str] = []
+
+    async def _upload(*, uri: str, file_path: str, **kwargs: object) -> None:
+        if uri.endswith("/a.pdf"):
+            raise RuntimeError("transient 503")
+        uploaded.append(uri)
+
+    monkeypatch.setattr(azure_storage.async_client, "upload_file_from_path", _upload)
+
+    monkeypatch.setattr(base_module.app.DATABASE.workflow_runs, "get_workflow_run", AsyncMock(return_value=None))
+
+    with pytest.raises(DownloadSaveIncompleteError) as raised:
+        await azure_storage.save_downloaded_files(organization_id=TEST_ORGANIZATION_ID, run_id="wr_partial")
+
+    assert raised.value.skipped_files == ["a.pdf"]
+    assert [uri.rsplit("/", 1)[-1] for uri in uploaded] == ["b.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_save_downloaded_files_retry_skips_stale_files_and_versions_fresh_redownloads(
+    azure_storage: AzureStorageForTests, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "wr_retry"
+    run_dir = tmp_path / "downloads" / run_id
+    run_dir.mkdir(parents=True)
+    stale_file = run_dir / "only-attempt-1.pdf"
+    fresh_file = run_dir / "report.pdf"
+    stale_file.write_bytes(b"same bytes")
+    fresh_file.write_bytes(b"same bytes")
+    monkeypatch.setattr("skyvern.forge.sdk.api.files.settings.DOWNLOAD_PATH", str(tmp_path / "downloads"))
+
+    attempt_started_at = datetime.now(UTC) - timedelta(seconds=1)
+    os.utime(stale_file, (attempt_started_at.timestamp() - 60, attempt_started_at.timestamp() - 60))
+    os.utime(fresh_file, (attempt_started_at.timestamp() + 1, attempt_started_at.timestamp() + 1))
+    checksum = hashlib.sha256(b"same bytes").hexdigest()
+    base_uri = (
+        f"azure://{settings.AZURE_STORAGE_CONTAINER_UPLOADS}/downloads/{settings.ENV}/{TEST_ORGANIZATION_ID}/{run_id}"
+    )
+    rows = [
+        make_artifact(f"{base_uri}/{stale_file.name}", artifact_type=ArtifactType.DOWNLOAD).model_copy(
+            update={"checksum": checksum, "modified_at": attempt_started_at - timedelta(seconds=60)}
+        ),
+        make_artifact(f"{base_uri}/{fresh_file.name}", artifact_type=ArtifactType.DOWNLOAD).model_copy(
+            update={"checksum": checksum, "modified_at": attempt_started_at - timedelta(seconds=60)}
+        ),
+    ]
+
+    async def _list_rows(**kwargs: object) -> list[Artifact]:
+        return rows
+
+    async def _save_row(*, uri: str, **kwargs: object) -> str:
+        for row_index, row in enumerate(rows):
+            if row.uri == uri:
+                rows[row_index] = row.model_copy(update={"modified_at": datetime.now(UTC)})
+                return row.artifact_id
+        rows.append(
+            make_artifact(uri, artifact_type=ArtifactType.DOWNLOAD).model_copy(
+                update={"artifact_id": "a_retry", "modified_at": datetime.now(UTC)}
+            )
+        )
+        return rows[-1].artifact_id
+
+    attempts_repository = FakeWorkflowRunAttemptsRepository(
+        [SimpleNamespace(attempt_number=2, started_at=attempt_started_at)]
+    )
+    monkeypatch.setattr(azure_storage.async_client, "upload_file_from_path", AsyncMock())
+    monkeypatch.setattr(
+        azure_module,
+        "app",
+        fake_app := SimpleNamespace(
+            ARTIFACT_MANAGER=SimpleNamespace(create_download_artifact=AsyncMock(side_effect=_save_row)),
+            WORKFLOW_CONTEXT_MANAGER=WorkflowContextManager(),
+            DATABASE=SimpleNamespace(
+                artifacts=SimpleNamespace(list_artifacts_for_run_by_type=_list_rows),
+                workflow_run_attempts=attempts_repository,
+                workflow_runs=SimpleNamespace(get_workflow_run=AsyncMock(return_value=None)),
+            ),
+        ),
+    )
+    monkeypatch.setattr(base_module, "app", fake_app)
+
+    await azure_storage.save_downloaded_files(organization_id=TEST_ORGANIZATION_ID, run_id=run_id)
+
+    assert attempts_repository.requested_workflow_run_ids == [run_id]
+    assert azure_storage.async_client.upload_file_from_path.await_args.kwargs["uri"] == (
+        f"{base_uri}/attempts/2/{fresh_file.name}"
+    )
+    assert len(rows) == 3
+    assert all(row.modified_at < attempt_started_at for row in rows[:2])
+    registered = [
+        call.kwargs["filename"] for call in azure_module.app.ARTIFACT_MANAGER.create_download_artifact.await_args_list
+    ]
+    assert registered == [fresh_file.name]
+    attempt_two_listing = [row.uri.rsplit("/", 1)[-1] for row in rows if row.modified_at >= attempt_started_at]
+    assert attempt_two_listing == [fresh_file.name]

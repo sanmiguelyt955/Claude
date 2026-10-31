@@ -1,0 +1,574 @@
+import json
+from datetime import UTC, datetime
+from http import HTTPStatus
+
+import pytest
+
+from skyvern.exceptions import (
+    BrowserSessionClosed,
+    BrowserSessionExpired,
+    BrowserSessionStartupTimeout,
+    CaptchaNotSolvedInTime,
+    CaptchaSolveError,
+    CdpConnectionConfigurationError,
+    SkyvernException,
+    SkyvernExtraNotInstalled,
+    SkyvernHTTPException,
+    UnknownErrorWhileCreatingBrowserContext,
+    get_user_facing_exception_message,
+    raise_local_extra_required,
+    raise_server_extra_required,
+    require_local_extra_modules,
+    require_server_extra_modules,
+)
+from skyvern.forge.api_app import handle_skyvern_http_exception
+
+
+class FakePatchrightTimeoutError(Exception):
+    pass
+
+
+def test_unknown_error_while_creating_browser_context_strips_call_log() -> None:
+    inner_exception = FakePatchrightTimeoutError(
+        "BrowserType.launch_persistent_context: Timeout 180000ms exceeded. "
+        "Call log:\n- <launching> /opt/microsoft/msedge/msedge --proxy-server=http://network.joinmassive.com:65534"
+    )
+
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+
+    assert "Call log:" not in message
+    assert "--proxy-server=" not in message
+    assert "timed out after 180 seconds" in message
+    assert "Please try re-running." in message
+    assert "support@skyvern.com" in message
+
+
+def test_unknown_error_omits_browser_type_from_user_facing_message() -> None:
+    # The browser_type label can be a remote-browser vendor identity; keep it on the
+    # exception for structured logs but never surface it in the user-facing message.
+    sentinel = "zzz-secret-browser-label"
+    error = UnknownErrorWhileCreatingBrowserContext(sentinel, RuntimeError("setup failed"))
+    message = str(error)
+
+    assert sentinel not in message
+    assert error.browser_type == sentinel
+    assert "Failed to create browser context" in message
+
+
+def test_unknown_error_renders_redacted_inner_type_name() -> None:
+    # A SkyvernException may hide a sensitive class name behind user_facing_type_name; the
+    # wrapper must render that neutral token, never the real class name.
+    class _SecretVendorRateLimitError(SkyvernException):
+        @property
+        def user_facing_type_name(self) -> str:
+            return "RemoteBrowserRateLimitError"
+
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", _SecretVendorRateLimitError("slow down"))
+    message = str(error)
+
+    assert "SecretVendor" not in message
+    assert "RemoteBrowserRateLimitError" in message
+
+
+def test_unknown_error_preserves_real_inner_type_name_by_default() -> None:
+    # Failure classification keys off the parenthesized inner class name in the message, so a
+    # plain SkyvernException (no redaction) must still surface its real class name.
+    class _PlainProxyError(SkyvernException):
+        pass
+
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", _PlainProxyError("no proxy available"))
+    assert "_PlainProxyError" in str(error)
+
+
+def test_unknown_error_redacts_raw_cdp_endpoint_url() -> None:
+    # A raw connect_over_cdp failure echoes the ws/wss endpoint, which can carry the vendor
+    # host, a session-bearing query, or embedded credentials — none may reach the user.
+    inner_exception = Exception(
+        "browserType.connectOverCDP: WebSocket error: "
+        "wss://user:secret@remote.example.internal/session/tok-9f3a?apiKey=SEKRET connect ECONNREFUSED"
+    )
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "wss://" not in message
+    assert "tok-9f3a" not in message
+    assert "SEKRET" not in message
+    assert "remote.example.internal" not in message
+    assert "[remote browser endpoint]" in message
+
+
+def test_unknown_error_redacts_http_cdp_discovery_url() -> None:
+    # The /json/version discovery endpoint is reached over http(s) and can carry the vendor host
+    # and a session-bearing token just like the ws socket, so it must be redacted too.
+    inner_exception = Exception(
+        "connect_over_cdp: fetching https://remote.example.internal/json/version?token=SEKRET failed"
+    )
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "https://" not in message
+    assert "SEKRET" not in message
+    assert "remote.example.internal" not in message
+    assert "[remote browser endpoint]" in message
+
+
+def test_unknown_error_preserves_generic_http_url() -> None:
+    # A non-CDP setup failure (proxy/public-IP probe) can echo an ordinary http(s) URL the user
+    # needs to diagnose their own configuration; with no CDP signal present it must not be redacted.
+    inner_exception = Exception("Proxy health check failed: GET http://proxy.example.com:8080/status returned 503")
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "http://proxy.example.com:8080/status" in message
+    assert "[remote browser endpoint]" not in message
+    assert "returned 503" in message
+
+
+def test_unknown_error_redacts_generic_ws_url() -> None:
+    # Even without a CDP signal, a ws/wss URL is unambiguously a devtools socket that may carry the
+    # vendor host or embedded credentials, so ws/wss endpoints are always redacted.
+    inner_exception = Exception("Browser setup failed talking to wss://user:secret@vendor.internal/session/tok-42")
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "wss://" not in message
+    assert "tok-42" not in message
+    assert "vendor.internal" not in message
+    assert "[remote browser endpoint]" in message
+
+
+def test_unknown_error_preserves_useful_non_sensitive_prose() -> None:
+    # A generic setup failure carrying an ordinary http(s) URL should reach the user intact so the
+    # message stays actionable.
+    inner_exception = Exception("Failed to reach public IP service at https://api.ipify.org")
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "https://api.ipify.org" in message  # nosemgrep: incomplete-url-substring-sanitization
+    assert "Failed to reach public IP service" in message
+    assert "[remote browser endpoint]" not in message
+
+
+def test_captcha_not_solved_in_time_is_captcha_solve_error() -> None:
+    # The action handler catches CaptchaSolveError before its generic arm; this
+    # subclass relationship is what routes captcha-solve failures to the handled
+    # log path instead of "Unhandled exception in action handler".
+    error = CaptchaNotSolvedInTime("task_123", "unsolved")
+    assert isinstance(error, CaptchaSolveError)
+    assert isinstance(error, SkyvernException)
+
+
+def test_unknown_error_preserves_cdp_configuration_guidance() -> None:
+    inner_exception = CdpConnectionConfigurationError(
+        "Skyvern reached the configured CDP address, but /json/version returned HTTP 404. "
+        "Start Chrome with --remote-debugging-port=9222."
+    )
+
+    error = UnknownErrorWhileCreatingBrowserContext("cdp-connect", inner_exception)
+    message = str(error)
+
+    assert "CdpConnectionConfigurationError" in message
+    assert "/json/version returned HTTP 404" in message
+    assert "--remote-debugging-port=9222" in message
+
+
+def test_get_user_facing_exception_message_for_skyvern_exception() -> None:
+    message = get_user_facing_exception_message(SkyvernException("Human-friendly message"))
+    assert message == "Human-friendly message"
+
+
+def test_get_user_facing_exception_message_for_generic_exception() -> None:
+    message = get_user_facing_exception_message(ValueError("raw error"))
+    assert message == "Unexpected error: raw error"
+
+
+def test_skyvern_http_exception_normalizes_status_code_to_plain_int() -> None:
+    error = SkyvernHTTPException("bad request", status_code=HTTPStatus.BAD_REQUEST)
+
+    assert error.status_code == 400
+    assert type(error.status_code) is int
+
+
+def test_browser_session_timeout_exceptions_distinguish_startup_from_expiry() -> None:
+    startup_timeout = BrowserSessionStartupTimeout("pbs_test")
+    expired = BrowserSessionClosed(
+        "pbs_test",
+        reason="expired after reaching its configured lifetime",
+    )
+
+    assert startup_timeout.status_code == 504
+    assert expired.status_code == 410
+    assert str(startup_timeout) == (
+        "Browser session pbs_test failed to start within the timeout period. "
+        "Create a new browser session and retry with its id."
+    )
+    assert str(expired) == (
+        "Browser session pbs_test expired after reaching its configured lifetime. "
+        "Create a new browser session and retry."
+    )
+
+
+def test_browser_session_closed_states_the_remedy_without_an_explicit_reason() -> None:
+    assert str(BrowserSessionClosed("pbs_test")) == (
+        "Browser session pbs_test is closed. Create a new browser session and retry."
+    )
+
+
+@pytest.mark.asyncio
+async def test_refused_run_carries_a_stable_error_code_a_caller_can_branch_on() -> None:
+    """A dispatcher re-sending a dead session id must be able to tell expiry from any other 410
+    without matching on prose, so these codes are a published contract."""
+    expired = BrowserSessionExpired(
+        "pbs_test",
+        started_at=datetime(2026, 10, 13, 1, 0, tzinfo=UTC),
+        ended_at=datetime(2026, 10, 13, 2, 0, tzinfo=UTC),
+        timeout_minutes=60,
+        created_by="api",
+        refused_at_submission=True,
+    )
+
+    response = await handle_skyvern_http_exception(None, expired)  # type: ignore[arg-type]
+    body = json.loads(response.body)
+
+    assert response.status_code == 410
+    assert body["error_code"] == "browser_session_expired"
+    assert "expired" in body["detail"]
+    # The subclass must not inherit the base code, or expiry becomes indistinguishable from a
+    # session the caller closed itself.
+    assert BrowserSessionClosed("pbs_test").error_code == "browser_session_closed"
+    assert BrowserSessionStartupTimeout("pbs_test").error_code == "browser_session_startup_timeout"
+
+
+@pytest.mark.asyncio
+async def test_error_code_is_absent_from_responses_that_do_not_set_one() -> None:
+    response = await handle_skyvern_http_exception(  # type: ignore[arg-type]
+        None, SkyvernHTTPException("bad request", status_code=HTTPStatus.BAD_REQUEST)
+    )
+
+    assert json.loads(response.body) == {"detail": "bad request"}
+
+
+def test_raise_server_extra_required_translates_when_server_extra_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None,
+    )
+    missing = ModuleNotFoundError("No module named 'starlette_context'", name="starlette_context")
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[server\]"'):
+        raise_server_extra_required("skyvern.library.skyvern_browser", missing)
+
+
+def test_raise_server_extra_required_translates_missing_server_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "playwright" else object(),
+    )
+    missing = ModuleNotFoundError("No module named 'playwright'", name="playwright")
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[server\]"'):
+        raise_server_extra_required("skyvern.library.skyvern_browser", missing)
+
+
+def test_raise_local_extra_required_translates_missing_local_marker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "playwright" else object(),
+    )
+    missing = ModuleNotFoundError("No module named 'playwright'", name="playwright")
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[local\]"'):
+        raise_local_extra_required("Browser APIs", missing)
+
+
+def test_raise_local_extra_required_rewrites_nested_server_guard() -> None:
+    missing = SkyvernExtraNotInstalled("skyvern.forge.api_app", extra="server")
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[local\]"'):
+        raise_local_extra_required("Skyvern.local()", missing)
+
+
+def test_raise_server_extra_required_preserves_installed_marker_submodule_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("skyvern.exceptions.find_spec", lambda module_name: object())
+    missing = ModuleNotFoundError("No module named 'playwright._impl._broken'", name="playwright._impl._broken")
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        raise_server_extra_required("skyvern.library.skyvern_browser", missing)
+
+    assert exc_info.value is missing
+
+
+def test_raise_server_extra_required_preserves_unknown_missing_dependency_when_server_extra_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "playwright" else object(),
+    )
+    missing = ModuleNotFoundError("No module named 'bogus_internal_dep'", name="bogus_internal_dep")
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        raise_server_extra_required("skyvern.services.script_service", missing)
+
+    assert exc_info.value is missing
+
+
+def test_raise_server_extra_required_preserves_missing_dependency_when_server_markers_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("skyvern.exceptions.find_spec", lambda module_name: object())
+    missing = ModuleNotFoundError("No module named 'bogus_internal_dep'", name="bogus_internal_dep")
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        raise_server_extra_required("skyvern.services.script_service", missing)
+
+    assert exc_info.value is missing
+
+
+def test_raise_server_extra_required_preserves_internal_skyvern_import_failure_when_server_extra_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "playwright" else object(),
+    )
+    missing = ModuleNotFoundError("No module named 'skyvern.typo'", name="skyvern.typo")
+
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        raise_server_extra_required("skyvern.services.script_service", missing)
+
+    assert exc_info.value is missing
+
+
+def test_require_server_extra_modules_requires_server_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "sqlalchemy" else object(),
+    )
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[server\]"'):
+        require_server_extra_modules("skyvern.library.skyvern_browser_page")
+
+
+def test_require_server_extra_modules_catches_partial_server_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "jinja2" else object(),
+    )
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[server\]"'):
+        require_server_extra_modules("skyvern.library.skyvern_browser_page")
+
+
+def test_require_server_extra_modules_discriminates_from_local_with_explicit_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "uvicorn" else object(),
+    )
+
+    require_server_extra_modules("skyvern.forge.api_app")
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[server\]"'):
+        require_server_extra_modules("skyvern.forge", ("uvicorn",))
+
+
+def test_require_local_extra_modules_requires_local_sentinels(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "skyvern.exceptions.find_spec",
+        lambda module_name: None if module_name == "playwright" else object(),
+    )
+
+    with pytest.raises(SkyvernExtraNotInstalled, match=r'pip install "skyvern\[local\]"'):
+        require_local_extra_modules("skyvern.library.skyvern_browser_page")
+
+
+def test_browser_connection_error_connect_over_cdp_websocket() -> None:
+    """The exact error from SKY-8578: connect_over_cdp fails with 502 Bad Gateway."""
+    raw_error = (
+        "BrowserType.connect_over_cdp: WebSocket error: "
+        "wss://sessions.skyvern.com/pbs_510103089551940236/"
+        "1c41-4113-9f69-44ed13f3cc40 502 Bad Gateway "
+        "<html><head><title>502 Bad Gateway</title></head></html> "
+        "Call log: - <ws connecting> wss://sessions.skyvern.com/pbs_510103089551940236 "
+        "- <ws unexpected response> 502 Bad Gateway "
+        "- <ws error> error WebSocket was closed before the connection code=1006 reason="
+    )
+    message = get_user_facing_exception_message(Exception(raw_error))
+    assert "sessions.skyvern.com" not in message
+    assert "502 Bad Gateway" not in message
+    assert "Call log" not in message
+    assert "WebSocket" not in message
+    assert "Failed to connect to the browser session" in message
+    assert "high demand" in message
+    assert "try re-running" in message
+
+
+def test_browser_connection_error_websocket_closed() -> None:
+    """WebSocket closed before connection is established."""
+    raw_error = "WebSocket was closed before the connection was established"
+    message = get_user_facing_exception_message(Exception(raw_error))
+    assert "Failed to connect to the browser session" in message
+    assert "try re-running" in message
+
+
+def test_session_closed_error_does_not_claim_high_demand() -> None:
+    # SKY-13502: a session-router lifecycle close (4410 "session closed") means the session was
+    # already closed before the connect — "high demand" asserts a cause that was never
+    # established, and retry advice cannot help a closed session.
+    raw_error = (
+        "BrowserType.connect_over_cdp: Target page, context or browser has been closed "
+        "Call log: - <ws connecting> wss://sessions.skyvern.com/pbs_000000000000000000 "
+        "- <ws error> error WebSocket was closed before the connection code=4410 reason=session closed"
+    )
+    message = get_user_facing_exception_message(Exception(raw_error))
+    assert "high demand" not in message
+    assert "re-run" not in message
+    assert "already closed" in message
+    assert "sessions.skyvern.com" not in message
+    assert "wss://" not in message
+
+
+def test_session_closed_requires_reason_text_not_bare_close_code() -> None:
+    # Close code 4410 is reused for other outcomes (e.g. the live-view stream closes with
+    # reason "no_working_page"), so the bare code must not trigger the session-closed story.
+    raw_error = (
+        "BrowserType.connect_over_cdp: WebSocket error: wss://sessions.skyvern.com/pbs_000000000000000000 "
+        "- <ws error> error WebSocket was closed before the connection code=4410 reason=no_working_page"
+    )
+    message = get_user_facing_exception_message(Exception(raw_error))
+    assert "already closed" not in message
+    assert "Failed to connect to the browser session" in message
+
+
+def test_unknown_error_still_redacts_cdp_endpoints_for_session_closed_error() -> None:
+    # SKY-13502 split _is_browser_connection_error's consumers: the narrow session-closed test
+    # picks the message, but redaction routing must keep the broad net — a session-closed CDP
+    # failure still echoes endpoint URLs carrying host, session tokens, or credentials.
+    inner_exception = Exception(
+        "browserType.connectOverCDP: WebSocket error: "
+        "wss://user:secret@remote.example.internal/session/tok-9f3a?apiKey=SEKRET "
+        "fetching https://remote.example.internal/json/version?token=SEKRET failed "
+        "WebSocket was closed before the connection code=4410 reason=session closed"
+    )
+    message = str(UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception))
+
+    assert "wss://" not in message
+    assert "https://" not in message
+    assert "SEKRET" not in message
+    assert "tok-9f3a" not in message
+    assert "remote.example.internal" not in message
+    assert "[remote browser endpoint]" in message
+
+
+@pytest.mark.parametrize(
+    ("call_log_tail", "expects_new_session_advice"),
+    [
+        # The socket opened and the attach handshake then blew the deadline. Playwright leaves that
+        # socket attached to the browser, so it keeps buffering events and the next attach to the
+        # same session is slower — "high demand" and "re-run" both point the caller the wrong way.
+        (
+            "- <ws connecting> wss://sessions.skyvern.com/pbs_1/tok - <ws connected> wss://sessions.skyvern.com/pbs_1/tok",
+            True,
+        ),
+        # Timed out before the socket opened: Playwright cleaned it up, nothing is attached, and
+        # retrying the same session is still the right move.
+        ("- <ws connecting> wss://sessions.skyvern.com/pbs_1/tok", False),
+    ],
+    ids=["socket-opened-then-handshake-stalled", "timed-out-before-socket-opened"],
+)
+def test_connect_timeout_message_depends_on_whether_the_socket_opened(
+    call_log_tail: str, expects_new_session_advice: bool
+) -> None:
+    raw_error = f"BrowserType.connect_over_cdp: Timeout 30000ms exceeded. Call log: {call_log_tail}"
+
+    message = get_user_facing_exception_message(Exception(raw_error))
+
+    assert "sessions.skyvern.com" not in message
+    assert "wss://" not in message
+    if expects_new_session_advice:
+        assert "high demand" not in message
+        assert "re-running" not in message
+        assert "Start a new browser session" in message
+    else:
+        assert "high demand" in message
+        assert "try re-running" in message
+
+
+def test_non_browser_error_not_intercepted() -> None:
+    """Regular errors should still pass through as-is."""
+    message = get_user_facing_exception_message(ValueError("some other error"))
+    assert message == "Unexpected error: some other error"
+
+
+def test_unknown_error_display_server_missing_xserver() -> None:
+    inner_exception = Exception(
+        "BrowserType.launch_persistent_context: Target page, context or browser has been closed\n\n"
+        "Browser logs:\n"
+        "Looks like you launched a headed browser without having a XServer running.\n"
+        "[err] Missing X server or $DISPLAY\n"
+        "[err] ui/aura/env.cc: The platform failed to initialize. Exiting."
+    )
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "browser display/graphics stack" in message
+    assert "browser-environment issue" in message
+    assert "support@skyvern.com" in message
+
+
+def test_unknown_error_display_server_platform_failed() -> None:
+    inner_exception = Exception("[err] ui/aura/env.cc: The platform failed to initialize. Exiting.")
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "browser display/graphics stack" in message
+
+
+def test_unknown_error_display_server_egl_failure() -> None:
+    inner_exception = Exception(
+        "[err] [297028:297028:0407/015340.854525:ERROR:ui/gl/gl_surface_egl.cc:1013] "
+        "No suitable EGL configs found for initialization.\n"
+        "[err] [297028:297028:0407/015340.854713:ERROR:gpu/ipc/service/gpu_init.cc:118] "
+        "CollectGraphicsInfo failed."
+    )
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "browser display/graphics stack" in message
+    assert "browser profile problem" in message
+
+
+def test_unknown_error_display_server_no_display() -> None:
+    inner_exception = Exception("No display environment variable set")
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "browser display/graphics stack" in message
+
+
+def test_unknown_error_strips_browser_logs_with_internal_path() -> None:
+    """SKY-8931: Browser logs section exposes internal browser binary path."""
+    inner_exception = Exception(
+        "BrowserType.launch_persistent_context: Target page, context or browser has been closed\n\n"
+        "Browser logs:\n"
+        "<launching> /opt/internal-browser/chromium/chrome "
+        "--disable-field-trial-config --disable-background-networking"
+    )
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "/opt/internal-browser" not in message
+    assert "Browser logs:" not in message
+    assert "--disable-field-trial-config" not in message
+    # SKY-9319: TargetClosedError-style failures now return a friendly retry message
+    # instead of the raw Playwright string.
+    assert "The browser closed unexpectedly during launch" in message
+    assert "support@skyvern.com" in message
+
+
+def test_unknown_error_timeout_with_browser_logs_still_formats_structured() -> None:
+    """Timeout + Browser logs: the structured 'timed out after N seconds' path must win."""
+    inner_exception = Exception(
+        "BrowserType.launch_persistent_context: Timeout 180000ms exceeded.\n\n"
+        "Browser logs:\n"
+        "<launching> /opt/internal-browser/chromium/chrome --disable-field-trial-config"
+    )
+    error = UnknownErrorWhileCreatingBrowserContext("dynamic-browser", inner_exception)
+    message = str(error)
+    assert "timed out after 180 seconds" in message
+    assert "/opt/internal-browser" not in message
+    assert "Browser logs:" not in message

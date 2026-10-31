@@ -1,0 +1,638 @@
+from __future__ import annotations
+
+import asyncio
+import errno
+import subprocess
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+import pytest_asyncio
+
+import skyvern.browser_extension.runtime as runtime_module
+from skyvern.browser_extension.broker_client import BrokerClient
+from skyvern.browser_extension.errors import BrowserExtensionBrokerError, BrowserExtensionError
+from skyvern.browser_extension.runtime import BrowserExtensionRuntime, broker_mode_enabled
+from tests.unit.browser_extension.home_guard import _test_broker_base_dir
+
+
+class StubRelay:
+    def __init__(
+        self,
+        token: str,
+        port: int,
+        on_event: Callable[[str, dict], Awaitable[None]],
+        on_disconnect: Callable[[], Awaitable[None]] | None = None,
+        *,
+        calls: list[str],
+        start_error: OSError | None = None,
+    ) -> None:
+        self.token = token
+        self.port = port
+        self.bound_port = port
+        self.on_event = on_event
+        self.on_disconnect = on_disconnect
+        self.calls = calls
+        self.start_error = start_error
+        self.connected = True
+        self.stop_count = 0
+
+    def get_or_create_pairing_nonce(self) -> str:
+        return "runtime-pairing-nonce"
+
+    async def start(self) -> None:
+        self.calls.append("relay.start")
+        if self.start_error is not None:
+            raise self.start_error
+
+    async def stop(self) -> None:
+        self.calls.append("relay.stop")
+        self.stop_count += 1
+
+    async def wait_connected(self, timeout: float) -> bool:
+        return self.connected
+
+
+class StubAdapter:
+    def __init__(self, registry, relay: StubRelay, *, calls: list[str]) -> None:
+        self.registry = registry
+        self.relay = relay
+        self.calls = calls
+        self.events: list[tuple[str, dict]] = []
+        self.disconnect_count = 0
+        self.stop_count = 0
+        self.cdp_ws_url = "ws://127.0.0.1:23456/cdp/test-capability"
+
+    async def start(self) -> None:
+        self.calls.append("adapter.start")
+
+    async def stop(self) -> None:
+        self.calls.append("adapter.stop")
+        self.stop_count += 1
+
+    async def handle_extension_event(self, event: str, params: dict) -> None:
+        self.events.append((event, params))
+
+    async def on_extension_disconnect(self) -> None:
+        self.disconnect_count += 1
+
+    def target_attachment_snapshot(self, target_id: str) -> bool:
+        return target_id == "target-17"
+
+    def scoped_tab_id_for_target(self, target_id: str) -> int | None:
+        return 17 if target_id == "target-17" else None
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_runtime(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
+    monkeypatch.setenv("SKYVERN_BROWSER_EXTENSION_BROKER", "0")
+    BrowserExtensionRuntime._instance = None
+    BrowserExtensionRuntime._lock = asyncio.Lock()
+    yield
+    instance = BrowserExtensionRuntime.instance()
+    if instance is not None:
+        await instance.shutdown()
+
+
+def install_stubs(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    relay_start_error: OSError | None = None,
+) -> tuple[list[StubRelay], list[StubAdapter], list[str]]:
+    relays: list[StubRelay] = []
+    adapters: list[StubAdapter] = []
+    calls: list[str] = []
+
+    def relay_factory(token, port, on_event, on_disconnect, *, order_debugger_events=False) -> StubRelay:
+        relay = StubRelay(
+            token,
+            port,
+            on_event,
+            on_disconnect,
+            calls=calls,
+            start_error=relay_start_error,
+        )
+        relays.append(relay)
+        return relay
+
+    def adapter_factory(registry, relay) -> StubAdapter:
+        adapter = StubAdapter(registry, relay, calls=calls)
+        adapters.append(adapter)
+        return adapter
+
+    monkeypatch.setattr(runtime_module, "_relay_factory", relay_factory)
+    monkeypatch.setattr(runtime_module, "_adapter_factory", adapter_factory)
+    monkeypatch.setattr(runtime_module, "load_or_create_pairing_token", lambda: "runtime-test-token")
+    return relays, adapters, calls
+
+
+@pytest.mark.asyncio
+async def test_singleton_is_idempotent_and_late_binds_adapter_callbacks(monkeypatch: pytest.MonkeyPatch) -> None:
+    relays, adapters, calls = install_stubs(monkeypatch)
+
+    first = await BrowserExtensionRuntime.get_or_start(21001)
+    second = await BrowserExtensionRuntime.get_or_start(21002)
+
+    assert first is second
+    assert BrowserExtensionRuntime.instance() is first
+    assert len(relays) == len(adapters) == 1
+    assert relays[0].port == 21001
+    assert calls == ["adapter.start", "relay.start"]
+    assert first.cdp_ws_url == adapters[0].cdp_ws_url
+    assert first.extension_connected
+    assert await first.wait_for_extension(0.01)
+
+    event_params = {"tabId": 17}
+    await relays[0].on_event("scope.tabAdded", event_params)
+    assert adapters[0].events == [("scope.tabAdded", event_params)]
+    assert relays[0].on_disconnect is not None
+    await relays[0].on_disconnect()
+    assert adapters[0].disconnect_count == 1
+
+
+@pytest.mark.asyncio
+async def test_page_debugger_attached_caches_target_binding_and_detaches_alias() -> None:
+    relay = MagicMock()
+    relay.connected = True
+    adapter = MagicMock()
+    adapter.target_attachment_snapshot.return_value = True
+    runtime = BrowserExtensionRuntime(relay, adapter)
+
+    page = MagicMock()
+    page.is_closed.return_value = False
+    cdp_session = MagicMock()
+    cdp_session.send = AsyncMock(return_value={"targetInfo": {"targetId": "target-17"}})
+    cdp_session.detach = AsyncMock()
+    page.context = SimpleNamespace(new_cdp_session=AsyncMock(return_value=cdp_session))
+
+    assert await runtime.page_debugger_attached(page) is True
+    assert await runtime.page_debugger_attached(page) is True
+    page.context.new_cdp_session.assert_awaited_once_with(page)
+    cdp_session.send.assert_awaited_once_with("Target.getTargetInfo")
+    cdp_session.detach.assert_awaited_once_with()
+    adapter.target_attachment_snapshot.assert_called_with("target-17")
+
+    relay.connected = False
+    assert await runtime.page_debugger_attached(page) is False
+
+
+@pytest.mark.asyncio
+async def test_page_close_during_target_binding_returns_false_without_cancelling_caller() -> None:
+    relay = MagicMock()
+    relay.connected = True
+    runtime = BrowserExtensionRuntime(relay, MagicMock())
+    binding_started = asyncio.Event()
+    binding_released = asyncio.Event()
+    binding_finished = asyncio.Event()
+
+    async def acquire(_page: MagicMock) -> None:
+        binding_started.set()
+        try:
+            await binding_released.wait()
+        finally:
+            binding_finished.set()
+
+    page = MagicMock()
+    page.is_closed.return_value = False
+    page.context = SimpleNamespace(new_cdp_session=acquire)
+    caller = asyncio.create_task(runtime.page_debugger_attached(page))
+    await binding_started.wait()
+
+    page.is_closed.return_value = True
+    runtime._invalidate_page_binding(page)
+    try:
+        assert await asyncio.wait_for(caller, 1) is False
+        assert caller.cancelled() is False
+    finally:
+        binding_released.set()
+    await asyncio.wait_for(binding_finished.wait(), 1)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_binding_callback_does_not_remove_replacement_task() -> None:
+    relay = MagicMock()
+    relay.connected = True
+    runtime = BrowserExtensionRuntime(relay, MagicMock())
+    binding_started = asyncio.Event()
+    binding_released = asyncio.Event()
+
+    async def acquire(_page: MagicMock) -> None:
+        binding_started.set()
+        await binding_released.wait()
+
+    page = MagicMock()
+    page.is_closed.return_value = False
+    page.context = SimpleNamespace(new_cdp_session=acquire)
+    target_id_task = asyncio.create_task(runtime._target_id_for_page(page))
+    await binding_started.wait()
+
+    binding_task = runtime._page_target_binding_tasks[page]
+    runtime._invalidate_page_binding(page)
+    replacement_task = asyncio.create_task(asyncio.sleep(60))
+    runtime._page_target_binding_tasks[page] = replacement_task
+    await asyncio.sleep(0)
+
+    assert runtime._page_target_binding_tasks.get(page) is replacement_task
+    assert await asyncio.wait_for(target_id_task, 1) is None
+
+    binding_released.set()
+    replacement_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await replacement_task
+    await asyncio.sleep(0)
+    assert binding_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_late_target_acquisition_detaches_alias_after_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    relay = MagicMock()
+    relay.connected = True
+    runtime = BrowserExtensionRuntime(relay, MagicMock())
+    monkeypatch.setattr(runtime_module, "_PAGE_TARGET_ACQUISITION_TIMEOUT_SECONDS", 0.01)
+    acquisition_started = asyncio.Event()
+    acquisition_released = asyncio.Event()
+    detach_finished = asyncio.Event()
+    cdp_session = MagicMock()
+    cdp_session.detach = AsyncMock(side_effect=detach_finished.set)
+
+    async def acquire(_page: MagicMock) -> MagicMock:
+        acquisition_started.set()
+        await acquisition_released.wait()
+        return cdp_session
+
+    page = MagicMock()
+    page.is_closed.return_value = False
+    page.context = SimpleNamespace(new_cdp_session=acquire)
+    result_task = asyncio.create_task(runtime.page_debugger_attached(page))
+    await acquisition_started.wait()
+    assert await asyncio.wait_for(result_task, 1) is False
+    assert cdp_session.detach.await_count == 0
+
+    acquisition_released.set()
+    await asyncio.wait_for(detach_finished.wait(), 1)
+    cdp_session.detach.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_open_pairing_page_uses_relay_nonce_without_exposing_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_stubs(monkeypatch)
+    opener = MagicMock(return_value=True)
+    monkeypatch.setattr(BrowserExtensionRuntime, "open_extension_url", staticmethod(opener))
+    runtime = await BrowserExtensionRuntime.get_or_start(21003)
+
+    assert runtime.open_pairing_page()
+    assert runtime.open_pairing_page()
+    opener.assert_called_with("http://127.0.0.1:21003/pair#runtime-pairing-nonce")
+    assert opener.call_count == 2
+    assert "runtime-test-token" not in opener.call_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_busy_pairing_waits_then_opens_this_clients_offer(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def ignore_event(_event: str, _params: dict) -> None:
+        return None
+
+    relay = BrokerClient(19777, ignore_event, base_dir=_test_broker_base_dir(), auto_spawn=False)
+    begin_pairing = AsyncMock(
+        side_effect=[
+            BrowserExtensionBrokerError("PAIRING_BUSY", "Another client is pairing"),
+            {"active": True, "opened": True, "expiresIn": 120.0},
+        ]
+    )
+    pairing_status = AsyncMock(return_value={"active": False, "owned": False})
+    monkeypatch.setattr(relay, "begin_pairing", begin_pairing)
+    monkeypatch.setattr(relay, "pairing_status", pairing_status)
+    monkeypatch.setattr(runtime_module.asyncio, "sleep", AsyncMock())
+    runtime = BrowserExtensionRuntime(relay, MagicMock())
+
+    assert await runtime.begin_pairing()
+    assert begin_pairing.await_count == 2
+    pairing_status.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_pairing_surfaces_extension_upgrade_requirement(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def ignore_event(_event: str, _params: dict) -> None:
+        return None
+
+    relay = BrokerClient(19777, ignore_event, base_dir=_test_broker_base_dir(), auto_spawn=False)
+    monkeypatch.setattr(
+        relay,
+        "begin_pairing",
+        AsyncMock(
+            side_effect=BrowserExtensionBrokerError(
+                "EXTENSION_UPGRADE_REQUIRED",
+                "Reload the current Skyvern Agent extension",
+            )
+        ),
+    )
+    runtime = BrowserExtensionRuntime(relay, MagicMock())
+
+    with pytest.raises(BrowserExtensionBrokerError) as error_info:
+        await runtime.begin_pairing()
+
+    assert error_info.value.code == "EXTENSION_UPGRADE_REQUIRED"
+
+
+def test_open_extension_url_targets_google_chrome_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = MagicMock()
+    monkeypatch.setattr(runtime_module.sys, "platform", "darwin")
+    monkeypatch.setattr(runtime_module.shutil, "which", lambda name: "/usr/bin/open" if name == "open" else None)
+    monkeypatch.setattr(runtime_module.subprocess, "run", run)
+
+    assert BrowserExtensionRuntime.open_extension_url("http://127.0.0.1:19777/pair#nonce")
+    run.assert_called_once_with(
+        ["/usr/bin/open", "-a", "Google Chrome", "http://127.0.0.1:19777/pair#nonce"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_open_extension_url_launches_direct_browser_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    platform: str,
+) -> None:
+    popen = MagicMock()
+    monkeypatch.setattr(runtime_module.sys, "platform", platform)
+    monkeypatch.setattr(runtime_module.subprocess, "Popen", popen)
+    if platform == "linux":
+        executable = Path("/usr/bin/chromium")
+        monkeypatch.setattr(
+            runtime_module.shutil, "which", lambda name: str(executable) if name == "chromium" else None
+        )
+        platform_options = {"start_new_session": True}
+    else:
+        executable = tmp_path / "Google" / "Chrome" / "Application" / "chrome.exe"
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.delenv("PROGRAMFILES", raising=False)
+        monkeypatch.delenv("PROGRAMFILES(X86)", raising=False)
+        platform_options = {"creationflags": 0x00000208}
+
+    assert BrowserExtensionRuntime.open_extension_url("http://127.0.0.1:19777/pair#nonce")
+    popen.assert_called_once_with(
+        [str(executable), "http://127.0.0.1:19777/pair#nonce"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        **platform_options,
+    )
+
+
+@pytest.mark.asyncio
+async def test_port_resolution_prefers_explicit_then_environment_then_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    relays, _, _ = install_stubs(monkeypatch)
+    monkeypatch.setenv("SKYVERN_BROWSER_EXTENSION_PORT", "22001")
+
+    environment_runtime = await BrowserExtensionRuntime.get_or_start()
+    assert relays[-1].port == 22001
+    await environment_runtime.shutdown()
+
+    explicit_runtime = await BrowserExtensionRuntime.get_or_start(22002)
+    assert relays[-1].port == 22002
+    await explicit_runtime.shutdown()
+
+    monkeypatch.delenv("SKYVERN_BROWSER_EXTENSION_PORT")
+    default_runtime = await BrowserExtensionRuntime.get_or_start()
+    assert relays[-1].port == 19777
+    await default_runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_port_in_use_has_actionable_browser_extension_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, adapters, _ = install_stubs(monkeypatch, relay_start_error=OSError(errno.EADDRINUSE, "address in use"))
+
+    with pytest.raises(BrowserExtensionError) as error_info:
+        await BrowserExtensionRuntime.get_or_start(23001)
+
+    message = str(error_info.value)
+    assert "23001" in message
+    assert "SKYVERN_BROWSER_EXTENSION_PORT" in message
+    assert "extension popup" in message
+    assert adapters[0].stop_count == 1
+    assert BrowserExtensionRuntime.instance() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("port_value", [0, "0"])
+async def test_zero_port_is_rejected(monkeypatch: pytest.MonkeyPatch, port_value: int | str) -> None:
+    install_stubs(monkeypatch)
+    if isinstance(port_value, str):
+        monkeypatch.setenv("SKYVERN_BROWSER_EXTENSION_PORT", port_value)
+        port = None
+    else:
+        port = port_value
+
+    with pytest.raises(BrowserExtensionError, match="between 1 and 65535"):
+        await BrowserExtensionRuntime.get_or_start(port)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_relay_before_adapter_is_idempotent_and_resets_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relays, adapters, calls = install_stubs(monkeypatch)
+    runtime = await BrowserExtensionRuntime.get_or_start(24001)
+
+    await runtime.shutdown()
+    await runtime.shutdown()
+
+    assert calls == ["adapter.start", "relay.start", "relay.stop", "adapter.stop"]
+    assert relays[0].stop_count == adapters[0].stop_count == 1
+    assert BrowserExtensionRuntime.instance() is None
+
+    restarted = await BrowserExtensionRuntime.get_or_start(24002)
+    assert restarted is not runtime
+    assert relays[-1].port == 24002
+
+
+def test_extension_dir_points_to_packaged_manifest() -> None:
+    directory = BrowserExtensionRuntime.extension_dir()
+    expected_directory = Path(runtime_module.__file__).resolve().parent / "extension"
+
+    assert directory == expected_directory
+    if not (directory / "manifest.json").exists():
+        pytest.skip("extension manifest is owned by another build stream")
+    assert directory.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_broker_is_default_without_loading_embedded_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class StubBroker:
+        def __init__(self, port: int, on_event, on_disconnect) -> None:
+            self.port = port
+            self.bound_port = port
+            self.on_event = on_event
+            self.on_disconnect = on_disconnect
+            self.connected = False
+            self.scoped_tabs: list[dict] = []
+
+        async def start(self) -> None:
+            calls.append("broker.start")
+
+        async def stop(self) -> None:
+            calls.append("broker.stop")
+
+        async def wait_connected(self, _timeout: float) -> bool:
+            return False
+
+        async def request(self, _op: str, _args: dict, timeout: float = 30.0) -> dict:
+            return {"timeout": timeout}
+
+    adapters: list[StubAdapter] = []
+
+    def adapter_factory(registry, relay) -> StubAdapter:
+        adapter = StubAdapter(registry, relay, calls=calls)
+        adapters.append(adapter)
+        return adapter
+
+    token_loader = MagicMock(side_effect=AssertionError("embedded token path must remain unused"))
+    monkeypatch.delenv("SKYVERN_BROWSER_EXTENSION_BROKER")
+    monkeypatch.setattr(runtime_module, "BrokerClient", StubBroker)
+    monkeypatch.setattr(runtime_module, "_adapter_factory", adapter_factory)
+    monkeypatch.setattr(runtime_module, "load_or_create_pairing_token", token_loader)
+
+    runtime = await BrowserExtensionRuntime.get_or_start(24003)
+
+    assert runtime.extension_connected is False
+    assert calls == ["adapter.start", "broker.start"]
+    token_loader.assert_not_called()
+    await runtime.shutdown()
+    assert calls == ["adapter.start", "broker.start", "broker.stop", "adapter.stop"]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(None, True), ("0", False), ("1", True), ("false", True), ("", True)],
+)
+def test_broker_gate_only_exact_zero_opts_out(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str | None,
+    expected: bool,
+) -> None:
+    if value is None:
+        monkeypatch.delenv("SKYVERN_BROWSER_EXTENSION_BROKER", raising=False)
+    else:
+        monkeypatch.setenv("SKYVERN_BROWSER_EXTENSION_BROKER", value)
+
+    assert broker_mode_enabled() is expected
+
+
+@pytest.mark.asyncio
+async def test_broker_startup_failure_does_not_fall_back_to_embedded_relay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relays, adapters, _calls = install_stubs(monkeypatch)
+
+    class FailingBroker:
+        def __init__(self, _port: int, _on_event, _on_disconnect) -> None:
+            self.bound_port = 24004
+            self.connected = False
+            self.scoped_tabs: list[dict] = []
+
+        async def start(self) -> None:
+            raise BrowserExtensionBrokerError("UNSAFE_STATE", "Broker lease journal is invalid")
+
+        async def stop(self) -> None:
+            return None
+
+        async def wait_connected(self, _timeout: float) -> bool:
+            return False
+
+        async def request(self, _op: str, _args: dict, timeout: float = 30.0) -> dict:
+            return {"timeout": timeout}
+
+    monkeypatch.delenv("SKYVERN_BROWSER_EXTENSION_BROKER")
+    monkeypatch.setattr(runtime_module, "BrokerClient", FailingBroker)
+
+    with pytest.raises(BrowserExtensionBrokerError, match="UNSAFE_STATE"):
+        await BrowserExtensionRuntime.get_or_start(24004)
+
+    assert relays == []
+    assert len(adapters) == 1
+    assert BrowserExtensionRuntime.instance() is None
+
+
+@pytest.mark.asyncio
+async def test_windows_default_logs_and_uses_legacy_relay(monkeypatch: pytest.MonkeyPatch) -> None:
+    relays, _adapters, calls = install_stubs(monkeypatch)
+    log = MagicMock()
+    monkeypatch.delenv("SKYVERN_BROWSER_EXTENSION_BROKER")
+    monkeypatch.setattr(runtime_module.sys, "platform", "win32")
+    monkeypatch.setattr(runtime_module.LOG, "info", log)
+
+    runtime = await BrowserExtensionRuntime.get_or_start(24005)
+
+    assert not broker_mode_enabled()
+    assert len(relays) == 1
+    assert calls == ["adapter.start", "relay.start"]
+    log.assert_called_once_with(
+        "browser_extension_broker_unsupported_platform_using_legacy",
+        code="UNSUPPORTED_PLATFORM",
+        platform="win32",
+    )
+    await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_fixed_fill_targets_selected_page_instead_of_active_chrome_tab(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = MagicMock()
+    page.is_closed.return_value = False
+    relay = SimpleNamespace(
+        connected=True,
+        scoped_tabs=[{"tabId": 17, "active": True}, {"tabId": 42, "active": False}],
+        request=AsyncMock(return_value={"textLength": 3}),
+    )
+    adapter = SimpleNamespace(scoped_tab_id_for_target=lambda target: 42 if target == "selected-target" else None)
+    runtime = BrowserExtensionRuntime(relay, adapter)
+    monkeypatch.setattr(runtime_module, "time", SimpleNamespace(time=lambda: 100.0))
+    binding = AsyncMock(return_value="selected-target")
+    monkeypatch.setattr(runtime, "_target_id_for_page", binding)
+
+    assert await runtime.fill_input(page, "#email", "abc", timeout=5.0) == {"textLength": 3}
+    binding.assert_awaited_once_with(page)
+    relay.request.assert_awaited_once_with(
+        "dom.fill", {"tabId": 42, "selector": "#email", "text": "abc", "deadline": 105000}, timeout=5.0
+    )
+    page.evaluate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fixed_fill_refuses_a_target_that_lost_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = MagicMock()
+    page.is_closed.return_value = False
+    relay = SimpleNamespace(connected=True, request=AsyncMock())
+    runtime = BrowserExtensionRuntime(relay, SimpleNamespace(scoped_tab_id_for_target=lambda target: None))
+    monkeypatch.setattr(runtime, "_target_id_for_page", AsyncMock(return_value="old-target"))
+
+    with pytest.raises(BrowserExtensionError, match="selected page"):
+        await runtime.fill_input(page, "#email", "abc")
+    relay.request.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fixed_fill_keeps_deadline_while_binding_selected_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = MagicMock()
+    page.is_closed.return_value = False
+    relay = SimpleNamespace(connected=True, request=AsyncMock())
+    runtime = BrowserExtensionRuntime(relay, SimpleNamespace(scoped_tab_id_for_target=lambda target: 42))
+    clock = [100.0]
+    monkeypatch.setattr(runtime_module, "time", SimpleNamespace(time=lambda: clock[0]))
+
+    async def bind(_page):
+        clock[0] += 2.0
+        return "selected-target"
+
+    monkeypatch.setattr(runtime, "_target_id_for_page", bind)
+    with pytest.raises(TimeoutError, match="expired"):
+        await runtime.fill_input(page, "#email", "example", timeout=1.0)
+    relay.request.assert_not_awaited()

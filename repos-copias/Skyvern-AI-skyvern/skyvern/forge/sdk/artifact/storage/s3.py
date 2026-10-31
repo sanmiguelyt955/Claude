@@ -1,0 +1,1369 @@
+import asyncio
+import io
+import os
+import shutil
+import uuid
+import zipfile
+from datetime import datetime, timezone
+from typing import BinaryIO, cast
+
+import structlog
+import zstandard as zstd
+from botocore.exceptions import ClientError
+
+from skyvern.config import settings
+from skyvern.constants import BROWSER_DOWNLOADING_SUFFIX, DOWNLOAD_FILE_PREFIX
+from skyvern.exceptions import DownloadSaveIncompleteError
+from skyvern.forge import app
+from skyvern.forge.sdk.api.aws import AsyncAWSClient, S3ObjectStream, S3StorageClass, S3Uri, _recording_content_type
+from skyvern.forge.sdk.api.files import (
+    calculate_sha256_for_file,
+    create_named_temporary_file,
+    dump_download_visibility_inputs,
+    get_download_dir,
+    get_skyvern_temp_dir,
+    unzip_bytes_to_temp_directory,
+    wait_for_pending_extension_rename,
+)
+from skyvern.forge.sdk.artifact.models import Artifact, ArtifactType, LogEntityType
+from skyvern.forge.sdk.artifact.signing import SENSITIVE_ARTIFACT_URL_EXPIRY_SECONDS
+from skyvern.forge.sdk.artifact.storage.base import (
+    FILE_EXTENTSION_MAP,
+    BaseStorage,
+    StoredObjectChangedError,
+    StoredObjectVersion,
+    StreamingArtifactStorage,
+    _file_infos_from_artifacts,
+    _file_infos_from_download_artifacts,
+    dedupe_run_scoped_download_artifacts,
+    download_checksums_by_uri,
+    is_file_from_retry_attempt,
+    key_is_org_scoped,
+    presign_with_sensitive_cap,
+    resolve_download_attempt_fail_open,
+)
+from skyvern.forge.sdk.artifact.storage.bounded_file import BoundedFileReader
+from skyvern.forge.sdk.artifact.storage.run_recording_clips import (
+    RUN_RECORDING_CLIPS_SYNC_TIMEOUT_SECONDS,
+    RUN_RECORDING_PATH_SEGMENT,
+    sync_run_recording_clips,
+)
+from skyvern.forge.sdk.artifact.utils import replace_file_extension
+from skyvern.forge.sdk.models import Step
+from skyvern.forge.sdk.schemas.ai_suggestions import AISuggestion
+from skyvern.forge.sdk.schemas.files import FileInfo
+from skyvern.forge.sdk.schemas.task_v2 import TaskV2, Thought
+from skyvern.forge.sdk.schemas.workflow_runs import WorkflowRunBlock
+from skyvern.utils.script_file_paths import build_script_file_storage_uri
+from skyvern.webeye.video_utils import prepare_recording_for_upload
+
+LOG = structlog.get_logger()
+
+
+S3_ZSTD_COMPRESSED_SUFFIX = ".zst"
+
+
+def _safe_get_file_size(path: str) -> int | None:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        LOG.warning("Failed to get file size", path=path, exc_info=True)
+        return None
+
+
+def empty_read_decision(
+    *,
+    download_row_count: int | None,
+    rows_lookup_failed: bool,
+    skip_fired: bool,
+    rows_present_but_unresolvable: bool,
+    listed: bool,
+) -> dict[str, int | bool | str | None]:
+    """Why a downloads read came back empty, from counts alone — never a listing."""
+    if rows_lookup_failed:
+        cause = "row_lookup_failed"
+    elif rows_present_but_unresolvable:
+        cause = "rows_present_but_unresolvable"
+    elif skip_fired:
+        cause = "listing_skipped_zero_rows"
+    elif download_row_count is None:
+        cause = "listed_rows_unqueried"
+    else:
+        cause = "listed_and_empty"
+    return {
+        "download_row_count": download_row_count,
+        "rows_lookup_failed": rows_lookup_failed,
+        "skip_fired": skip_fired,
+        "rows_present_but_unresolvable": rows_present_but_unresolvable,
+        "listed": listed,
+        "empty_read_cause": cause,
+    }
+
+
+class S3Storage(BaseStorage, StreamingArtifactStorage):
+    _PATH_VERSION = "v1"
+    # Caps concurrent head_object calls from S3 listing reads. /browser_sessions/history fans out over up to 100
+    # sessions at once, so the semaphore lives on the instance and every listing call on it shares one cap.
+    _LEGACY_LISTING_HEAD_CONCURRENCY = 32
+
+    def __init__(self, bucket: str | None = None, endpoint_url: str | None = None) -> None:
+        self.async_client = AsyncAWSClient(endpoint_url=endpoint_url)
+        self.bucket = bucket or settings.AWS_S3_BUCKET_ARTIFACTS
+        # asyncio.Semaphore is event-loop-bound; constructing it eagerly is
+        # safe in 3.10+ (binds lazily on first acquire). The forge/cloud apps
+        # run a single asyncio loop, so one instance-level semaphore is
+        # enough to enforce a request-wide cap across the outer fanout.
+        self._head_object_semaphore = asyncio.Semaphore(self._LEGACY_LISTING_HEAD_CONCURRENCY)
+
+    def build_uri(self, *, organization_id: str, artifact_id: str, step: Step, artifact_type: ArtifactType) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        if artifact_type == ArtifactType.HAR:
+            file_ext = f"{file_ext}{S3_ZSTD_COMPRESSED_SUFFIX}"
+
+        return f"{self._build_base_uri(organization_id)}/{step.task_id}/{step.order:02d}_{step.retry_index}_{step.step_id}/{datetime.utcnow().isoformat()}_{artifact_id}_{artifact_type}.{file_ext}"
+
+    async def retrieve_global_workflows(self) -> list[str]:
+        uri = f"s3://{self.bucket}/{settings.ENV}/global_workflows.txt"
+        data = await self.async_client.download_file(uri, log_exception=False)
+        if not data:
+            return []
+        return [line.strip() for line in data.decode("utf-8").split("\n") if line.strip()]
+
+    def _build_base_uri(self, organization_id: str) -> str:
+        return f"s3://{self.bucket}/{self._PATH_VERSION}/{settings.ENV}/{organization_id}"
+
+    def build_log_uri(
+        self, *, organization_id: str, log_entity_type: LogEntityType, log_entity_id: str, artifact_type: ArtifactType
+    ) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        return f"{self._build_base_uri(organization_id)}/logs/{log_entity_type}/{log_entity_id}/{datetime.utcnow().isoformat()}_{artifact_type}.{file_ext}"
+
+    def build_thought_uri(
+        self, *, organization_id: str, artifact_id: str, thought: Thought, artifact_type: ArtifactType
+    ) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        return f"{self._build_base_uri(organization_id)}/observers/{thought.observer_cruise_id}/{thought.observer_thought_id}/{datetime.utcnow().isoformat()}_{artifact_id}_{artifact_type}.{file_ext}"
+
+    def build_task_v2_uri(
+        self, *, organization_id: str, artifact_id: str, task_v2: TaskV2, artifact_type: ArtifactType
+    ) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        return f"{self._build_base_uri(organization_id)}/observers/{task_v2.observer_cruise_id}/{datetime.utcnow().isoformat()}_{artifact_id}_{artifact_type}.{file_ext}"
+
+    def build_workflow_run_block_uri(
+        self,
+        *,
+        organization_id: str,
+        artifact_id: str,
+        workflow_run_block: WorkflowRunBlock,
+        artifact_type: ArtifactType,
+    ) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        return f"{self._build_base_uri(organization_id)}/workflow_runs/{workflow_run_block.workflow_run_id}/{workflow_run_block.workflow_run_block_id}/{datetime.utcnow().isoformat()}_{artifact_id}_{artifact_type}.{file_ext}"
+
+    def build_ai_suggestion_uri(
+        self, *, organization_id: str, artifact_id: str, ai_suggestion: AISuggestion, artifact_type: ArtifactType
+    ) -> str:
+        file_ext = FILE_EXTENTSION_MAP[artifact_type]
+        return f"{self._build_base_uri(organization_id)}/ai_suggestions/{ai_suggestion.ai_suggestion_id}/{datetime.utcnow().isoformat()}_{artifact_id}_{artifact_type}.{file_ext}"
+
+    def build_script_file_uri(
+        self, *, organization_id: str, script_id: str, script_version: int, file_path: str
+    ) -> str:
+        """Build the S3 URI for a script file.
+
+        Args:
+            organization_id: The organization ID
+            script_id: The script ID
+            script_version: The script version
+            file_path: The file path relative to script root
+
+        Returns:
+            The S3 URI for the script file
+        """
+        return build_script_file_storage_uri(
+            self._build_base_uri(organization_id),
+            script_id=script_id,
+            script_version=script_version,
+            file_path=file_path,
+        )
+
+    async def store_artifact(
+        self,
+        artifact: Artifact,
+        data: bytes,
+        supersede_queued_prefixes: bool = False,
+        prefix_uri: str | None = None,
+    ) -> None:
+        # We compress HAR files with zstd level 3 to reduce storage size.
+        # HARs are easily compressible because they are mostly JSON.
+        # Other artifacts are not compressed because they are not easily compressible.
+        uri = artifact.uri
+        if uri.endswith(S3_ZSTD_COMPRESSED_SUFFIX):
+            cctx = zstd.ZstdCompressor(level=3)
+            data = cctx.compress(data)
+
+        sc = await self._get_storage_class_for_org(artifact.organization_id, self.bucket, len(data))
+        LOG.debug(
+            "Storing artifact",
+            artifact_id=artifact.artifact_id,
+            organization_id=artifact.organization_id,
+            uri=uri,
+            storage_class=sc,
+        )
+        # A recording's per-step prefixes stream to the key they were registered under, and its terminal
+        # finalize must serialize against them so a stale detached prefix can never overwrite the finalized
+        # object. The finalize can rename the object (.webm prefixes -> .mp4 terminal), so serialize on the
+        # key the prefixes actually queued to (prefix_uri when the finalize renamed, else this uri); the
+        # terminal still writes `uri`. supersede_queued_prefixes (the finalize) additionally skips prefixes
+        # still queued behind the active transfer.
+        serialize_key = (prefix_uri or uri) if artifact.artifact_type == ArtifactType.RECORDING else None
+        if supersede_queued_prefixes and serialize_key is not None:
+            # Terminal finalize does a full replacement that can rewrite earlier bytes, so any Phase 2
+            # compose base cached for this key is now stale and must not seed a later copy.
+            self.async_client.forget_compose_state(serialize_key)
+        await self.async_client.upload_file(
+            uri,
+            data,
+            storage_class=sc,
+            serialize_key=serialize_key,
+            supersede_queued=supersede_queued_prefixes,
+            content_type=_recording_content_type(uri) if artifact.artifact_type == ArtifactType.RECORDING else None,
+        )
+
+    async def _get_storage_class_for_org(
+        self,
+        organization_id: str,
+        bucket: str,
+        object_size_bytes: int | None = None,
+    ) -> S3StorageClass:
+        return S3StorageClass.STANDARD
+
+    def can_stream_artifact(self, artifact: Artifact) -> bool:
+        # retrieve_artifact decompresses a zstd HAR and extracts a bundle member from its archive after the read.
+        return not artifact.bundle_key and not artifact.uri.endswith(S3_ZSTD_COMPRESSED_SUFFIX)
+
+    async def stat_artifact(self, artifact: Artifact) -> StoredObjectVersion | None:
+        try:
+            info = await self.async_client.get_object_info(artifact.uri)
+        except Exception as e:
+            self.async_client.log_download_failure(e, artifact.uri)
+            return None
+        return StoredObjectVersion(size=info["ContentLength"], etag=info.get("ETag"))
+
+    async def open_artifact_stream(
+        self, artifact: Artifact, *, byte_range: tuple[int, int] | None = None, etag: str | None = None
+    ) -> S3ObjectStream | None:
+        try:
+            return await self.async_client.open_download_stream(artifact.uri, byte_range=byte_range, if_match=etag)
+        except Exception as e:
+            if etag is not None and self.async_client._error_code(e) == "PreconditionFailed":
+                raise StoredObjectChangedError(artifact.uri) from e
+            self.async_client.log_download_failure(e, artifact.uri)
+            return None
+
+    async def retrieve_artifact(self, artifact: Artifact) -> bytes | None:
+        data = await self.async_client.download_file(artifact.uri)
+        # Decompress zstd-compressed files (HAR only)
+        if data and artifact.uri.endswith(S3_ZSTD_COMPRESSED_SUFFIX):
+            dctx = zstd.ZstdDecompressor()
+            data = dctx.decompress(data)
+        # Extract a named entry from a ZIP archive (STEP_ARCHIVE / TASK_ARCHIVE)
+        if data and artifact.bundle_key:
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    return zf.read(artifact.bundle_key)
+            except (KeyError, zipfile.BadZipFile):
+                LOG.warning(
+                    "Failed to extract entry from archive",
+                    bundle_key=artifact.bundle_key,
+                    artifact_id=artifact.artifact_id,
+                )
+                return None
+        return data
+
+    async def check_archived_uris(self, uris: list[str]) -> dict[str, bool]:
+        if not uris:
+            return {}
+
+        async def _check(uri: str) -> tuple[str, bool]:
+            async with self._head_object_semaphore:
+                try:
+                    info = await self.async_client.get_object_info(uri)
+                except ClientError as exc:
+                    LOG.warning(
+                        "head_object failed; assuming not archived",
+                        uri=uri,
+                        error_code=exc.response.get("Error", {}).get("Code"),
+                    )
+                    return uri, False
+            sc = info.get("StorageClass", S3StorageClass.STANDARD)
+            return uri, sc in (S3StorageClass.GLACIER, S3StorageClass.DEEP_ARCHIVE)
+
+        pairs = await asyncio.gather(*[_check(uri) for uri in uris])
+        return dict(pairs)
+
+    async def get_share_link(self, artifact: Artifact) -> str | None:
+        share_urls = await self.get_share_links([artifact])
+        return share_urls[0] if share_urls else None
+
+    async def get_share_links(self, artifacts: list[Artifact]) -> list[str] | None:
+        return await presign_with_sensitive_cap(
+            artifacts,
+            presign=self.async_client.create_presigned_urls,
+            presign_sensitive=lambda uris: self.async_client.create_presigned_urls(
+                uris, expires_in=min(settings.PRESIGNED_URL_EXPIRATION, SENSITIVE_ARTIFACT_URL_EXPIRY_SECONDS)
+            ),
+        )
+
+    async def store_artifact_from_path(self, artifact: Artifact, path: str) -> None:
+        sc = await self._get_storage_class_for_org(artifact.organization_id, self.bucket, os.path.getsize(path))
+        LOG.debug(
+            "Storing artifact from path",
+            artifact_id=artifact.artifact_id,
+            organization_id=artifact.organization_id,
+            uri=artifact.uri,
+            storage_class=sc,
+            path=path,
+        )
+        await self.async_client.upload_file_from_path(artifact.uri, path, storage_class=sc)
+
+    async def store_artifact_prefix_from_path(self, artifact: Artifact, path: str, length: int) -> None:
+        # A compressed-suffix URI must be compressed in full (HAR only); recordings never use it, so
+        # fall back to the buffered default rather than stream a raw prefix under a .zst key.
+        if artifact.uri.endswith(S3_ZSTD_COMPRESSED_SUFFIX):
+            await super().store_artifact_prefix_from_path(artifact, path, length)
+            return
+        sc = await self._get_storage_class_for_org(artifact.organization_id, self.bucket, length)
+        LOG.debug(
+            "Streaming artifact prefix from path",
+            artifact_id=artifact.artifact_id,
+            organization_id=artifact.organization_id,
+            uri=artifact.uri,
+            storage_class=sc,
+            path=path,
+            length=length,
+        )
+        # Phase 2 (SKY-15288): when enabled, advance the recording object in place by copying the already
+        # uploaded prefix server-side and uploading only the new tail. The compose method owns the whole
+        # step — including the Phase 1 full-prefix fallback for unsupported steps — inside ONE serialized
+        # write slot, so a later step can never interleave between a failed compose and its fallback.
+        if settings.RECORDING_INCREMENTAL_COMPOSE_ENABLED and artifact.artifact_type == ArtifactType.RECORDING:
+            await self.async_client.store_recording_prefix(
+                artifact.uri, path, length, storage_class=sc, serialize_key=artifact.uri
+            )
+            return
+
+        # Feature off (or non-recording): the exact Phase 1 path — hand the reader's lifetime to
+        # upload_file_stream: the transfer can be detached on caller cancel and keep reading, so it must
+        # close the reader only after the real transfer finishes.
+        reader = BoundedFileReader(path, length)
+        # serialize_key fences this prefix ahead of the terminal write to the same uri (see store_artifact).
+        rec_ct = _recording_content_type(artifact.uri) if artifact.artifact_type == ArtifactType.RECORDING else None
+        await self.async_client.upload_file_stream(
+            artifact.uri,
+            cast(BinaryIO, reader),
+            storage_class=sc,
+            close_file_obj=True,
+            serialize_key=artifact.uri,
+            content_type=rec_ct,
+        )
+
+    async def save_streaming_file(self, organization_id: str, file_name: str) -> bool | None:
+        from_path = f"{get_skyvern_temp_dir()}/{organization_id}/{file_name}"
+        to_path = f"s3://{settings.AWS_S3_BUCKET_SCREENSHOTS}/{settings.ENV}/{organization_id}/{file_name}"
+        sc = await self._get_storage_class_for_org(organization_id, settings.AWS_S3_BUCKET_SCREENSHOTS)
+        LOG.debug(
+            "Saving streaming file",
+            organization_id=organization_id,
+            file_name=file_name,
+            from_path=from_path,
+            to_path=to_path,
+            storage_class=sc,
+        )
+        await self.async_client.upload_file_from_path(to_path, from_path, storage_class=sc)
+        return None
+
+    async def get_streaming_file(self, organization_id: str, file_name: str, use_default: bool = True) -> bytes | None:
+        path = f"s3://{settings.AWS_S3_BUCKET_SCREENSHOTS}/{settings.ENV}/{organization_id}/{file_name}"
+        return await self.async_client.download_file(path, log_exception=False)
+
+    async def store_browser_session(self, organization_id: str, workflow_permanent_id: str, directory: str) -> None:
+        # Zip the directory to a temp file
+        temp_zip_file = create_named_temporary_file()
+        zip_file_path = shutil.make_archive(temp_zip_file.name, "zip", directory)
+        browser_session_uri = f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/{workflow_permanent_id}.zip"
+        sc = await self._get_storage_class_for_org(organization_id, settings.AWS_S3_BUCKET_BROWSER_SESSIONS)
+        LOG.debug(
+            "Storing browser session",
+            organization_id=organization_id,
+            workflow_permanent_id=workflow_permanent_id,
+            zip_file_path=zip_file_path,
+            browser_session_uri=browser_session_uri,
+            storage_class=sc,
+        )
+        await self.async_client.upload_file_from_path(browser_session_uri, zip_file_path, storage_class=sc)
+
+    async def retrieve_browser_session(self, organization_id: str, workflow_permanent_id: str) -> str | None:
+        browser_session_uri = f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/{workflow_permanent_id}.zip"
+        downloaded_zip_bytes = await self.async_client.download_file(browser_session_uri, log_exception=True)
+        if not downloaded_zip_bytes:
+            return None
+        return unzip_bytes_to_temp_directory(downloaded_zip_bytes, prefix="skyvern_browser_session_")
+
+    async def delete_browser_session(self, organization_id: str, workflow_permanent_id: str) -> None:
+        browser_session_uri = f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/{workflow_permanent_id}.zip"
+        LOG.info(
+            "Deleting persisted browser session",
+            organization_id=organization_id,
+            workflow_permanent_id=workflow_permanent_id,
+            browser_session_uri=browser_session_uri,
+        )
+        # S3 DeleteObject is idempotent: deleting a missing key is a no-op, so only real
+        # failures (AccessDenied, network, etc.) will raise here.
+        await self.async_client.delete_file(browser_session_uri, log_exception=True, raise_on_error=True)
+
+    async def store_browser_profile(self, organization_id: str, profile_id: str, directory: str) -> None:
+        """Store browser profile to S3."""
+        temp_zip_file = create_named_temporary_file()
+        # make_archive writes base_name + ".zip", a separate file the NamedTemporaryFile cleanup never
+        # removes. Name it up front and clean it in a finally that also covers the archive step, so a
+        # partial .zip from an archive that fails partway can't leak into TEMP_PATH.
+        zip_file_path = f"{temp_zip_file.name}.zip"
+        profile_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/profiles/{profile_id}.zip"
+        )
+        sc = await self._get_storage_class_for_org(organization_id, settings.AWS_S3_BUCKET_BROWSER_SESSIONS)
+        try:
+            # Off the event loop: the credential living-profile engine calls this mid-run, where a
+            # sync archive of a large profile dir would stall every other coroutine on the worker.
+            await asyncio.to_thread(shutil.make_archive, temp_zip_file.name, "zip", directory)
+            LOG.debug(
+                "Storing browser profile",
+                organization_id=organization_id,
+                profile_id=profile_id,
+                zip_file_path=zip_file_path,
+                profile_uri=profile_uri,
+                storage_class=sc,
+            )
+            await self.async_client.upload_file_from_path(profile_uri, zip_file_path, storage_class=sc)
+        finally:
+            if os.path.exists(zip_file_path):
+                os.remove(zip_file_path)
+
+    async def retrieve_browser_profile(self, organization_id: str, profile_id: str) -> str | None:
+        """Retrieve browser profile from S3."""
+        profile_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/profiles/{profile_id}.zip"
+        )
+        downloaded_zip_bytes = await self.async_client.download_file(profile_uri, log_exception=True)
+        if not downloaded_zip_bytes:
+            return None
+        return unzip_bytes_to_temp_directory(downloaded_zip_bytes, prefix="skyvern_browser_profile_")
+
+    async def browser_profile_exists(self, organization_id: str, profile_id: str) -> bool:
+        """Cheap existence check (head_object) — avoids downloading the archive just to know it exists."""
+        profile_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/profiles/{profile_id}.zip"
+        )
+        try:
+            await self.async_client.get_object_info(profile_uri)
+        except ClientError as exc:
+            if self.async_client._is_not_found_error(exc):
+                return False
+            # Transient/authz errors propagate so the has-content fail-safe treats a flaky read as
+            # existing content instead of reseeding a run to fresh and overwriting its saved archive.
+            raise
+        return True
+
+    async def get_browser_profile_etag(self, organization_id: str, profile_id: str) -> str | None:
+        profile_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/profiles/{profile_id}.zip"
+        )
+        try:
+            info = await self.async_client.get_object_info(profile_uri)
+        except ClientError as exc:
+            if self.async_client._is_not_found_error(exc):
+                # Missing object = no prior version = no conflict possible → a full write is fine.
+                return None
+            # Transient/authz errors propagate: the write path skips this run rather than reading None
+            # as "unchanged" and fail-open overwriting a possibly-concurrently-updated archive.
+            raise
+        etag = info.get("ETag") if info else None
+        return str(etag) if etag else None
+
+    async def delete_browser_profile(self, organization_id: str, profile_id: str, hard_delete: bool = False) -> None:
+        """Delete a browser profile from S3. The bucket is Suspended (no versioning), so a plain
+        DeleteObject genuinely erases the single profile archive. hard_delete=True RAISES on an S3
+        failure so the caller can't falsely report a cookie-bearing archive erased (the reap then leaves
+        the profile row for retry/discovery instead of a silent orphan); soft delete is best-effort — a
+        reap failure must not break the promote or the soft-delete that triggered it."""
+        profile_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_BROWSER_SESSIONS}/{settings.ENV}/{organization_id}/profiles/{profile_id}.zip"
+        )
+        LOG.info(
+            "Deleting browser profile",
+            organization_id=organization_id,
+            profile_id=profile_id,
+            profile_uri=profile_uri,
+            hard_delete=hard_delete,
+        )
+        # DeleteObject is idempotent: deleting a missing key is a no-op. A hard delete propagates a real
+        # failure (raise_on_error) so the erasure is never silently reported complete; soft delete swallows.
+        await self.async_client.delete_file(profile_uri, log_exception=True, raise_on_error=hard_delete)
+
+    async def list_downloaded_files_in_browser_session(
+        self, organization_id: str, browser_session_id: str
+    ) -> list[str]:
+        """Return S3 URIs of completed downloads in the session.
+
+        DB-backed: artifact rows are the source of truth when the keyring is set.
+        Used by the agent for baseline-before / baseline-after diffs to detect
+        newly-downloaded files. Excludes ``*.crdownload`` partials; those go
+        through ``list_downloading_files_in_browser_session`` instead.
+
+        Lists S3 instead when the keyring is unset (OSS default, where the rows
+        are not consulted) or when the DB lookup itself raises.
+        """
+        return await self._list_downloads_for_session(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            in_progress=False,
+        )
+
+    async def _list_downloads_for_session(
+        self,
+        *,
+        organization_id: str,
+        browser_session_id: str,
+        in_progress: bool,
+    ) -> list[str]:
+        """Shared DB-backed lister with a partial-vs-final discriminator.
+
+        Centralizes the keyring-gating + DB-failure-fallback so the two public
+        methods stay parallel.
+        """
+        if settings.ARTIFACT_CONTENT_HMAC_KEYRING:
+            try:
+                artifacts = await app.DATABASE.artifacts.list_artifacts_for_browser_session_by_type(
+                    browser_session_id=browser_session_id,
+                    organization_id=organization_id,
+                    artifact_type=ArtifactType.DOWNLOAD,
+                )
+            except Exception:
+                LOG.warning(
+                    "Failed to list browser-session download artifacts; falling back to S3 LIST",
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    in_progress=in_progress,
+                    exc_info=True,
+                )
+                artifacts = None
+            if artifacts is not None:
+                # Honour the partial-vs-final discriminator the agent expects.
+                return [a.uri for a in artifacts if a.uri and a.uri.endswith(BROWSER_DOWNLOADING_SUFFIX) == in_progress]
+
+        bucket = settings.AWS_S3_BUCKET_ARTIFACTS
+        uri = f"s3://{bucket}/{self._PATH_VERSION}/{settings.ENV}/{organization_id}/browser_sessions/{browser_session_id}/downloads"
+        files = [f"s3://{bucket}/{file}" for file in await self.async_client.list_files(uri=uri)]
+        return [f for f in files if f.endswith(BROWSER_DOWNLOADING_SUFFIX) == in_progress]
+
+    async def get_shared_downloaded_files_in_browser_session(
+        self, organization_id: str, browser_session_id: str
+    ) -> list[FileInfo]:
+        # With the keyring set, artifact rows are the source of truth: a lookup that succeeds and finds nothing
+        # means no downloads, so S3 is not listed. Without a keyring (OSS default) this lists S3 and presigns, so
+        # webhook consumers with no API key can still fetch the files.
+        if settings.ARTIFACT_CONTENT_HMAC_KEYRING:
+            try:
+                artifacts = await app.DATABASE.artifacts.list_artifacts_for_browser_session_by_type(
+                    browser_session_id=browser_session_id,
+                    organization_id=organization_id,
+                    artifact_type=ArtifactType.DOWNLOAD,
+                )
+            except Exception:
+                LOG.warning(
+                    "Failed to look up browser-session download artifacts; falling back to presigned S3 URLs",
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    exc_info=True,
+                )
+            else:
+                # Filter out in-progress partials — the user-facing listing must
+                # only show completed downloads. Partials still live as artifact
+                # rows so the agent can detect "still downloading" via DB query.
+                artifacts = [a for a in artifacts if a.uri and not a.uri.endswith(BROWSER_DOWNLOADING_SUFFIX)]
+                return await _file_infos_from_download_artifacts(artifacts)
+
+        return await self._get_shared_downloaded_files_in_browser_session_via_listing(
+            organization_id=organization_id, browser_session_id=browser_session_id
+        )
+
+    async def _safe_get_object_info(self, uri: str) -> dict | None:
+        try:
+            return await self.async_client.get_object_info(uri)
+        except Exception:
+            LOG.warning("Object info retrieval failed", uri=uri, exc_info=True)
+            return None
+
+    async def _bounded_get_object_infos(self, keys: list[str]) -> list[dict | None]:
+        """Fan out head_object across keys under the instance-wide cap.
+
+        Uses ``self._head_object_semaphore`` so concurrent callers on the same
+        ``S3Storage`` (e.g. the per-session fanout inside
+        ``/browser_sessions/history``) share one limit instead of each getting
+        its own — otherwise page_size x cap could blow past S3 client limits.
+        """
+        if not keys:
+            return []
+
+        async def _bounded(uri: str) -> dict | None:
+            async with self._head_object_semaphore:
+                return await self._safe_get_object_info(uri)
+
+        return await asyncio.gather(*[_bounded(key) for key in keys])
+
+    async def _resilient_presign(self, keys: list[str]) -> list[str | None]:
+        """Batch presign with per-key fallback so one failure does not drop every URL."""
+        if not keys:
+            return []
+        batched = await self.async_client.create_presigned_urls(keys)
+        if batched is not None and len(batched) == len(keys):
+            return list(batched)
+
+        LOG.warning(
+            "Batch presign failed or returned wrong length; falling back to per-key signing",
+            requested=len(keys),
+            returned=(len(batched) if batched is not None else None),
+        )
+
+        async def _sign_one(uri: str) -> str | None:
+            try:
+                signed = await self.async_client.create_presigned_urls([uri])
+                return signed[0] if signed else None
+            except Exception:
+                LOG.exception("Per-key presign failed", uri=uri)
+                return None
+
+        return await asyncio.gather(*[_sign_one(key) for key in keys])
+
+    async def _get_shared_downloaded_files_in_browser_session_via_listing(
+        self, *, organization_id: str, browser_session_id: str
+    ) -> list[FileInfo]:
+        # Direct S3 LIST, only for OSS deployments without a keyring and for a
+        # failed row lookup. ``list_downloaded_files_in_browser_session`` returns
+        # S3 URIs, not presigned FileInfos, so it is not reused here.
+        bucket = settings.AWS_S3_BUCKET_ARTIFACTS
+        listing_uri = f"s3://{bucket}/{self._PATH_VERSION}/{settings.ENV}/{organization_id}/browser_sessions/{browser_session_id}/downloads"
+        object_keys = [
+            f"s3://{bucket}/{file}"
+            for file in await self.async_client.list_files(uri=listing_uri)
+            if not file.endswith(BROWSER_DOWNLOADING_SUFFIX)
+        ]
+        if len(object_keys) == 0:
+            return []
+
+        object_infos, presigned_urls = await asyncio.gather(
+            self._bounded_get_object_infos(object_keys),
+            self._resilient_presign(object_keys),
+        )
+
+        file_infos: list[FileInfo] = []
+        for key, object_info, url in zip(object_keys, object_infos, presigned_urls):
+            if url is None:
+                continue
+            metadata = (object_info or {}).get("Metadata") or {}
+            modified_at: datetime | None = (object_info or {}).get("LastModified")
+            content_length: int | None = (object_info or {}).get("ContentLength")
+
+            filename = os.path.basename(key)
+            checksum = metadata.get("sha256_checksum") if metadata else None
+
+            file_infos.append(
+                FileInfo(
+                    url=url,
+                    checksum=checksum,
+                    filename=metadata.get("original_filename", filename) if metadata else filename,
+                    file_size=content_length,
+                    modified_at=modified_at,
+                )
+            )
+
+        return file_infos
+
+    async def list_downloading_files_in_browser_session(
+        self, organization_id: str, browser_session_id: str
+    ) -> list[str]:
+        """Return S3 URIs of in-progress downloads (``*.crdownload``).
+
+        DB-backed (artifact rows are the source of truth). The watcher creates
+        a partial artifact row (``checksum=None``) the moment Chrome opens the
+        ``.crdownload`` file; that row is dropped when Chrome's atomic rename
+        fires ``Change.deleted``. Used by ``complete_on_download`` task blocks
+        to wait until in-flight downloads finish.
+        """
+        return await self._list_downloads_for_session(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            in_progress=True,
+        )
+
+    async def get_shared_recordings_in_browser_session(
+        self, organization_id: str, browser_session_id: str
+    ) -> list[FileInfo]:
+        """Get recording files for a browser session.
+
+        When the keyring is configured, RECORDING rows scoped to the session are
+        the source of truth: build short signed ``/v1/artifacts/{id}/content``
+        URLs from them, and return nothing when there are none. The S3 LIST +
+        presigned URLs path runs only when the row lookup raises or the keyring
+        is unset (OSS default, no HMAC signing).
+        """
+        if settings.ARTIFACT_CONTENT_HMAC_KEYRING:
+            try:
+                artifacts = await app.DATABASE.artifacts.list_artifacts_for_browser_session_by_type(
+                    browser_session_id=browser_session_id,
+                    organization_id=organization_id,
+                    artifact_type=ArtifactType.RECORDING,
+                )
+            except Exception:
+                LOG.warning(
+                    "Failed to look up browser-session recording artifacts; falling back to presigned S3 URLs",
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    exc_info=True,
+                )
+            else:
+                # Defensive extension filter — same as the listing path —
+                # in case a non-recording row sneaks under the same browser_session_id.
+                artifacts = [
+                    a
+                    for a in artifacts
+                    if a.uri and (a.uri.lower().endswith(".webm") or a.uri.lower().endswith(".mp4"))
+                ]
+                file_infos = await _file_infos_from_artifacts(artifacts, artifact_type=ArtifactType.RECORDING)
+                # Newest first — match the listing path's ordering.
+                file_infos.sort(key=lambda f: (f.modified_at is not None, f.modified_at), reverse=True)
+                return file_infos
+
+        return await self._get_shared_recordings_in_browser_session_via_listing(
+            organization_id=organization_id, browser_session_id=browser_session_id
+        )
+
+    async def _get_shared_recordings_in_browser_session_via_listing(
+        self, *, organization_id: str, browser_session_id: str
+    ) -> list[FileInfo]:
+        # Direct S3 LIST, only for OSS deployments without a keyring and for a
+        # failed row lookup. Every call is a billable ListObjects request.
+        bucket = settings.AWS_S3_BUCKET_ARTIFACTS
+        listing_uri = f"s3://{bucket}/{self._PATH_VERSION}/{settings.ENV}/{organization_id}/browser_sessions/{browser_session_id}/videos"
+        all_keys = [f"s3://{bucket}/{file}" for file in await self.async_client.list_files(uri=listing_uri)]
+        if len(all_keys) == 0:
+            return []
+
+        # Playwright's record_video_dir should only contain .webm files; filter defensively.
+        candidate_keys: list[str] = []
+        for key in all_keys:
+            key_lower = key.lower()
+            if key_lower.endswith(".webm") or key_lower.endswith(".mp4"):
+                candidate_keys.append(key)
+            else:
+                LOG.warning(
+                    "Skipping recording file with unsupported extension",
+                    uri=key,
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                )
+        if not candidate_keys:
+            return []
+
+        # Defer presign until zero-byte uploads are filtered out so we never sign discards.
+        candidate_infos = await self._bounded_get_object_infos(candidate_keys)
+        kept: list[tuple[str, dict | None]] = []
+        for key, info in zip(candidate_keys, candidate_infos):
+            if info is not None and info.get("ContentLength") == 0:
+                continue
+            kept.append((key, info))
+        if not kept:
+            return []
+
+        object_keys = [key for key, _ in kept]
+        object_infos = [info for _, info in kept]
+        presigned_urls = await self._resilient_presign(object_keys)
+
+        file_infos: list[FileInfo] = []
+        for key, object_info, url in zip(object_keys, object_infos, presigned_urls):
+            if url is None:
+                continue
+            metadata = (object_info or {}).get("Metadata") or {}
+            modified_at: datetime | None = (object_info or {}).get("LastModified")
+            content_length: int | None = (object_info or {}).get("ContentLength")
+
+            filename = os.path.basename(key)
+            checksum = metadata.get("sha256_checksum") if metadata else None
+
+            file_infos.append(
+                FileInfo(
+                    url=url,
+                    checksum=checksum,
+                    filename=metadata.get("original_filename", filename) if metadata else filename,
+                    file_size=content_length,
+                    modified_at=modified_at,
+                )
+            )
+
+        # Prefer the newest recording first (S3 list order is not guaranteed).
+        # Treat None as "oldest".
+        file_infos.sort(key=lambda f: (f.modified_at is not None, f.modified_at), reverse=True)
+        return file_infos
+
+    async def save_downloaded_files(
+        self,
+        organization_id: str,
+        run_id: str | None,
+        *,
+        attempt_number: int | None = None,
+    ) -> None:
+        sc = await self._get_storage_class_for_org(organization_id, settings.AWS_S3_BUCKET_UPLOADS)
+        base_uri = (
+            f"s3://{settings.AWS_S3_BUCKET_UPLOADS}/{DOWNLOAD_FILE_PREFIX}/{settings.ENV}/{organization_id}/{run_id}"
+        )
+
+        await self._save_downloaded_files_from_local(
+            organization_id=organization_id,
+            run_id=run_id,
+            base_uri=base_uri,
+            storage_class=sc,
+            attempt_number=attempt_number,
+        )
+
+    async def _save_downloaded_files_from_local(
+        self,
+        organization_id: str,
+        run_id: str | None,
+        base_uri: str,
+        storage_class: S3StorageClass,
+        attempt_number: int | None = None,
+    ) -> None:
+        """Save files from local download directory to S3."""
+        download_dir = get_download_dir(run_id=run_id)
+        files = os.listdir(download_dir)
+        if not files:
+            return
+        retry_workflow_run_id, attempt_number, retry_attempt_started_at = await resolve_download_attempt_fail_open(
+            organization_id, run_id, attempt_number=attempt_number
+        )
+        retry_attempt = run_id is not None and attempt_number > 1
+        if retry_attempt:
+            base_uri = f"{base_uri}/attempts/{attempt_number}"
+        already_saved = (
+            download_checksums_by_uri(
+                (await self._list_download_artifacts_safe(organization_id=organization_id, run_id=run_id))[0]
+            )
+            if run_id is not None
+            else {}
+        )
+        skipped_files: list[str] = []
+        unchanged_file_count = 0
+        for file in files:
+            if file.endswith(BROWSER_DOWNLOADING_SUFFIX):
+                continue
+            fpath = os.path.join(download_dir, file)
+            if not os.path.isfile(fpath):
+                continue
+            file = await wait_for_pending_extension_rename(download_dir, file)
+            fpath = os.path.join(download_dir, file)
+            if not os.path.isfile(fpath):
+                continue
+            if retry_attempt and not is_file_from_retry_attempt(fpath, retry_attempt_started_at):
+                continue
+            uri = f"{base_uri}/{file}"
+            checksum = calculate_sha256_for_file(fpath)
+            # Cleanup runs repeatedly over a growing download dir; re-sending bytes that are
+            # already in the uploads bucket is what outgrows SAVE_DOWNLOADED_FILES_TIMEOUT.
+            if already_saved.get(uri) == checksum:
+                unchanged_file_count += 1
+                continue
+            file_size = _safe_get_file_size(fpath)
+            # S3 object metadata only allows ASCII; non-ASCII filenames (CJK,
+            # emoji) would otherwise raise ParamValidationError at upload time.
+            # The full filename is still preserved in the S3 key and on the
+            # Artifact row's URI.
+            metadata: dict[str, str] = {"sha256_checksum": checksum}
+            if file.isascii():
+                metadata["original_filename"] = file
+            # Upload with raise_exception=True so a partial failure aborts
+            # this iteration and we never create an Artifact row for bytes
+            # that didn't actually land in S3.
+            try:
+                await self.async_client.upload_file_from_path(
+                    uri=uri,
+                    file_path=fpath,
+                    metadata=metadata,
+                    storage_class=storage_class,
+                    raise_exception=True,
+                )
+            except Exception:
+                LOG.warning(
+                    "Skipping downloaded file — S3 upload failed",
+                    file=file,
+                    organization_id=organization_id,
+                    run_id=run_id,
+                    exc_info=True,
+                )
+                skipped_files.append(file)
+                continue
+
+            # Register the file as an Artifact so GET run output can serve it via
+            # the signed /v1/artifacts/{id}/content endpoint (SKY-8861). Persist
+            # the SHA-256 we already computed so retrieval doesn't need an
+            # extra S3 HEAD per file.
+            if run_id is not None:
+                try:
+                    await app.ARTIFACT_MANAGER.create_download_artifact(
+                        organization_id=organization_id,
+                        run_id=run_id,
+                        uri=uri,
+                        filename=file,
+                        workflow_run_id=retry_workflow_run_id if retry_attempt else None,
+                        checksum=checksum,
+                        file_size=file_size,
+                    )
+                except Exception:
+                    LOG.warning(
+                        "Failed to register downloaded file as artifact",
+                        file=file,
+                        organization_id=organization_id,
+                        run_id=run_id,
+                        exc_info=True,
+                    )
+                    skipped_files.append(file)
+        if unchanged_file_count:
+            LOG.info(
+                "Skipped downloaded files already saved with the same checksum",
+                organization_id=organization_id,
+                run_id=run_id,
+                unchanged_file_count=unchanged_file_count,
+                total_file_count=len(files),
+            )
+        if skipped_files:
+            raise DownloadSaveIncompleteError(skipped_files)
+
+    async def get_downloaded_files(
+        self, organization_id: str, run_id: str | None, attempt_started_at: datetime | None = None
+    ) -> list[FileInfo]:
+        # With the keyring set, the run's DOWNLOAD rows are the source of truth: each row carries the SHA-256 and
+        # what a signed /v1/artifacts/{id}/content URL needs, so there is no S3 LIST or per-file HEAD, and a run with
+        # no rows has no downloads. Without a keyring (OSS default) the signed endpoint needs an API key that webhook
+        # consumers lack, so this lists and presigns even when rows exist, as it also does when the row lookup fails.
+
+        # ``download_row_count`` stays None when the rows were never queried (no keyring, no run id,
+        # or the lookup failed), so an unqueried read is never reported as a read that found nothing.
+        download_row_count: int | None = None
+        rows_lookup_failed = False
+        download_artifacts: list[Artifact] | None = None
+        if run_id is not None and settings.ARTIFACT_CONTENT_HMAC_KEYRING:
+            download_artifacts, rows_lookup_failed = await self._list_download_artifacts_safe(
+                organization_id=organization_id, run_id=run_id
+            )
+            if not rows_lookup_failed:
+                download_row_count = len(download_artifacts)
+                download_artifacts = dedupe_run_scoped_download_artifacts(
+                    download_artifacts, attempt_started_at=attempt_started_at
+                )
+                file_infos = await _file_infos_from_download_artifacts(download_artifacts)
+                if not file_infos:
+                    self._log_empty_downloads_read(
+                        organization_id=organization_id,
+                        run_id=run_id,
+                        download_row_count=download_row_count,
+                        rows_lookup_failed=False,
+                        skip_fired=not download_artifacts,
+                        rows_present_but_unresolvable=bool(download_artifacts),
+                        listed=False,
+                    )
+                return file_infos
+
+        file_infos = await self._get_downloaded_files_via_s3_listing(
+            organization_id=organization_id,
+            run_id=run_id,
+            download_artifacts=download_artifacts,
+        )
+        if not file_infos:
+            self._log_empty_downloads_read(
+                organization_id=organization_id,
+                run_id=run_id,
+                download_row_count=download_row_count,
+                rows_lookup_failed=rows_lookup_failed,
+                skip_fired=False,
+                rows_present_but_unresolvable=False,
+                listed=True,
+            )
+        return file_infos
+
+    def _log_empty_downloads_read(
+        self,
+        *,
+        organization_id: str,
+        run_id: str | None,
+        download_row_count: int | None,
+        rows_lookup_failed: bool,
+        skip_fired: bool,
+        rows_present_but_unresolvable: bool,
+        listed: bool,
+    ) -> None:
+        decision = empty_read_decision(
+            download_row_count=download_row_count,
+            rows_lookup_failed=rows_lookup_failed,
+            skip_fired=skip_fired,
+            rows_present_but_unresolvable=rows_present_but_unresolvable,
+            listed=listed,
+        )
+        dump_download_visibility_inputs("empty_read", {"run_id": run_id, **decision})
+        LOG.debug(
+            "downloads.empty_read",
+            organization_id=organization_id,
+            run_id=run_id,
+            **decision,
+        )
+
+    async def _list_download_artifacts_safe(self, *, organization_id: str, run_id: str) -> tuple[list[Artifact], bool]:
+        """The run's DOWNLOAD rows, plus whether the lookup itself failed.
+
+        The failure flag is what separates "this run has no download rows" from "we could not tell".
+        """
+        try:
+            artifacts = await app.DATABASE.artifacts.list_artifacts_for_run_by_type(
+                run_id=run_id,
+                organization_id=organization_id,
+                artifact_type=ArtifactType.DOWNLOAD,
+            )
+        except Exception:
+            LOG.warning(
+                "Failed to look up download artifacts; falling back to presigned S3 URLs",
+                organization_id=organization_id,
+                run_id=run_id,
+                exc_info=True,
+            )
+            return [], True
+        return artifacts, False
+
+    async def _get_downloaded_files_via_s3_listing(
+        self,
+        *,
+        organization_id: str,
+        run_id: str | None,
+        download_artifacts: list[Artifact] | None = None,
+    ) -> list[FileInfo]:
+        if download_artifacts is None and run_id is not None:
+            download_artifacts, _ = await self._list_download_artifacts_safe(
+                organization_id=organization_id,
+                run_id=run_id,
+            )
+        artifacts_by_uri = {artifact.uri: artifact for artifact in download_artifacts or []}
+        bucket = settings.AWS_S3_BUCKET_UPLOADS
+        uri = f"s3://{bucket}/{DOWNLOAD_FILE_PREFIX}/{settings.ENV}/{organization_id}/{run_id}"
+        object_keys = await self.async_client.list_files(uri=uri)
+        if len(object_keys) == 0:
+            return []
+
+        file_infos: list[FileInfo] = []
+        for key in object_keys:
+            if key.endswith(BROWSER_DOWNLOADING_SUFFIX):
+                continue
+            object_uri = f"s3://{bucket}/{key}"
+
+            metadata = {}
+            content_length: int | None = None
+            blob_modified_at = None
+            try:
+                object_info = await self.async_client.get_object_info(object_uri)
+                metadata = object_info.get("Metadata", {})
+                content_length = object_info.get("ContentLength")
+                blob_modified_at = object_info.get("LastModified")
+            except Exception:
+                LOG.warning("Object info retrieval failed", uri=object_uri, exc_info=True)
+            filename = os.path.basename(key)
+            checksum = metadata.get("sha256_checksum") if metadata else None
+            display_name = metadata.get("original_filename", filename) if metadata else filename
+            artifact = artifacts_by_uri.get(object_uri)
+
+            presigned_urls = await self.async_client.create_presigned_urls([object_uri])
+            if not presigned_urls:
+                continue
+
+            file_infos.append(
+                FileInfo(
+                    url=presigned_urls[0],
+                    checksum=checksum,
+                    filename=display_name,
+                    file_size=content_length,
+                    modified_at=artifact.modified_at if artifact is not None else blob_modified_at,
+                    artifact_id=artifact.artifact_id if artifact is not None else None,
+                )
+            )
+        return file_infos
+
+    async def save_legacy_file(
+        self, *, organization_id: str, filename: str, fileObj: BinaryIO
+    ) -> tuple[str, str] | None:
+        todays_date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+        bucket = settings.AWS_S3_BUCKET_UPLOADS
+        sc = await self._get_storage_class_for_org(organization_id, bucket)
+        # First try uploading with original filename
+        try:
+            sanitized_filename = os.path.basename(filename)  # Remove any path components
+            s3_uri = f"s3://{bucket}/{settings.ENV}/{organization_id}/{todays_date}/{sanitized_filename}"
+            uploaded_s3_uri = await self.async_client.upload_file_stream(s3_uri, fileObj, storage_class=sc)
+        except Exception:
+            LOG.error("Failed to upload file to S3", exc_info=True)
+            uploaded_s3_uri = None
+
+        # If upload fails, try again with UUID prefix
+        if not uploaded_s3_uri:
+            uuid_prefixed_filename = f"{str(uuid.uuid4())}_{filename}"
+            s3_uri = f"s3://{bucket}/{settings.ENV}/{organization_id}/{todays_date}/{uuid_prefixed_filename}"
+            fileObj.seek(0)  # Reset file pointer
+            uploaded_s3_uri = await self.async_client.upload_file_stream(s3_uri, fileObj, storage_class=sc)
+
+        if not uploaded_s3_uri:
+            LOG.error(
+                "Failed to upload file to S3 after retrying with UUID prefix",
+                organization_id=organization_id,
+                storage_class=sc,
+                filename=filename,
+                exc_info=True,
+            )
+            return None
+        LOG.debug(
+            "Legacy file upload",
+            organization_id=organization_id,
+            storage_class=sc,
+            filename=filename,
+            uploaded_s3_uri=uploaded_s3_uri,
+        )
+        # Generate a presigned URL for the uploaded file
+        presigned_urls = await self.async_client.create_presigned_urls([uploaded_s3_uri])
+        if not presigned_urls:
+            LOG.error(
+                "Failed to create presigned URL for uploaded file",
+                organization_id=organization_id,
+                storage_class=sc,
+                uploaded_s3_uri=uploaded_s3_uri,
+                filename=filename,
+                exc_info=True,
+            )
+            return None
+        return presigned_urls[0], uploaded_s3_uri
+
+    async def delete_legacy_file(self, *, organization_id: str, uri: str) -> None:
+        self.assert_managed_file_access(uri, organization_id)
+        await self.async_client.delete_file(uri, log_exception=True, raise_on_error=True)
+
+    def _build_browser_session_uri(
+        self,
+        organization_id: str,
+        browser_session_id: str,
+        artifact_type: str,
+        remote_path: str,
+        date: str | None = None,
+    ) -> str:
+        """Build the S3 URI for a browser session file."""
+        base = f"s3://{self.bucket}/{self._PATH_VERSION}/{settings.ENV}/{organization_id}/browser_sessions/{browser_session_id}/{artifact_type}"
+        if date:
+            return f"{base}/{date}/{remote_path}"
+        return f"{base}/{remote_path}"
+
+    async def sync_browser_session_file(
+        self,
+        organization_id: str,
+        browser_session_id: str,
+        artifact_type: str,
+        local_file_path: str,
+        remote_path: str,
+        date: str | None = None,
+        recording_finalized_at: datetime | None = None,
+        producer_run_id: str | None = None,
+    ) -> str:
+        """Sync a file from local browser session to S3."""
+        uri = self._build_browser_session_uri(organization_id, browser_session_id, artifact_type, remote_path, date)
+        sc = await self._get_storage_class_for_org(organization_id, self.bucket)
+
+        if artifact_type == "videos":
+            # Anchor per-run clip offsets to browser close, captured before the (potentially
+            # slow) compress+upload below so a long upload doesn't shift every clip window.
+            recording_finalized_at = recording_finalized_at or datetime.now(timezone.utc)
+            # Compress finalized Playwright recordings before upload. The raw
+            # local file remains the source of truth if ffmpeg fails; the S3
+            # object and artifact metadata reflect the prepared upload file.
+            async with prepare_recording_for_upload(local_file_path) as prepared_upload:
+                upload_file_path = prepared_upload.path
+                upload_remote_path = replace_file_extension(remote_path, prepared_upload.file_extension)
+                uri = self._build_browser_session_uri(
+                    organization_id, browser_session_id, artifact_type, upload_remote_path, date
+                )
+                await self.async_client.upload_file_from_path(
+                    uri, upload_file_path, storage_class=sc, raise_exception=True
+                )
+                # Register the uploaded recording for signed artifact serving.
+                checksum = calculate_sha256_for_file(upload_file_path)
+                file_size = _safe_get_file_size(upload_file_path)
+                await app.ARTIFACT_MANAGER.create_browser_session_recording_artifact(
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    uri=uri,
+                    filename=os.path.basename(upload_remote_path),
+                    checksum=checksum,
+                    file_size=file_size,
+                )
+
+                async def _upload_clip(run_id: str, clip_path: str, filename: str) -> str:
+                    clip_uri = self._build_browser_session_uri(
+                        organization_id, browser_session_id, RUN_RECORDING_PATH_SEGMENT, f"{run_id}/{filename}", date
+                    )
+                    await self.async_client.upload_file_from_path(clip_uri, clip_path, storage_class=sc)
+                    return clip_uri
+
+                try:
+                    async with asyncio.timeout(RUN_RECORDING_CLIPS_SYNC_TIMEOUT_SECONDS):
+                        await sync_run_recording_clips(
+                            organization_id=organization_id,
+                            browser_session_id=browser_session_id,
+                            source_path=upload_file_path,
+                            upload_clip=_upload_clip,
+                            now=recording_finalized_at,
+                        )
+                except Exception:
+                    LOG.warning(
+                        "Run recording clip generation failed", browser_session_id=browser_session_id, exc_info=True
+                    )
+            return uri
+
+        await self.async_client.upload_file_from_path(uri, local_file_path, storage_class=sc)
+
+        if artifact_type == "downloads":
+            # Register a DOWNLOAD Artifact row scoped to the session so the DB
+            # is the single source of truth for both the
+            # ``GET /v1/browser_sessions/{id}`` user-facing listing and the
+            # agent's baseline-before/after / complete_on_download checks.
+            # Partial files (``*.crdownload``) get a row too with
+            # checksum=None — the agent's "still downloading" query reads
+            # URI-suffix from the row. The row is dropped when Chrome's
+            # atomic rename fires ``Change.deleted`` for the partial path.
+            #
+            # Exceptions propagate so the watcher's bounded retry in
+            # ``browser_controller._watch_and_sync_directory`` can recover
+            # from a transient DB outage. Both ``upload_file_from_path`` (S3
+            # overwrite) and ``create_browser_session_download_artifact``
+            # (idempotent on ``(session, uri)``) are safe to retry.
+            is_partial = remote_path.endswith(BROWSER_DOWNLOADING_SUFFIX)
+            download_checksum = None if is_partial else calculate_sha256_for_file(local_file_path)
+            download_file_size = None if is_partial else _safe_get_file_size(local_file_path)
+            await app.ARTIFACT_MANAGER.create_browser_session_download_artifact(
+                organization_id=organization_id,
+                browser_session_id=browser_session_id,
+                uri=uri,
+                filename=os.path.basename(remote_path),
+                checksum=download_checksum,
+                file_size=download_file_size,
+                run_id=None if is_partial else producer_run_id,
+            )
+        return uri
+
+    async def delete_browser_session_file(
+        self,
+        organization_id: str,
+        browser_session_id: str,
+        artifact_type: str,
+        remote_path: str,
+        date: str | None = None,
+    ) -> None:
+        """Delete a file from browser session storage in S3.
+
+        For ``downloads``, also drop the matching DOWNLOAD artifact row so a
+        subsequent ``GET /v1/browser_sessions/{id}`` doesn't hand out a signed
+        URL that 404s. The DB delete runs before the S3 delete: if S3 fails
+        we'd rather have an artifact row missing (the file simply stops being
+        listed) than a row pointing at a deleted object.
+        """
+        uri = self._build_browser_session_uri(organization_id, browser_session_id, artifact_type, remote_path, date)
+        if artifact_type == "downloads":
+            try:
+                await app.DATABASE.artifacts.delete_artifact_for_browser_session(
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    uri=uri,
+                    artifact_type=ArtifactType.DOWNLOAD,
+                )
+            except Exception:
+                LOG.warning(
+                    "Failed to delete browser-session download artifact row; proceeding with S3 delete",
+                    organization_id=organization_id,
+                    browser_session_id=browser_session_id,
+                    remote_path=remote_path,
+                    exc_info=True,
+                )
+        await self.async_client.delete_file(uri, log_exception=True)
+
+    async def browser_session_file_exists(
+        self,
+        organization_id: str,
+        browser_session_id: str,
+        artifact_type: str,
+        remote_path: str,
+        date: str | None = None,
+    ) -> bool:
+        """Check if a file exists in browser session storage in S3."""
+        uri = self._build_browser_session_uri(organization_id, browser_session_id, artifact_type, remote_path, date)
+        try:
+            info = await self.async_client.get_object_info(uri)
+            return info is not None
+        except Exception:
+            return False
+
+    def assert_managed_file_access(self, uri: str, organization_id: str) -> None:
+        try:
+            parsed_uri = S3Uri(uri)
+        except Exception as e:
+            raise PermissionError(f"No permission to access storage URI: {uri}") from e
+
+        # Uploads bucket: keys use {env}/{org}/ or downloads/{env}/{org}/
+        if parsed_uri.bucket == settings.AWS_S3_BUCKET_UPLOADS:
+            allowed_prefixes = (
+                f"{settings.ENV}/{organization_id}/",
+                f"{DOWNLOAD_FILE_PREFIX}/{settings.ENV}/{organization_id}/",
+            )
+            if key_is_org_scoped(parsed_uri.key, allowed_prefixes):
+                return
+
+        # Artifacts bucket: keys use v1/{env}/{org}/
+        if parsed_uri.bucket == settings.AWS_S3_BUCKET_ARTIFACTS:
+            artifact_prefix = f"{self._PATH_VERSION}/{settings.ENV}/{organization_id}/"
+            if key_is_org_scoped(parsed_uri.key, (artifact_prefix,)):
+                return
+
+        raise PermissionError(f"No permission to access storage URI: {uri}")
+
+    async def download_managed_file(self, uri: str, organization_id: str) -> bytes | None:
+        """Download a managed org-scoped file from S3."""
+        self.assert_managed_file_access(uri, organization_id)
+        return await self.async_client.download_file(uri, log_exception=False)
+
+    async def managed_file_size(self, uri: str, organization_id: str) -> int | None:
+        self.assert_managed_file_access(uri, organization_id)
+        info = await self.async_client.get_object_info(uri)
+        size = info.get("ContentLength") if info else None
+        return size if isinstance(size, int) else None
+
+    async def file_exists(self, uri: str) -> bool:
+        """Check if a file exists at the given S3 URI."""
+        try:
+            info = await self.async_client.get_object_info(uri)
+            return info is not None
+        except Exception:
+            return False
+
+    @property
+    def storage_type(self) -> str:
+        """Returns 's3' as the storage type."""
+        return "s3"

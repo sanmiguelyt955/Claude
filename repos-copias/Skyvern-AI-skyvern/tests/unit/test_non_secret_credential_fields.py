@@ -1,0 +1,226 @@
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from skyvern.forge.sdk.schemas.credentials import (
+    CreditCardBillingAddress,
+    CreditCardCredential,
+    PasswordCredential,
+)
+from skyvern.forge.sdk.workflow import context_manager as context_manager_module
+from skyvern.forge.sdk.workflow.context_manager import RANDOM_SECRET_ID_PREFIX, WorkflowRunContext
+
+_CARD = CreditCardCredential(
+    card_number="4111111111111111",
+    card_cvv="587",
+    card_exp_month="12",
+    card_exp_year="2030",
+    card_brand="visa",
+    card_holder_name="Test Holder",
+    billing_address=CreditCardBillingAddress(
+        city="San Francisco",
+        state_code="CA",
+        country_code="US",
+        postal_code="94105",
+    ),
+)
+
+
+def _context(*, mask_secrets: bool = True) -> WorkflowRunContext:
+    return WorkflowRunContext(
+        workflow_title="t",
+        workflow_id="w_test",
+        workflow_permanent_id="wpid_test",
+        workflow_run_id="wr_test",
+        aws_client=MagicMock(),
+        mask_secrets=mask_secrets,
+    )
+
+
+async def _register(
+    monkeypatch: pytest.MonkeyPatch,
+    credential: Any = _CARD,
+    parameter_key: str = "card",
+) -> tuple[WorkflowRunContext, dict[str, Any]]:
+    context = _context()
+    parameter = MagicMock(key=parameter_key)
+
+    db_credential = MagicMock(vault_type=None, totp_identifier=None)
+    vault = MagicMock()
+    vault.get_credential_item = AsyncMock(return_value=MagicMock(credential=credential))
+
+    app = MagicMock()
+    app.DATABASE.credentials.get_credential = AsyncMock(return_value=db_credential)
+    app.CREDENTIAL_VAULT_SERVICES.get.return_value = vault
+    # Mirror the OSS no-op hook: return the resolved item unchanged.
+    app.AGENT_FUNCTION.enforce_credential_use = AsyncMock()
+    app.AGENT_FUNCTION.process_registered_credential_item = AsyncMock(
+        side_effect=lambda *, workflow_run_id, db_credential, credential_item: credential_item
+    )
+    monkeypatch.setattr(context_manager_module, "app", app)
+
+    await context._register_credential_parameter_value(
+        credential_id="cred_test",
+        parameter=parameter,
+        organization=MagicMock(organization_id="o_test"),
+    )
+    return context, context.values[parameter_key]
+
+
+@pytest.mark.asyncio
+async def test_low_entropy_fields_are_not_registered_as_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    context, values = await _register(monkeypatch)
+
+    assert values["card_brand"] == "visa"
+    assert "visa" not in context.secrets.values()
+    # Billing fields stay masked: the safe credential API excludes them on purpose.
+    assert str(values["billing_address_state_code"]).startswith(RANDOM_SECRET_ID_PREFIX)
+    assert "CA" in context.secrets.values()
+
+
+@pytest.mark.asyncio
+async def test_card_number_and_cvv_are_still_masked(monkeypatch: pytest.MonkeyPatch) -> None:
+    context, values = await _register(monkeypatch)
+
+    for field in ("card_number", "card_cvv"):
+        assert str(values[field]).startswith(RANDOM_SECRET_ID_PREFIX)
+    assert "4111111111111111" in context.secrets.values()
+    assert "587" in context.secrets.values()
+
+
+@pytest.mark.asyncio
+async def test_a_registered_brand_no_longer_corrupts_unrelated_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    context, _ = await _register(monkeypatch)
+
+    payload = {"note": "a travel visa is required", "brand": "visa"}
+
+    assert context.mask_secrets_in_data(payload) == payload
+
+
+def _context_with_secrets(**secrets: str) -> WorkflowRunContext:
+    context = _context()
+    context.secrets.update(secrets)
+    return context
+
+
+def test_short_secret_inside_timestamp_survives_unchanged() -> None:
+    context = _context_with_secrets(card_cvv="587")
+    payload = {"requestedDate": "2026-06-26T15:14:30.587+00:00"}
+
+    assert context.mask_secrets_in_data(payload) == payload
+
+
+def test_standalone_short_secret_leaf_still_masks() -> None:
+    context = _context_with_secrets(card_cvv="587")
+
+    assert context.mask_secrets_in_data({"code": "587"}) == {"code": "*****"}
+    assert context.mask_secrets_in_data(["587"]) == ["*****"]
+
+
+def test_secret_used_as_a_dict_key_masks() -> None:
+    context = _context_with_secrets(otp="778899")
+
+    assert context.mask_secrets_in_data({"778899": True}) == {"*****": True}
+    assert context.mask_secrets_in_data([{"778899": {"seen": "778899"}}]) == [{"*****": {"seen": "*****"}}]
+    assert context.mask_secrets_in_data({1: "ok", None: "ok"}) == {1: "ok", None: "ok"}
+
+
+def test_four_char_year_masks_only_as_whole_value() -> None:
+    context = _context_with_secrets(card_exp_year="2030")
+    payload = {"due": "2030-01-15", "note": "renews in 2030"}
+
+    assert context.mask_secrets_in_data(payload) == payload
+    assert context.mask_secrets_in_data({"card_exp_year": "2030"}) == {"card_exp_year": "*****"}
+
+
+def test_five_char_secret_still_masks_as_substring() -> None:
+    context = _context_with_secrets(token="ab1cd")
+
+    assert context.mask_secrets_in_data({"log": "xab1cdy"}) == {"log": "x*****y"}
+
+
+def test_long_secret_still_masks_as_substring() -> None:
+    context = _context_with_secrets(card_number="4111111111111111")
+
+    masked = context.mask_secrets_in_data({"log": "charged card 4111111111111111 ok"})
+    assert masked == {"log": "charged card ***** ok"}
+
+
+def test_mask_secrets_in_data_masks_even_when_workflow_opted_out() -> None:
+    context = _context(mask_secrets=False)
+    context.secrets["password"] = "secret-value"
+
+    assert context.mask_secrets_in_data({"password": "secret-value"}) == {"password": "*****"}
+
+
+def test_mask_secrets_in_data_masks_even_when_global_flag_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(context_manager_module.settings, "ENABLE_SECRET_ARTIFACT_REDACTION", False)
+    context = _context(mask_secrets=False)
+    context.secrets["password"] = "secret-value"
+
+    assert context.mask_secrets_in_data({"password": "secret-value"}) == {"password": "*****"}
+
+
+@pytest.mark.asyncio
+async def test_password_less_credential_still_exposes_a_password_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A login with no password must still register `password`, as the empty string.
+
+    Blocks (code blocks especially) dereference `.password` directly, so dropping the key for a
+    falsy value turns a valid password-less credential into a namespace lookup failure.
+    """
+    credential = PasswordCredential(username="user@example.com", password="")
+
+    context, values = await _register(monkeypatch, credential=credential, parameter_key="login")
+
+    assert values["password"] == ""
+    assert str(values["username"]).startswith(RANDOM_SECRET_ID_PREFIX)
+    # The empty password is not a secret to mask, so it must not enter the secrets map.
+    assert "" not in context.secrets
+
+
+@pytest.mark.asyncio
+async def test_password_less_credential_resolves_real_password_to_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The template entry for the real password resolves to "" rather than a placeholder id."""
+    credential = PasswordCredential(username="user@example.com", password="")
+
+    context, _ = await _register(monkeypatch, credential=credential, parameter_key="login")
+    entries = context.credential_template_entries(["login"], resolve_credential_dicts=True)
+
+    assert entries["login_real_password"] == ""
+    assert entries["login_real_username"] == "user@example.com"
+    assert entries["login"]["password"] == ""
+
+
+@pytest.mark.asyncio
+async def test_password_less_credential_username_is_not_recorded_as_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A password-less login makes the username its only authenticator, so it must not be exempted
+    from the re-submit budget the way a real login's username is."""
+    credential = PasswordCredential(username="user@example.com", password="")
+
+    context, values = await _register(monkeypatch, credential=credential, parameter_key="login")
+
+    assert context.login_identifier_secret_ids == set()
+    assert context.secrets[values["username"]] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_only_a_logins_username_slot_is_recorded_as_an_identifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A customer-named metadata field, a card, or a response path called `username` also mints a token
+    # ending in `_username`; none of them is a login identifier, so the re-submit budget must still bind them.
+    credential = PasswordCredential(username="user@example.com", password="pw-value-1", metadata={"username": "pw-2"})
+
+    context, values = await _register(monkeypatch, credential=credential, parameter_key="login")
+    context.register_secret_value("pw-value-3", suffix="username")
+
+    assert context.login_identifier_secret_ids == {values["username"]}
+    assert context.secrets[values["username"]] == "user@example.com"
+
+    card_context, _ = await _register(monkeypatch)
+    assert card_context.login_identifier_secret_ids == set()

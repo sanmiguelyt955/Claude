@@ -1,0 +1,186 @@
+import { useScrollToHash } from "@/hooks/useScrollToHash";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useSettingsStore } from "@/store/SettingsStore";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  useRuntimeCredential,
+  type RuntimeCredential,
+} from "@/hooks/useRuntimeCredential";
+import { HiddenCopyableInput } from "@/components/ui/hidden-copyable-input";
+import { OnePasswordTokenForm } from "@/components/OnePasswordTokenForm";
+import { BitwardenCredentialForm } from "@/components/BitwardenCredentialForm";
+import { AzureClientSecretCredentialTokenForm } from "@/components/AzureClientSecretCredentialTokenForm";
+import { CustomCredentialServiceConfigForm } from "@/components/CustomCredentialServiceConfigForm";
+import { CustomLLMConfigForm } from "@/components/CustomLLMConfigForm";
+import { OrgLLMDefaultsCard } from "@/components/OrgLLMDefaultsCard";
+import { GoogleOAuthClientConfigForm } from "@/components/GoogleOAuthClientConfigForm";
+import { useVersionQuery } from "@/hooks/useVersionQuery";
+import { formatVersion, getAppVersion } from "@/util/version";
+
+// The browser holds a scoped session token rather than the organization key, so a value copied
+// from here stops working at expiry. Say which one is on screen.
+function describeRuntimeCredential(credential: RuntimeCredential): string {
+  if (!credential.apiKey) {
+    return "The UI server mints this credential after the page loads.";
+  }
+  if (credential.expiresAt === null) {
+    return "Currently active API key";
+  }
+  return (
+    `Short-lived browser session token, valid until ${new Date(credential.expiresAt * 1000).toLocaleTimeString()}. ` +
+    "For SDK, CI, or scheduled callers, use the organization API key from your server configuration."
+  );
+}
+
+function Settings() {
+  useScrollToHash();
+  const { environment, organization, setEnvironment, setOrganization } =
+    useSettingsStore();
+  const credential = useRuntimeCredential();
+  const { data: versionData } = useVersionQuery();
+
+  return (
+    <div className="flex flex-col gap-8">
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Settings</CardTitle>
+          <CardDescription>
+            You can select environment and organization here
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-4">
+              <Label className="w-36 whitespace-nowrap">Environment</Label>
+              <Select value={environment} onValueChange={setEnvironment}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Environment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">local</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-4">
+              <Label className="w-36 whitespace-nowrap">Organization</Label>
+              <Select value={organization} onValueChange={setOrganization}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Organization" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="skyvern">Skyvern</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">API Key</CardTitle>
+          <CardDescription>
+            {describeRuntimeCredential(credential)}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <HiddenCopyableInput
+            value={credential.apiKey ?? "Waiting for a browser session token"}
+          />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">1Password Integration</CardTitle>
+          <CardDescription>
+            Connect a 1Password service account so agent logins can use items
+            from your vaults. The steps below walk through creating the token.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <OnePasswordTokenForm />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Bitwarden Integration</CardTitle>
+          <CardDescription>
+            Configure your Bitwarden account credentials to use your own vault
+            for credential management.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <BitwardenCredentialForm />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Azure Integration</CardTitle>
+          <CardDescription>Manage your Azure integration</CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <AzureClientSecretCredentialTokenForm />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Custom Credential Service</CardTitle>
+          <CardDescription>
+            Configure your custom HTTP API for credential management.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <CustomCredentialServiceConfigForm />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Google OAuth</CardTitle>
+          <CardDescription>
+            Configure the OAuth client used by Google integrations.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <GoogleOAuthClientConfigForm />
+        </CardContent>
+      </Card>
+      <Card id="custom-llms">
+        <CardHeader className="border-b-2">
+          <CardTitle className="text-lg">Custom LLMs</CardTitle>
+          <CardDescription>
+            Add custom OpenAI-compatible, Ollama, or OpenRouter models.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-8">
+          <CustomLLMConfigForm />
+        </CardContent>
+      </Card>
+      <OrgLLMDefaultsCard />
+      {(getAppVersion() !== "development" || versionData?.version) && (
+        <p className="text-center text-xs text-muted-foreground/50">
+          {getAppVersion() !== "development" && (
+            <>UI: {formatVersion(getAppVersion())}</>
+          )}
+          {getAppVersion() !== "development" && versionData?.version && " | "}
+          {versionData?.version && (
+            <>API: {formatVersion(versionData.version)}</>
+          )}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export { Settings };

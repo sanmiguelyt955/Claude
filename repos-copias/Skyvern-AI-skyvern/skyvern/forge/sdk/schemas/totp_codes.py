@@ -1,0 +1,123 @@
+from datetime import datetime
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from skyvern.forge.sdk.utils.sanitization import sanitize_postgres_text
+
+
+class TOTPCodeBase(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    totp_identifier: str | None = Field(
+        default=None,
+        description="The identifier of the TOTP code. It can be the email address, phone number, or the identifier of the user.",
+        examples=["john.doe@example.com", "4155555555", "user_123"],
+    )
+    task_id: str | None = Field(
+        default=None,
+        description="The task_id the totp code is for. It can be the task_id of the task that the TOTP code is for.",
+        examples=["task_123456"],
+    )
+    workflow_id: str | None = Field(
+        default=None,
+        description="The workflow ID the TOTP code is for. It can be the workflow ID of the workflow that the TOTP code is for.",
+        examples=["wpid_123456"],
+    )
+    workflow_run_id: str | None = Field(
+        default=None,
+        description="The workflow run id that the TOTP code is for. It can be the workflow run id of the workflow run that the TOTP code is for.",
+        examples=["wr_123456"],
+    )
+    source: str | None = Field(
+        default=None,
+        description="An optional field. The source of the TOTP code. e.g. email, sms, etc.",
+        examples=["email", "sms", "app"],
+    )
+    content: str | None = Field(
+        default=None,
+        description="The content of the TOTP code. It can be the email content that contains the TOTP code, or the sms message that contains the TOTP code. Skyvern will automatically extract the TOTP code from the content.",
+        examples=["Hello, your verification code is 123456"],
+    )
+
+    expired_at: datetime | None = Field(
+        default=None,
+        description="The timestamp when the TOTP code expires",
+        examples=["2025-01-01T00:00:00Z"],
+    )
+
+
+class OTPType(StrEnum):
+    TOTP = "totp"
+    MAGIC_LINK = "magic_link"
+
+
+class TOTPCodeCreate(TOTPCodeBase):
+    totp_identifier: str = Field(
+        ...,
+        description="The identifier of the TOTP code. It can be the email address, phone number, or the identifier of the user.",
+        examples=["john.doe@example.com", "4155555555", "user_123"],
+    )
+    content: str = Field(
+        ...,
+        description="The content of the TOTP code. It can be the email content that contains the TOTP code, or the sms message that contains the TOTP code. Skyvern will automatically extract the TOTP code from the content.",
+        examples=["Hello, your verification code is 123456"],
+    )
+    type: OTPType | None = Field(
+        default=None,
+        description="Deprecated compatibility field. Skyvern auto-detects the OTP type from content, so this value does not constrain extraction.",
+        examples=["totp", "magic_link"],
+        deprecated=True,
+    )
+
+    @field_validator("content")
+    @classmethod
+    def sanitize_content(cls, value: str) -> str:
+        """Remove NUL (0x00) bytes from content to avoid PostgreSQL DataError."""
+        return sanitize_postgres_text(value)
+
+
+class TOTPCode(TOTPCodeCreate):
+    totp_code_id: str = Field(..., description="The skyvern ID of the TOTP code.")
+    code: str = Field(..., description="The TOTP code extracted from the content.")
+    organization_id: str = Field(..., description="The ID of the organization that the TOTP code is for.")
+    created_at: datetime = Field(..., description="The timestamp when the TOTP code was created.")
+    modified_at: datetime = Field(..., description="The timestamp when the TOTP code was modified.")
+    otp_type: OTPType | None = Field(None, description="The type of the OTP code.")
+
+
+class RawTOTPCode(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    totp_code_id: str
+    totp_identifier: str
+    organization_id: str
+    content: str
+    task_id: str | None
+    workflow_id: str | None
+    workflow_run_id: str | None
+    source: str | None
+    created_at: datetime
+    expired_at: datetime | None
+
+
+class RawTOTPCodeAccepted(TOTPCode):
+    status: Literal["raw_pending"] = "raw_pending"
+
+    @classmethod
+    def from_raw_row(cls, raw_row: RawTOTPCode) -> "RawTOTPCodeAccepted":
+        return cls(
+            totp_code_id=raw_row.totp_code_id,
+            totp_identifier=raw_row.totp_identifier,
+            organization_id=raw_row.organization_id,
+            content=raw_row.content,
+            code="",
+            task_id=raw_row.task_id,
+            workflow_id=raw_row.workflow_id,
+            workflow_run_id=raw_row.workflow_run_id,
+            source=raw_row.source,
+            created_at=raw_row.created_at,
+            modified_at=raw_row.created_at,
+            expired_at=raw_row.expired_at,
+        )

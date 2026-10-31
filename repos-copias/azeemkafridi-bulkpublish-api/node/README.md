@@ -1,0 +1,121 @@
+# BulkPublish Node.js SDK
+
+Official TypeScript/Node.js SDK for the [BulkPublish](https://bulkpublish.com) social media API. Automate publishing to 15 platforms — built for developers, scripts, AI agents, LLMs, and agentic workflows.
+
+## Installation
+
+```bash
+npm install bulkpublish
+```
+
+Requires Node.js 18+. Zero dependencies — uses native `fetch`.
+
+## Quick Start
+
+```typescript
+import { BulkPublish } from 'bulkpublish';
+
+const bp = new BulkPublish({ apiKey: 'bp_your_key_here' });
+
+// List connected social media channels
+const { channels } = await bp.channels.list();
+
+// Upload media
+const { file } = await bp.media.upload('./photo.jpg');
+
+// Schedule a post to multiple platforms
+const post = await bp.posts.create({
+  content: 'Hello from the BulkPublish API!',
+  channels: [
+    { channelId: channels[0].id, platform: channels[0].platform },
+    { channelId: channels[1].id, platform: channels[1].platform },
+  ],
+  mediaFiles: [file.id],
+  scheduledAt: '2026-04-10T09:00:00Z',
+  timezone: 'America/New_York',
+  status: 'scheduled',
+});
+```
+
+### Post Type Overrides
+
+```typescript
+// Post a reel to Instagram
+const post = await bp.posts.create({
+  content: 'Check this out!',
+  channels: [{ channelId: 1, platform: 'instagram' }],
+  mediaFiles: [mediaId],
+  postTypeOverrides: { instagram: 'reel' },
+});
+```
+
+## Built for Automation
+
+BulkPublish is designed for programmatic social media management — no browser sessions, no UI, no OAuth flows at runtime. Connect your accounts once in the dashboard, then automate everything:
+
+- **AI agents** — Use with Claude (MCP server), GPT (function calling), LangChain, or any LLM with tool use
+- **Server-side scripts** — Cron jobs, CI/CD pipelines, content syndication
+- **Bulk operations** — Iterate over data and schedule hundreds of posts programmatically
+- **Analytics pipelines** — Pull engagement data into your own dashboards or AI analysis (check `supportedMetrics` before treating a `0` as a measurement — platforms report different subsets)
+
+## Full TypeScript Types
+
+Every request and response is fully typed. Works great with IDE autocomplete and LLM code generation:
+
+```typescript
+import type { Post, Channel, CreatePostParams } from 'bulkpublish';
+```
+
+## Available Resources
+
+| Resource | Methods |
+|----------|---------|
+| `bp.posts` | `create`, `list`, `get`, `update`, `delete`, `publish`, `retry`, `approve`, `reject`, `bulk`, `queueSlot`, `metrics`, `story`, `share`, `unshare`, `engagement`, `replyToComment`, `moderateComment` |
+| `bp.channels` | `list`, `get`, `delete`, `health` |
+| `bp.media` | `upload`, `list`, `get`, `delete`, `getLabels`, `setLabels`, `createMultipart`, `completeMultipart`, `abortMultipart` |
+| `bp.analytics` | `summary`, `engagement`, `refresh`, `account` |
+| `bp.labels` | `list`, `create`, `update`, `delete` |
+| `bp.hashtagGroups` | `list`, `get`, `create`, `update`, `delete` |
+| `bp.templates` | `list`, `get`, `create`, `update`, `delete` |
+| `bp.reviewLinks` | `list`, `create`, `delete` — a read-only link covering a batch of posts at once, for client review |
+| `bp.clientConnectLinks` | `list`, `create`, `delete` — a one-time link for a client to connect their own platform account, no BulkPublish account needed |
+| `bp.calendarNotes` | `list`, `create`, `update`, `delete` |
+| `bp.schedules` | `list`, `create`, `update`, `delete` |
+| `bp.channelSets` | `list`, `create`, `update`, `delete` — saved channel groups for one-click targeting |
+| `bp.rssFeeds` | `list`, `create`, `update`, `delete` — RSS/Atom autopost feeds (new items become posts; optional `fieldMapping` controls caption template, media, truncation, per-channel overrides) |
+| `bp.organizations` | `list`, `create` — the organizations this key's user belongs to, and the role held in each. API key only: not reachable with an OAuth token |
+| `bp.notifications` | `list`, `markRead`, `delete`, `preferences`, `updatePreferences` — publish failures, expiring connections. API key only |
+| `bp.inbox` | `listConversations`, `updateConversation`, `listMessages`, `sendMessage` — direct messages, reviews and comment threads (Pro and Business plans). See the [Inbox guide](../guides/inbox.md) |
+
+## Platform Requirements
+
+| Platform | Post Types | Media | Required Fields | Char Limit |
+|---|---|---|---|---|
+| Facebook | `post`, `reel`, `story` | Optional (reel/story need media) | — | 63,206 |
+| Instagram | `feed_photo`, `feed_video`, `reel`, `story`, `carousel` | Required (type-specific) | — | 2,200 |
+| X / Twitter | `tweet` | Optional (max 4 images or 1 video) | — | 280 |
+| YouTube | `video`, `short` | **Video required** | **`platformSpecific.youtube.title`** | 5,000 |
+| TikTok | `video`, `photo_slideshow` | **Video or images required** | — | 2,200 |
+| LinkedIn | `post`, `multi_image`, `pdf_carousel`, `article`, `document`, `poll`, `reshare` | Varies by type | `url` for article, `poll` for poll, `reshareId` for reshare | 3,000 |
+| Pinterest | `pin`, `video_pin`, `carousel` | **Required** | **`platformSpecific.pinterest.title`** | 500 |
+| Threads | `text`, `image`, `video`, `carousel` | Optional | — | 500 |
+| Bluesky | `post` | Optional (max 4 images or 1 video) | — | 300 |
+| GMB | `standard`, `event`, `offer` | Optional (image only) | dates for event | 1,500 |
+| Mastodon | `post` | Optional (max 4 images or 1 video) | — | 500 |
+
+**Important:**
+- YouTube and TikTok **only accept video** — do not include them for image-only posts
+- Instagram defaults to `feed_photo` — set `postTypeOverrides` for video content
+- Use `platformContent` for shorter text on low-limit platforms (Bluesky 300, Pinterest 500)
+
+## Resources
+
+- [Full API Reference](https://app.bulkpublish.com/docs)
+- [Guides & Examples](https://github.com/azeemkafridi/bulkpublish-api)
+- [AI Agent Examples](https://github.com/azeemkafridi/bulkpublish-api/tree/main/examples/ai-agents) — Claude, GPT, LangChain
+- [MCP Server](https://github.com/azeemkafridi/bulkpublish-api/tree/main/mcp-server) — For Claude Desktop, Claude Code, Cursor
+- [Get an API Key](https://app.bulkpublish.com/settings/developer)
+
+## License
+
+MIT

@@ -1,0 +1,1384 @@
+import asyncio
+import secrets
+import shutil
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from pathlib import Path as FilePath
+from typing import Any, Literal, NoReturn
+
+import structlog
+from fastapi import Depends, HTTPException, Path, Query, status
+from sqlalchemy.exc import IntegrityError
+
+from skyvern.config import settings
+from skyvern.exceptions import (
+    BrowserProfileNotFound,
+    BrowserSessionNotFound,
+    WorkflowNotFound,
+    WorkflowRunNotFound,
+)
+from skyvern.forge import app
+from skyvern.forge.sdk.api.files import discard_temp_working_dir, make_temp_directory
+from skyvern.forge.sdk.credential_site_policy import same_release_scope
+from skyvern.forge.sdk.routes.code_samples import (
+    CREATE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON,
+    CREATE_BROWSER_PROFILE_CODE_SAMPLE_TS,
+    DELETE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON,
+    DELETE_BROWSER_PROFILE_CODE_SAMPLE_TS,
+    GET_BROWSER_PROFILE_CODE_SAMPLE_PYTHON,
+    GET_BROWSER_PROFILE_CODE_SAMPLE_TS,
+    GET_BROWSER_PROFILES_CODE_SAMPLE_PYTHON,
+    GET_BROWSER_PROFILES_CODE_SAMPLE_TS,
+    UPDATE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON,
+    UPDATE_BROWSER_PROFILE_CODE_SAMPLE_TS,
+)
+from skyvern.forge.sdk.routes.routers import base_router
+from skyvern.forge.sdk.schemas.browser_profiles import (
+    BrowserProfile,
+    BrowserProfileUsage,
+    CreateBrowserProfileRequest,
+    UpdateBrowserProfileRequest,
+)
+from skyvern.forge.sdk.schemas.organizations import Organization
+from skyvern.forge.sdk.schemas.persistent_browser_sessions import (
+    PersistentBrowserSession,
+    export_profile_storage_id,
+    is_external_cdp_session,
+)
+from skyvern.forge.sdk.services import org_auth_service
+from skyvern.forge.sdk.services.request_principal import get_request_principal
+from skyvern.forge.sdk.workflow.browser_session_persistence import retrieve_persisted_workflow_browser_state_dir
+from skyvern.schemas.proxy_pinning import apply_proxy_pin_update as _apply_proxy_pin_update
+from skyvern.schemas.proxy_pinning import should_generate_proxy_session_id
+from skyvern.schemas.runs import ProxyLocation, ProxyLocationInput
+from skyvern.utils.contained_effects import contained_effect
+from skyvern.webeye.browser_profile_utils import FRESH_PROFILE_COPY_IGNORE, valid_operator_profile_generation
+from skyvern.webeye.profile_cookie_merge import cookies_for_login_urls, sanitize_cookies, write_signin_cookies
+
+try:
+    from redis.exceptions import LockError
+except ImportError:
+
+    class LockError(Exception):  # type: ignore[no-redef]
+        pass
+
+
+LOG = structlog.get_logger()
+
+DEFAULT_PROFILE_BROWSER_TYPES = ("chrome", "chromium")
+
+# How long a save waits for a closing session's teardown to upload the archive before the retryable 400.
+_CLOSING_SESSION_ARCHIVE_WAIT_SECONDS = 10.0
+_CLOSING_SESSION_ARCHIVE_FIRST_POLL_SECONDS = 0.25
+_CLOSING_SESSION_ARCHIVE_MAX_POLL_SECONDS = 1.0
+# The lock must outlive the archive wait plus the download, re-zip and upload of a large profile, or a save on another
+# worker could copy the archive before this save reaps it. A holder that dies keeps the session locked this long.
+_SESSION_PROFILE_SAVE_LOCK_SECONDS = 300
+_SESSION_PROFILE_SAVE_LOCK_WAIT_SECONDS = 30
+_SESSION_PROFILE_SAVED_MARKER_TTL = timedelta(days=1)
+
+
+def _redact_credential_profile_labels(profile: BrowserProfile) -> None:
+    profile.name = "Browser profile"
+    profile.description = None
+
+
+def _normalize_proxy_pin_fields(
+    *,
+    proxy_location: ProxyLocationInput,
+    proxy_session_id: str | None,
+) -> tuple[ProxyLocationInput, str | None]:
+    if proxy_session_id:
+        return proxy_location or ProxyLocation.RESIDENTIAL_ISP, proxy_session_id
+    return proxy_location, None
+
+
+def _refuse_profile_from_external_session(browser_session: PersistentBrowserSession) -> None:
+    if is_external_cdp_session(browser_session):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Browser session {browser_session.persistent_browser_session_id} is a registered external "
+            "browser, and Skyvern does not save profiles from it.",
+        )
+
+
+def _handle_duplicate_profile_name(*, organization_id: str, name: str, exc: IntegrityError) -> NoReturn:
+    LOG.warning(
+        "Duplicate browser profile name",
+        organization_id=organization_id,
+        name=name,
+        exc_info=True,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=f"A browser profile named '{name}' already exists. Use a different name or delete the existing profile.",
+    ) from exc
+
+
+@base_router.post(
+    "/browser_profiles",
+    response_model=BrowserProfile,
+    tags=["Browser Profiles"],
+    summary="Create a browser profile",
+    description=("Create a blank browser profile, or create one from a persistent browser session or workflow run."),
+    openapi_extra={
+        "x-fern-sdk-method-name": "create_browser_profile",
+        "x-fern-examples": [
+            {
+                "code-samples": [
+                    {"sdk": "python", "code": CREATE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON},
+                    {"sdk": "typescript", "code": CREATE_BROWSER_PROFILE_CODE_SAMPLE_TS},
+                ]
+            }
+        ],
+    },
+    responses={
+        200: {"description": "Successfully created browser profile"},
+        400: {"description": "Invalid request - source not found or source archive unavailable"},
+        409: {"description": "Browser profile name already exists"},
+    },
+)
+@base_router.post(
+    "/browser_profiles/",
+    response_model=BrowserProfile,
+    include_in_schema=False,
+)
+async def create_browser_profile(
+    request: CreateBrowserProfileRequest,
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> BrowserProfile:
+    organization_id = current_org.organization_id
+    LOG.info(
+        "Creating browser profile",
+        organization_id=organization_id,
+        browser_session_id=request.browser_session_id,
+        workflow_run_id=request.workflow_run_id,
+    )
+
+    if request.browser_session_id is not None:
+        browser_session_id = request.browser_session_id
+        proxy_location, proxy_session_id = _normalize_proxy_pin_fields(
+            proxy_location=request.proxy_location,
+            proxy_session_id=request.proxy_session_id,
+        )
+        return await _create_profile_from_session(
+            organization_id=organization_id,
+            name=request.name,
+            description=request.description,
+            browser_session_id=browser_session_id,
+            proxy_location=proxy_location,
+            proxy_session_id=proxy_session_id,
+        )
+
+    if request.workflow_run_id is not None:
+        workflow_run_id = request.workflow_run_id
+        proxy_location, proxy_session_id = _normalize_proxy_pin_fields(
+            proxy_location=request.proxy_location,
+            proxy_session_id=request.proxy_session_id,
+        )
+        return await _create_profile_from_workflow_run(
+            organization_id=organization_id,
+            name=request.name,
+            description=request.description,
+            workflow_run_id=workflow_run_id,
+            proxy_location=proxy_location,
+            proxy_session_id=proxy_session_id,
+        )
+
+    await app.RATE_LIMITER.rate_limit_submit_run(organization_id)
+    proxy_location, proxy_session_id = _normalize_proxy_pin_fields(
+        proxy_location=request.proxy_location,
+        proxy_session_id=request.proxy_session_id,
+    )
+    return await _create_empty_profile(
+        organization_id=organization_id,
+        name=request.name,
+        description=request.description,
+        proxy_location=proxy_location,
+        proxy_session_id=proxy_session_id,
+    )
+
+
+@base_router.get(
+    "/browser_profiles",
+    response_model=list[BrowserProfile],
+    tags=["Browser Profiles"],
+    summary="List browser profiles",
+    description="Get all browser profiles for the organization",
+    openapi_extra={
+        "x-fern-sdk-method-name": "list_browser_profiles",
+        "x-fern-examples": [
+            {
+                "code-samples": [
+                    {"sdk": "python", "code": GET_BROWSER_PROFILES_CODE_SAMPLE_PYTHON},
+                    {"sdk": "typescript", "code": GET_BROWSER_PROFILES_CODE_SAMPLE_TS},
+                ]
+            }
+        ],
+    },
+    responses={
+        200: {"description": "Successfully retrieved browser profiles"},
+    },
+)
+@base_router.get(
+    "/browser_profiles/",
+    response_model=list[BrowserProfile],
+    include_in_schema=False,
+)
+async def list_browser_profiles(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1),
+    include_deleted: bool = Query(default=False, description="Include deleted browser profiles"),
+    search_key: str | None = Query(
+        None,
+        description=(
+            "Case-insensitive substring search across: browser profile name and description. "
+            "A profile is returned if either field matches."
+        ),
+        examples=["my_profile", "production"],
+    ),
+    managed: bool | None = Query(
+        None,
+        description="Omit to return all profiles; false returns only user-created profiles; true returns only auto-managed profiles.",
+    ),
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> list[BrowserProfile]:
+    """List all browser profiles for the current organization."""
+    organization_id = current_org.organization_id
+    LOG.info(
+        "Listing browser profiles",
+        organization_id=organization_id,
+        include_deleted=include_deleted,
+        page=page,
+        page_size=page_size,
+        search_key=search_key,
+        managed=managed,
+    )
+
+    principal = get_request_principal()
+    hidden_profile_ids: set[str] = set()
+    credential_links_by_profile: dict[str, list[tuple[str, str | None]]] | None = None
+    if (
+        search_key
+        and await app.AGENT_FUNCTION.credential_folders_restricted(organization_id)
+        and not await app.AGENT_FUNCTION.credential_folder_admin_bypass(principal)
+    ):
+        credential_links_by_profile = await app.DATABASE.credentials.get_browser_profile_credential_links(
+            None, organization_id
+        )
+        all_credential_ids = {
+            credential_id for links in credential_links_by_profile.values() for credential_id, _folder_id in links
+        }
+        allowed_credential_ids = await app.AGENT_FUNCTION.accessible_credential_ids(
+            principal, "credential.read", all_credential_ids
+        )
+        hidden_profile_ids = {
+            profile_id
+            for profile_id, links in credential_links_by_profile.items()
+            if not {credential_id for credential_id, _folder_id in links} <= allowed_credential_ids
+        }
+
+    profiles = await app.DATABASE.browser_sessions.list_browser_profiles(
+        organization_id=organization_id,
+        include_deleted=include_deleted,
+        page=page,
+        page_size=page_size,
+        search_key=search_key,
+        managed=managed,
+        exclude_search_profile_ids=hidden_profile_ids,
+    )
+
+    if (
+        profiles
+        and await app.AGENT_FUNCTION.credential_folders_restricted(organization_id)
+        and not await app.AGENT_FUNCTION.credential_folder_admin_bypass(principal)
+    ):
+        if credential_links_by_profile is None:
+            credential_links_by_profile = await app.DATABASE.credentials.get_browser_profile_credential_links(
+                {profile.browser_profile_id for profile in profiles}, organization_id
+            )
+            credential_ids = {
+                credential_id for links in credential_links_by_profile.values() for credential_id, _folder_id in links
+            }
+            allowed_credential_ids = await app.AGENT_FUNCTION.accessible_credential_ids(
+                principal, "credential.read", credential_ids
+            )
+        for profile in profiles:
+            linked_ids = {
+                credential_id
+                for credential_id, _folder_id in credential_links_by_profile.get(profile.browser_profile_id, [])
+            }
+            if linked_ids and not linked_ids <= allowed_credential_ids:
+                profile.linked_credential_id = None
+                profile.linked_credential_name = None
+                _redact_credential_profile_labels(profile)
+
+    LOG.info(
+        "Listed browser profiles",
+        organization_id=organization_id,
+        count=len(profiles),
+    )
+    return profiles
+
+
+@base_router.get(
+    "/browser_profiles/{profile_id}",
+    response_model=BrowserProfile,
+    tags=["Browser Profiles"],
+    summary="Get browser profile",
+    description="Get a specific browser profile by ID",
+    responses={
+        200: {"description": "Successfully retrieved browser profile"},
+        404: {"description": "Browser profile not found"},
+    },
+    openapi_extra={
+        "x-fern-sdk-method-name": "get_browser_profile",
+        "x-fern-examples": [
+            {
+                "code-samples": [
+                    {"sdk": "python", "code": GET_BROWSER_PROFILE_CODE_SAMPLE_PYTHON},
+                    {"sdk": "typescript", "code": GET_BROWSER_PROFILE_CODE_SAMPLE_TS},
+                ]
+            }
+        ],
+    },
+)
+@base_router.get(
+    "/browser_profiles/{profile_id}/",
+    response_model=BrowserProfile,
+    include_in_schema=False,
+)
+async def get_browser_profile(
+    profile_id: str = Path(
+        ...,
+        description="The ID of the browser profile. browser_profile_id starts with `bp_`",
+        examples=["bp_123456"],
+    ),
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> BrowserProfile:
+    """Get a browser profile for the current organization."""
+    organization_id = current_org.organization_id
+    LOG.info(
+        "Getting browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+
+    profile = await app.DATABASE.browser_sessions.get_browser_profile(
+        profile_id=profile_id,
+        organization_id=organization_id,
+    )
+
+    if not profile:
+        LOG.warning(
+            "Browser profile not found",
+            organization_id=organization_id,
+            browser_profile_id=profile_id,
+        )
+        raise BrowserProfileNotFound(profile_id=profile_id, organization_id=organization_id)
+
+    linked_credentials = await app.DATABASE.credentials.get_credentials_by_browser_profile_id(
+        profile_id, organization_id
+    )
+    principal = get_request_principal()
+    redact_labels = False
+    if await app.AGENT_FUNCTION.credential_folders_restricted(
+        organization_id
+    ) and not await app.AGENT_FUNCTION.credential_folder_admin_bypass(principal):
+        linked_credential_links_by_profile = await app.DATABASE.credentials.get_browser_profile_credential_links(
+            {profile_id}, organization_id
+        )
+        linked_credential_ids = {
+            credential_id for credential_id, _folder_id in linked_credential_links_by_profile.get(profile_id, [])
+        }
+        allowed_credential_ids = await app.AGENT_FUNCTION.accessible_credential_ids(
+            principal, "credential.read", linked_credential_ids
+        )
+        if linked_credential_ids and not linked_credential_ids <= allowed_credential_ids:
+            linked_credentials = []
+            profile.linked_credential_id = None
+            profile.linked_credential_name = None
+            redact_labels = True
+    if linked_credentials:
+        profile.linked_credential_id = linked_credentials[0].credential_id
+        profile.linked_credential_name = linked_credentials[0].name
+    if redact_labels:
+        _redact_credential_profile_labels(profile)
+
+    LOG.info(
+        "Retrieved browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+    return profile
+
+
+@base_router.get(
+    "/browser_profiles/{profile_id}/usage",
+    response_model=BrowserProfileUsage,
+    tags=["Browser Profiles"],
+    summary="Get browser profile usage",
+    description="List the workflows, credentials, and recent runs that depend on a browser profile.",
+    responses={
+        200: {"description": "Successfully retrieved browser profile usage"},
+        404: {"description": "Browser profile not found"},
+    },
+    openapi_extra={
+        "x-fern-sdk-method-name": "get_browser_profile_usage",
+    },
+)
+@base_router.get(
+    "/browser_profiles/{profile_id}/usage/",
+    response_model=BrowserProfileUsage,
+    include_in_schema=False,
+)
+async def get_browser_profile_usage(
+    profile_id: str = Path(
+        ...,
+        description="The ID of the browser profile. browser_profile_id starts with `bp_`",
+        examples=["bp_123456"],
+    ),
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> BrowserProfileUsage:
+    """List the workflows, credentials, and recent runs that depend on a browser profile."""
+    organization_id = current_org.organization_id
+    profile = await app.DATABASE.browser_sessions.get_browser_profile(
+        profile_id=profile_id,
+        organization_id=organization_id,
+    )
+    if not profile:
+        raise BrowserProfileNotFound(profile_id=profile_id, organization_id=organization_id)
+
+    usage = await app.DATABASE.browser_sessions.get_browser_profile_usage(
+        profile_id=profile_id,
+        organization_id=organization_id,
+    )
+    principal = get_request_principal()
+    if (
+        usage.credentials
+        and await app.AGENT_FUNCTION.credential_folders_restricted(organization_id)
+        and not await app.AGENT_FUNCTION.credential_folder_admin_bypass(principal)
+    ):
+        allowed_credential_ids = await app.AGENT_FUNCTION.accessible_credential_ids(
+            principal, "credential.read", {credential.credential_id for credential in usage.credentials}
+        )
+        usage.credentials = [
+            credential for credential in usage.credentials if credential.credential_id in allowed_credential_ids
+        ]
+    LOG.info(
+        "Retrieved browser profile usage",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+        workflow_count=len(usage.workflows),
+        credential_count=len(usage.credentials),
+        recent_seeded_run_count=usage.recent_seeded_run_count,
+    )
+    return usage
+
+
+@base_router.patch(
+    "/browser_profiles/{profile_id}",
+    response_model=BrowserProfile,
+    tags=["Browser Profiles"],
+    summary="Update browser profile",
+    description="Update a browser profile's name and/or description",
+    responses={
+        200: {"description": "Successfully updated browser profile"},
+        404: {"description": "Browser profile not found"},
+        409: {"description": "Browser profile name already exists"},
+    },
+    openapi_extra={
+        "x-fern-sdk-method-name": "update_browser_profile",
+        "x-fern-examples": [
+            {
+                "code-samples": [
+                    {"sdk": "python", "code": UPDATE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON},
+                    {"sdk": "typescript", "code": UPDATE_BROWSER_PROFILE_CODE_SAMPLE_TS},
+                ]
+            }
+        ],
+    },
+)
+@base_router.patch(
+    "/browser_profiles/{profile_id}/",
+    response_model=BrowserProfile,
+    include_in_schema=False,
+)
+async def update_browser_profile(
+    request: UpdateBrowserProfileRequest,
+    profile_id: str = Path(
+        ...,
+        description="The ID of the browser profile to update. browser_profile_id starts with `bp_`",
+        examples=["bp_123456"],
+    ),
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> BrowserProfile:
+    organization_id = current_org.organization_id
+    LOG.info(
+        "Updating browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+
+    try:
+        update_kwargs: dict[str, Any] = {
+            "profile_id": profile_id,
+            "organization_id": organization_id,
+            "name": request.name,
+            "description": request.description,
+        }
+        _apply_proxy_pin_update(
+            update_kwargs,
+            proxy_location_was_set="proxy_location" in request.model_fields_set,
+            proxy_location=request.proxy_location,
+            proxy_session_id_was_set="proxy_session_id" in request.model_fields_set,
+            proxy_session_id=request.proxy_session_id,
+            rotate_proxy_session_id=request.rotate_proxy_session_id,
+        )
+        profile = await app.DATABASE.browser_sessions.update_browser_profile(**update_kwargs)
+    except BrowserProfileNotFound:
+        LOG.warning(
+            "Browser profile not found for update",
+            organization_id=organization_id,
+            browser_profile_id=profile_id,
+        )
+        raise
+    except IntegrityError as exc:
+        if request.name is None:
+            LOG.exception(
+                "Unexpected integrity error on browser profile update without name change",
+                organization_id=organization_id,
+                browser_profile_id=profile_id,
+            )
+            raise
+        _handle_duplicate_profile_name(organization_id=organization_id, name=request.name, exc=exc)
+
+    LOG.info(
+        "Updated browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+    return profile
+
+
+@base_router.delete(
+    "/browser_profiles/{profile_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Browser Profiles"],
+    summary="Delete browser profile",
+    description="Delete a browser profile (soft delete)",
+    responses={
+        204: {"description": "Successfully deleted browser profile"},
+        404: {"description": "Browser profile not found"},
+    },
+    openapi_extra={
+        "x-fern-sdk-method-name": "delete_browser_profile",
+        "x-fern-examples": [
+            {
+                "code-samples": [
+                    {"sdk": "python", "code": DELETE_BROWSER_PROFILE_CODE_SAMPLE_PYTHON},
+                    {"sdk": "typescript", "code": DELETE_BROWSER_PROFILE_CODE_SAMPLE_TS},
+                ]
+            }
+        ],
+    },
+)
+@base_router.delete(
+    "/browser_profiles/{profile_id}/",
+    status_code=status.HTTP_204_NO_CONTENT,
+    include_in_schema=False,
+)
+async def delete_browser_profile(
+    profile_id: str = Path(
+        ...,
+        description="The ID of the browser profile to delete. browser_profile_id starts with `bp_`",
+        examples=["bp_123456"],
+    ),
+    current_org: Organization = Depends(org_auth_service.get_current_org),
+) -> None:
+    """Delete a browser profile for the current organization."""
+    organization_id = current_org.organization_id
+    LOG.info(
+        "Deleting browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+
+    try:
+        # Soft-delete and credential-detach happen in one transaction (see the repo method), so a dangling
+        # bp id can't survive a mid-failure and 404 the credential's next login.
+        cleared_credential_ids = await app.DATABASE.browser_sessions.delete_browser_profile(
+            profile_id=profile_id,
+            organization_id=organization_id,
+        )
+    except BrowserProfileNotFound:
+        LOG.warning(
+            "Browser profile not found for deletion",
+            organization_id=organization_id,
+            browser_profile_id=profile_id,
+        )
+        raise
+
+    if cleared_credential_ids:
+        LOG.info(
+            "Detached credentials from deleted browser profile",
+            organization_id=organization_id,
+            browser_profile_id=profile_id,
+            credential_ids=cleared_credential_ids,
+        )
+
+    # Reap the stored blob so soft-deleted profiles don't leave orphaned S3 objects behind.
+    # Best-effort: the soft-delete already succeeded, so a reap failure must not fail the request.
+    try:
+        await app.STORAGE.delete_browser_profile(
+            organization_id=organization_id,
+            profile_id=profile_id,
+        )
+    except Exception:
+        LOG.exception(
+            "Failed to delete browser profile blob after soft-delete",
+            organization_id=organization_id,
+            browser_profile_id=profile_id,
+        )
+
+    LOG.info(
+        "Deleted browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile_id,
+    )
+
+
+def _create_empty_browser_profile_directory() -> str:
+    profile_dir = FilePath(make_temp_directory(prefix="skyvern_empty_browser_profile_"))
+    _seed_empty_browser_profile_directory(profile_dir)
+    return str(profile_dir)
+
+
+def _default_browser_profile_template_candidates() -> list[FilePath]:
+    if not settings.DEFAULT_BROWSER_PROFILE_DIR:
+        return []
+
+    base_dir = FilePath(settings.DEFAULT_BROWSER_PROFILE_DIR)
+    candidates = [base_dir]
+    for browser_type in DEFAULT_PROFILE_BROWSER_TYPES:
+        candidates.extend(_versioned_browser_profile_template_candidates(base_dir, browser_type))
+        candidates.append(base_dir / browser_type)
+    return candidates
+
+
+def _versioned_browser_profile_template_candidates(base_dir: FilePath, browser_type: str) -> list[FilePath]:
+    prefix = f"{browser_type}_"
+    candidates: list[tuple[int, FilePath]] = []
+    try:
+        children = list(base_dir.iterdir())
+    except OSError:
+        return []
+
+    for child in children:
+        if not child.is_dir() or not child.name.startswith(prefix):
+            continue
+        suffix = child.name.removeprefix(prefix)
+        if not suffix.isdigit():
+            continue
+        candidates.append((int(suffix), child))
+
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
+    return [path for _, path in candidates]
+
+
+def _browser_profile_template_identity(directory: FilePath) -> str | None:
+    if (
+        not directory.is_dir()
+        or (directory / ".skyvern_corrupt").exists()
+        or not (directory / "Default").is_dir()
+        or not (directory / "Default" / "Preferences").is_file()
+        or not (directory / "Local State").is_file()
+    ):
+        return None
+    if directory.name in DEFAULT_PROFILE_BROWSER_TYPES:
+        return valid_operator_profile_generation(str(directory.parent), directory.name, str(directory))
+    return ""
+
+
+def _is_valid_browser_profile_template(directory: FilePath) -> bool:
+    return _browser_profile_template_identity(directory) is not None
+
+
+def _clear_directory(directory: FilePath) -> None:
+    for child in directory.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
+def _copy_browser_profile_template(source_dir: FilePath, destination_dir: FilePath) -> None:
+    for source_child in source_dir.iterdir():
+        if source_child.name in FRESH_PROFILE_COPY_IGNORE:
+            continue
+
+        destination_child = destination_dir / source_child.name
+        if source_child.is_dir():
+            shutil.copytree(source_child, destination_child)
+        else:
+            shutil.copy2(source_child, destination_child)
+
+
+def _seed_minimal_empty_browser_profile_directory(profile_dir: FilePath) -> None:
+    default_dir = profile_dir / "Default"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    (default_dir / "Preferences").write_text("{}", encoding="utf-8")
+    (profile_dir / "Local State").write_text("{}", encoding="utf-8")
+
+
+def _seed_empty_browser_profile_directory(profile_dir: FilePath) -> None:
+    for template_dir in _default_browser_profile_template_candidates():
+        template_identity = _browser_profile_template_identity(template_dir)
+        if template_identity is None:
+            continue
+        try:
+            _copy_browser_profile_template(template_dir, profile_dir)
+            if _browser_profile_template_identity(template_dir) != template_identity:
+                raise OSError("Default browser profile template was invalidated while copying")
+            LOG.info(
+                "Seeded empty browser profile from default profile template",
+                template_dir=str(template_dir),
+                profile_dir=str(profile_dir),
+            )
+            return
+        except Exception:
+            LOG.warning(
+                "Failed to seed empty browser profile from default template, falling back",
+                template_dir=str(template_dir),
+                profile_dir=str(profile_dir),
+                exc_info=True,
+            )
+            _clear_directory(profile_dir)
+
+    _seed_minimal_empty_browser_profile_directory(profile_dir)
+    LOG.info("Seeded empty browser profile from minimal profile skeleton", profile_dir=str(profile_dir))
+
+
+async def _hard_delete_created_profile_after_store_failure(
+    *,
+    organization_id: str,
+    browser_profile_id: str,
+) -> bool:
+    try:
+        await app.DATABASE.browser_sessions.hard_delete_browser_profile(
+            browser_profile_id, organization_id=organization_id
+        )
+    except Exception:
+        LOG.exception(
+            "Failed to roll back browser profile after storage failure",
+            organization_id=organization_id,
+            browser_profile_id=browser_profile_id,
+        )
+        return False
+    return True
+
+
+async def _create_empty_profile(
+    *,
+    organization_id: str,
+    name: str,
+    description: str | None,
+    proxy_location: ProxyLocationInput = None,
+    proxy_session_id: str | None = None,
+    seed_cookies: list[dict] | None = None,
+) -> BrowserProfile:
+    # Seed before inserting so local setup failures never reserve a profile name.
+    profile_dir = _create_empty_browser_profile_directory()
+    try:
+        if seed_cookies:
+            write_signin_cookies(profile_dir, seed_cookies)
+        try:
+            profile = await app.DATABASE.browser_sessions.create_browser_profile(
+                organization_id=organization_id,
+                name=name,
+                description=description,
+                proxy_location=proxy_location,
+                proxy_session_id=proxy_session_id,
+            )
+        except IntegrityError as exc:
+            _handle_duplicate_profile_name(organization_id=organization_id, name=name, exc=exc)
+
+        try:
+            await app.STORAGE.store_browser_profile(
+                organization_id=organization_id,
+                profile_id=profile.browser_profile_id,
+                directory=profile_dir,
+            )
+        # BaseException: a caller's timeout cancels mid-store, and the row must not outlive its files.
+        except BaseException:
+            rolled_back = await _hard_delete_created_profile_after_store_failure(
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+            )
+            LOG.error(
+                "Failed to store empty browser profile artifacts",
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+                rolled_back=rolled_back,
+                exc_info=True,
+            )
+            raise
+    finally:
+        shutil.rmtree(profile_dir, ignore_errors=True)
+
+    LOG.info(
+        "Created empty browser profile",
+        organization_id=organization_id,
+        browser_profile_id=profile.browser_profile_id,
+    )
+    return profile
+
+
+async def create_profile_from_running_session(
+    *,
+    organization_id: str,
+    browser_session_id: str,
+    login_urls: list[str],
+    name: str,
+    description: str | None,
+) -> tuple[BrowserProfile | None, int]:
+    """Save a live session's cookies for the sign-in hosts as a new profile; ``(None, 0)`` means none matched.
+
+    Raises when the live browser cannot be read, so callers can tell a failed read from an empty one.
+    """
+    browser_session = await app.DATABASE.browser_sessions.get_persistent_browser_session(
+        browser_session_id, organization_id
+    )
+    if browser_session is None:
+        raise BrowserSessionNotFound(browser_session_id)
+    _refuse_profile_from_external_session(browser_session)
+    browser_state = await app.PERSISTENT_SESSIONS_MANAGER.get_observer_browser_state(
+        browser_session_id, organization_id
+    )
+    if browser_state is None or browser_state.browser_context is None:
+        raise RuntimeError(f"The live browser for {browser_session_id} is not reachable")
+    try:
+        page = await browser_state.get_working_page(prune_excess_pages=False)
+        candidates = [*login_urls, page.url] if page is not None else list(login_urls)
+        # Only the site the card names: an identity provider's or another tab's cookies never ride along.
+        hosts = [url for url in candidates if login_urls and same_release_scope(url, login_urls[0])]
+        cookies = sanitize_cookies(cookies_for_login_urls(await browser_state.browser_context.cookies(), hosts))
+    finally:
+        await app.PERSISTENT_SESSIONS_MANAGER.release_observer_browser_state(browser_session_id, browser_state)
+    if not cookies:
+        return None, 0
+
+    proxy_location, proxy_session_id = _normalize_proxy_pin_fields(
+        proxy_location=browser_session.proxy_location,
+        proxy_session_id=browser_session.proxy_session_id,
+    )
+    # Each renewed sign-in adds a profile under the same name, so a taken name goes straight to a dated one.
+    stamp = f"{datetime.now(UTC):%Y-%m-%d %H:%M:%S}"
+    candidates = [name, f"{name} ({stamp})", f"{name} ({stamp} {secrets.token_hex(2)})"]
+    for candidate in candidates:
+        try:
+            profile = await _create_empty_profile(
+                organization_id=organization_id,
+                name=candidate,
+                description=description,
+                proxy_location=proxy_location,
+                proxy_session_id=proxy_session_id,
+                seed_cookies=cookies,
+            )
+            break
+        except HTTPException as exc:
+            if exc.status_code != status.HTTP_409_CONFLICT or candidate == candidates[-1]:
+                raise
+    LOG.info(
+        "Created browser profile from running session",
+        organization_id=organization_id,
+        browser_profile_id=profile.browser_profile_id,
+        browser_session_id=browser_session_id,
+        cookie_count=len(cookies),
+    )
+    return profile, len(cookies)
+
+
+async def _session_archive_exists(*, organization_id: str, profile_id: str) -> bool | None:
+    """None when storage could not answer, which proves neither presence nor absence."""
+    try:
+        return await app.STORAGE.browser_profile_exists(organization_id=organization_id, profile_id=profile_id)
+    except Exception as exc:
+        # Polled up to a dozen times per save, so log the error without a traceback each time.
+        LOG.warning(
+            "Failed to check for browser session archive",
+            organization_id=organization_id,
+            profile_id=profile_id,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return None
+
+
+async def _wait_for_closing_session_archive(
+    *,
+    organization_id: str,
+    browser_session_id: str,
+    source_profile_id: str,
+) -> Literal["found", "session_ended", "timed_out"]:
+    # Teardown uploads the archive before it stamps completed_at, so a row read before the storage
+    # check that is already terminal means no archive is coming.
+    deadline = time.monotonic() + _CLOSING_SESSION_ARCHIVE_WAIT_SECONDS
+    delay = _CLOSING_SESSION_ARCHIVE_FIRST_POLL_SECONDS
+    while (remaining := deadline - time.monotonic()) > 0:
+        await asyncio.sleep(min(delay, remaining))
+        delay = min(delay * 2, _CLOSING_SESSION_ARCHIVE_MAX_POLL_SECONDS)
+        browser_session = await app.DATABASE.browser_sessions.get_persistent_browser_session(
+            browser_session_id, organization_id
+        )
+        archive_exists = await _session_archive_exists(organization_id=organization_id, profile_id=source_profile_id)
+        if archive_exists:
+            return "found"
+        if archive_exists is False and (browser_session is None or browser_session.completed_at is not None):
+            return "session_ended"
+    return "timed_out"
+
+
+@dataclass
+class _LocalSaveLock:
+    lock: asyncio.Lock
+    users: int = 0
+
+
+_LOCAL_SESSION_SAVE_LOCKS: dict[tuple[asyncio.AbstractEventLoop, str], _LocalSaveLock] = {}
+
+
+@asynccontextmanager
+async def _session_profile_save_lock(*, organization_id: str, browser_session_id: str) -> AsyncIterator[None]:
+    lock_name = f"browser_profile_from_session_lock:{organization_id}:{browser_session_id}"
+    # Without Redis the cache lock is a no-op, so saves in one process also queue on a local lock; the cache
+    # lock then covers saves on other workers.
+    local_key = (asyncio.get_running_loop(), lock_name)
+    local = _LOCAL_SESSION_SAVE_LOCKS.setdefault(local_key, _LocalSaveLock(lock=asyncio.Lock()))
+    local.users += 1
+    try:
+        async with local.lock:
+            cache_lock = app.CACHE.get_lock(
+                lock_name,
+                blocking_timeout=_SESSION_PROFILE_SAVE_LOCK_WAIT_SECONDS,
+                timeout=_SESSION_PROFILE_SAVE_LOCK_SECONDS,
+            )
+            try:
+                await cache_lock.__aenter__()
+            except LockError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A browser profile is already being saved from this browser session. Retry in a few seconds.",
+                ) from exc
+            try:
+                yield
+            finally:
+                try:
+                    await cache_lock.__aexit__(None, None, None)
+                except LockError:
+                    # The save outlived the lock's expiry; its outcome stands, so don't replace it with this error.
+                    with contained_effect("browser profile save lock release failure"):
+                        LOG.warning(
+                            "Browser profile save outlived its session lock",
+                            organization_id=organization_id,
+                            browser_session_id=browser_session_id,
+                            exc_info=True,
+                        )
+    finally:
+        local.users -= 1
+        if local.users == 0 and _LOCAL_SESSION_SAVE_LOCKS.get(local_key) is local:
+            del _LOCAL_SESSION_SAVE_LOCKS[local_key]
+
+
+def _session_profile_saved_marker_key(organization_id: str, browser_session_id: str) -> str:
+    return f"browser_profile_from_session:{organization_id}:{browser_session_id}"
+
+
+async def _profile_already_saved_from_session(
+    *, organization_id: str, browser_session_id: str, name: str
+) -> BrowserProfile | None:
+    try:
+        saved_profile_id = await app.CACHE.get(_session_profile_saved_marker_key(organization_id, browser_session_id))
+    except Exception:
+        LOG.warning(
+            "Failed to read browser profile saved from session",
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            exc_info=True,
+        )
+        return None
+    if not saved_profile_id:
+        return None
+    profile = await app.DATABASE.browser_sessions.get_browser_profile(saved_profile_id, organization_id)
+    if profile is None or profile.name != name:
+        return None
+    return profile
+
+
+async def _create_profile_from_session(
+    *,
+    organization_id: str,
+    name: str,
+    description: str | None,
+    browser_session_id: str,
+    proxy_location: ProxyLocationInput = None,
+    proxy_session_id: str | None = None,
+) -> BrowserProfile:
+    # A save consumes the session's archive, so a client retrying a save whose response it lost (or that is
+    # still running) must get that save's profile back rather than a 400 or a second profile.
+    async with _session_profile_save_lock(organization_id=organization_id, browser_session_id=browser_session_id):
+        return await _create_profile_from_session_locked(
+            organization_id=organization_id,
+            name=name,
+            description=description,
+            browser_session_id=browser_session_id,
+            proxy_location=proxy_location,
+            proxy_session_id=proxy_session_id,
+        )
+
+
+async def _create_profile_from_session_locked(
+    *,
+    organization_id: str,
+    name: str,
+    description: str | None,
+    browser_session_id: str,
+    proxy_location: ProxyLocationInput,
+    proxy_session_id: str | None,
+) -> BrowserProfile:
+    browser_session = await app.DATABASE.browser_sessions.get_persistent_browser_session(
+        browser_session_id, organization_id
+    )
+    if browser_session is None:
+        LOG.warning(
+            "Browser session not found for profile creation",
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+        )
+        raise BrowserSessionNotFound(browser_session_id)
+    _refuse_profile_from_external_session(browser_session)
+
+    saved_profile = await _profile_already_saved_from_session(
+        organization_id=organization_id, browser_session_id=browser_session_id, name=name
+    )
+    if saved_profile is not None:
+        LOG.info(
+            "Returning browser profile already created from session",
+            organization_id=organization_id,
+            browser_profile_id=saved_profile.browser_profile_id,
+            browser_session_id=browser_session_id,
+        )
+        return saved_profile
+
+    # Read the storage id the session actually exported to: reuse writes back to its bp_, but a fallback
+    # (saved profile failed to load) exported under the session id, so resolve from the loaded profile.
+    loaded_profile_id = browser_session.browser_profile_id if browser_session.browser_profile_loaded else None
+    # Non-None only for a pure-reuse session; it drives the terminal "archive unavailable" error below.
+    reused_profile_id = loaded_profile_id if not browser_session.generate_browser_profile else None
+    source_profile_id = export_profile_storage_id(
+        session_id=browser_session_id,
+        browser_profile_id=loaded_profile_id,
+        generate_browser_profile=browser_session.generate_browser_profile,
+    )
+    session_dir = await app.STORAGE.retrieve_browser_profile(
+        organization_id=organization_id,
+        profile_id=source_profile_id,
+    )
+    archive_wait_seconds = 0.0
+    wait_outcome: Literal["found", "session_ended", "timed_out"] | None = None
+    # The close call returns before teardown uploads the archive, so only a closing session that exports under its own
+    # id waits for it. A pure-reuse session reads its bp_ archive as it stood before the session, because teardown
+    # writes the session's changes back over that archive later.
+    if (
+        not session_dir
+        and browser_session.close_requested_at is not None
+        and browser_session.completed_at is None
+        and browser_session.should_export_profile()
+        and reused_profile_id is None
+    ):
+        wait_started = time.monotonic()
+        wait_outcome = await _wait_for_closing_session_archive(
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            source_profile_id=source_profile_id,
+        )
+        archive_wait_seconds = round(time.monotonic() - wait_started, 3)
+        if wait_outcome == "found":
+            session_dir = await app.STORAGE.retrieve_browser_profile(
+                organization_id=organization_id,
+                profile_id=source_profile_id,
+            )
+    if not session_dir:
+        # An opted-out session never uploads an archive, so retrying can't help — fail fast with a
+        # distinct message the client can tell apart from the transient "upload not finished yet" case.
+        if not browser_session.should_export_profile():
+            LOG.info(
+                "Browser session was not configured to generate a browser profile",
+                organization_id=organization_id,
+                browser_session_id=browser_session_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "This browser session was not configured to generate a browser profile. "
+                    "Start a session with generate_browser_profile enabled to capture a profile."
+                ),
+            )
+        if reused_profile_id is not None:
+            # A reuse session writes back over its own profile, which already existed before the session, so a
+            # missing archive is terminal (a deleted/absent profile) — retrying can't conjure it.
+            LOG.warning(
+                "Reused browser profile archive not found for profile creation",
+                organization_id=organization_id,
+                browser_session_id=browser_session_id,
+                browser_profile_id=reused_profile_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"This browser session reused profile {reused_profile_id}, whose archive is unavailable. "
+                    "Create a profile from that session's source profile instead, or start a session with "
+                    "generate_browser_profile enabled to capture a new profile."
+                ),
+            )
+        if wait_outcome is None:
+            # A failed download also reads as no archive, so an ended row is final only once storage confirms the miss.
+            session_ended = (
+                browser_session.completed_at is not None
+                and await _session_archive_exists(organization_id=organization_id, profile_id=source_profile_id)
+                is False
+            )
+        else:
+            session_ended = wait_outcome == "session_ended"
+        LOG.warning(
+            "Browser session archive not found for profile creation",
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            archive_wait_seconds=archive_wait_seconds,
+            session_ended=session_ended,
+        )
+        if session_ended:
+            # Clients retry on the "persisted profile archive" wording below, so this final case must not use it.
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "This browser session has ended and has no profile archive to save, so retrying will not help. "
+                    "A session's archive can be saved as a profile only once; start a new session with "
+                    "generate_browser_profile enabled to capture another profile."
+                ),
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Browser session does not have a persisted profile archive. "
+                "Close the session and wait for upload before creating a browser profile."
+            ),
+        )
+
+    source_browser_type = browser_session.browser_type.value if browser_session.browser_type else None
+    if (
+        proxy_session_id is None
+        and browser_session.proxy_session_id
+        and (proxy_location is None or should_generate_proxy_session_id(proxy_location))
+    ):
+        proxy_location = browser_session.proxy_location or ProxyLocation.RESIDENTIAL_ISP
+        proxy_session_id = browser_session.proxy_session_id
+
+    try:
+        try:
+            profile = await app.DATABASE.browser_sessions.create_browser_profile(
+                organization_id=organization_id,
+                name=name,
+                description=description,
+                source_browser_type=source_browser_type,
+                proxy_location=proxy_location,
+                proxy_session_id=proxy_session_id,
+            )
+        except IntegrityError as exc:
+            _handle_duplicate_profile_name(organization_id=organization_id, name=name, exc=exc)
+
+        try:
+            await app.STORAGE.store_browser_profile(
+                organization_id=organization_id,
+                profile_id=profile.browser_profile_id,
+                directory=session_dir,
+            )
+        except Exception:
+            rolled_back = await _hard_delete_created_profile_after_store_failure(
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+            )
+            LOG.error(
+                "Failed to store browser profile artifacts",
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+                rolled_back=rolled_back,
+                exc_info=True,
+            )
+            raise
+    finally:
+        discard_temp_working_dir(session_dir)
+
+    try:
+        await app.CACHE.set(
+            _session_profile_saved_marker_key(organization_id, browser_session_id),
+            profile.browser_profile_id,
+            ex=_SESSION_PROFILE_SAVED_MARKER_TTL,
+        )
+    except Exception:
+        LOG.warning(
+            "Failed to record browser profile saved from session",
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            browser_profile_id=profile.browser_profile_id,
+            exc_info=True,
+        )
+
+    # The promote copied the session's own export (profiles/{pbs_session}.zip) into the new bp_, so
+    # reap that source now that it's redundant. Keyed on the session id, never a reused bp_ profile.
+    # Best-effort: only after a successful promote, and a reap failure must not fail the request.
+    try:
+        await app.STORAGE.delete_browser_profile(
+            organization_id=organization_id,
+            profile_id=browser_session_id,
+        )
+    except Exception:
+        LOG.exception(
+            "Failed to delete source session profile blob after promote",
+            organization_id=organization_id,
+            browser_session_id=browser_session_id,
+            browser_profile_id=profile.browser_profile_id,
+        )
+
+    LOG.info(
+        "Created browser profile from session",
+        organization_id=organization_id,
+        browser_profile_id=profile.browser_profile_id,
+        browser_session_id=browser_session_id,
+        archive_wait_seconds=archive_wait_seconds,
+    )
+    return profile
+
+
+async def _create_profile_from_workflow_run(
+    *,
+    organization_id: str,
+    name: str,
+    description: str | None,
+    workflow_run_id: str,
+    proxy_location: ProxyLocationInput = None,
+    proxy_session_id: str | None = None,
+) -> BrowserProfile:
+    workflow_run = await app.DATABASE.workflow_runs.get_workflow_run(workflow_run_id, organization_id=organization_id)
+    if not workflow_run:
+        LOG.warning(
+            "Workflow run not found for profile creation",
+            organization_id=organization_id,
+            workflow_run_id=workflow_run_id,
+        )
+        raise WorkflowRunNotFound(workflow_run_id)
+
+    workflow = await app.DATABASE.workflows.get_workflow(
+        workflow_id=workflow_run.workflow_id,
+        organization_id=organization_id,
+    )
+    if not workflow:
+        LOG.warning(
+            "Workflow not found for profile creation",
+            organization_id=organization_id,
+            workflow_id=workflow_run.workflow_id,
+            workflow_permanent_id=workflow_run.workflow_permanent_id,
+        )
+        raise WorkflowNotFound(workflow_id=workflow_run.workflow_id)
+
+    # Flag-off orgs keep the legacy immediate 400 when the workflow doesn't persist. Under the engine a
+    # plain picked profile is a living sink even without persist, so archive-presence is the gate — the
+    # poll below decides (it also serves the run's browser_sink_profile_id), not persist_browser_session.
+    if (
+        not await app.AGENT_FUNCTION.is_browser_memory_engine_enabled_for_org(organization_id)
+        and not workflow.persist_browser_session
+    ):
+        LOG.warning(
+            "Workflow does not persist browser sessions",
+            organization_id=organization_id,
+            workflow_run_id=workflow_run_id,
+            workflow_permanent_id=workflow.workflow_permanent_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow does not persist browser sessions",
+        )
+
+    # The session persistence task runs asynchronously after workflow completion.
+    # Poll for a short grace period so that immediate profile-creation requests
+    # succeed without forcing clients to implement retry loops.
+    poll_attempts = 30  # ~30 s max wait
+    session_dir: str | None = None
+    for attempt in range(poll_attempts):
+        session_dir = await retrieve_persisted_workflow_browser_state_dir(
+            organization_id=organization_id,
+            workflow=workflow,
+            workflow_run=workflow_run,
+        )
+        if session_dir:
+            break  # session found
+        # Avoid busy-waiting; sleep 1 s between attempts (non-blocking asyncio sleep)
+        if attempt < poll_attempts - 1:
+            await asyncio.sleep(1)
+
+    if not session_dir:
+        LOG.warning(
+            "Workflow run has no persisted session after waiting",
+            organization_id=organization_id,
+            workflow_run_id=workflow_run_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow run does not have a persisted session",
+        )
+
+    try:
+        try:
+            profile = await app.DATABASE.browser_sessions.create_browser_profile(
+                organization_id=organization_id,
+                name=name,
+                description=description,
+                proxy_location=proxy_location,
+                proxy_session_id=proxy_session_id,
+            )
+        except IntegrityError as exc:
+            _handle_duplicate_profile_name(organization_id=organization_id, name=name, exc=exc)
+
+        try:
+            await app.STORAGE.store_browser_profile(
+                organization_id=organization_id,
+                profile_id=profile.browser_profile_id,
+                directory=session_dir,
+            )
+            LOG.info(
+                "Created browser profile from workflow run",
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+                workflow_run_id=workflow_run_id,
+            )
+        except Exception:
+            rolled_back = await _hard_delete_created_profile_after_store_failure(
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+            )
+            LOG.error(
+                "Failed to store browser profile artifacts",
+                organization_id=organization_id,
+                browser_profile_id=profile.browser_profile_id,
+                workflow_run_id=workflow_run_id,
+                rolled_back=rolled_back,
+                exc_info=True,
+            )
+            raise
+    finally:
+        discard_temp_working_dir(session_dir)
+
+    return profile

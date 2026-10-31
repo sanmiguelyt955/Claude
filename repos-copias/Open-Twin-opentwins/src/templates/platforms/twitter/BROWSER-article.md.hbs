@@ -1,0 +1,131 @@
+# BROWSER-article.md - Article Publish Patterns
+
+**Article editor URL:** `https://x.com/compose/articles`
+**Editor type:** Draft.js (`public-DraftEditor-content`)
+
+---
+
+## Key Constraints
+
+- 🚨 **Title:** `textarea[name="Article Title"]` — use clipboard paste via evaluate
+- 🚨 **Body:** `div[data-testid="composer"][contenteditable="true"]` — use ClipboardEvent paste with `text/html`
+- 🚨 **`execCommand('insertText')` does NOT persist** — Draft.js only saves the last block
+- 🚨 **Paste ONLY works on a fresh editor after typing the title.** Do NOT `selectAll`+`delete` before pasting — breaks multi-block creation. Always create a NEW article draft.
+- 🚨 **Publish is two clicks:** editor "Publish" → confirm dialog "Publish" (`aria-label="Publish"`)
+
+---
+
+## Supported HTML → Draft.js Mapping
+
+| HTML | Draft.js Class | Visual |
+|------|---------------|--------|
+| `<h2>` | `longform-header-two` | **Heading** |
+| `<p>` | `longform-unstyled` | Body paragraph |
+| `<strong>` | `font-weight: bold` (inline) | **Bold** text |
+| `<em>` | `font-style: italic` (inline) | *Italic* text |
+| `<ul><li>` | `longform-unordered-list-item` | Bullet list |
+| `<blockquote>` | `longform-blockquote` | Blockquote |
+| `<a href="https://x.com/handle">@handle</a>` | Auto-linked mention | Clickable @mention (notifies user) |
+| `#hashtag` (plain text) | Auto-detected by editor | Clickable hashtag link |
+| `<a href="https://...">text</a>` | Inline link | Clickable external link |
+
+---
+
+## Step 1 — Navigate to Articles and create new draft
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/navigate -H 'Content-Type: application/json' -d '{"url":"https://x.com/compose/articles"}' 2>&1
+
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 3000)); const createBtn = document.querySelector('button[aria-label=\"create\"]'); if (createBtn) { createBtn.click(); return { clicked: 'create' }; } const writeBtn = document.querySelector('[data-testid=\"empty_state_button_text\"]') || Array.from(document.querySelectorAll('a, button')).find(b => b.innerText.trim() === 'Write'); if (writeBtn) { writeBtn.click(); return { clicked: 'write' }; } return { error: 'no Write/create button' }; }"}
+ENDJSON
+```
+Wait 3s for editor to load — URL changes to /compose/articles/edit/{id}
+
+---
+
+## Step 2 — Type title (clipboard paste via evaluate)
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 1000)); var title = document.querySelector('textarea[name=\"Article Title\"]'); if (!title) return { error: 'no title field' }; title.focus(); await new Promise(r => setTimeout(r, 300)); var dt = new DataTransfer(); dt.setData('text/plain', window.__data.text); title.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); await new Promise(r => setTimeout(r, 500)); return { typed: title.value || title.innerText }; }", "data": {"text": "YOUR_ARTICLE_TITLE"}}
+ENDJSON
+```
+
+🚨 Title MUST be typed before body paste — this initializes the Draft.js editor for multi-block paste.
+
+---
+
+## Step 3 — Paste body with rich HTML
+
+Build HTML string with formatting, mentions, hashtags. Then paste:
+
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var editor = document.querySelector('[data-testid=\"composer\"]'); if (!editor) return { error: 'no editor' }; editor.focus(); editor.click(); await new Promise(r => setTimeout(r, 500)); var dt = new DataTransfer(); dt.setData('text/plain', window.__data.plain); dt.setData('text/html', window.__data.html); editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); await new Promise(r => setTimeout(r, 3000)); var result = editor.innerText; var blockCount = editor.querySelectorAll('[data-block]').length; return { pasted: true, wordCount: result.split(/\\s+/).length, blocks: blockCount }; }", "data": {"html": "<p>YOUR_ARTICLE_HTML</p>", "plain": "YOUR_ARTICLE_TEXT"}}
+ENDJSON
+```
+
+Wait 5s after paste for auto-save before publishing.
+
+---
+
+## Step 4 — Publish (two-click flow)
+
+**Click 1 — Open publish dialog:**
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { var btns = Array.from(document.querySelectorAll('button')); var publishBtn = btns.find(b => b.innerText.trim() === 'Publish'); if (!publishBtn) return { error: 'no publish button' }; publishBtn.click(); return { clicked: true }; }"}
+ENDJSON
+```
+
+Wait 2s. Dialog shows: audience (default "Everyone"), reply settings, timeline preview.
+
+**Click 2 — Confirm publish:**
+```bash
+exec curl -s -X POST http://localhost:3847/api/browser/{{browser_profile}}/evaluate -H 'Content-Type: application/json' -d @- <<'ENDJSON'
+{"fn":"async () => { await new Promise(r => setTimeout(r, 2000)); var btns = Array.from(document.querySelectorAll('button')); var publishBtn = btns.find(b => b.innerText.trim() === 'Publish' && b.getAttribute('aria-label') === 'Publish'); if (!publishBtn) return { error: 'no dialog publish button' }; publishBtn.click(); await new Promise(r => setTimeout(r, 5000)); return { published: true, url: window.location.href }; }"}
+ENDJSON
+```
+
+After publish: page redirects to `https://x.com/{handle}/status/{id}`. Article URL: `https://x.com/{handle}/article/{id}`.
+
+---
+
+## Step 5 — Verify and log
+
+Check `window.location.href` contains `/status/`. Extract article URL by replacing `/status/` with `/article/`.
+
+---
+
+## Example Article HTML
+
+```html
+<p>Six months ago I changed how I approach {{pillars.[0].name}}. Not a small tweak. A fundamental shift in how I think about the problem.</p>
+
+<h2>The gap nobody talks about</h2>
+<p>Most people in {{role}} roles focus on the obvious metrics. But the real insight comes from looking at <strong>the process underneath</strong>.</p>
+<p>As a {{role}}, I have seen this pattern play out repeatedly.</p>
+
+<h2>Three things that changed my approach</h2>
+<ul>
+<li>A clear definition of <em>done</em> that everyone can observe</li>
+<li>A feedback loop that catches problems early</li>
+<li>A regular review cadence that keeps things on track</li>
+</ul>
+
+<blockquote>{{brand_tagline}}</blockquote>
+
+<p>If you work in {{pillars.[0].name}} and have not tried this approach yet, start small. Pick one area. Build the habit. Iterate from there.</p>
+
+<p>#{{pillars.[0].name}}</p>
+```
+
+---
+
+## Mentions & Hashtags Strategy
+
+- **@mentions:** 2-3 per article. Only accounts genuinely referenced in the content. Wrap in `<a href="https://x.com/{handle}">@handle</a>`. Mentioned users get notified.
+- **#hashtags:** 0-1 in a closing paragraph as plain text (auto-linked by editor). Zero is default; one only if it genuinely routes discovery.
+- **External links:** `<a href="url">text</a>` for sources. Adds credibility.
+- 🚨 Do NOT tag random big accounts for visibility — that is spam.

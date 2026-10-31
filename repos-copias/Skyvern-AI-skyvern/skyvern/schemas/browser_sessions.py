@@ -1,0 +1,164 @@
+from datetime import datetime
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
+from skyvern.forge.sdk.schemas.persistent_browser_sessions import Extensions, PersistentBrowserType
+from skyvern.schemas.browser_session_timeouts import DEFAULT_TIMEOUT, MAX_EXTENDED_TIMEOUT, MAX_TIMEOUT, MIN_TIMEOUT
+from skyvern.schemas.browser_settings import BrowserSettings, require_known_timezone
+from skyvern.schemas.docs.doc_strings import PROXY_LOCATION_DOC_STRING
+from skyvern.schemas.proxy_pinning import validate_proxy_session_id
+from skyvern.schemas.runs import GeoTarget, ProxyLocationInput, _validate_browser_address
+from skyvern.utils.url_validators import is_tls_or_local_browser_address, validate_url
+
+
+class CreateBrowserSessionRequest(BaseModel):
+    url: str | None = Field(
+        default=None,
+        description="Optional URL to open when the standalone browser session starts.",
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_start_url(cls, value: str | None) -> str | None:
+        if not value:
+            return value
+        return validate_url(value)
+
+    # No le bound: the route caps values above MAX_TIMEOUT and returns a warning on the
+    # response instead of failing the request with pydantic's 422.
+    timeout: int | None = Field(
+        default=DEFAULT_TIMEOUT,
+        description=f"Timeout in minutes for the session. Timeout is applied after the session is started. Must be between {MIN_TIMEOUT} and {MAX_TIMEOUT}. Defaults to {DEFAULT_TIMEOUT}.",
+        ge=MIN_TIMEOUT,
+    )
+
+    proxy_location: ProxyLocationInput = Field(
+        default=None,
+        description=PROXY_LOCATION_DOC_STRING + " Can also be a GeoTarget object for granular city/state targeting: "
+        '{"country": "US", "subdivision": "CA", "city": "San Francisco"}, '
+        "or a custom proxy URL dict for self-hosted deployments: "
+        '{"url": "http://user:password@proxy.example.com:8080"}',
+    )
+
+    @field_validator("proxy_location", mode="before")
+    @classmethod
+    def validate_proxy_location_dict(cls, proxy_location: object) -> object:
+        if isinstance(proxy_location, dict):
+            # Custom proxy URL dict: {"url": "http://..."} — pass through for self-hosted deployments.
+            if "url" in proxy_location and "country" not in proxy_location:
+                return proxy_location
+            return GeoTarget.model_validate(proxy_location)
+        return proxy_location
+
+    proxy_session_id: str | None = Field(
+        default=None,
+        description="Opaque Skyvern-managed proxy sticky-session id for pinned Residential ISP sessions.",
+    )
+
+    @field_validator("proxy_session_id")
+    @classmethod
+    def validate_proxy_session_id_field(cls, value: str | None) -> str | None:
+        return validate_proxy_session_id(value)
+
+    extensions: list[Extensions] | None = Field(
+        default=None,
+        description="A list of extensions to install in the browser session.",
+    )
+
+    browser_type: PersistentBrowserType | None = Field(
+        default=None,
+        description="The type of browser to use for the session.",
+    )
+
+    browser_profile_id: str | None = Field(
+        default=None,
+        description="ID of a browser profile to load into this session (restores cookies, localStorage, etc.). browser_profile_id starts with `bp_`.",
+        pattern=r"^bp_",
+    )
+
+    generate_browser_profile: bool = Field(
+        default=False,
+        description="When true, the session's browser profile (cookies, localStorage, etc.) is saved to storage "
+        "when the session ends so it can be turned into a reusable browser profile. Defaults to false to avoid "
+        "storing profiles for sessions that never need them. Sessions started with a browser_profile_id always "
+        "persist their profile regardless of this flag.",
+    )
+
+    browser_settings: BrowserSettings | None = Field(
+        default=None,
+        description="Settings applied when the session's browser is created. A timezone_id here takes precedence "
+        "over the timezone implied by proxy_location.",
+    )
+
+    @field_validator("browser_settings")
+    @classmethod
+    def validate_browser_settings(cls, value: BrowserSettings | None) -> BrowserSettings | None:
+        return require_known_timezone(value)
+
+    needs_live_view: bool = Field(
+        default=False,
+        description="Whether a person will watch this session's browser live. Defaults to false, which suits "
+        "unattended automation; the Skyvern app sets it because a session opened in the UI is watched. It requests "
+        "a capability, not a particular browser, and cannot be used to select where the session runs.",
+    )
+
+
+class RegisterExternalBrowserSessionRequest(BaseModel):
+    cdp_url: str = Field(
+        min_length=1,
+        repr=False,
+        description="CDP address of a browser the caller already runs. It is stored server-side and never returned.",
+    )
+    timeout: int = Field(
+        default=DEFAULT_TIMEOUT,
+        ge=MIN_TIMEOUT,
+        le=MAX_TIMEOUT,
+        description=(
+            f"Minutes the registration stays attachable, counted from registration. "
+            f"Between {MIN_TIMEOUT} and {MAX_TIMEOUT}."
+        ),
+    )
+
+    @field_validator("cdp_url")
+    @classmethod
+    def validate_cdp_url(cls, value: str) -> str:
+        _validate_browser_address(value, field_name="cdp_url")
+        if not is_tls_or_local_browser_address(value):
+            raise ValueError("cdp_url must use https:// or wss:// outside local development")
+        return value
+
+
+class UpdateBrowserSessionRequest(BaseModel):
+    generate_browser_profile: bool = Field(
+        description="Enable or disable saving this session's browser profile when it ends. Can be toggled while "
+        "the session is still alive; the value is read at session teardown.",
+    )
+
+
+class ExtendBrowserSessionRequest(BaseModel):
+    # No pydantic `le=` bound: the route grants what remains under MAX_EXTENDED_TIMEOUT and returns a warning
+    # on the response instead of failing the request with pydantic's 422.
+    additional_minutes: int = Field(
+        description=(
+            "Minutes to add to the session's current deadline. A session can be extended, one or more times, up to a total "
+            f"lifetime of {MAX_EXTENDED_TIMEOUT} minutes ({MAX_EXTENDED_TIMEOUT // 60} hours) counted from when it "
+            "started; a request for more than the remaining headroom is granted the remainder and the response "
+            "carries a warning."
+        ),
+        ge=1,
+    )
+
+
+class BrowserRecording(BaseModel):
+    recording_id: str
+    organization_id: str
+    recording_attempt_id: str
+    browser_session_id: str
+    workflow_permanent_id: str
+    workflow_id: str | None = None
+    workflow_version: int | None = None
+    evidence: list[dict[str, Any]]
+    metadata: dict[str, Any]
+    created_at: datetime
+    modified_at: datetime

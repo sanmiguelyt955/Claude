@@ -1,0 +1,534 @@
+import { useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeftIcon,
+  Pencil1Icon,
+  ReloadIcon,
+  TrashIcon,
+} from "@radix-ui/react-icons";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useWorkflowQuery } from "@/routes/workflows/hooks/useWorkflowQuery";
+import { useScheduleDetailQuery } from "./useScheduleDetailQuery";
+import {
+  useDeleteOrgScheduleMutation,
+  useDisableScheduleMutation,
+  useEnableScheduleMutation,
+  useUpdateScheduleMutation,
+} from "./useScheduleActions";
+import { formatNextRun } from "@/routes/workflows/editor/panels/schedulePanel/cronUtils";
+import {
+  buildCadencePayload,
+  cronBelowMinInterval,
+  describeCadence,
+  intervalDraftFromSeconds,
+  isCadenceAccepted,
+  type IntervalDraft,
+  upcomingFirstRun,
+} from "@/routes/workflows/editor/panels/schedulePanel/scheduleCadence";
+import { getErrorDetail } from "@/util/getErrorDetail";
+import { basicLocalTimeFormat, basicTimeFormat } from "@/util/timeFormat";
+import { ScheduleConfigFields } from "@/routes/workflows/components/ScheduleConfigFields";
+import { ScheduleParametersSection } from "@/routes/workflows/components/ScheduleParametersSection";
+import {
+  buildScheduleParametersPayload,
+  formatScheduleParameterValue,
+  hasUserFacingParameters,
+  isScheduleParameter,
+} from "@/routes/workflows/components/scheduleParameters";
+import { useScheduleParameterState } from "@/routes/workflows/hooks/useScheduleParameterState";
+import type { Parameter } from "@/routes/workflows/types/workflowTypes";
+import { DispatchStatusPill } from "@/routes/workflows/editor/panels/schedulePanel/DispatchStatusPill";
+
+function ScheduleDetailPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { workflowPermanentId, scheduleId } = useParams();
+  const { data, isLoading, isError, error } = useScheduleDetailQuery(
+    workflowPermanentId,
+    scheduleId,
+  );
+
+  const titleFromState = (location.state as { workflowTitle?: string })
+    ?.workflowTitle;
+  const { data: workflow, isSuccess: workflowLoaded } = useWorkflowQuery({
+    workflowPermanentId,
+  });
+  const workflowTitle =
+    titleFromState || workflow?.title || workflowPermanentId || "Schedule";
+
+  const enableMutation = useEnableScheduleMutation();
+  const disableMutation = useDisableScheduleMutation();
+  const deleteMutation = useDeleteOrgScheduleMutation();
+  const updateMutation = useUpdateScheduleMutation();
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [editCron, setEditCron] = useState("");
+  const [editInterval, setEditInterval] = useState<IntervalDraft | null>(null);
+  const [editTimezone, setEditTimezone] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+
+  const workflowParameters: ReadonlyArray<Parameter> = useMemo(
+    () => workflow?.workflow_definition.parameters ?? [],
+    [workflow],
+  );
+  const {
+    values: editParameters,
+    errors: parameterErrors,
+    handleChange: handleParameterChange,
+    validate: validateParameters,
+    reset: resetParameters,
+  } = useScheduleParameterState(
+    workflowParameters,
+    data?.schedule.parameters ?? null,
+  );
+
+  const editCadenceAccepted = isCadenceAccepted(
+    editCron,
+    editInterval,
+    editTimezone,
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <ReloadIcon className="size-6 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (isError || !data) {
+    const detail = getErrorDetail(error);
+    return (
+      <div className="py-20 text-center text-sm text-red-400">
+        Failed to load schedule details.
+        {detail && (
+          <span className="mt-1 block text-xs text-slate-500">{detail}</span>
+        )}
+      </div>
+    );
+  }
+
+  const { schedule, next_runs } = data;
+  const humanReadable = describeCadence(schedule);
+  const isOneTime = schedule.run_at != null;
+  const firstRun = upcomingFirstRun(schedule.first_fire_at);
+  const scheduleCronTooFrequent = cronBelowMinInterval(
+    schedule.cron_expression,
+  );
+
+  function startEditing() {
+    setEditCron(schedule.cron_expression ?? "0 9 * * *");
+    setEditInterval(
+      schedule.interval_seconds
+        ? intervalDraftFromSeconds(schedule.interval_seconds)
+        : null,
+    );
+    setEditTimezone(schedule.timezone);
+    setEditName(schedule.name ?? "");
+    setEditDescription(schedule.description ?? "");
+    resetParameters();
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    // Drop any in-progress parameter edits so they don't reappear on
+    // re-entry; re-seed from the stored schedule values.
+    resetParameters();
+  }
+
+  function handleSave() {
+    if (!workflowPermanentId || !scheduleId) return;
+    const parametersValid = validateParameters();
+    if (!editCadenceAccepted || !parametersValid) return;
+    // Only persist explicitly-set overrides. The form is seeded from
+    // workflow defaults, so blindly sending the whole values dict would
+    // pin the current default into the schedule and change semantics from
+    // "use workflow default at execution time" to "freeze current default".
+    const payload = buildScheduleParametersPayload(
+      editParameters,
+      workflowParameters,
+    );
+    updateMutation.mutate(
+      {
+        workflowPermanentId,
+        scheduleId,
+        request: {
+          // `enabled` is intentionally omitted so the edit preserves whatever
+          // the enable/disable toggle set, even if this detail query is stale.
+          ...buildCadencePayload(editCron, editInterval, editTimezone),
+          timezone: editTimezone,
+          parameters: payload,
+          ...(editName && { name: editName }),
+          description: editDescription || undefined,
+        },
+      },
+      {
+        onSuccess: () => setEditing(false),
+      },
+    );
+  }
+
+  function handleToggle(checked: boolean) {
+    const item = {
+      workflow_schedule_id: schedule.workflow_schedule_id,
+      organization_id: schedule.organization_id,
+      workflow_permanent_id: schedule.workflow_permanent_id,
+      workflow_title: "",
+      cron_expression: schedule.cron_expression,
+      interval_seconds: schedule.interval_seconds,
+      first_fire_at: schedule.first_fire_at,
+      run_at: schedule.run_at,
+      dispatch_status: schedule.dispatch_status,
+      workflow_run_id: schedule.workflow_run_id,
+      timezone: schedule.timezone,
+      enabled: schedule.enabled,
+      parameters: schedule.parameters,
+      name: schedule.name ?? null,
+      description: schedule.description ?? null,
+      next_run: null,
+      created_at: schedule.created_at,
+      modified_at: schedule.modified_at,
+    };
+    if (checked) {
+      enableMutation.mutate(item);
+    } else {
+      disableMutation.mutate(item);
+    }
+  }
+
+  function handleDelete() {
+    const item = {
+      workflow_schedule_id: schedule.workflow_schedule_id,
+      organization_id: schedule.organization_id,
+      workflow_permanent_id: schedule.workflow_permanent_id,
+      workflow_title: "",
+      cron_expression: schedule.cron_expression,
+      interval_seconds: schedule.interval_seconds,
+      first_fire_at: schedule.first_fire_at,
+      run_at: schedule.run_at,
+      dispatch_status: schedule.dispatch_status,
+      workflow_run_id: schedule.workflow_run_id,
+      timezone: schedule.timezone,
+      enabled: schedule.enabled,
+      parameters: schedule.parameters,
+      name: schedule.name ?? null,
+      description: schedule.description ?? null,
+      next_run: null,
+      created_at: schedule.created_at,
+      modified_at: schedule.modified_at,
+    };
+    deleteMutation.mutate(item, {
+      onSuccess: () => navigate("/schedules"),
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-9"
+          onClick={() => navigate("/schedules")}
+        >
+          <ArrowLeftIcon className="size-4" />
+        </Button>
+        <div className="flex-1">
+          <h1 className="text-2xl font-normal text-slate-50">
+            {schedule.name ?? workflowTitle}
+          </h1>
+          {schedule.description && (
+            <p className="text-sm text-slate-400">{schedule.description}</p>
+          )}
+          <p className="text-xs text-slate-500">
+            {humanReadable} · {schedule.timezone}
+          </p>
+          <Link
+            to={`/agents/${schedule.workflow_permanent_id}/runs`}
+            className="mt-1 inline-block text-xs text-slate-400 hover:text-slate-200 hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {workflowTitle} runs →
+          </Link>
+        </div>
+        {!isOneTime && (
+          <Switch checked={schedule.enabled} onCheckedChange={handleToggle} />
+        )}
+        <Button
+          variant="destructive"
+          size="icon"
+          className="size-9"
+          onClick={() => setDeleteDialogOpen(true)}
+        >
+          <TrashIcon className="size-4" />
+        </Button>
+      </div>
+
+      {/* Content grid */}
+      <div className="grid grid-cols-2 gap-6">
+        {/* Schedule Configuration */}
+        <div className="rounded-lg border border-slate-700 p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-sm text-slate-400">Schedule Configuration</h3>
+            {!editing && !isOneTime && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-xs"
+                onClick={startEditing}
+                disabled={!workflowLoaded}
+                title={
+                  workflowLoaded ? undefined : "Loading agent definition..."
+                }
+              >
+                <Pencil1Icon className="size-3" />
+                Edit
+              </Button>
+            )}
+          </div>
+
+          {editing ? (
+            <div className="space-y-4">
+              {/* Name */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Name</Label>
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Schedule name"
+                  className="h-8 text-sm"
+                />
+              </div>
+
+              {/* Description */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Description</Label>
+                <Input
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Add a description..."
+                  className="h-8 text-sm"
+                />
+              </div>
+
+              <ScheduleParametersSection
+                parameters={workflowParameters}
+                values={editParameters}
+                onChange={handleParameterChange}
+                errors={parameterErrors}
+                disabled={updateMutation.isPending}
+              />
+
+              <ScheduleConfigFields
+                size="compact"
+                cronExpression={editCron}
+                timezone={editTimezone}
+                onCronChange={setEditCron}
+                onTimezoneChange={setEditTimezone}
+                interval={editInterval}
+                onIntervalChange={setEditInterval}
+                intervalAnchor={
+                  schedule.interval_seconds ? schedule.first_fire_at : null
+                }
+                disabled={updateMutation.isPending}
+              />
+
+              {/* Save / Cancel */}
+              <div className="flex gap-2 pt-1">
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={!editCadenceAccepted || updateMutation.isPending}
+                  onClick={handleSave}
+                >
+                  {updateMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={cancelEditing}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-start justify-between">
+                <span className="text-sm text-slate-400">Frequency</span>
+                <span className="text-sm text-slate-50">{humanReadable}</span>
+              </div>
+              <div className="flex items-start justify-between">
+                <span className="text-sm text-slate-400">Timezone</span>
+                <span className="text-sm text-slate-50">
+                  {schedule.timezone}
+                </span>
+              </div>
+              {schedule.run_at && (
+                <div className="flex items-start justify-between">
+                  <span className="text-sm text-slate-400">Runs at</span>
+                  <span className="text-sm text-slate-50">
+                    {formatNextRun(
+                      new Date(schedule.run_at),
+                      schedule.timezone,
+                    )}
+                  </span>
+                </div>
+              )}
+              {schedule.dispatch_status && (
+                <div className="flex items-start justify-between">
+                  <span className="text-sm text-slate-400">Status</span>
+                  <DispatchStatusPill status={schedule.dispatch_status} />
+                </div>
+              )}
+              {schedule.dispatch_status === "fired" &&
+                schedule.workflow_run_id && (
+                  <div className="flex items-start justify-between">
+                    <span className="text-sm text-slate-400">Run</span>
+                    <Link
+                      to={`/runs/${schedule.workflow_run_id}`}
+                      className="font-mono text-xs text-slate-50 hover:underline"
+                    >
+                      {schedule.workflow_run_id}
+                    </Link>
+                  </div>
+                )}
+              {schedule.cron_expression && (
+                <div className="flex items-start justify-between">
+                  <span className="text-sm text-slate-400">Cron</span>
+                  <code className="font-mono text-xs text-slate-50">
+                    {schedule.cron_expression}
+                  </code>
+                </div>
+              )}
+              {firstRun && (
+                <div className="flex items-start justify-between">
+                  <span className="text-sm text-slate-400">First run</span>
+                  <span className="text-sm text-slate-50">
+                    {formatNextRun(firstRun, schedule.timezone)}
+                  </span>
+                </div>
+              )}
+              {scheduleCronTooFrequent && (
+                <div className="rounded border border-amber-600/40 bg-amber-900/20 px-2 py-1 text-xs text-amber-200">
+                  This schedule fires more often than the 5-minute minimum.
+                  Saving any change requires updating its cron expression first.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Details + Upcoming Runs */}
+        <div className="space-y-6">
+          <div className="rounded-lg border border-slate-700 p-4">
+            <h3 className="mb-4 text-sm text-slate-400">Details</h3>
+            <div className="space-y-2">
+              <div className="flex items-start justify-between">
+                <span className="text-sm text-slate-400">Created</span>
+                <span
+                  className="text-sm text-slate-50"
+                  title={basicTimeFormat(schedule.created_at)}
+                >
+                  {basicLocalTimeFormat(schedule.created_at)}
+                </span>
+              </div>
+              <div className="flex items-start justify-between">
+                <span className="text-sm text-slate-400">Last Modified</span>
+                <span
+                  className="text-sm text-slate-50"
+                  title={basicTimeFormat(schedule.modified_at)}
+                >
+                  {basicLocalTimeFormat(schedule.modified_at)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {hasUserFacingParameters(workflowParameters) && (
+            <div className="rounded-lg border border-slate-700 p-4">
+              <h3 className="mb-4 text-sm text-slate-400">Agent Inputs</h3>
+              <div className="space-y-2">
+                {workflowParameters
+                  .filter(isScheduleParameter)
+                  .map((parameter) => {
+                    const storedValue = schedule.parameters?.[parameter.key];
+                    const hasValue =
+                      storedValue !== undefined && storedValue !== null;
+                    return (
+                      <div
+                        key={parameter.key}
+                        className="flex items-start justify-between gap-4"
+                      >
+                        <span className="font-mono text-xs text-slate-400">
+                          {parameter.key}
+                        </span>
+                        <span className="max-w-[60%] truncate text-right text-xs text-slate-50">
+                          {hasValue ? (
+                            formatScheduleParameterValue(storedValue)
+                          ) : parameter.default_value !== null &&
+                            parameter.default_value !== undefined ? (
+                            <span className="italic text-slate-500">
+                              default:{" "}
+                              {formatScheduleParameterValue(
+                                parameter.default_value,
+                              )}
+                            </span>
+                          ) : (
+                            <span className="italic text-slate-500">
+                              (not set)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {!isOneTime && (
+            <div className="rounded-lg border border-slate-700 p-4">
+              <h3 className="mb-4 text-sm text-slate-400">Upcoming Runs</h3>
+              <p className="mb-2 text-xs text-slate-400">
+                Next {next_runs.length} runs
+              </p>
+              <div className="space-y-0.5">
+                {next_runs.map((run) => (
+                  <p key={run} className="text-xs text-slate-500">
+                    {formatNextRun(new Date(run), schedule.timezone)}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteDialogOpen(false);
+          }
+        }}
+        title="Delete schedule?"
+        description={<p>This schedule will be permanently deleted.</p>}
+        isPending={deleteMutation.isPending}
+        onConfirm={handleDelete}
+      />
+    </div>
+  );
+}
+
+export { ScheduleDetailPage };

@@ -1,0 +1,298 @@
+// @vitest-environment jsdom
+
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { getClient } from "@/api/AxiosClient";
+import type { CredentialApiResponse } from "@/api/types";
+import { copyText } from "@/util/copyText";
+import { CredentialAuthenticatorSupportProvider } from "./CredentialAuthenticatorSupportContext";
+import { CredentialItem } from "./CredentialItem";
+
+vi.mock("@/api/AxiosClient", () => ({ getClient: vi.fn() }));
+vi.mock("@/hooks/useCredentialGetter", () => ({
+  useCredentialGetter: () => null,
+}));
+vi.mock("@/store/useCredentialTestStore", () => ({
+  useCredentialTestStore: (
+    selector: (state: { activeTest: null }) => unknown,
+  ) => selector({ activeTest: null }),
+}));
+vi.mock("@/util/copyText", () => ({ copyText: vi.fn() }));
+vi.mock("@/components/ui/use-toast", () => ({
+  toast: vi.fn(),
+}));
+vi.mock("./CredentialFolderSelector", () => ({
+  CredentialFolderSelector: () => <button>Folder</button>,
+}));
+vi.mock("./DeleteCredentialButton", () => ({
+  DeleteCredentialButton: () => <button>Delete</button>,
+}));
+vi.mock("./CredentialsModal", () => ({
+  CredentialsModal: () => null,
+}));
+
+const mockedGetClient = vi.mocked(getClient);
+const mockedCopyText = vi.mocked(copyText);
+
+function makePasswordCredential(
+  overrides: Partial<CredentialApiResponse> = {},
+): CredentialApiResponse {
+  return {
+    credential_id: "cred_1",
+    credential_type: "password",
+    name: "Example Login",
+    credential: {
+      username: "user@example.com",
+      totp_type: "authenticator",
+      totp_identifier: null,
+    },
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+describe("CredentialItem TOTP code preview", () => {
+  it("uses the context label for an additional two-factor method", () => {
+    render(
+      <CredentialAuthenticatorSupportProvider
+        value={{
+          additionalTwoFactorMethods: [
+            {
+              value: "security_device",
+              requestType: "none",
+              label: "Security Device",
+              renderFields: () => null,
+              validate: () => null,
+              onSaved: vi.fn(),
+            },
+          ],
+        }}
+      >
+        <CredentialItem
+          credential={
+            makePasswordCredential({
+              credential: {
+                username: "user@example.com",
+                totp_type: "security_device" as never,
+                totp_identifier: null,
+              },
+            }) as unknown as CredentialApiResponse
+          }
+        />
+      </CredentialAuthenticatorSupportProvider>,
+    );
+
+    expect(screen.getByText("Security Device")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Show 2FA code" })).toBeNull();
+  });
+
+  it("loads and copies the current authenticator code on demand", async () => {
+    mockedGetClient.mockResolvedValue({
+      get: vi.fn().mockResolvedValue({
+        data: { code: "123456", seconds_remaining: 24 },
+      }),
+    } as never);
+    mockedCopyText.mockResolvedValue(true);
+
+    render(<CredentialItem credential={makePasswordCredential()} />);
+
+    expect(screen.getAllByText("••••••••").length).toBeGreaterThan(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2FA code" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("123 456")).toBeTruthy();
+      expect(screen.getByText("24s")).toBeTruthy();
+    });
+    expect(mockedGetClient).toHaveBeenCalledWith(null, "sans-api-v1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy 2FA code" }));
+
+    await waitFor(() => {
+      expect(mockedCopyText).toHaveBeenCalledWith("123456");
+    });
+  });
+
+  it("shows an API error when the saved authenticator code cannot be loaded", async () => {
+    mockedGetClient.mockResolvedValue({
+      get: vi.fn().mockRejectedValue({
+        isAxiosError: true,
+        response: {
+          data: {
+            detail: {
+              error_code: "invalid_authenticator_key",
+              message: "Saved authenticator key is invalid.",
+            },
+          },
+        },
+      }),
+    } as never);
+
+    render(<CredentialItem credential={makePasswordCredential()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2FA code" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Saved authenticator key is invalid."),
+      ).toBeTruthy();
+    });
+  });
+
+  it("refreshes a hidden authenticator code without revealing it", async () => {
+    const getMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: { code: "123456", seconds_remaining: 24 },
+      })
+      .mockResolvedValueOnce({
+        data: { code: "654321", seconds_remaining: 20 },
+      });
+    mockedGetClient.mockResolvedValue({ get: getMock } as never);
+
+    render(<CredentialItem credential={makePasswordCredential()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2FA code" }));
+    await waitFor(() => {
+      expect(screen.getByText("123 456")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide 2FA code" }));
+    expect(screen.queryByText("123 456")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh 2FA code" }));
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText("654 321")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2FA code" }));
+    expect(screen.getByText("654 321")).toBeTruthy();
+    expect(getMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the displayed code after it expires", async () => {
+    mockedGetClient.mockResolvedValue({
+      get: vi.fn().mockResolvedValue({
+        data: { code: "123456", seconds_remaining: 1 },
+      }),
+    } as never);
+
+    render(<CredentialItem credential={makePasswordCredential()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2FA code" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("123 456")).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Copy 2FA code" }),
+      ).toBeTruthy();
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.queryByText("123 456")).toBeNull();
+        const copyButton = screen.getByRole("button", {
+          name: "Copy 2FA code",
+        }) as HTMLButtonElement;
+        expect(copyButton.disabled).toBe(true);
+        expect(
+          screen.getByText("2FA code expired. Refresh to load a new code."),
+        ).toBeTruthy();
+      },
+      { timeout: 3000 },
+    );
+  });
+});
+
+describe("CredentialItem saved browser session", () => {
+  it("labels the refresh link with what it does and explains it in a tooltip", async () => {
+    render(
+      <MemoryRouter>
+        <CredentialItem
+          credential={makePasswordCredential({ browser_profile_id: "bp_1" })}
+        />
+      </MemoryRouter>,
+    );
+
+    const link = screen.getByRole("link", { name: "Sign in again to refresh" });
+    expect(link.getAttribute("href")).toBe("/browser-profiles/bp_1?refresh=1");
+
+    fireEvent.focus(link);
+    expect(
+      (
+        await screen.findAllByText(
+          "Opens a live browser with this saved session. Sign in again, then close it to save the new session.",
+        )
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+});
+
+describe("CredentialItem 1Password metadata", () => {
+  it("shows the 1Password badge and missing-upstream note", () => {
+    render(
+      <CredentialItem
+        credential={makePasswordCredential({
+          vault_type: "onepassword",
+          vault_id: "vault-1",
+          item_id: "item-1",
+          upstream_missing_at: "2026-10-18T12:00:00Z",
+        })}
+      />,
+    );
+
+    expect(screen.getByText("1Password")).toBeTruthy();
+    expect(screen.getByText("missing in 1Password")).toBeTruthy();
+  });
+});
+
+describe("SKY-18379 QA R1 repro: imported 1Password credential", () => {
+  it("QA1-U1: does not offer Edit on a read-only 1Password credential, whose update always 405s", () => {
+    render(
+      <MemoryRouter>
+        <CredentialItem
+          credential={makePasswordCredential({
+            vault_type: "onepassword",
+            vault_id: "vault-1",
+            item_id: "item-1",
+            credential: {
+              username: "user@example.com",
+              totp_type: "none",
+              totp_identifier: null,
+            },
+          })}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("1Password")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Edit credential" }),
+    ).toBeNull();
+  });
+
+  it("keeps Edit available for a Skyvern-vault credential", () => {
+    render(
+      <CredentialItem
+        credential={makePasswordCredential({ vault_type: "skyvern" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Edit credential" }),
+    ).toBeTruthy();
+  });
+});

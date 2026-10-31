@@ -1,0 +1,90 @@
+# PLAYBOOK.md - Substack Agent
+
+**End-of-day / on-demand tasks. NOT for routine heartbeats.**
+
+---
+
+## Memory Update
+
+**When:** Task "update_memory" (~22:00 daily)
+
+🚨 **GRACEFUL DEGRADATION:** Steps 1-2 use browser. If ANY step fails, **skip it and continue**. Step 3 (INSIGHTS.md) is MANDATORY and reads local files only. Never skip step 3 because an earlier step failed.
+
+---
+
+### Step 1: Check newsletter stats (browser - best effort)
+
+Navigate to `https://substack.com/publish/posts` -> note subscriber count, recent post views/likes.
+
+If browser fails -> log "Substack stats: browser unavailable" and **continue to step 2**.
+
+### Step 2: Check subscriber/follower count (browser - best effort)
+
+Navigate to profile page -> note current subscriber count. Compare to last count in INSIGHTS.md.
+
+If browser fails -> log "Subscriber check: browser unavailable" and **continue to step 3**.
+
+### Step 3: Update `INSIGHTS.md` (MANDATORY — no browser needed)
+
+🚨 **This step MUST always run**, even if steps 1-2 failed. It reads LOCAL files only.
+
+**Read inputs:**
+- `memory/{today}.md` — today's activities and outcomes
+- `memory/{yesterday}.md` — recent patterns (if exists)
+- Stats from steps 1-2 (if available)
+
+**Update `INSIGHTS.md`** with confirmed patterns (2+ occurrences):
+- What Works: topics, formats, timing
+- What Doesn't Work: approaches to avoid
+- Key Relationships: reciprocal writers/commenters
+- Content Insights: which posts got traction
+- Strategy Adjustments: data-based changes
+- Subscriber Tracking: current count, milestones
+
+🚨 **Stale target pruning (MANDATORY).** Walk the `## Key Relationships` section. For each `@handle` without activity observed in the last 7 days (grep the handle across `memory/*.md` for this week): demote it to a `## Key Relationships (watching — silent 7+d)` subsection. Watching entries are not used as `priority_targets` in daily browse_and_engage tasks — they get a weekly check at most. Remove handles with 14+ days silence entirely. Annotate every Key Relationship entry with its most recent activity date (format: `last seen: YYYY-MM-DD`) so next retro has clean timestamps. Undated entries MUST get a date appended during this pass.
+
+Keep INSIGHTS.md under 100 lines. Replace outdated entries vs appending.
+
+🚨 **Do NOT prune tracking files.** `memory/commented_posts.txt`, `memory/replied_notifications_substack.txt`, and `memory/recommended_publications.txt` are permanent. They are the sole dedup mechanism for `/note/` URLs — HEARTBEAT.md SS 3 explicitly skips the page-level `alreadyCommented` check on `/note/` URLs because our profile link always appears as note author (false positive). Pruning these files causes duplicate comments on notes whose content resurfaces in feed/search after the prune window. File size is not a concern — tracking files grow slowly and remain trivially small.
+
+---
+
+## Generate Schedule
+
+**When:**
+- Morning Schedule Check (HEARTBEAT.md SS 0) - generates TODAY's schedule
+- Scheduled daily - generates TODAY's schedule
+
+1. **Read inputs for schedule generation:**
+   - **Content brief:** `{{pipeline_workspace}}/content-briefs/{target_date}.md` — provides today's theme, engagement targets, suggested hooks, hashtags. Adapt to Substack style, don't copy verbatim.
+   - **INSIGHTS.md** — provides what's been working: post performance, timing, reciprocal writers, subscriber patterns.
+   - **How they work together:** Content brief sets the THEME (what to talk about). INSIGHTS.md sets the STRATEGY (who to engage, when to post, what resonates). If no content brief exists, use INSIGHTS.md alone.
+2. Extract: post performance, timing, reciprocal writers
+3. Base template (TOOLS.md SS Schedule Templates)
+4. **🚨 Capacity match (validate before writing):**
+   - Σ(max_comments across all tasks) MUST = `daily.comments.limit` from limits.json
+   - Σ(max_likes across all tasks) MUST = `daily.likes.limit` from limits.json
+   - If mismatch → adjust task configs until they match exactly. Do NOT skip.
+   - **Weekly recommendations (Mon–Sat):** If `weekly.recommendations.current < weekly.recommendations.limit` AND today is Mon-Sat, add a `recommend` task at 20:00 with `config.candidate_handle = <handle>`. Pick `<handle>` = first writer in `INSIGHTS.md → Key Relationships` active section (NOT "watching — silent 7+d") whose handle is not in `memory/recommended_publications.txt` (grep `@<handle>|` — trailing `|` prevents substring collisions). If all active KRs already recommended → skip.
+   - **🚨 Newsletter (Tue only):** Tuesday `publish_newsletter` at 16:00 is MANDATORY — never skip unless `weekly.newsletters.current >= limit`. (Tue-only: early-stage growth via Notes beats newsletter volume. Send time 16:00 Kyiv = 09:00 EDT, US East prime open window. Reassess at 100 email subs.)
+     - 🚨 MUST include `content_source` in `publish_newsletter` config:
+       ```json
+       "config": {
+         "content_source": "{{pipeline_workspace}}/content-ready/{today_date}/substack-newsletter.md",
+         ...
+       }
+       ```
+   - **🚨 Notes:** Mon-Sat MUST have at least one `publish_note` task. Notes are the discovery engine — they surface your profile to new readers. Sunday is rest day (no note required).
+     - 🚨 MUST include `content_source` in `publish_note` config:
+       ```json
+       "config": {
+         "content_source": "{{pipeline_workspace}}/content-ready/{today_date}/substack-note.md",
+         ...
+       }
+       ```
+
+5. Adjustments (only if 2+ pattern occurrences)
+6. Jitter (+-30min), collision (10min spacing), hours (08:00-23:00)
+7. **Write:** `schedule.json` with metadata.for_date = target date (TODAY), all tasks
+
+**Note:** `update_memory` at 22:00 is MANDATORY in every schedule — never skip it.

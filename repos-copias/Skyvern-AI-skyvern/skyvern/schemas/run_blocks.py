@@ -1,0 +1,132 @@
+from pydantic import BaseModel, Field, model_validator
+from typing_extensions import Self
+
+from skyvern.forge.sdk.workflow.models.run_limits import MaxScreenshotScrolls
+from skyvern.schemas.credential_type import CredentialType
+from skyvern.schemas.proxy_location import ProxyLocation
+from skyvern.utils.url_validators import WebhookUrl
+
+
+class BaseRunBlockRequest(BaseModel):
+    """Base class for run block requests with common browser automation parameters"""
+
+    url: str | None = Field(default=None, description="Website URL")
+    webhook_url: WebhookUrl | None = Field(default=None, description="Webhook URL to send status updates")
+    proxy_location: ProxyLocation | None = Field(default=None, description="Proxy location to use")
+    totp_identifier: str | None = Field(
+        default=None, description="Identifier for TOTP (Time-based One-Time Password) if required"
+    )
+    totp_url: str | None = Field(default=None, description="TOTP URL to fetch one-time passwords")
+    browser_session_id: str | None = Field(
+        default=None,
+        description="ID of the browser session to use, which is prefixed by `pbs_` e.g. `pbs_123456`",
+        examples=["pbs_123456"],
+    )
+    browser_profile_id: str | None = Field(
+        default=None,
+        description="ID of a browser profile to reuse for this run",
+    )
+    start_fresh_browser: bool = Field(
+        default=False,
+        description=(
+            "When true, start this run from a fresh, empty browser and ignore any saved browser "
+            "memory — no memory is read or written. A verified sign-in during the run still updates "
+            "the credential's saved login."
+        ),
+    )
+    browser_address: str | None = Field(
+        default=None,
+        description="The CDP address for the task.",
+        examples=["http://127.0.0.1:9222", "ws://127.0.0.1:9222/devtools/browser/1234567890"],
+    )
+    extra_http_headers: dict[str, str] | None = Field(
+        default=None, description="Additional HTTP headers to include in requests"
+    )
+    cdp_connect_headers: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "HTTP headers attached ONLY to the CDP WebSocket handshake when connecting "
+            "to a remote browser via browser_address. Never forwarded to target websites."
+        ),
+    )
+    max_screenshot_scrolling_times: MaxScreenshotScrolls = Field(
+        default=None, description="Maximum number of times to scroll for screenshots"
+    )
+
+    @model_validator(mode="after")
+    def _reject_start_fresh_with_session(self) -> Self:
+        if self.start_fresh_browser and self.browser_session_id:
+            raise ValueError(
+                "start_fresh_browser cannot be combined with browser_session_id — "
+                "a live session is the browser for the run."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_start_fresh_with_profile(self) -> Self:
+        if self.start_fresh_browser and self.browser_profile_id:
+            raise ValueError(
+                "start_fresh_browser cannot be combined with browser_profile_id — "
+                "pick one: a fresh browser or a specific profile."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reject_start_fresh_with_address(self) -> Self:
+        if self.start_fresh_browser and self.browser_address:
+            raise ValueError(
+                "start_fresh_browser cannot be combined with browser_address — "
+                "connecting to an existing remote browser reuses its session state."
+            )
+        return self
+
+
+class LoginRequest(BaseRunBlockRequest):
+    credential_type: CredentialType = Field(..., description="Where to get the credential from")
+    prompt: str | None = Field(
+        default=None,
+        description="Login instructions. Skyvern has default prompt/instruction for login if this field is not provided.",
+    )
+
+    # Skyvern credential
+    credential_id: str | None = Field(
+        default=None, description="ID of the Skyvern credential to use for login.", examples=["cred_123"]
+    )
+
+    # Bitwarden credential
+    bitwarden_collection_id: str | None = Field(
+        default=None,
+        description="Bitwarden collection ID. You can find it in the Bitwarden collection URL. e.g. `https://vault.bitwarden.com/vaults/collection_id/items`",
+    )
+    bitwarden_item_id: str | None = Field(default=None, description="Bitwarden item ID")
+
+    # 1Password credential
+    onepassword_vault_id: str | None = Field(default=None, description="1Password vault ID")
+    onepassword_item_id: str | None = Field(default=None, description="1Password item ID")
+    onepassword_totp_field_name: str | None = Field(
+        default=None,
+        description="1Password item field id or label to treat as the TOTP secret, overriding "
+        "1Password's own field-type detection",
+    )
+
+    # Azure Vault credential
+    azure_vault_name: str | None = Field(default=None, description="Azure Vault Name")
+    azure_vault_username_key: str | None = Field(default=None, description="Azure Vault username key")
+    azure_vault_password_key: str | None = Field(default=None, description="Azure Vault password key")
+    azure_vault_totp_secret_key: str | None = Field(default=None, description="Azure Vault TOTP secret key")
+
+
+class DownloadFilesRequest(BaseRunBlockRequest):
+    navigation_goal: str = Field(..., description="Instructions for navigating to and downloading the file")
+    download_suffix: str | None = Field(
+        default=None,
+        description=(
+            "Complete filename for the downloaded file. Supports {{ original_filename }}, which keeps the name the "
+            "site gave the file, so {{ original_filename }} alone preserves it and prefix_{{ original_filename }} "
+            "prefixes it. The source extension is used unless the configured filename includes an extension, which "
+            "overrides it. {{ original_filename }} must be a standalone interpolation without filters or other "
+            "transformations."
+        ),
+    )
+    download_timeout: float | None = Field(default=None, description="Timeout in seconds for the download operation")
+    max_steps_per_run: int | None = Field(default=None, description="Maximum number of steps to execute")

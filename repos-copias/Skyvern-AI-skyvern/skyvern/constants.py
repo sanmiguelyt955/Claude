@@ -1,0 +1,202 @@
+from enum import StrEnum
+from pathlib import Path
+
+# This is the attribute name used to tag interactable elements
+SKYVERN_ID_ATTR: str = "unique_id"
+
+# Values sent in the x-user-agent header by first-party Skyvern clients. Used to distinguish
+# UI-, MCP- and CLI-triggered runs from API/SDK callers (e.g. for trigger_type classification and routing strategy).
+SKYVERN_UI_USER_AGENT: str = "skyvern-ui"
+SKYVERN_MCP_USER_AGENT: str = "skyvern-mcp"
+SKYVERN_CLI_USER_AGENT: str = "skyvern-cli"
+# The CLI drives the same tools as the MCP server, so it gets the MCP's run treatment; only attribution tells them apart.
+SKYVERN_AGENT_USER_AGENTS: frozenset[str] = frozenset({SKYVERN_MCP_USER_AGENT, SKYVERN_CLI_USER_AGENT})
+
+SKYVERN_DIR = Path(__file__).parent
+REPO_ROOT_DIR = SKYVERN_DIR.parent
+
+# Bounds the reasoning that user-defined errors carry to the customer webhook, and the
+# descriptions in an error_code_mapping. Lives here so the leaf error models and the workflow
+# schema can share one number without the models depending on the schema package.
+ERROR_CODE_REASONING_MAX_LENGTH = 2000
+
+INPUT_TEXT_TIMEOUT = 120000  # 2 minutes
+PAGE_CONTENT_TIMEOUT = 300  # 5 mins
+BROWSER_PAGE_CLOSE_TIMEOUT = 5  # 5 seconds
+# Bounded attempts to close a crashed tab. Anything that waits on that close derives its budget from
+# this and BROWSER_PAGE_CLOSE_TIMEOUT rather than restating the count.
+CRASHED_PAGE_CLOSE_ATTEMPTS = 2
+BROWSER_CLOSE_TIMEOUT = 180  # 3 minute
+# Independent budget for disabling the download interceptor during close(). Kept well below
+# BROWSER_CLOSE_TIMEOUT so a stuck/cancellation-resistant download drain is reclaimed quickly
+# and can never consume the budget the paid-provider cleanup phase needs.
+BROWSER_INTERCEPTOR_DISABLE_TIMEOUT = 30  # 30 seconds
+# Budget for the whole browser-context teardown phase: on-close callbacks, cookie persistence, then context
+# close. Healthy closes finish in seconds (prod p99.9 ~4.5s); one still running at this point is wedged, and
+# holding it to BROWSER_CLOSE_TIMEOUT only delays the run's result. Keep on-close callbacks cheap.
+BROWSER_CONTEXT_CLOSE_TIMEOUT = 30  # 30 seconds
+BROWSER_DOWNLOAD_MAX_WAIT_TIME = 120  # 2 minute
+BROWSER_DOWNLOAD_NO_SIGNAL_GRACE_TIME = 120  # 2 minute
+BROWSER_DOWNLOAD_TIMEOUT = 600  # 10 minute
+DIALOG_LLM_TIMEOUT = 10  # 10 seconds
+DOWNLOAD_FILE_PREFIX = "downloads"
+SAVE_DOWNLOADED_FILES_TIMEOUT = 180
+SPECULATIVE_COST_PERSIST_DRAIN_TIMEOUT = 30
+GET_DOWNLOADED_FILES_TIMEOUT = 30
+NAVIGATION_MAX_RETRY_TIME = 5
+PERMANENT_NAV_ERRORS = ("net::ERR_INVALID_URL",)
+# The proxy hop itself failing (HTTP CONNECT or SOCKS handshake) before the site is contacted. Only a
+# proxied browser can report these, and they are the only codes here that rule out the target -- except
+# for a target with no DNS address record, which the proxy also reports as a tunnel failure.
+PROXY_TRANSPORT_NAV_ERRORS = (
+    "net::ERR_TUNNEL_CONNECTION_FAILED",
+    "net::ERR_SOCKS_CONNECTION_FAILED",
+    "net::ERR_SOCKS_CONNECTION_HOST_UNREACHABLE",
+)
+# Browser-context draws allowed for one navigation. A generic net::ERR keeps the single historical
+# recovery. A refusal by the proxy hop gets more because that refusal is a property of the draw rather
+# than of the route or the target -- a run minutes or seconds away reaches the same target fine -- so
+# independent draws are the only thing that clears it. Each draw relaunches the browser, which already
+# spaces them by seconds, and only a run that would otherwise have failed outright pays for them.
+NAV_ERROR_MAX_BROWSER_DRAWS = 2
+PROXY_TRANSPORT_NAV_MAX_BROWSER_DRAWS = 4
+PROXY_SENSITIVE_NAV_ERRORS = (
+    "net::ERR_NAME_NOT_RESOLVED",
+    "net::ERR_NAME_RESOLUTION_FAILED",
+    *PROXY_TRANSPORT_NAV_ERRORS,
+    "net::ERR_CERT_",
+    "net::ERR_SSL_",
+)
+# Errors that should not be retried within the same browser context/proxy.
+# The outer context-recreation retry in get_or_create_page may still attempt
+# recovery for proxy-sensitive errors by picking a different proxy node.
+SKIP_INNER_NAV_RETRY_ERRORS = PERMANENT_NAV_ERRORS + PROXY_SENSITIVE_NAV_ERRORS
+# The subset of PROXY_SENSITIVE_NAV_ERRORS that attributes a navigation failure to our own
+# egress rather than to the site. PROXY_SENSITIVE_NAV_ERRORS is deliberately wider because it
+# answers a different question -- whether retrying on a different proxy node is worth it -- and
+# it includes cert failures a plain expired certificate on the target site also produces.
+# ERR_CERT_AUTHORITY_INVALID is the one cert code that means an untrusted issuer, i.e. something
+# terminating TLS in front of us.
+EGRESS_ATTRIBUTABLE_NAV_ERRORS = (
+    *PROXY_TRANSPORT_NAV_ERRORS,
+    "net::ERR_NAME_NOT_RESOLVED",
+    "net::ERR_NAME_RESOLUTION_FAILED",
+    "net::ERR_CERT_AUTHORITY_INVALID",
+)
+
+AUTO_COMPLETION_POTENTIAL_VALUES_COUNT = 3
+DROPDOWN_MENU_MAX_DISTANCE = 100
+BROWSER_DOWNLOADING_SUFFIX = ".crdownload"
+MAX_UPLOAD_FILE_COUNT = 300
+AZURE_BLOB_STORAGE_MAX_UPLOAD_FILE_COUNT = 300
+CUSTOMER_STORAGE_UPLOAD_MAX_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB per file (FileUploadBlock)
+DEFAULT_MAX_SCREENSHOT_SCROLLS = 3
+# Sanity ceiling for a user-supplied scroll count. Bounds the value well below the
+# INTEGER column limit (a larger value overflowed workflow_runs on insert) while
+# staying far above any real screenshot need.
+MAX_SCREENSHOT_SCROLLS = 1000
+
+# Default navigation_goal for LoginBlocks. Instructs the LLM how to find the login
+# page, fill credentials, and handle multi-step flows / 2FA.
+DEFAULT_LOGIN_PROMPT = """\
+If you're not on the login page, navigate to the login page first.
+First, dismiss any promotional popups or cookie prompts that could block interaction with the page.
+
+Log in using the credentials provided in the user details:
+1. Find the username/email input field and enter the username or email from the provided credentials.
+2. Find the password input field and enter the password from the provided credentials. \
+Some websites use a multi-step login flow where you enter the email first, click a "Continue" or "Next" button, \
+and then the password field appears on the next step. Handle this by entering the email, clicking continue, \
+then entering the password once the field is revealed.
+3. Click the login/sign-in button to submit the credentials.
+4. If a 2-factor authentication step appears, enter the authentication code.
+
+Make sure you enter the username and password separately — do not paste both into the same field.
+Use your action history to determine if you already attempted to log in. \
+If you have not clicked the login button since filling in the credentials, try submitting before assuming failure.
+
+If you fail to log in or can't find the login page after several trials, terminate.
+If the credentials are invalid, expired, or explicitly rejected by the website (e.g., "Invalid credentials", \
+"Wrong password"), terminate immediately and take no further actions.
+If login is completed, you're successful."""
+
+# Default complete_criterion for LoginBlocks. Guides the LLM to check for actual
+# logged-in indicators rather than relying on page location, which fails on sites
+# that redirect to the homepage after successful login.
+DEFAULT_LOGIN_COMPLETE_CRITERION = (
+    "The login is successful. To verify, look for ANY of these logged-in indicators on the page: "
+    "(1) a user name, email, or account name displayed in the header/navigation bar, "
+    "(2) a 'Sign out', 'Log out', or 'Logout' button or link, "
+    "(3) an account/profile menu or avatar that was not present before login, "
+    "(4) a personalized greeting such as 'Welcome [Name]' or 'Hello [Name]', "
+    "(5) a 'My Account', 'My Dashboard', or similar authenticated-only link. "
+    "IMPORTANT: Being redirected to the homepage does NOT mean login failed — "
+    "many websites redirect to the homepage after a successful login. "
+    "Check the page elements carefully for the indicators listed above. "
+    "Do NOT assume login failed just because you are on the homepage or the same page as before."
+)
+
+# Template for wrapping a block-level mini-goal with the user's original prompt as context.
+# Used by both TaskV2 planning and the Workflow Copilot tool handler so that every block's
+# navigation_goal carries the user's overarching intent — the verifier (complete_verify) can
+# then reason about completion against the user's goal rather than the block's narrow action
+# decomposition.
+MINI_GOAL_TEMPLATE = """Achieve the following mini goal and once it's achieved, complete:
+```{mini_goal}```
+
+This mini goal is part of the big goal the user wants to achieve and use the big goal as context to achieve the mini goal:
+```{main_goal}```"""
+
+# reserved fields for navigation payload
+SPECIAL_FIELD_VERIFICATION_CODE = "verification_code"
+
+
+class ScrapeType(StrEnum):
+    NORMAL = "normal"
+    STOPLOADING = "stoploading"
+    RELOAD = "reload"
+
+
+SCRAPE_TYPE_ORDER = [ScrapeType.NORMAL, ScrapeType.NORMAL, ScrapeType.RELOAD]
+DEFAULT_MAX_TOKENS = 100000
+MAX_FILE_PARSE_INPUT_TOKENS = 256_000
+# Safety ceiling on how many pages of a scanned/image-only PDF are OCR'd via the vision-LLM
+# fallback. Each page is a separate LLM call, so this bounds cost; MAX_FILE_PARSE_INPUT_TOKENS
+# still bounds the concatenated text handed to downstream extraction.
+MAX_PDF_OCR_PAGES = 50
+# Max concurrent per-page OCR calls when transcribing a scanned PDF.
+PDF_OCR_PAGE_CONCURRENCY = 5
+# Wall-clock ceiling for one blocking file-parse step (validation, text extraction, page
+# rendering). Parse cost tracks document complexity more than raw byte size, so a size cap
+# alone cannot bound it; this keeps a pathological document to one failed block instead of
+# letting it consume the run's whole activity budget.
+FILE_PARSE_STEP_TIMEOUT_SECONDS = 300
+# Wall-clock ceiling for one file-parser LLM call (page OCR or structured extraction); the slowest legitimate call seen
+# is a ~245 s large-output extraction. The LLM client's timeout only bounds the gap between received bytes, which a
+# gateway's keep-alive bytes keep resetting on a stalled call.
+FILE_PARSER_LLM_CALL_TIMEOUT_SECONDS = 250
+# Wall-clock ceiling for OCR'ing every page of one scanned PDF: MAX_PDF_OCR_PAGES in rounds of PDF_OCR_PAGE_CONCURRENCY,
+# one retry per page, at the ~30 s a slow OCR call takes. It, not the per-call ceiling, bounds a scan whose pages stall.
+PDF_OCR_TOTAL_TIMEOUT_SECONDS = 600
+MAX_IMAGE_BLOCKS = 20
+SCROLL_AMOUNT_MULTIPLIER = 100
+EXTRACT_ACTION_SCROLL_AMOUNT = 500  # pixels per scroll action from extract-action prompt
+
+# Text input constants
+TEXT_INPUT_DELAY = 10  # 10ms between each character input
+# Number of trailing characters typed keystroke-by-keystroke (the rest use fill()).
+# 10 chars yield 9 inter-key intervals, balancing speed with realistic input cadence.
+TEXT_PRESS_MAX_LENGTH = 10
+
+# Script generation constants
+DEFAULT_SCRIPT_RUN_ID = "default"
+
+# SkyvernPage constants
+SKYVERN_PAGE_MAX_SCRAPING_RETRIES = 2
+
+# Placeholder titles a workflow carries before anything names it. Two strings because
+# the frontend and backend defaults drifted apart.
+DEFAULT_WORKFLOW_TITLES = ("New Workflow", "New Agent")
+
+# What the data-retention scrubber writes over a stored value it removed.
+SCRUBBED_VALUE = "[removed]"

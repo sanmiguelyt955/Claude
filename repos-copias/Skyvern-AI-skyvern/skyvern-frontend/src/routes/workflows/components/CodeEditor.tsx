@@ -1,0 +1,302 @@
+import {
+  useWorkflowScopeId,
+  useWorkflowScopeReadOnly,
+} from "@/routes/workflows/editor/WorkflowScopeContext";
+import { useDeferredLockedEdit } from "@/hooks/useDeferredLockedEdit";
+import CodeMirror, { EditorView, type Extension } from "@uiw/react-codemirror";
+import type { ViewUpdate } from "@codemirror/view";
+import { json } from "@codemirror/lang-json";
+import { python } from "@codemirror/lang-python";
+import { html } from "@codemirror/lang-html";
+import { yaml } from "@codemirror/lang-yaml";
+import { tokyoNightStorm } from "@uiw/codemirror-theme-tokyo-night-storm";
+import { tokyoNightDay } from "@uiw/codemirror-theme-tokyo-night-day";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/util/utils";
+import { useThemeAsDarkOrLight } from "@/components/useThemeAsDarkOrLight";
+
+import {
+  isDeeplyNestedDocument,
+  LARGE_DOCUMENT_CHAR_THRESHOLD,
+} from "./oversizedDocument";
+import "./code-mirror-overrides.css";
+
+function getLanguageExtension(
+  language: "python" | "json" | "html" | "yaml",
+): Extension {
+  switch (language) {
+    case "python":
+      return python();
+    case "json":
+      return json();
+    case "html":
+      return html();
+    case "yaml":
+      return yaml();
+  }
+}
+
+type Props = {
+  value: string;
+  onChange?: (value: string) => void;
+  deferKey?: string;
+  // Invoked once with the CodeMirror view when it is created (e.g. to drive
+  // the search panel from a toolbar button).
+  onEditorView?: (view: EditorView) => void;
+  language?: "python" | "json" | "html" | "yaml";
+  lineWrap?: boolean;
+  readOnly?: boolean;
+  minHeight?: string;
+  maxHeight?: string;
+  className?: string;
+  fontSize?: number;
+  fullHeight?: boolean;
+  // Accessible name applied to the CodeMirror editing surface (the
+  // contenteditable), not the wrapper div.
+  ariaLabel?: string;
+  autoFocus?: boolean;
+  /**
+   * Additional CodeMirror extensions. Useful for per-use-case concerns
+   * like linting — e.g. the error_code_mapping editor passes a linter
+   * that flags whitespace-bearing keys inline on the offending line.
+   * Pass a stable (e.g. module-level) reference to avoid editor churn.
+   */
+  extraExtensions?: Extension[];
+} & Pick<React.HTMLAttributes<HTMLDivElement>, "aria-required">;
+
+const fullHeightExtension = EditorView.theme({
+  "&": { height: "100%" },
+  ".cm-scroller": { flex: 1 },
+});
+
+// Pre-mount margin: render the editor while it is still ~200 px outside the
+// viewport so it is ready before the user scrolls/pans to it. Trades a small
+// over-mount budget for no visible empty-placeholder flash.
+const VIEWPORT_PREMOUNT_MARGIN = "200px";
+
+function CodeEditorImpl({
+  value,
+  onChange,
+  deferKey,
+  onEditorView,
+  minHeight,
+  maxHeight,
+  language,
+  lineWrap = true,
+  className,
+  readOnly = false,
+  fontSize = 12,
+  fullHeight = false,
+  extraExtensions,
+  ariaLabel,
+  autoFocus = false,
+  ...restProps
+}: Props) {
+  // `value` is typed `string`, but workflow document panels can pass an
+  // absent/incomplete payload at runtime (SKY-11567). Normalize to a string so
+  // the editor and the oversized-document guard never read `.length` of
+  // undefined.
+  const safeValue = value ?? "";
+  const workflowId = useWorkflowScopeId();
+  const scopeReadOnly = useWorkflowScopeReadOnly();
+  const {
+    value: internalValue,
+    onChange: handleChange,
+    onBlur: handleBlur,
+    mutationLocked,
+  } = useDeferredLockedEdit({
+    value: safeValue,
+    onChange,
+    mutationLockEnabled: workflowId !== null,
+    deferKey:
+      deferKey !== undefined && !readOnly && !scopeReadOnly
+        ? JSON.stringify([workflowId, deferKey])
+        : undefined,
+  });
+  const themeMode = useThemeAsDarkOrLight();
+  const viewRef = useRef<EditorView | null>(null);
+
+  // Defer EditorView creation until the container is in (or near) the
+  // viewport. Block editors mount many CodeEditors at once (script-mode
+  // toggle, accordion content), and CodeMirror's useLayoutEffect-driven
+  // EditorView constructor is heavy enough to dominate a React commit with
+  // multiple instances — see the trace at SKY-9051 showing ~1.3 s of style
+  // recalc per interaction with off-screen editors in scope. Once visible,
+  // stay mounted so panning back and forth doesn't tear down editor state.
+  const placeholderRef = useRef<HTMLDivElement>(null);
+  const [shouldMount, setShouldMount] = useState<boolean>(
+    typeof IntersectionObserver === "undefined",
+  );
+
+  useEffect(() => {
+    if (shouldMount) return;
+    const el = placeholderRef.current;
+    if (!el) {
+      setShouldMount(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldMount(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: VIEWPORT_PREMOUNT_MARGIN },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [shouldMount]);
+
+  const latestOnEditorViewRef = useRef(onEditorView);
+  useEffect(() => {
+    latestOnEditorViewRef.current = onEditorView;
+  }, [onEditorView]);
+
+  const handleCreateEditor = useCallback((view: EditorView) => {
+    viewRef.current = view;
+    latestOnEditorViewRef.current?.(view);
+  }, []);
+
+  const handleEditorUpdate = useCallback((viewUpdate: ViewUpdate) => {
+    if (!viewRef.current) viewRef.current = viewUpdate.view;
+  }, []);
+
+  // Highlighting is only unsafe for deeply nested documents (the stack-overflow
+  // trigger); line-wrapping is additionally guarded by raw size. Keeping these
+  // separate lets large-but-shallow payloads (e.g. webhook bodies) stay
+  // syntax-highlighted while still rendering unwrapped. See SKY-11432 / SKY-11608.
+  const deeplyNested = useMemo(
+    () => isDeeplyNestedDocument(internalValue),
+    [internalValue],
+  );
+  // Reuses deeplyNested's scan instead of calling isOversizedDocument, which
+  // would re-run getMaxStructureDepth for values under the size threshold.
+  const oversized = useMemo(
+    () => internalValue.length > LARGE_DOCUMENT_CHAR_THRESHOLD || deeplyNested,
+    [internalValue, deeplyNested],
+  );
+  const effectiveLineWrap = lineWrap && !oversized;
+
+  // Memoize the extension tuple so React hands CodeMirror a stable
+  // reference across renders. Without this, a parent re-render would
+  // rebuild the array (and anything spread in) every cycle and trigger
+  // unnecessary editor state reconfiguration.
+  const extensions = useMemo<Extension[]>(() => {
+    const exts: Extension[] = [];
+    if (language && !deeplyNested) {
+      exts.push(getLanguageExtension(language));
+    }
+    if (effectiveLineWrap) {
+      exts.push(EditorView.lineWrapping);
+    }
+    if (extraExtensions) {
+      exts.push(...extraExtensions);
+    }
+    if (fullHeight) {
+      exts.push(fullHeightExtension);
+    }
+    if (ariaLabel) {
+      exts.push(EditorView.contentAttributes.of({ "aria-label": ariaLabel }));
+    }
+    return exts;
+  }, [
+    language,
+    deeplyNested,
+    effectiveLineWrap,
+    extraExtensions,
+    fullHeight,
+    ariaLabel,
+  ]);
+
+  const style: React.CSSProperties = { fontSize };
+  if (fullHeight) {
+    style.height = "100%";
+  }
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    const el = view.scrollDOM; // this is the .cm-scroller element
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) return;
+
+      const factor =
+        e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+      const dy = e.deltaY * factor;
+      const dx = e.deltaX * factor;
+
+      const top = el.scrollTop;
+      const left = el.scrollLeft;
+      const maxY = el.scrollHeight - el.clientHeight;
+      const maxX = el.scrollWidth - el.clientWidth;
+
+      const atTop = top <= 0;
+      const atBottom = top >= maxY - 1;
+      const atLeft = left <= 0;
+      const atRight = left >= maxX - 1;
+
+      const verticalWouldScroll = (dy < 0 && !atTop) || (dy > 0 && !atBottom);
+      const horizontalWouldScroll = (dx < 0 && !atLeft) || (dx > 0 && !atRight);
+
+      if (verticalWouldScroll || horizontalWouldScroll) {
+        e.stopPropagation();
+      }
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: true, capture: true });
+
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewRef.current]);
+
+  if (!shouldMount) {
+    // The placeholder reserves the editor's footprint so the IntersectionObserver
+    // hit-tests against a real layout box and the mount swap is visually quiet.
+    const placeholderStyle: React.CSSProperties = { ...style };
+    if (minHeight) placeholderStyle.minHeight = minHeight;
+    if (maxHeight) placeholderStyle.maxHeight = maxHeight;
+    return (
+      <div
+        ref={placeholderRef}
+        className={cn("cursor-auto", className)}
+        style={placeholderStyle}
+        data-codeeditor-state="pending"
+      />
+    );
+  }
+
+  return (
+    <CodeMirror
+      value={internalValue}
+      onChange={handleChange}
+      extensions={extensions}
+      theme={themeMode === "dark" ? tokyoNightStorm : tokyoNightDay}
+      minHeight={minHeight}
+      maxHeight={maxHeight}
+      readOnly={readOnly || mutationLocked}
+      editable={!mutationLocked}
+      autoFocus={autoFocus}
+      className={cn("cursor-auto", className)}
+      style={style}
+      {...restProps}
+      onCreateEditor={handleCreateEditor}
+      onUpdate={handleEditorUpdate}
+      onBlur={handleBlur}
+    />
+  );
+}
+
+// React.memo: parents that pass a stable `extraExtensions` (per docs) and
+// otherwise primitive props now get cheap re-renders. `onChange` is captured
+// via ref so inline callbacks don't invalidate the memo. The CodeMirror
+// dispatch cycle is expensive enough under accessibility-extension load
+// (axe DevTools / Lighthouse) that even one skipped render per parent
+// commit is meaningful.
+const CodeEditor = memo(CodeEditorImpl);
+
+export { CodeEditor };

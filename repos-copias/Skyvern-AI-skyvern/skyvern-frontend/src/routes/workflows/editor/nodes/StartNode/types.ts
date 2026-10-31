@@ -1,0 +1,70 @@
+import { ProxyLocation } from "@/api/types";
+import type { Node } from "@xyflow/react";
+import { AppNode } from "..";
+import {
+  WorkflowModel,
+  WorkflowRetryPolicy,
+} from "@/routes/workflows/types/workflowTypes";
+import type { StartReviewAnnotation } from "../../review/reviewAnnotation";
+
+export type WorkflowStartNodeData = {
+  withWorkflowSettings: true;
+  retryPolicy: WorkflowRetryPolicy | null;
+  webhookCallbackUrl: string;
+  proxyLocation: ProxyLocation;
+  totpVerificationUrl: string | null;
+  totpIdentifier: string | null;
+  adaptiveCaching: boolean;
+  generateScriptOnTerminal: boolean;
+  persistBrowserSession: boolean;
+  reuseBrowserSession: boolean;
+  pinSavedSessionIp: boolean;
+  browserProfileId: string | null;
+  browserProfileKey: string | null;
+  model: WorkflowModel | null;
+  maxScreenshotScrolls: number | null;
+  maxElapsedTimeMinutes: number | null;
+  extraHttpHeaders: string | Record<string, unknown> | null;
+  cdpConnectHeaders: string | Record<string, unknown> | null;
+  editable: boolean;
+  runWith: string;
+  browserType?: string | null;
+  codeVersion: number | null;
+  scriptCacheKey: string | null;
+  aiFallback: boolean;
+  maskSecrets: boolean;
+  runSequentially: boolean;
+  sequentialKey: string | null;
+  finallyBlockLabel: string | null;
+  workflowSystemPrompt: string | null;
+  errorCodeMapping: Record<string, string> | null;
+  label: "__start_block__";
+  showCode: boolean;
+  review?: StartReviewAnnotation;
+};
+
+export type OtherStartNodeData = {
+  withWorkflowSettings: false;
+  editable: boolean;
+  label: "__start_block__";
+  showCode: boolean;
+  parentNodeType?: "loop" | "conditional";
+};
+
+export type StartNodeData = WorkflowStartNodeData | OtherStartNodeData;
+
+export type StartNode = Node<StartNodeData, "start">;
+
+// Window event asking the root start node to expand its Workflow Settings
+// accordion (dispatched from the canvas when the start node is clicked).
+export const OPEN_WORKFLOW_SETTINGS_EVENT = "open-workflow-settings";
+
+export function isStartNode(node: AppNode): node is StartNode {
+  return node.type === "start";
+}
+
+export function isWorkflowStartNodeData(
+  data: StartNodeData,
+): data is WorkflowStartNodeData {
+  return data.withWorkflowSettings;
+}

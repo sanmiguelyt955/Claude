@@ -1,0 +1,208 @@
+import pytest
+from pydantic import ValidationError
+
+from skyvern.forge.sdk.workflow.models.validators import (
+    RUN_METADATA_MAX_KEY_LENGTH,
+    RUN_METADATA_MAX_KEYS,
+    RUN_METADATA_MAX_VALUE_LENGTH,
+    TAG_DESCRIPTION_MAX_LENGTH,
+    TAG_KEY_MAX_LENGTH,
+    TAG_VALUE_MAX_LENGTH,
+    normalize_optional_system_tag_key,
+    normalize_optional_tag_key,
+    normalize_optional_tag_value,
+    normalize_run_metadata,
+    normalize_tag_description,
+    normalize_tag_value,
+)
+from skyvern.schemas.runs import WorkflowRunRequest
+
+
+class TestNormalizeRunMetadataUnchanged:
+    """Lock the existing normalize_run_metadata contract through the tag refactor."""
+
+    def test_none_passes_through(self) -> None:
+        assert normalize_run_metadata(None) is None
+
+    def test_strips_whitespace(self) -> None:
+        assert normalize_run_metadata({" customer ": "  acme  "}) == {"customer": "acme"}
+
+    def test_skips_empty_values(self) -> None:
+        assert normalize_run_metadata({"a": "v", "b": "", "c": "   "}) == {"a": "v"}
+
+    def test_all_empty_returns_none(self) -> None:
+        assert normalize_run_metadata({"": "", "  ": "  "}) is None
+
+    def test_reserved_namespace_keys_are_filtered(self) -> None:
+        assert normalize_run_metadata({"env": "prod", " skyvern.platform ": "shop"}) == {"env": "prod"}
+
+    def test_all_reserved_namespace_keys_return_none(self) -> None:
+        assert normalize_run_metadata({"skyvern.platform": "shop"}) is None
+
+    @pytest.mark.parametrize("value", ["__untagged__", "__other__"])
+    def test_reserved_analytics_values_raise(self, value: str) -> None:
+        # run_metadata becomes run tags, so it reaches the same rollup as the tag endpoints.
+        with pytest.raises(ValueError, match="reserved"):
+            normalize_run_metadata({"cost_center": value})
+
+    def test_reserved_value_under_a_reserved_key_is_filtered_not_raised(self) -> None:
+        # The skyvern.* entry is dropped before the value check, so it can't raise on an
+        # entry that was never going to be written.
+        assert normalize_run_metadata({"skyvern.platform": "__other__", "env": "prod"}) == {"env": "prod"}
+
+    def test_over_max_keys_raises(self) -> None:
+        too_many = {f"k{i}": "v" for i in range(RUN_METADATA_MAX_KEYS + 1)}
+        with pytest.raises(ValueError, match="at most"):
+            normalize_run_metadata(too_many)
+
+    def test_key_too_long_raises(self) -> None:
+        with pytest.raises(ValueError, match="keys must be at most"):
+            normalize_run_metadata({"k" * (RUN_METADATA_MAX_KEY_LENGTH + 1): "v"})
+
+    def test_value_too_long_raises(self) -> None:
+        with pytest.raises(ValueError, match="values must be at most"):
+            normalize_run_metadata({"k": "v" * (RUN_METADATA_MAX_VALUE_LENGTH + 1)})
+
+    def test_run_metadata_permits_punctuation_in_keys(self) -> None:
+        # Existing shipped behavior: run_metadata does NOT restrict key characters.
+        # Only the tag validators apply the stricter regex.
+        assert normalize_run_metadata({"weird:key": "v"}) == {"weird:key": "v"}
+        assert normalize_run_metadata({"k": "value,with,commas"}) == {"k": "value,with,commas"}
+
+
+class TestNormalizeOptionalTagKey:
+    def test_none_is_standalone(self) -> None:
+        # Null/blank key == standalone label (no group).
+        assert normalize_optional_tag_key(None) is None
+        assert normalize_optional_tag_key("") is None
+        assert normalize_optional_tag_key("   ") is None
+
+    def test_strips_whitespace(self) -> None:
+        assert normalize_optional_tag_key(" env ") == "env"
+
+    def test_non_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be a string"):
+            normalize_optional_tag_key(1)
+
+    def test_key_too_long_raises(self) -> None:
+        with pytest.raises(ValueError, match="keys must be at most"):
+            normalize_optional_tag_key("k" * (TAG_KEY_MAX_LENGTH + 1))
+
+    @pytest.mark.parametrize(
+        "key",
+        ["env", "customer.id", "team_name", "use-case", "Env", "k1", "a", "A1.b-c_d"],
+    )
+    def test_valid_keys_accepted(self, key: str) -> None:
+        assert normalize_optional_tag_key(key) == key
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "key:with:colons",
+            "key,with,commas",
+            "key/with/slashes",
+            "key with space",
+            "_leading_underscore",
+            ".leading.dot",
+            "-leading-dash",
+        ],
+    )
+    def test_invalid_keys_rejected(self, key: str) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            normalize_optional_tag_key(key)
+
+    @pytest.mark.parametrize("key", ["skyvern.trigger_type", "skyvern.managed", "skyvern.foo"])
+    def test_skyvern_prefix_rejected(self, key: str) -> None:
+        with pytest.raises(ValueError, match="reserved"):
+            normalize_optional_tag_key(key)
+
+    def test_skyvern_inside_key_allowed(self) -> None:
+        assert normalize_optional_tag_key("my-skyvern") == "my-skyvern"
+
+    def test_bare_skyvern_key_allowed(self) -> None:
+        # 'skyvern' without the dot separator is not the reserved prefix.
+        assert normalize_optional_tag_key("skyvern") == "skyvern"
+
+
+class TestNormalizeOptionalSystemTagKey:
+    def test_reserved_key_shape_is_valid_for_system_writers(self) -> None:
+        assert normalize_optional_system_tag_key(" skyvern.platform ") == "skyvern.platform"
+
+    def test_non_reserved_key_rejected(self) -> None:
+        with pytest.raises(ValueError, match="reserved"):
+            normalize_optional_system_tag_key("env")
+
+    def test_bad_shape_still_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must match"):
+            normalize_optional_system_tag_key("skyvern bad")
+
+
+class TestNormalizeTagValue:
+    def test_strips_whitespace(self) -> None:
+        assert normalize_tag_value("  prod  ") == "prod"
+
+    def test_empty_raises(self) -> None:
+        # The label (value) is always required.
+        with pytest.raises(ValueError, match="required"):
+            normalize_tag_value("   ")
+
+    def test_non_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be a string"):
+            normalize_tag_value(1)
+
+    def test_value_too_long_raises(self) -> None:
+        with pytest.raises(ValueError, match="values must be at most"):
+            normalize_tag_value("v" * (TAG_VALUE_MAX_LENGTH + 1))
+
+    def test_comma_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not contain ','"):
+            normalize_tag_value("value,with,comma")
+
+    def test_colon_allowed(self) -> None:
+        # `:` is fine in values: the ?tags= parser splits on the first ':' only.
+        assert normalize_tag_value("staging:us-east-1") == "staging:us-east-1"
+
+    def test_value_allows_other_punctuation(self) -> None:
+        assert normalize_tag_value("value with spaces.and-dashes_and!special") == (
+            "value with spaces.and-dashes_and!special"
+        )
+
+
+class TestNormalizeOptionalTagValue:
+    def test_none_and_blank_pass_through(self) -> None:
+        assert normalize_optional_tag_value(None) is None
+        assert normalize_optional_tag_value("") is None
+        assert normalize_optional_tag_value("   ") is None
+
+    def test_valid_value_trimmed(self) -> None:
+        assert normalize_optional_tag_value("  prod ") == "prod"
+
+    def test_comma_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not contain ','"):
+            normalize_optional_tag_value("a,b")
+
+
+class TestNormalizeTagDescription:
+    def test_none_passes_through(self) -> None:
+        assert normalize_tag_description(None) is None
+
+    def test_strips_whitespace(self) -> None:
+        assert normalize_tag_description("  hello  ") == "hello"
+
+    def test_empty_after_strip_returns_none(self) -> None:
+        assert normalize_tag_description("   ") is None
+
+    def test_over_max_length_raises(self) -> None:
+        with pytest.raises(ValueError, match="at most"):
+            normalize_tag_description("x" * (TAG_DESCRIPTION_MAX_LENGTH + 1))
+
+
+@pytest.mark.parametrize("value", ["__untagged__", "__other__"])
+def test_run_creation_request_rejects_reserved_run_metadata_value(value: str) -> None:
+    """Entry-point check that the validator is actually wired to the public request model,
+    not merely correct in isolation."""
+    with pytest.raises(ValidationError):
+        WorkflowRunRequest(workflow_id="wpid_x", run_metadata={"cost_center": value})
+
+    ok = WorkflowRunRequest(workflow_id="wpid_x", run_metadata={"cost_center": f"prod{value}eu"})
+    assert ok.run_metadata == {"cost_center": f"prod{value}eu"}
