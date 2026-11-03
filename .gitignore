@@ -31,3 +31,6 @@ out/
 *.mp4
 *.mov
 *.webm
+
+# Salidas generadas por servidor_nube.py / vision_local.py (cuadros, audio, videos)
+datos/
