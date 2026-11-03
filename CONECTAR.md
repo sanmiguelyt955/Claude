@@ -17,9 +17,16 @@ En https://github.com/sanmiguelyt955/claude/settings/secrets/actions → **New r
 Opcional, en la pestaña **Variables**: `HF_SPACE` = `tu-usuario/video-nube` (si no la pones, se usa ese nombre).
 Opcional, como secreto del Space (en Hugging Face): `YTDLP_COOKIES` (cookies de YouTube en formato Netscape) si quieres analizar enlaces de YouTube. Sin cookies, YouTube suele bloquear las descargas desde servidores.
 
-## 3. Desplegar
-El despliegue se lanza solo en cada push que toque el servidor. Para lanzarlo ya:
-GitHub → **Actions** → **Desplegar video-nube en Hugging Face** → abre la última ejecución → **Re-run all jobs**.
+## 3. Desplegar (elige una vía)
+**Vía A: GitHub Actions (automática).** El despliegue se lanza solo en cada push que toque el servidor.
+- Si en la pestaña **Actions** del repo no aparece ninguna ejecución, Actions está desactivado. Actívalo en Settings → Actions → General → **Allow all actions**.
+- Para lanzarlo ya: **Actions** → **Desplegar video-nube en Hugging Face** → última ejecución → **Re-run all jobs**.
+
+**Vía B: desde una sesión de Claude Code en la web.**
+1. En el menú del entorno de la nube (barra de título de la sesión → **Edit**), añade como variables de entorno `HF_TOKEN` (el token *Write* del paso 1) y `MCP_CLAVE`.
+2. Abre una sesión nueva y pide «despliega video-nube». Claude ejecuta `python nube/desplegar.py`.
+
+Nunca pegues el token en el chat.
 Al terminar, el registro muestra la URL del Space. El primer arranque tarda unos 10-15 min (construye la imagen y descarga unos 12 GB de modelos).
 
 Comprueba que responde: `https://<usuario>-video-nube.hf.space/` → `{"estado": "ok"}`.
