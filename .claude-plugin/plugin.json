@@ -1,0 +1,27 @@
+{
+  "name": "video-claude",
+  "version": "1.0.0",
+  "description": "Ver y oír videos y audios como Gemini (ver-video + conector video-nube) y editar videos profesionalmente (video-editor).",
+  "author": {
+    "name": "sanmiguelyt955",
+    "url": "https://github.com/sanmiguelyt955"
+  },
+  "repository": "https://github.com/sanmiguelyt955/claude",
+  "license": "MIT",
+  "keywords": [
+    "video",
+    "audio",
+    "mcp",
+    "transcripcion",
+    "edicion-de-video"
+  ],
+  "skills": "./.claude/skills",
+  "mcpServers": {
+    "video-nube": {
+      "type": "http",
+      "url": "${VIDEO_NUBE_URL}"
+    }
+  },
+  "icon": "./.claude-plugin/icon.png",
+  "privacyPolicyUrl": "https://github.com/sanmiguelyt955/claude/blob/main/PRIVACIDAD.md"
+}

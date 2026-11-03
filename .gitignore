@@ -34,3 +34,7 @@ out/
 
 # Salidas generadas por servidor_nube.py / vision_local.py (cuadros, audio, videos)
 datos/
+
+# Paquetes generados que sí se versionan (para descargarlos desde GitHub)
+!dist/
+__pycache__/

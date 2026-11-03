@@ -1,0 +1,62 @@
+name: Desplegar video-nube en Hugging Face
+
+# Sube el servidor MCP a un Space de Hugging Face (lo crea si no existe).
+# Configuración (GitHub > Settings > Secrets and variables > Actions):
+#   secreto  HF_TOKEN   token de Hugging Face con permiso "write" (obligatorio)
+#   secreto  MCP_CLAVE  clave secreta que irá en la URL del conector (recomendado)
+#   variable HF_SPACE   p. ej. "tu-usuario/video-nube" (opcional; por defecto <usuario>/video-nube)
+on:
+  push:
+    branches: [main, claude/video-editing-skill-6wybxb]
+    paths:
+      - "servidor_nube.py"
+      - "vision_local.py"
+      - "escucha_local.py"
+      - "oido_modelo.py"
+      - "nube/**"
+      - ".github/workflows/desplegar-hf-space.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desplegar-hf-space
+  cancel-in-progress: true
+
+jobs:
+  desplegar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar configuración
+        id: cfg
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::warning::Falta el secreto HF_TOKEN: no se despliega. Añádelo en Settings > Secrets and variables > Actions."
+            echo "listo=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=si" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.cfg.outputs.listo == 'si'
+        with:
+          python-version: "3.12"
+
+      - name: Comprobar sintaxis
+        if: steps.cfg.outputs.listo == 'si'
+        run: python -m py_compile servidor_nube.py vision_local.py escucha_local.py oido_modelo.py nube/desplegar.py
+
+      - name: Desplegar
+        if: steps.cfg.outputs.listo == 'si'
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          MCP_CLAVE: ${{ secrets.MCP_CLAVE }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          pip install -q "huggingface_hub>=0.30"
+          python nube/desplegar.py

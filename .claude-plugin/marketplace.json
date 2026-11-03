@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sanmiguel",
+  "description": "Herramientas propias de video para Claude Code y Cowork.",
+  "owner": {
+    "name": "sanmiguelyt955",
+    "url": "https://github.com/sanmiguelyt955"
+  },
+  "plugins": [
+    {
+      "name": "video-claude",
+      "description": "Ver y oír videos y audios como Gemini y editar videos profesionalmente.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

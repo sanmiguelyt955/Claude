@@ -1,0 +1,12 @@
+# Versiones probadas en la sesión (torch/torchaudio/torchvision CPU se instalan aparte en el Dockerfile)
+fastmcp==4.1.6
+faster-whisper==1.2.1
+transformers==5.22.1
+huggingface_hub==2.4.0
+librosa==1.0.0
+soundfile
+scikit-learn==1.9.1
+numpy
+pillow
+yt-dlp[default]
+deno

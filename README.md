@@ -55,3 +55,19 @@ Los modelos (pesos abiertos) se descargan la primera vez y después todo corre e
 Herramientas MCP nuevas: `escuchar_audio` y `preguntar_audio`. `ver_video` añade a cada cuadro su sonido, y acepta `escuchar` y `escenas` (un cuadro extra en cada corte de escena).
 
 Prueba con clips reales de ESC-50 (aplausos, perro, risa, lluvia, sirena), música a 120 BPM y voz: el detector acertó cada tramo al segundo, CLAP acertó 7 de 7, el BPM medido fue 117,5 y no hubo frases inventadas.
+
+## En la nube, Claude Code y Cowork (plugin `video-claude`)
+
+- **Servidor en la nube:** Space de Hugging Face (`nube/`), desplegado automáticamente por `.github/workflows/desplegar-hf-space.yml`. Pasos en **[CONECTAR.md](CONECTAR.md)**.
+- **Claude Code:**
+  ```
+  /plugin marketplace add sanmiguelyt955/claude
+  /plugin install video-claude@sanmiguel
+  ```
+- **Cowork / claude.ai:** conector personalizado con la URL del Space, y las skills de `dist/` (`ver-video.zip`, `video-editor.zip` o `video-claude.plugin`). Para regenerarlas: `nube/empaquetar.sh`.
+
+### Novedades del servidor
+- `oir`: **oídos de verdad**. Gemma 4 E2B (pesos abiertos, Apache 2.0, corre en el servidor) escucha el audio original, y opcionalmente ve los cuadros, y responde en lenguaje natural. Es excelente con la voz (tono, emoción, intención). Su respuesta incluye la evidencia de los detectores de hablantes y de sonidos para contrastarla.
+- **Quién habla:** diarización con WavLM. En la prueba con 3 voces reales acertó 3 hablantes y 7 de 7 turnos. Cada frase y cada cuadro llevan `H1`, `H2`…
+- **Entradas en la nube:** `subida:<id>` (con `POST /<clave>/subir`), URLs directas y enlaces de plataformas vía yt-dlp (YouTube y Vimeo suelen bloquear servidores; se pueden usar cookies con `YTDLP_COOKIES`).
+- Privacidad: [PRIVACIDAD.md](PRIVACIDAD.md).

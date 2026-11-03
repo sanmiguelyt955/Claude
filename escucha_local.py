@@ -177,6 +177,82 @@ def prosodia(p, segmentos):
     return out
 
 
+# ----------------------------------------------------------------- quién habla (diarización)
+
+MODELO_HABLANTE = "microsoft/wavlm-base-plus-sv"
+UMBRAL_MISMO_HABLANTE = 0.86   # similitud coseno recomendada para wavlm-base-plus-sv
+
+
+@lru_cache(maxsize=1)
+def _hablante():
+    from transformers import AutoFeatureExtractor, WavLMForXVector
+    return AutoFeatureExtractor.from_pretrained(MODELO_HABLANTE), WavLMForXVector.from_pretrained(MODELO_HABLANTE).eval()
+
+
+def _turnos(segmentos, pausa=0.35):
+    """Parte la transcripción en turnos: un corte en cada segmento y en cada pausa larga entre palabras."""
+    turnos = []
+    for s in segmentos:
+        pal = s.get("palabras") or [{"p": s["texto"], "t": s["inicio"]}]
+        cur = None
+        for i, w in enumerate(pal):
+            fin_w = pal[i + 1]["t"] if i + 1 < len(pal) else s["fin"]
+            if cur and w["t"] - cur["fin"] > pausa:
+                turnos.append(cur); cur = None
+            cur = cur or {"inicio": w["t"], "fin": w["t"], "palabras": []}
+            cur["palabras"].append(w["p"])
+            cur["fin"] = max(cur["fin"], min(fin_w, w["t"] + 1.5))
+        if cur:
+            turnos.append(cur)
+    return turnos
+
+
+def diarizar(p, segmentos, umbral=UMBRAL_MISMO_HABLANTE, min_dur=0.8, contexto=1.5):
+    """Quién habla: H1, H2... (H1 = quien habla primero).
+    1) turnos de voz >= 0,8 s -> embedding WavLM (x-vector) -> clustering aglomerativo por coseno:
+       así se decide cuántos hablantes hay (número automático);
+    2) turnos cortos: embedding de una ventana de 1,5 s centrada en el turno, asignada al hablante
+       más parecido (nunca crea hablantes nuevos). Devuelve (turnos, n_hablantes)."""
+    import torch
+    from sklearn.cluster import AgglomerativeClustering
+    turnos = _turnos(segmentos)
+    if not turnos:
+        return [], 0
+    fe, model = _hablante()
+    sr = 16000
+    audio = cargar(p, sr)
+
+    def emb(a, b):
+        x = audio[max(0, int(a * sr)):int(b * sr)]
+        with torch.no_grad():
+            return torch.nn.functional.normalize(model(**fe(x, sampling_rate=sr, return_tensors="pt")).embeddings, dim=-1)[0].numpy()
+
+    largos = [i for i, t in enumerate(turnos) if t["fin"] - t["inicio"] >= min_dur]
+    if not largos:   # todo es muy corto: usar ventanas de contexto para todos
+        largos = list(range(len(turnos)))
+        embs = [emb((t["inicio"] + t["fin"]) / 2 - contexto / 2, (t["inicio"] + t["fin"]) / 2 + contexto / 2) for t in turnos]
+    else:
+        embs = [emb(turnos[i]["inicio"], turnos[i]["fin"]) for i in largos]
+    etiquetas = [0] if len(embs) == 1 else list(AgglomerativeClustering(
+        n_clusters=None, metric="cosine", linkage="average", distance_threshold=1 - umbral).fit(np.stack(embs)).labels_)
+    mapa = {}
+    for i, e in sorted(zip(largos, etiquetas)):
+        turnos[i]["hablante"] = mapa.setdefault(e, f"H{len(mapa) + 1}")
+    centro = {}
+    for i, v in zip(largos, embs):
+        centro.setdefault(turnos[i]["hablante"], []).append(v)
+    centro = {h: np.mean(v, axis=0) / np.linalg.norm(np.mean(v, axis=0)) for h, v in centro.items()}
+    for t in turnos:
+        if "hablante" not in t:
+            m = (t["inicio"] + t["fin"]) / 2
+            e = emb(m - contexto / 2, m + contexto / 2)
+            t["hablante"] = max(centro, key=lambda h: float(np.dot(centro[h], e)))
+    for t in turnos:
+        t["texto"] = " ".join(t.pop("palabras")).strip()
+        t["inicio"], t["fin"] = round(t["inicio"], 2), round(t["fin"], 2)
+    return turnos, len(mapa)
+
+
 # ----------------------------------------------------------------- ver el sonido
 
 def espectrograma(p, ini, fin, destino):

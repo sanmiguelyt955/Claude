@@ -191,8 +191,7 @@ FORMATOS_AUDIO = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".flac", ".opu
 
 def _ruta_media(path):
     import vision_local as vl
-    p = Path(path)
-    p = p if p.is_absolute() else vl.RAIZ / p
+    p = vl.resolver(path)
     if not p.is_file():
         raise vl.ErrorVision(f"Falta {path}")
     if p.suffix.lower() not in FORMATOS_AUDIO | vl.FORMATOS:
@@ -227,13 +226,64 @@ def escuchar_audio(path: str, start_offset: float = 0, end_offset: float = 0, id
             E.espectrograma(p, ini, fin, esp)
         datos = {"duracion_segundos": meta["duracion_segundos"], "start_offset": ini, "end_offset": fin,
                  "idioma_detectado": trans["idioma"],
-                 "transcripcion": [{k: s[k] for k in ("id", "inicio", "fin", "inicio_mmss", "texto")}
+                 "transcripcion": [{k: s.get(k) for k in ("id", "inicio", "fin", "inicio_mmss", "hablante", "texto")}
                                    for s in trans["segmentos"] if s["fin"] > ini and s["inicio"] < fin],
+                 "hablantes": trans.get("hablantes"),
+                 "turnos": [{**t, "inicio_mmss": vl.mmss(t["inicio"])} for t in trans.get("turnos", [])
+                            if t["fin"] > ini and t["inicio"] < fin],
                  **r,
                  "por_segundo": [f"[{vl.mmss(e['t'])}] " + ", ".join(f"{a} {b:.2f}" for a, b in e["sonidos"]) + f" · {e['db']} dB"
                                  for e in ev]}
         return [json.dumps(datos, ensure_ascii=False),
                 f"Espectrograma ({ini:g}-{fin:g} s; el eje de tiempo empieza en 0):", Image(path=str(esp))]
+    except vl.ErrorVision as e:
+        raise _error(e)
+
+
+SISTEMA_OIDO = ("Eres los oídos (y, si recibes imágenes, los ojos) de otro asistente. Responde SOLO sobre lo que "
+                "realmente oyes en el audio y ves en las imágenes recibidas. Si no recibes imágenes, no describas nada "
+                "visual. Si algo no se distingue con claridad, dilo. Sé concreto y breve.")
+
+
+@mcp.tool
+def oir(path: str, pregunta: str, start_offset: float = 0, end_offset: float = 0, con_cuadros: bool = False,
+        fps: float = 0.5, idioma_respuesta: str = "español"):
+    """Oídos de verdad: un modelo multimodal abierto (Gemma 4 E2B, en el servidor, sin APIs) ESCUCHA la señal de audio original del tramo y responde a tu pregunta en lenguaje natural. Muy bueno con la VOZ: emoción, tono, ironía, acento, edad/género aparente, intención, qué dice y cómo lo dice. Con con_cuadros=True también ve los cuadros del tramo (fps) junto con el audio, para preguntas audio+video ("¿qué hace mientras dice X?"). Máx. 30 s por tramo recomendado (hasta 120 s). La respuesta incluye la evidencia del detector de sonidos (AudioSet) para contrastarla: para sonidos no verbales (sirenas, lluvia, música) confía más en esa evidencia o en preguntar_audio."""
+    import escucha_local as E
+    import oido_modelo as O
+    import vision_local as vl
+    try:
+        p = _ruta_media(path)
+        dur = _duracion(p)
+        ini = max(0.0, start_offset or 0)
+        fin = min(end_offset or min(dur, ini + 30), dur)
+        if ini >= fin:
+            raise vl.ErrorVision("Rango vacío")
+        if fin - ini > 120:
+            raise vl.ErrorVision("Tramo de más de 120 s: divídelo (el modelo escucha mejor en tramos de ≤30 s)")
+        imagenes = []
+        if con_cuadros:
+            if p.suffix.lower() not in vl.FORMATOS:
+                raise vl.ErrorVision("con_cuadros requiere un video")
+            imagenes = [str(f) for _, f in vl.cuadros(p, ini, fin, fps, "default")][:16]
+        q = pregunta
+        if imagenes:
+            q = (f"Recibes {len(imagenes)} cuadros del video (en orden, uno cada {1 / fps:g} s desde {vl.mmss(ini)}) "
+                 f"y el audio del mismo tramo. {pregunta}")
+        q += f" Responde en {idioma_respuesta}."
+        texto, seg = O.preguntar(q, E.cargar(p, 16000, ini, fin), imagenes, sistema=SISTEMA_OIDO, max_tokens=400)
+        meta = {"duracion_segundos": round(dur, 3), "tiene_audio": True}
+        ev = [e for e in vl._eventos(p, meta) if ini - 1e-6 <= e["t"] < fin]
+        evidencia = [f"[{vl.mmss(e['t'])}] " + ", ".join(f"{a} {b:.2f}" for a, b in e["sonidos"][:3]) for e in ev]
+        trans = vl.transcripcion(p, meta)
+        turnos = [f"[{vl.mmss(t['inicio'])}] {t['hablante']}: {t['texto'][:80]}" for t in trans.get("turnos", [])
+                  if t["fin"] > ini and t["inicio"] < fin]
+        return json.dumps({"respuesta": texto, "modelo": O.MODELO, "tramo": [ini, fin], "cuadros_vistos": len(imagenes),
+                           "segundos": seg,
+                           "aviso": "Contrasta la respuesta con la evidencia: el modelo es fiable con la voz (tono, emoción, "
+                                    "intención) pero puede fallar contando hablantes o identificando sonidos no verbales.",
+                           "evidencia_hablantes": {"n": trans.get("hablantes"), "turnos": turnos},
+                           "evidencia_detector_sonidos": evidencia}, ensure_ascii=False)
     except vl.ErrorVision as e:
         raise _error(e)
 
@@ -253,5 +303,82 @@ def preguntar_audio(path: str, descripciones: list[str], start_offset: float = 0
         raise _error(e)
 
 
+# ---------------------------------------------------------------------------
+# Modo nube (Hugging Face Space / cualquier servidor): MCP por HTTP + subida de archivos.
+# La URL lleva una clave secreta: https://<servidor>/<MCP_CLAVE>/mcp  y  .../<MCP_CLAVE>/subir
+
+import os as _os
+
+CLAVE = _os.environ.get("MCP_CLAVE", "").strip().strip("/")
+PREFIJO = f"/{CLAVE}" if CLAVE else ""
+MAX_SUBIDA_MB = float(_os.environ.get("MAX_SUBIDA_MB", 2000))
+
+
+@mcp.custom_route("/", methods=["GET"])
+async def _estado(request):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"servicio": "video-nube", "estado": "ok",
+                         "mcp": "/<clave>/mcp" if CLAVE else "/mcp", "subir": "POST /<clave>/subir"})
+
+
+@mcp.custom_route(f"{PREFIJO}/subir", methods=["POST"])
+async def _subir(request):
+    """Sube un archivo (multipart 'archivo' o cuerpo binario con ?nombre=x.mp4). Devuelve {"path": "subida:<id>"}."""
+    import re
+    import secrets
+    from starlette.responses import JSONResponse
+    import vision_local as vl
+    vl.SUBIDAS.mkdir(parents=True, exist_ok=True)
+    ident = secrets.token_hex(8)
+    nombre = request.query_params.get("nombre", "")
+    ctype = request.headers.get("content-type", "")
+    if ctype.startswith("multipart/form-data"):
+        form = await request.form(max_part_size=int(MAX_SUBIDA_MB * 1e6))
+        f = form.get("archivo") or next((v for v in form.values() if hasattr(v, "read")), None)
+        if f is None:
+            return JSONResponse({"error": "Falta el campo 'archivo'"}, status_code=400)
+        nombre = nombre or f.filename or "archivo.mp4"
+        ext = re.sub(r"[^a-z0-9.]", "", Path(nombre).suffix.lower()) or ".mp4"
+        destino = vl.SUBIDAS / f"{ident}{ext}"
+        with open(destino, "wb") as out:
+            while chunk := await f.read(1 << 20):
+                out.write(chunk)
+    else:
+        ext = re.sub(r"[^a-z0-9.]", "", Path(nombre or "archivo.mp4").suffix.lower()) or ".mp4"
+        destino = vl.SUBIDAS / f"{ident}{ext}"
+        total = 0
+        with open(destino, "wb") as out:
+            async for chunk in request.stream():
+                total += len(chunk)
+                if total > MAX_SUBIDA_MB * 1e6:
+                    out.close(); destino.unlink(missing_ok=True)
+                    return JSONResponse({"error": f"Supera {MAX_SUBIDA_MB:g} MB"}, status_code=413)
+                out.write(chunk)
+    return JSONResponse({"path": f"subida:{ident}", "bytes": destino.stat().st_size})
+
+
 if __name__ == "__main__":
-    mcp.run()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--http", action="store_true", help="servir por HTTP (nube) en vez de stdio")
+    ap.add_argument("--port", type=int, default=int(_os.environ.get("PORT", 7860)))
+    a = ap.parse_args()
+    if a.http:
+        if _os.environ.get("PRECARGAR_MODELOS") == "1":
+            import threading
+
+            def _precargar():
+                from huggingface_hub import snapshot_download
+                import escucha_local as E
+                import oido_modelo as O
+                for m in ["Systran/faster-whisper-small", E.MODELO_EVENTOS, E.MODELO_CLAP, E.MODELO_EMOCION,
+                          E.MODELO_HABLANTE, O.MODELO]:
+                    try:
+                        snapshot_download(m)
+                        print(f"[precarga] {m} listo", flush=True)
+                    except Exception as e:  # sin red o sin permiso: se descargará al usarlo
+                        print(f"[precarga] {m} falló: {e}", flush=True)
+            threading.Thread(target=_precargar, daemon=True).start()
+        mcp.run(transport="http", host="0.0.0.0", port=a.port, path=f"{PREFIJO}/mcp")
+    else:
+        mcp.run()

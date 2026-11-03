@@ -20,7 +20,12 @@ Todos los archivos generados se escriben dentro de datos/vision/ del repositorio
 import hashlib
 import json
 import math
+import os
+import re
+import shutil
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent
@@ -53,9 +58,73 @@ def leer_wav_16k(ruta):
         return np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
 
 
+SUBIDAS = RAIZ / "datos" / "subidas"
+DESCARGAS = RAIZ / "datos" / "descargas"
+MAX_DESCARGA_MB = float(os.environ.get("MAX_DESCARGA_MB", 2000))
+
+
+def resolver(entrada):
+    """Ruta local | 'subida:<id>' (archivo subido a /subir) | URL http(s) (directa o YouTube/TikTok/Instagram
+    vía yt-dlp). Devuelve un Path local; las descargas se guardan en caché en datos/descargas/."""
+    entrada = str(entrada).strip()
+    if entrada.startswith("subida:"):
+        ident = re.sub(r"[^A-Za-z0-9._-]", "", entrada[7:])
+        hits = sorted(SUBIDAS.glob(ident + "*"))
+        if not hits:
+            raise ErrorVision(f"No existe la subida {ident}")
+        return hits[0]
+    if re.match(r"https?://", entrada):
+        DESCARGAS.mkdir(parents=True, exist_ok=True)
+        clave = hashlib.sha1(entrada.encode()).hexdigest()[:16]
+        hechos = [f for f in DESCARGAS.glob(clave + ".*") if not f.name.endswith(".part")]
+        if hechos:
+            return hechos[0]
+        directo = re.search(r"\.(mp4|mov|webm|mkv|avi|m4v|mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)", entrada, re.I)
+        if not directo and shutil.which("yt-dlp"):
+            cmd = ["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
+                   "--merge-output-format", "mp4", "--max-filesize", f"{int(MAX_DESCARGA_MB)}M",
+                   "-o", str(DESCARGAS / f"{clave}.%(ext)s")]
+            cookies = os.environ.get("YTDLP_COOKIES", "").strip()   # opcional: cookies Netscape (secreto del Space)
+            if cookies:
+                fc = DESCARGAS / ".cookies.txt"
+                fc.write_text(cookies + "\n", encoding="utf-8")
+                os.chmod(fc, 0o600)
+                cmd += ["--cookies", str(fc)]
+            r = subprocess.run(cmd + [entrada], capture_output=True, text=True)
+            if r.returncode != 0:
+                err = r.stderr.strip()[-300:]
+                pista = (" Las plataformas (YouTube, Vimeo, Instagram...) suelen bloquear descargas desde servidores: "
+                         "sube el archivo a /subir o usa un enlace directo al .mp4.") if ("403" in err or "logged-in" in err
+                                                                                        or "Sign in" in err) else ""
+                raise ErrorVision(f"No se pudo descargar con yt-dlp: {err}{pista}")
+        else:
+            ext = (directo.group(1).lower() if directo else "mp4")
+            destino = DESCARGAS / f"{clave}.{ext}"
+            req = urllib.request.Request(entrada, headers={"User-Agent": "Mozilla/5.0 (ver-video)"})
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r, open(str(destino) + ".part", "wb") as f:
+                    total = 0
+                    while True:
+                        b = r.read(1 << 20)
+                        if not b:
+                            break
+                        total += len(b)
+                        if total > MAX_DESCARGA_MB * 1e6:
+                            raise ErrorVision(f"El archivo supera {MAX_DESCARGA_MB:g} MB")
+                        f.write(b)
+            except urllib.error.URLError as e:
+                raise ErrorVision(f"No se pudo descargar {entrada}: {e}")
+            Path(str(destino) + ".part").replace(destino)
+        hechos = [f for f in DESCARGAS.glob(clave + ".*") if not f.name.endswith(".part")]
+        if not hechos:
+            raise ErrorVision("La descarga no produjo ningún archivo")
+        return hechos[0]
+    p = Path(entrada)
+    return p if p.is_absolute() else RAIZ / p
+
+
 def _ruta(video_path):
-    p = Path(video_path)
-    p = p if p.is_absolute() else RAIZ / p
+    p = resolver(video_path)
     if not p.is_file():
         raise ErrorVision(f"Falta {video_path}")
     if p.suffix.lower() not in FORMATOS:
@@ -99,7 +168,7 @@ def transcripcion(p, meta, idioma="auto"):
     """Audio mono 16 kHz -> faster-whisper small (local). Cacheada por video."""
     carpeta = SALIDA / _id(p)
     carpeta.mkdir(parents=True, exist_ok=True)
-    cache = carpeta / f"transcripcion_v2_{idioma}.json"
+    cache = carpeta / f"transcripcion_v3_{idioma}.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
     if not meta["tiene_audio"]:
@@ -122,6 +191,7 @@ def transcripcion(p, meta, idioma="auto"):
                 "palabras": [{"p": w.word.strip(), "t": round(w.start, 2)} for w in (s.words or [])],
             })
         datos = {"idioma": info.language, "segmentos": segmentos}
+        _hablantes(p, datos)
     cache.write_text(json.dumps(datos, ensure_ascii=False, indent=1), encoding="utf-8")
     return datos
 
@@ -158,11 +228,37 @@ def cuadros(p, ini, fin, fps, media_resolution):
     return [(t, f) for t, f in lista if f.is_file()]
 
 
+def _hablantes(p, datos):
+    """Quién habla (escucha_local.diarizar). Marca cada palabra y segmento con H1, H2..."""
+    try:
+        import escucha_local as E
+    except ImportError:      # sin dependencias de escucha: se omite
+        return
+    turnos, n = E.diarizar(p, datos["segmentos"])
+    datos["hablantes"], datos["turnos"] = n, turnos
+    for s in datos["segmentos"]:
+        cuenta = {}
+        for w in s["palabras"]:
+            t = next((x for x in turnos if x["inicio"] - 0.05 <= w["t"] <= x["fin"] + 0.05), None)
+            w["h"] = t["hablante"] if t else None
+            if w["h"]:
+                cuenta[w["h"]] = cuenta.get(w["h"], 0) + 1
+        s["hablante"] = max(cuenta, key=cuenta.get) if cuenta else None
+
+
 def _voz_en(trans, a, b):
-    """Palabras dichas en [a, b)."""
-    pal = [w["p"] for s in trans["segmentos"] if s["fin"] > a and s["inicio"] < b
+    """Palabras dichas en [a, b); con varios hablantes: 'H1: ... / H2: ...'."""
+    pal = [w for s in trans["segmentos"] if s["fin"] > a and s["inicio"] < b
            for w in s["palabras"] if a <= w["t"] < b]
-    return " ".join(pal).strip()
+    if trans.get("hablantes", 1) <= 1:
+        return " ".join(w["p"] for w in pal).strip()
+    partes = []
+    for w in pal:
+        if partes and partes[-1][0] == w.get("h"):
+            partes[-1][1].append(w["p"])
+        else:
+            partes.append((w.get("h"), [w["p"]]))
+    return " / ".join(f"{h}: {' '.join(ws)}" if h else " ".join(ws) for h, ws in partes).strip()
 
 
 def _estimacion(n_cuadros, segundos, media_resolution):
@@ -275,8 +371,10 @@ def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resoluti
         **_estimacion(len(linea), fin - ini, media_resolution),
         "audio": _resumen_audio(p, meta, ev, trans, ini, fin) if escuchar and meta["tiene_audio"] else None,
         "linea_de_tiempo": linea,
-        "transcripcion": [{k: s[k] for k in ("id", "inicio", "fin", "inicio_mmss", "texto")}
+        "transcripcion": [{k: s.get(k) for k in ("id", "inicio", "fin", "inicio_mmss", "hablante", "texto")}
                           for s in trans["segmentos"] if s["fin"] > ini and s["inicio"] < fin],
+        "hablantes": trans.get("hablantes"),
+        "turnos": [{**t, "inicio_mmss": mmss(t["inicio"])} for t in trans.get("turnos", []) if t["fin"] > ini and t["inicio"] < fin],
     }
     if escuchar and meta["tiene_audio"]:
         import escucha_local as E
@@ -295,7 +393,9 @@ def ver_agentic(video_path, idioma="auto", escuchar=True):
     trans = transcripcion(p, meta, idioma)
     resultado = {
         **meta, "processing": "agentic", "idioma_detectado": trans["idioma"],
-        "segmentos": [{k: s[k] for k in ("id", "inicio", "fin", "inicio_mmss", "texto")} for s in trans["segmentos"]],
+        "segmentos": [{k: s.get(k) for k in ("id", "inicio", "fin", "inicio_mmss", "hablante", "texto")} for s in trans["segmentos"]],
+        "hablantes": trans.get("hablantes"),
+        "turnos": [{**t, "inicio_mmss": mmss(t["inicio"])} for t in trans.get("turnos", [])],
         "siguiente_paso": "Pide solo los tramos visuales que necesites con cargar_segmento(video_path, id=... "
                           "o inicio/fin, fps, media_resolution).",
     }
