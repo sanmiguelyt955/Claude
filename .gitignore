@@ -24,3 +24,10 @@ Thumbs.db
 # Tipos que genera Claude Code al cargar un mod
 mods/*/.claude-plugin/types/
 mods/*/tsconfig.json
+
+# Videos del editor (pesados, regenerables)
+work/
+out/
+*.mp4
+*.mov
+*.webm
