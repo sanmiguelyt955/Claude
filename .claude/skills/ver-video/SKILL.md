@@ -1,33 +1,38 @@
 ---
 name: ver-video
-description: Ve y entiende videos en local, de la misma forma que Gemini según su documentación pública. Toma 1 cuadro por segundo con marcas MM:SS, alinea la voz transcrita con cada cuadro, permite fps propio, recorte inicio/fin, media_resolution low/default y un modo agentic (primero la transcripción, luego solo los tramos necesarios). Úsala SIEMPRE que el usuario pida ver, analizar, describir, resumir o buscar momentos en un video (archivo local), o cuando el conector de Gemini Video falle. Sin APIs en la nube: ffmpeg + faster-whisper.
+description: Ve y OYE videos y audios en local, como Gemini según su documentación pública. Cada segundo con [MM:SS] trae el cuadro, lo que se dice (Whisper con VAD, sin frases inventadas) y lo que suena (527 tipos de sonido de AudioSet: música, perro, lluvia, aplausos, sirena, risa...) con su volumen. Incluye BPM/beats, silencios, tono/velocidad/emoción de la voz, espectrograma, preguntas libres al audio (CLAP), fps propio, recorte, cortes de escena y modo agentic para videos largos. Úsala SIEMPRE que el usuario pida ver, escuchar, analizar, describir, resumir o buscar momentos en un video o audio, o cuando falle el conector de Gemini Video. Sin APIs en la nube.
 ---
 
-# ver-video (visión de video estilo Gemini, 100 % local)
+# ver-video: ver y oír como Gemini, 100 % local
 
-Reimplementación clean room de cómo Google documenta que Gemini procesa video
+Reimplementación clean room de lo que Google documenta para Gemini
 (https://ai.google.dev/gemini-api/docs/video-understanding). No usa Gemini, Google ni APIs de pago.
+Claude no acepta audio: el sonido se traduce a texto (transcripción, etiquetas de sonido, música, voz) y a imagen (espectrograma).
 
-## Herramientas MCP (servidor `video-nube`, `.mcp.json` en la raíz)
-- `ver_video(video_path, processing="static", fps=1, start_offset=0, end_offset=0, media_resolution="default", idioma="auto")`
-  - **static**: devuelve el resumen (duración, resolución, fps, tokens estimados con las cifras de Google)
-    y después, por cada cuadro, `[MM:SS] voz: «…»` seguido de la imagen. Es lo mismo que Gemini tiene en contexto.
-  - **agentic**: devuelve solo la transcripción con segmentos `seg_000…` (barato). Después usa `cargar_segmento`.
-- `cargar_segmento(video_path, id="seg_003" | inicio, fin, fps, media_resolution)`: cuadros de ese tramo.
-- `analizar_video_nube()`: análisis fijo de `datos/videos/prueba.mp4` (cuadros cada 2 s + transcripción) en JSON.
+## Herramientas MCP (servidor `video-nube`, ver `.mcp.json`)
+| Herramienta | Para qué |
+|---|---|
+| `ver_video(video_path, processing="static", fps=1, start_offset, end_offset, media_resolution, escuchar=True, escenas=False)` | **static**: resumen + espectrograma + por cada cuadro `[MM:SS] voz: «…» · sonido: … · dB` y la imagen. **agentic**: transcripción + mapa de sonidos + cortes de escena, sin imágenes |
+| `cargar_segmento(video_path, id \| inicio, fin, fps, …)` | Modo agentic: cuadros y sonido solo del tramo pedido |
+| `escuchar_audio(path, start_offset, end_offset)` | Audio o pista de video (mp3, wav, m4a…): transcripción, sonidos por segundo, tramos, silencios, BPM, voz y espectrograma |
+| `preguntar_audio(path, descripciones[], start_offset, end_offset)` | Pregunta libre con CLAP: `["a dog barking", "a cat", "rain"]` → probabilidad de cada una. Las descripciones van en inglés |
+| `analizar_video_nube()` | Análisis fijo de `datos/videos/prueba.mp4` (cuadros cada 2 s + transcripción) |
 
-Sin MCP, usa el CLI: `python vision_local.py <video> [--processing agentic] [--fps 2] [--start 30 --end 60] [--res low] [--segmento seg_002]`
-Imprime el JSON; mira los cuadros con Read sobre las rutas de `linea_de_tiempo`.
+Sin MCP: `python vision_local.py <video> [--processing agentic] [--fps 2] [--start 30 --end 60] [--res low] [--escenas] [--sin-audio]`
+y `python escucha_local.py <audio|video> [--preguntar "a dog" "rain" --start 5 --end 10]`.
 
-## Cómo elegir (igual que las recomendaciones de Google)
-1. Video corto (≤ 2 min): `static` a 1 FPS.
-2. Acción rápida o cortes de edición: sube `fps` (2-5) solo en el tramo que importa (`start_offset`/`end_offset`).
-3. Video largo (> 5-10 min) o pregunta concreta: `agentic`. Lee la transcripción y carga solo los tramos relevantes.
-4. Mucho video y poco detalle: `media_resolution="low"` (384 px; 66 tokens/cuadro en Gemini).
-5. Límite de 120 cuadros por respuesta: si lo supera, la herramienta te pide `agentic`, bajar fps o recortar.
+## Cómo elegir (las recomendaciones de Google y lo que hemos medido)
+1. Video corto (≤ 2 min): `static` a 1 FPS, con escucha.
+2. Acción rápida o edición con muchos cortes: `escenas=True`, o sube `fps` (2-5) solo en el tramo importante.
+3. Video largo (> 5-10 min) o pregunta concreta: `agentic`. Lee la transcripción, los tramos sonoros y los cortes, y carga solo los tramos necesarios.
+4. Duda sobre un sonido concreto: confírmalo con `preguntar_audio` dando 3-6 alternativas plausibles.
+5. Ritmo y edición: usa `bpm` y `beats` de los tramos musicales.
+6. Hay un máximo de 120 cuadros por respuesta. Si se pasa, usa agentic, baja fps o recorta.
 
 ## Al responder
-- Cita momentos con `MM:SS`, como Gemini.
-- Distingue lo que **se ve** (cuadros) de lo que **se dice** (transcripción).
-- Entre cuadros hay huecos: no afirmes lo que pasa entre dos muestras. Si importa, vuelve a cargar con más fps.
-- Salidas en `datos/vision/<id>/` (no van a git). La transcripción se guarda en caché por video.
+- Cita momentos como `MM:SS`.
+- Separa lo que **se ve** (cuadros), lo que **se dice** (transcripción) y lo que **suena** (sonidos, música).
+- Las etiquetas de sonido son probabilidades: por debajo de 0.3, dilo con cautela o confírmalo con CLAP.
+- La emoción de la voz (neutral, alegre, enfadado, triste) es orientativa.
+- No afirmes lo que pasa entre dos cuadros. Si importa, recarga con más fps.
+- La primera pasada de un video tarda en CPU aproximadamente su duración: descarga los modelos una vez y después usa la caché en `datos/vision/<id>/`.

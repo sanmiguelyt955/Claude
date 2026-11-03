@@ -39,3 +39,19 @@ Herramientas MCP añadidas al mismo servidor `video-nube`:
 
 CLI: `python vision_local.py video.mp4 --fps 2 --start 30 --end 60 --res low`
 Skill para Claude Code: `.claude/skills/ver-video/SKILL.md`. Las salidas van a `datos/vision/` (ignorado por git).
+
+## Que Claude "oiga" el audio (local)
+
+`escucha_local.py` traduce el sonido a texto e imágenes, porque Claude no acepta audio:
+- **Qué suena cada segundo**: AST entrenado en AudioSet (527 clases: música, perro, lluvia, aplausos, sirena, risa, motor…) y volumen en dB.
+- **Preguntas libres**: CLAP puntúa descripciones como `"a dog barking"` frente a `"rain"`.
+- **Música**: BPM y beats (librosa). **Silencios.** **Voz**: tono (Hz), volumen, palabras por segundo y emoción.
+- **Espectrograma** como imagen, con eje de tiempo.
+- Whisper con VAD: ya no inventa frases sobre música, ruido o silencio.
+
+Instalación extra: `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements-escucha.txt`.
+Los modelos (pesos abiertos) se descargan la primera vez y después todo corre en CPU.
+
+Herramientas MCP nuevas: `escuchar_audio` y `preguntar_audio`. `ver_video` añade a cada cuadro su sonido, y acepta `escuchar` y `escenas` (un cuadro extra en cada corte de escena).
+
+Prueba con clips reales de ESC-50 (aplausos, perro, risa, lluvia, sirena), música a 120 BPM y voz: el detector acertó cada tramo al segundo, CLAP acertó 7 de 7, el BPM medido fue 117,5 y no hubo frases inventadas.

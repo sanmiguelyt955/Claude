@@ -99,7 +99,7 @@ def transcripcion(p, meta, idioma="auto"):
     """Audio mono 16 kHz -> faster-whisper small (local). Cacheada por video."""
     carpeta = SALIDA / _id(p)
     carpeta.mkdir(parents=True, exist_ok=True)
-    cache = carpeta / f"transcripcion_{idioma}.json"
+    cache = carpeta / f"transcripcion_v2_{idioma}.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
     if not meta["tiene_audio"]:
@@ -109,7 +109,11 @@ def transcripcion(p, meta, idioma="auto"):
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(p), "-vn", "-ac", "1", "-ar", "16000", str(wav)], check=True)
         from faster_whisper import WhisperModel
         modelo = WhisperModel("small", device="cpu", compute_type="int8")
-        segs, info = modelo.transcribe(leer_wav_16k(wav), language=None if idioma == "auto" else idioma, word_timestamps=True)
+        # VAD: solo transcribe donde hay voz (evita que Whisper "alucine" texto en música, ruidos o silencio)
+        segs, info = modelo.transcribe(leer_wav_16k(wav), language=None if idioma == "auto" else idioma,
+                                       word_timestamps=True, vad_filter=True,
+                                       vad_parameters={"min_silence_duration_ms": 500})
+        segs = [s for s in segs if s.no_speech_prob < 0.6 and s.avg_logprob > -1.0]
         segmentos = []
         for i, s in enumerate(segs):
             segmentos.append({
@@ -166,9 +170,76 @@ def _estimacion(n_cuadros, segundos, media_resolution):
             "regla": f"{TOKENS_CUADRO[media_resolution]} tokens/cuadro + {TOKENS_AUDIO_SEG} tokens/s de audio"}
 
 
+# ----------------------------------------------------------------- audio no verbal (escucha_local)
+
+def _eventos(p, meta):
+    """Qué suena cada segundo (AST/AudioSet), cacheado por video."""
+    f = SALIDA / _id(p) / "eventos.json"
+    if f.is_file():
+        return json.loads(f.read_text(encoding="utf-8"))
+    if not meta["tiene_audio"]:
+        ev = []
+    else:
+        import escucha_local as E
+        ev = E.eventos(p, meta["duracion_segundos"])
+    f.write_text(json.dumps(ev, ensure_ascii=False), encoding="utf-8")
+    return ev
+
+
+def _sonido_en(ev, a, b):
+    """Sonidos en [a, b): probabilidad máxima de cada etiqueta + volumen medio."""
+    sel = [e for e in ev if a - 1e-6 <= e["t"] < b - 1e-6] or [e for e in ev if e["t"] <= a < e["t"] + 1.0]
+    if not sel:
+        return None
+    best = {}
+    for e in sel:
+        for etq, pr in e["sonidos"]:
+            best[etq] = max(best.get(etq, 0), pr)
+    tops = sorted(best.items(), key=lambda z: -z[1])[:3]
+    return {"sonidos": [f"{k} {v:.2f}" for k, v in tops], "db": round(sum(e["db"] for e in sel) / len(sel), 1)}
+
+
+ETIQUETAS_MUSICA = ("Music", "music", "Song", "Singing", "Beat", "Drum", "Guitar", "Piano", "Synthesizer", "Sine wave")
+
+
+def _resumen_audio(p, meta, ev, trans, ini, fin):
+    import escucha_local as E
+    ev_r = [e for e in ev if ini - 1e-6 <= e["t"] < fin]
+    tramos = [t for t in E.resumen_eventos(ev_r, minimo=1)]
+    for t in tramos:
+        t["inicio_mmss"], t["fin_mmss"] = mmss(t["inicio"]), mmss(t["fin"])
+        if any(k in t["sonido"] for k in ETIQUETAS_MUSICA) and t["fin"] - t["inicio"] >= 3:
+            m = E.musica(p, t["inicio"], min(t["fin"], fin))
+            t["bpm"], t["beats"] = m["bpm"], m["beats"][:32]
+    segs = [s for s in trans["segmentos"] if s["fin"] > ini and s["inicio"] < fin]
+    return {
+        "tramos_sonoros": tramos,
+        "silencios": [{**s, "inicio_mmss": mmss(s["inicio"])} for s in E.silencios(ev_r)],
+        "voz": E.prosodia(p, segs) if segs else [],
+    }
+
+
+def _cortes(p, ini, fin, umbral=0.3):
+    """Tiempos (absolutos) de cambio de escena según ffmpeg (scene > umbral)."""
+    r = subprocess.run(["ffmpeg", "-v", "info", "-ss", f"{ini:.3f}", "-to", f"{fin:.3f}", "-i", str(p), "-an",
+                        "-vf", f"select='gt(scene,{umbral})',showinfo", "-f", "null", "-"],
+                       capture_output=True, text=True).stderr
+    import re
+    return [round(ini + float(x), 3) for x in re.findall(r"pts_time:([\d.]+)", r)]
+
+
+def _cuadro_en(p, t, media_resolution, carpeta):
+    f = carpeta / f"cuadro_{int(round(t * 1000)):09d}ms.jpg"
+    if not f.is_file():
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t:.3f}", "-i", str(p), "-frames:v", "1",
+                        "-vf", f"scale='min({ANCHO[media_resolution]},iw)':-2", "-q:v", "3", str(f)], check=True)
+    return f
+
+
 def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resolution="default",
-               idioma="auto", max_cuadros=MAX_CUADROS):
-    """Una sola pasada: línea de tiempo con un cuadro por paso y lo que se dice en ese paso."""
+               idioma="auto", max_cuadros=MAX_CUADROS, escuchar=True, escenas=False):
+    """Una sola pasada, como Gemini: por cada paso, el cuadro, lo que se dice y lo que suena.
+    escenas=True (mejora propia, no existe en Gemini): añade además un cuadro en cada corte de escena."""
     p = _ruta(video_path)
     meta = metadatos(p)
     ini, fin = _rango(meta, start_offset, end_offset)
@@ -178,24 +249,47 @@ def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resoluti
             f"Serían {previstos} cuadros (máximo {max_cuadros} por respuesta). Como recomienda Google para videos "
             f"largos, usa processing='agentic', o baja fps, o recorta con start_offset/end_offset.")
     trans = transcripcion(p, meta, idioma)
-    lista = cuadros(p, ini, fin, fps, media_resolution)
+    lista = [(t, f, False) for t, f in cuadros(p, ini, fin, fps, media_resolution)]
     paso = 1.0 / fps
-    linea = [{"tiempo_segundos": t, "tiempo_mmss": mmss(t), "archivo": str(f.relative_to(RAIZ)),
-              "voz": _voz_en(trans, t, t + paso)} for t, f in lista]
+    if escenas:
+        carpeta = lista[0][1].parent if lista else SALIDA / _id(p)
+        hay = {round(t, 2) for t, _, _ in lista}
+        extra = [t for t in _cortes(p, ini, fin) if all(abs(t - h) > 0.25 for h in hay)]
+        extra = extra[:max(0, max_cuadros - len(lista))]
+        lista += [(t, _cuadro_en(p, t, media_resolution, carpeta), True) for t in extra]
+        lista.sort(key=lambda z: z[0])
+    ev = _eventos(p, meta) if escuchar else []
+    linea = []
+    for i, (t, f, corte) in enumerate(lista):
+        sig = lista[i + 1][0] if i + 1 < len(lista) else min(t + paso, fin)
+        c = {"tiempo_segundos": t, "tiempo_mmss": mmss(t), "archivo": str(f.relative_to(RAIZ)),
+             "voz": _voz_en(trans, t, max(sig, t + 1e-3))}
+        if corte:
+            c["corte_de_escena"] = True
+        if escuchar:
+            c["sonido"] = _sonido_en(ev, t, max(sig, t + 1.0))
+        linea.append(c)
     resultado = {
         **meta, "processing": "static", "fps_muestreo": fps, "start_offset": ini, "end_offset": fin,
         "media_resolution": media_resolution, "idioma_detectado": trans["idioma"],
         **_estimacion(len(linea), fin - ini, media_resolution),
+        "audio": _resumen_audio(p, meta, ev, trans, ini, fin) if escuchar and meta["tiene_audio"] else None,
         "linea_de_tiempo": linea,
         "transcripcion": [{k: s[k] for k in ("id", "inicio", "fin", "inicio_mmss", "texto")}
                           for s in trans["segmentos"] if s["fin"] > ini and s["inicio"] < fin],
     }
-    _guardar(p, f"static_{media_resolution}_{fps:g}fps_{ini:g}-{fin:g}.json", resultado)
+    if escuchar and meta["tiene_audio"]:
+        import escucha_local as E
+        esp = SALIDA / _id(p) / f"espectrograma_{ini:g}-{fin:g}.png"
+        if not esp.is_file():
+            E.espectrograma(p, ini, fin, esp)
+        resultado["espectrograma"] = str(esp.relative_to(RAIZ))
+    _guardar(p, f"static_{media_resolution}_{fps:g}fps_{ini:g}-{fin:g}{'_escenas' if escenas else ''}.json", resultado)
     return resultado
 
 
-def ver_agentic(video_path, idioma="auto"):
-    """Primero la transcripción (barata). Los cuadros se piden después con cargar_segmento."""
+def ver_agentic(video_path, idioma="auto", escuchar=True):
+    """Primero lo barato: transcripción + mapa de sonidos. Los cuadros se piden después con cargar_segmento."""
     p = _ruta(video_path)
     meta = metadatos(p)
     trans = transcripcion(p, meta, idioma)
@@ -205,11 +299,18 @@ def ver_agentic(video_path, idioma="auto"):
         "siguiente_paso": "Pide solo los tramos visuales que necesites con cargar_segmento(video_path, id=... "
                           "o inicio/fin, fps, media_resolution).",
     }
+    if escuchar and meta["tiene_audio"]:
+        import escucha_local as E
+        ev = _eventos(p, meta)
+        resultado["tramos_sonoros"] = [{**t, "inicio_mmss": mmss(t["inicio"])} for t in E.resumen_eventos(ev, minimo=1)]
+        resultado["silencios"] = E.silencios(ev)
+        resultado["cortes_de_escena"] = [{"t": t, "mmss": mmss(t)} for t in _cortes(p, 0, meta["duracion_segundos"])]
     _guardar(p, "agentic.json", resultado)
     return resultado
 
 
-def cargar_segmento(video_path, id=None, inicio=None, fin=None, fps=1.0, media_resolution="default", idioma="auto"):
+def cargar_segmento(video_path, id=None, inicio=None, fin=None, fps=1.0, media_resolution="default", idioma="auto",
+                    escuchar=True, escenas=False):
     p = _ruta(video_path)
     if id:
         meta = metadatos(p)
@@ -218,7 +319,7 @@ def cargar_segmento(video_path, id=None, inicio=None, fin=None, fps=1.0, media_r
             raise ErrorVision(f"No existe el segmento {id}")
         inicio, fin = seg["inicio"], seg["fin"]
     return ver_static(video_path, fps=fps, start_offset=inicio or 0, end_offset=fin or 0,
-                      media_resolution=media_resolution, idioma=idioma)
+                      media_resolution=media_resolution, idioma=idioma, escuchar=escuchar, escenas=escenas)
 
 
 def _guardar(p, nombre, datos):
@@ -237,14 +338,17 @@ if __name__ == "__main__":
     ap.add_argument("--res", choices=list(ANCHO), default="default")
     ap.add_argument("--idioma", default="auto")
     ap.add_argument("--segmento")
+    ap.add_argument("--escenas", action="store_true", help="añade un cuadro en cada corte de escena")
+    ap.add_argument("--sin-audio", action="store_true", help="no analizar sonidos no verbales")
     a = ap.parse_args()
     try:
         if a.segmento:
-            r = cargar_segmento(a.video, id=a.segmento, fps=a.fps, media_resolution=a.res, idioma=a.idioma)
+            r = cargar_segmento(a.video, id=a.segmento, fps=a.fps, media_resolution=a.res, idioma=a.idioma,
+                                escuchar=not a.sin_audio, escenas=a.escenas)
         elif a.processing == "agentic":
-            r = ver_agentic(a.video, a.idioma)
+            r = ver_agentic(a.video, a.idioma, escuchar=not a.sin_audio)
         else:
-            r = ver_static(a.video, a.fps, a.start, a.end, a.res, a.idioma)
+            r = ver_static(a.video, a.fps, a.start, a.end, a.res, a.idioma, escuchar=not a.sin_audio, escenas=a.escenas)
     except ErrorVision as e:
         raise SystemExit(str(e))
     print(json.dumps(r, ensure_ascii=False, indent=1))
