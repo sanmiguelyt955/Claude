@@ -58,7 +58,7 @@ Prueba con clips reales de ESC-50 (aplausos, perro, risa, lluvia, sirena), músi
 
 ## En la nube, Claude Code y Cowork (plugin `video-claude`)
 
-- **Servidor en la nube:** Space de Hugging Face (`nube/`), desplegado automáticamente por `.github/workflows/desplegar-hf-space.yml`. Pasos en **[CONECTAR.md](CONECTAR.md)**.
+- **Servidor en la nube:** Space gratuito de Hugging Face. Se sube a mano en la web con `dist/space-video-nube.zip`, sin Actions ni tokens. Pasos en **[CONECTAR.md](CONECTAR.md)**. El workflow `.github/workflows/desplegar-hf-space.yml` es opcional y solo sirve si algún día activas Actions.
 - **Claude Code:**
   ```
   /plugin marketplace add sanmiguelyt955/claude

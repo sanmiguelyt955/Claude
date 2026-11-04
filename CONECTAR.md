@@ -1,47 +1,42 @@
-# Conectar video-claude en la nube (Hugging Face) + Claude Code + Cowork
+# Conectar video-claude en la nube (Hugging Face gratis) + Claude Code + Cowork
 
-Todo el procesamiento corre en **tu Space de Hugging Face**: los modelos son abiertos y no se usa ninguna API de pago.
-El despliegue es automático desde GitHub. Solo hay que hacer estos pasos **una vez**.
+Todo el procesamiento corre en **tu Space gratuito de Hugging Face** (16 GB de RAM y 2 CPU). Los modelos son abiertos y no se usa ninguna API de pago.
+No hacen falta GitHub Actions ni tokens. Haz esto **una sola vez** (unos 5 min).
 
-## 1. Token de Hugging Face (2 min)
-1. Crea una cuenta gratis en https://huggingface.co (o entra con la tuya).
-2. Ve a https://huggingface.co/settings/tokens → **Create new token** → tipo **Write** → cópialo.
+## 1. Crear el Space
+1. Entra en https://huggingface.co/new-space (con tu cuenta `Sanmiguelyt955`).
+2. **Space name:** `video-nube`.
+3. **SDK:** **Docker** → plantilla **Blank**.
+4. **Hardware:** **CPU basic · Free**.
+5. **Visibilidad:** **Public**. Es obligatorio: claude.ai no puede entrar en un Space privado. Lo protege la clave del paso 2.
+6. Pulsa **Create Space**.
 
-## 2. Secretos en GitHub (2 min)
-En https://github.com/sanmiguelyt955/claude/settings/secrets/actions → **New repository secret**:
-| Nombre | Valor |
-|---|---|
-| `HF_TOKEN` | el token del paso 1 |
-| `MCP_CLAVE` | una clave larga inventada por ti, solo letras, números y guiones (p. ej. `vn-8f3k2p9q7x`). Va dentro de la URL y protege el servidor |
+## 2. Poner la clave secreta
+En el Space: **Settings** → **Variables and secrets** → **New secret**.
+- **Name:** `MCP_CLAVE`
+- **Value:** una clave larga inventada por ti, con letras, números y guiones (p. ej. `vn-8f3k2p9q7x4m`). Guárdala: va dentro de la URL del conector.
 
-Opcional, en la pestaña **Variables**: `HF_SPACE` = `tu-usuario/video-nube` (si no la pones, se usa ese nombre).
-Opcional, como secreto del Space (en Hugging Face): `YTDLP_COOKIES` (cookies de YouTube en formato Netscape) si quieres analizar enlaces de YouTube. Sin cookies, YouTube suele bloquear las descargas desde servidores.
+## 3. Subir el código
+1. Descarga del repo de GitHub el archivo **`dist/space-video-nube.zip`** y descomprímelo en tu computadora. Salen 7 archivos: `Dockerfile`, `README.md`, `requirements-nube.txt`, `servidor_nube.py`, `vision_local.py`, `escucha_local.py` y `oido_modelo.py`.
+2. En el Space: pestaña **Files** → **Add file** → **Upload files**.
+3. Arrastra **los 7 archivos sueltos** (no el zip). El `README.md` sustituye al que creó Hugging Face; es correcto.
+4. Pulsa **Commit changes to main**.
 
-## 3. Desplegar (elige una vía)
-**Vía A: GitHub Actions (automática).** El despliegue se lanza solo en cada push que toque el servidor.
-- Si en la pestaña **Actions** del repo no aparece ninguna ejecución, Actions está desactivado. Actívalo en Settings → Actions → General → **Allow all actions**.
-- Para lanzarlo ya: **Actions** → **Desplegar video-nube en Hugging Face** → última ejecución → **Re-run all jobs**.
+El Space empieza a construirse solo. Tarda unos **10-15 min** la primera vez: instala las librerías y después descarga unos 12 GB de modelos.
+Cuando la pestaña **App** muestre `{"servicio":"video-nube","estado":"ok",…}`, ya está listo.
 
-**Vía B: desde una sesión de Claude Code en la web.**
-1. En el menú del entorno de la nube (barra de título de la sesión → **Edit**), añade como variables de entorno `HF_TOKEN` (el token *Write* del paso 1) y `MCP_CLAVE`.
-2. Abre una sesión nueva y pide «despliega video-nube». Claude ejecuta `python nube/desplegar.py`.
-
-Nunca pegues el token en el chat.
-Al terminar, el registro muestra la URL del Space. El primer arranque tarda unos 10-15 min (construye la imagen y descarga unos 12 GB de modelos).
-
-Comprueba que responde: `https://<usuario>-video-nube.hf.space/` → `{"estado": "ok"}`.
-
-Tu URL de conector es:
+## 4. Tu URL de conector
 ```
-https://<usuario>-video-nube.hf.space/<MCP_CLAVE>/mcp
+https://sanmiguelyt955-video-nube.hf.space/<MCP_CLAVE>/mcp
 ```
+Cambia `<MCP_CLAVE>` por tu clave. No compartas esta URL: quien la tenga puede usar tu servidor.
 
-## 4. Cowork y claude.ai
-1. **Conector:** Configuración → **Conectores** → **Añadir conector personalizado** → pega la URL del paso 3 → nombre `video-nube`.
-2. **Skills:** descarga de GitHub `dist/ver-video.zip` y `dist/video-editor.zip`, y súbelas en Configuración → **Capacidades / Skills** → **Subir skill**.
-   - Si tu Cowork admite plugins, puedes subir `dist/video-claude.plugin`, que trae las dos skills juntas. El conector se añade igualmente en el punto 1, porque la URL secreta no va dentro del paquete.
+## 5. Cowork y claude.ai
+1. **Conector:** Configuración → **Conectores** → **Añadir conector personalizado** → pega la URL del paso 4 → nombre `video-nube`.
+2. **Skills:** descarga `dist/ver-video.zip` y `dist/video-editor.zip` y súbelas en Configuración → **Capacidades / Skills** → **Subir skill**.
+   - Si tu Cowork admite plugins, puedes subir `dist/video-claude.plugin`, que trae las dos juntas. El conector se añade igualmente en el punto 1.
 
-## 5. Claude Code (cualquier proyecto)
+## 6. Claude Code (cualquier proyecto)
 ```
 /plugin marketplace add sanmiguelyt955/claude
 /plugin install video-claude@sanmiguel
@@ -49,20 +44,23 @@ https://<usuario>-video-nube.hf.space/<MCP_CLAVE>/mcp
 Mientras los cambios estén solo en la rama de trabajo, usa:
 `/plugin marketplace add https://github.com/sanmiguelyt955/claude.git#claude/video-editing-skill-6wybxb`
 
-El plugin incluye el conector `video-nube`, que lee la URL de la variable de entorno `VIDEO_NUBE_URL`. Ponla en tu `~/.claude/settings.json`:
+El conector del plugin lee la URL de `VIDEO_NUBE_URL`. Ponla en `~/.claude/settings.json`:
 ```json
-{ "env": { "VIDEO_NUBE_URL": "https://<usuario>-video-nube.hf.space/<MCP_CLAVE>/mcp" } }
+{ "env": { "VIDEO_NUBE_URL": "https://sanmiguelyt955-video-nube.hf.space/<MCP_CLAVE>/mcp" } }
 ```
-En las sesiones de Claude Code en la web, ponla en las **variables de entorno** del entorno de la nube.
+En Claude Code en la web, añádela en las **variables de entorno** del entorno de la nube.
 
-## 6. Usarlo
-- Pide cosas como «mira este video y dime dónde se ríen», «¿con qué tono habla en el minuto 2?» o «¿cuántas personas hablan?».
-- **Archivos tuyos:** la nube no ve tu disco. Pásale un enlace directo o súbelo primero:
-  `curl -F "archivo=@mi_video.mp4" https://<usuario>-video-nube.hf.space/<MCP_CLAVE>/subir` → `subida:<id>`.
-  Claude lo hace solo cuando trabaja con archivos locales.
+## 7. Usarlo
+- Pide cosas como «mira este video y dime dónde se ríen», «¿con qué tono habla en el 01:20?» o «¿cuántas personas hablan?».
+- **Archivos tuyos:** la nube no ve tu disco. Dale un enlace directo o súbelo primero:
+  `curl -F "archivo=@mi_video.mp4" https://sanmiguelyt955-video-nube.hf.space/<MCP_CLAVE>/subir` → `subida:<id>`.
+  Claude lo hace solo cuando tiene el archivo a mano.
+- YouTube y Vimeo bloquean las descargas desde servidores. Si los necesitas, añade al Space un secreto `YTDLP_COOKIES` con tus cookies en formato Netscape (usa tu sesión).
 
-## Límites del plan gratuito de Hugging Face
-- CPU básica: 2 vCPU y 16 GB de RAM. Basta para todos los modelos; la primera pasada de un video tarda aproximadamente su duración.
-- El Space se duerme tras un tiempo sin uso: la primera llamada lo despierta y tarda unos minutos.
+## Actualizar el servidor más adelante
+Cuando cambie el código, te dejaré un `dist/space-video-nube.zip` nuevo: vuelve a subir los 7 archivos (paso 3).
+
+## Límites del plan gratuito
+- La primera pasada de un video tarda en CPU aproximadamente su duración. Memoria medida: 2,5 GB sin `oir` y 7,8 GB con `oir`, dentro de los 16 GB.
+- El Space se duerme tras un tiempo sin uso. La primera llamada lo despierta, tarda unos minutos y vuelve a descargar los modelos.
 - El disco es temporal: subidas, cuadros y caché se borran al reiniciarse.
-- **Render no sirve aquí:** su plan gratuito da 512 MB de RAM y solo los modelos ocupan unos 12 GB.
