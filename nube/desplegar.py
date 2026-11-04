@@ -32,6 +32,13 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         lista = preparar(Path(tmp))
         print("Archivos del Space:", ", ".join(lista))
+        if "--zip" in sys.argv:   # paquete para subir a mano en la web de Hugging Face (Files > Upload files)
+            destino = RAIZ / "dist" / "space-video-nube.zip"
+            destino.parent.mkdir(exist_ok=True)
+            destino.unlink(missing_ok=True)
+            shutil.make_archive(str(destino.with_suffix("")), "zip", tmp)
+            print("Paquete:", destino)
+            return 0
         if dry:
             return 0
         token = os.environ.get("HF_TOKEN")
