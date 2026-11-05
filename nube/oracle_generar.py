@@ -18,7 +18,7 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 ARCHIVOS = ["servidor_nube.py", "vision_local.py", "escucha_local.py", "oido_modelo.py"]
-LIMITE_BRUTO = 23_000   # 23 000 * 4/3 ≈ 30 700 en base64 (+ margen para una clave SSH corta)
+LIMITE_BRUTO = 23_500   # 23 500 * 4/3 ≈ 31 300 en base64 (la guía crea la instancia sin claves SSH)
 
 
 # En la nube no sirve la herramienta de prueba con ruta fija (datos/videos/prueba.mp4): se quita para ahorrar espacio.

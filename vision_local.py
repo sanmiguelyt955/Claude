@@ -63,6 +63,13 @@ DESCARGAS = RAIZ / "datos" / "descargas"
 MAX_DESCARGA_MB = float(os.environ.get("MAX_DESCARGA_MB", 2000))
 
 
+def _es_media(f):
+    """True si ffprobe encuentra una pista de video o audio (evita guardar una página HTML como si fuera un .mp4)."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(f)],
+                       capture_output=True, text=True)
+    return r.returncode == 0 and any(t in r.stdout for t in ("video", "audio"))
+
+
 def resolver(entrada):
     """Ruta local | 'subida:<id>' (archivo subido a /subir) | URL http(s) (directa o YouTube/TikTok/Instagram
     vía yt-dlp). Devuelve un Path local; las descargas se guardan en caché en datos/descargas/."""
@@ -80,8 +87,12 @@ def resolver(entrada):
         if hechos:
             return hechos[0]
         directo = re.search(r"\.(mp4|mov|webm|mkv|avi|m4v|mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)", entrada, re.I)
-        if not directo and shutil.which("yt-dlp"):
-            cmd = ["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
+        ytdlp = shutil.which("yt-dlp")
+        if not directo and not ytdlp:
+            raise ErrorVision("Para enlaces de páginas (YouTube, TikTok, Instagram...) hace falta yt-dlp: "
+                              "pip install 'yt-dlp[default]'. Con un enlace directo al .mp4 no hace falta.")
+        if not directo:
+            cmd = [ytdlp, "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
                    "--merge-output-format", "mp4", "--max-filesize", f"{int(MAX_DESCARGA_MB)}M",
                    "-o", str(DESCARGAS / f"{clave}.%(ext)s")]
             cookies = os.environ.get("YTDLP_COOKIES", "").strip()   # opcional: cookies Netscape (secreto del Space)
@@ -92,11 +103,15 @@ def resolver(entrada):
                 cmd += ["--cookies", str(fc)]
             r = subprocess.run(cmd + [entrada], capture_output=True, text=True)
             if r.returncode != 0:
-                err = r.stderr.strip()[-300:]
-                pista = (" Las plataformas (YouTube, Vimeo, Instagram...) suelen bloquear descargas desde servidores: "
-                         "sube el archivo a /subir o usa un enlace directo al .mp4.") if ("403" in err or "logged-in" in err
-                                                                                        or "Sign in" in err) else ""
-                raise ErrorVision(f"No se pudo descargar con yt-dlp: {err}{pista}")
+                err = r.stderr.strip()
+                if any(k in err for k in ("403", "Sign in", "logged-in", "cookies", "bot", "login")):
+                    raise ErrorVision(
+                        "La plataforma bloqueó la descarga desde este servidor (pide iniciar sesión o confirmar que no "
+                        "es un bot; YouTube y Vimeo lo hacen con casi todos los servidores en la nube). Opciones: "
+                        "1) adjunta el video en el chat (o súbelo a /subir) y usa esa ruta; 2) usa un enlace directo al "
+                        "archivo .mp4; 3) en el servidor propio, pon tus cookies de la plataforma en YTDLP_COOKIES. "
+                        f"Detalle: {err[-200:]}")
+                raise ErrorVision(f"No se pudo descargar con yt-dlp: {err[-300:]}")
         else:
             ext = (directo.group(1).lower() if directo else "mp4")
             destino = DESCARGAS / f"{clave}.{ext}"
@@ -118,6 +133,10 @@ def resolver(entrada):
         hechos = [f for f in DESCARGAS.glob(clave + ".*") if not f.name.endswith(".part")]
         if not hechos:
             raise ErrorVision("La descarga no produjo ningún archivo")
+        if not _es_media(hechos[0]):
+            hechos[0].unlink()
+            raise ErrorVision("El enlace no lleva a un video o audio (devolvió una página web). Usa el enlace directo "
+                              "al archivo, o súbelo/adjúntalo.")
         return hechos[0]
     p = Path(entrada)
     return p if p.is_absolute() else RAIZ / p

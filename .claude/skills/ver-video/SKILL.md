@@ -28,7 +28,8 @@ No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AS
 | `oir(path, pregunta, start_offset, end_offset, con_cuadros=False)` | **Oídos de verdad**: un modelo multimodal escucha la señal original (y ve cuadros si `con_cuadros`) y responde. Ideal para tono, emoción, ironía, acento, intención. Tramos de ≤30 s |
 | `preguntar_audio(path, descripciones[], start_offset, end_offset)` | CLAP: probabilidad de cada descripción (en inglés), p. ej. `["a siren", "a dog barking", "rain"]` |
 
-Entradas válidas: `subida:<id>`, URL directa (`.mp4`, `.mp3`…), enlaces de YouTube/TikTok (las plataformas suelen bloquear servidores; si falla, sube el archivo) o ruta local (solo en modo local).
+Entradas válidas: archivo adjunto en el chat o ruta local (modo local), `subida:<id>`, URL directa (`.mp4`, `.mp3`…) o enlace de página (TikTok, Instagram, X, YouTube… vía yt-dlp).
+**YouTube y Vimeo bloquean casi siempre las descargas desde servidores en la nube** (piden iniciar sesión o confirmar que no eres un bot). Si sale ese error, no lo intentes esquivar: pide al usuario que **adjunte el video** (desde el celular: descargarlo y adjuntarlo en el chat) o que dé un enlace directo al archivo.
 
 ## 2. Cómo trabajar (como Gemini)
 1. Video ≤ 2 min: `ver_video` static a 1 FPS.
