@@ -35,7 +35,7 @@ TOKENS_CUADRO = {"low": 66, "default": 258}          # documentación de Google
 TOKENS_AUDIO_SEG = 32                                 # documentación de Google
 ANCHO = {"low": 384, "default": 768}                  # DECISIÓN: Google no publica píxeles
 FPS_MAX = 24.0                                        # DECISIÓN: Google no publica un máximo
-MAX_CUADROS = 120                                     # DECISIÓN: límite por respuesta MCP
+MAX_CUADROS = 480                                     # DECISIÓN: con hojas de contacto y páginas ya no se corta nada
 
 
 class ErrorVision(Exception):

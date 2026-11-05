@@ -21,9 +21,14 @@ ARCHIVOS = ["servidor_nube.py", "vision_local.py", "escucha_local.py", "oido_mod
 LIMITE_BRUTO = 23_000   # 23 000 * 4/3 ≈ 30 700 en base64 (+ margen para una clave SSH corta)
 
 
+# En la nube no sirve la herramienta de prueba con ruta fija (datos/videos/prueba.mp4): se quita para ahorrar espacio.
+SOLO_LOCAL = {"_hhmmss", "_ffprobe", "_analizar", "analizar_video_nube"}
+
+
 def minificar(codigo):
-    """Quita docstrings (salvo las de herramientas MCP, que Claude lee) y comentarios. No cambia el código."""
+    """Quita docstrings (salvo las de herramientas MCP, que Claude lee), comentarios y la herramienta solo local."""
     arbol = ast.parse(codigo)
+    arbol.body = [n for n in arbol.body if not (isinstance(n, ast.FunctionDef) and n.name in SOLO_LOCAL)]
     for n in ast.walk(arbol):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and n.body \
                 and isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant) \

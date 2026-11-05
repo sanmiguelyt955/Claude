@@ -22,8 +22,8 @@ No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AS
 ## 1. Herramientas
 | Herramienta | Para qué |
 |---|---|
-| `ver_video(video_path, processing="static", fps=1, start_offset, end_offset, media_resolution, escuchar=True, escenas=False)` | **static**: resumen + espectrograma + por cada cuadro `[MM:SS] voz: «H1: …» · sonido: … · dB` y la imagen. **agentic**: transcripción con hablantes + mapa de sonidos + cortes, sin imágenes |
-| `cargar_segmento(video_path, id \| inicio, fin, fps, escenas)` | Modo agentic: solo el tramo pedido |
+| `ver_video(video_path, processing="static", fps=1, start_offset, end_offset, media_resolution, escuchar=True, escenas=False, formato="auto", pagina=1)` | **static**: resumen + espectrograma + por cada cuadro `[MM:SS] voz: «H1: …» · sonido: … · dB` y la imagen. **agentic**: transcripción con hablantes + mapa de sonidos + cortes, sin imágenes |
+| `cargar_segmento(video_path, id \| inicio, fin, fps, escenas, formato, pagina)` | Modo agentic: solo el tramo pedido |
 | `escuchar_audio(path, start_offset, end_offset)` | Audio o pista de un video: transcripción con hablantes, sonidos por segundo, silencios, BPM, voz y espectrograma |
 | `oir(path, pregunta, start_offset, end_offset, con_cuadros=False)` | **Oídos de verdad**: un modelo multimodal escucha la señal original (y ve cuadros si `con_cuadros`) y responde. Ideal para tono, emoción, ironía, acento, intención. Tramos de ≤30 s |
 | `preguntar_audio(path, descripciones[], start_offset, end_offset)` | CLAP: probabilidad de cada descripción (en inglés), p. ej. `["a siren", "a dog barking", "rain"]` |
@@ -37,7 +37,11 @@ Entradas válidas: `subida:<id>`, URL directa (`.mp4`, `.mp3`…), enlaces de Yo
 4. Cómo suena la voz (emoción, sarcasmo, intención) o audio+imagen a la vez: `oir`.
 5. Confirmar un sonido: `preguntar_audio` con 3-6 alternativas plausibles.
 6. Ritmo para editar: `bpm` y `beats` de los tramos musicales.
-7. Máximo 120 cuadros por respuesta: si se pasa, usa agentic, baja fps o recorta.
+7. **Las imágenes nunca se cortan.** Cada respuesta cabe en el límite de Claude Code (25 000 tokens):
+   - `formato="auto"` (por defecto) manda los cuadros uno a uno si caben y, si no, **hojas de contacto**: rejillas de 8-9 cuadros en orden izquierda→derecha, arriba→abajo, con su `MM:SS` grabado en la esquina. Cuestan ~4 veces menos por cuadro.
+   - Si la respuesta termina con **`CONTINÚA`**, llama otra vez con los mismos parámetros y `pagina=2`, 3… **antes de responder** sobre esos tramos. La última dice `Fin`.
+   - Para un detalle fino (texto pequeño, caras, un gesto rápido), pide ese tramo corto con `formato="cuadros"`, que da cada cuadro a resolución completa.
+8. Máximo 480 cuadros por llamada (repartidos en páginas). Para videos largos, mejor agentic.
 
 ## 3. Fiabilidad (medida en pruebas)
 - Transcripción con VAD: no inventa frases sobre música, ruido o silencio. Las palabras justo en un cambio de hablante pueden caer en el vecino.
