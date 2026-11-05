@@ -14,7 +14,11 @@ Herramientas:
 
 Las imágenes se ven en el chat y quedan 30 días en `https://imagenes-flux.<cuenta>.workers.dev/img/<id>.jpg`.
 
-## Publicarlo (una vez, desde el celular)
+## Estado
+Publicado en `https://imagenes-flux.sanmiguelyt955.workers.dev` (cuenta de Cloudflare de sanmiguelyt955), con el secreto `CLAVE` ya puesto. Probado: schnell 1:1 en ~14 s (77 neuronas) y klein 9:16 sobre verde en ~7 s (156 neuronas); el recorte de `motion.py` lo deja limpio.
+Para clientes propios (scripts), manda un `User-Agent` normal: la protección de Cloudflare bloquea el de Python por defecto.
+
+## Publicarlo de nuevo (si hiciera falta, desde el celular)
 1. https://dash.cloudflare.com → **Workers & Pages** → **Create** → **Import a repository** → `sanmiguelyt955/Claude`.
 2. **Project name:** `imagenes-flux` · **Root directory:** `imagenes-flux` · **Deploy command:** `npx wrangler deploy` · **Rama:** la que tenga esta carpeta (`main` cuando esté fusionada).
 3. Cuando termine: Worker `imagenes-flux` → **Settings → Variables and Secrets → Add** → tipo **Secret**, nombre `CLAVE`, valor: una clave larga inventada (letras, números y guiones). Guarda.
