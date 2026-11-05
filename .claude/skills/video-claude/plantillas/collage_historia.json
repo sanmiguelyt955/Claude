@@ -1,0 +1,83 @@
+{
+ "serif": true,
+ "escenas": [
+  {
+   "dur": 4,
+   "camara": "avanzar",
+   "fuerza": 1.3,
+   "foco": {
+    "x": 0.5,
+    "y": 0.45
+   },
+   "transicion": "hueco",
+   "particulas": "polvo",
+   "texto": "Todo empieza en una *cocina*",
+   "posTexto": "abajo",
+   "capas": [
+    {
+     "src": "imagenes/fondo1.jpg",
+     "z": 0,
+     "ancho": 1.15
+    },
+    {
+     "src": "imagenes/manzana.png",
+     "z": 0.5,
+     "x": 0.5,
+     "y": 0.62,
+     "ancho": 0.38,
+     "mov": "flotar"
+    },
+    {
+     "src": "imagenes/marco.png",
+     "z": 1,
+     "ancho": 1.25,
+     "sombra": false
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "derecha",
+   "transicion": "tapa",
+   "texto": "con una receta *heredada*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "imagenes/fondo2.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "imagenes/nota.png",
+     "z": 0.6,
+     "x": 0.5,
+     "y": 0.6,
+     "ancho": 0.7,
+     "mov": "balanceo"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "retroceder",
+   "texto": "y mucho *cariño*",
+   "posTexto": "abajo",
+   "particulas": "chispas",
+   "capas": [
+    {
+     "src": "imagenes/fondo3.jpg",
+     "z": 0,
+     "ancho": 1.15
+    },
+    {
+     "src": "imagenes/manzana.png",
+     "z": 0.55,
+     "x": 0.32,
+     "y": 0.55,
+     "ancho": 0.3,
+     "mov": "respirar"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,57 @@
+{
+ "estilo": "bold",
+ "marca": {
+  "primary": "#0F172A",
+  "accent": "#FACC15",
+  "text": "#FFFFFF",
+  "secondary": "#7C3AED",
+  "font": "Inter, Arial, sans-serif"
+ },
+ "escenas": [
+  {
+   "tipo": "gancho",
+   "dur": 2.5,
+   "texto": "3 errores que *matan* tus reels",
+   "emoji": "🚫"
+  },
+  {
+   "tipo": "lista",
+   "dur": 4.5,
+   "titulo": "Evita esto:",
+   "items": [
+    "Gancho *lento*",
+    "Texto *ilegible*",
+    "Sin *llamada* a la acción"
+   ]
+  },
+  {
+   "tipo": "dato",
+   "dur": 3,
+   "titulo": "Los primeros",
+   "valor": 3,
+   "sufijo": " s",
+   "etiqueta": "deciden si se quedan"
+  },
+  {
+   "tipo": "grafica",
+   "dur": 3.5,
+   "titulo": "Retención media",
+   "barras": [
+    {
+     "etiqueta": "Gancho lento",
+     "valor": 28
+    },
+    {
+     "etiqueta": "Gancho fuerte",
+     "valor": 71
+    }
+   ]
+  },
+  {
+   "tipo": "cta",
+   "dur": 2.5,
+   "texto": "Guárdalo para tu *próximo* video",
+   "etiqueta": "Sígueme"
+  }
+ ]
+}

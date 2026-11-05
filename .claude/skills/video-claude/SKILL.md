@@ -14,6 +14,7 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 | **Videos largos** (10 min a horas) | `processing="agentic"` y luego `detalle="equilibrado"`, tramos o `momentos` | `references/ver-y-oir.md` §1c |
 | **Qué canción le queda**, ponerle música, aprender su gusto | `recomendar_musica`, `montar_musica`, `agregar_musica`, `calificar_musica`, `aprender_de_video` | `references/musica.md` |
 | **Editar** (cortes, subtítulos, motion graphics, 9:16, marca) | scripts de `scripts/` + Remotion | `references/editar.md`, `references/remotion.md` |
+| **Animar con código** (reel de motion graphics o collage con capas y cámara 3D, sin video de IA) | `scripts/motion.py reel\|collage guion.json --control` → revisar → final | `references/motion.md`, `plantillas/` |
 
 **Lee la referencia correspondiente antes de empezar** (Read del archivo, ruta relativa a esta carpeta: `.claude/skills/video-claude/`). Si la petición combina capacidades (p. ej. «edítalo y ponle música»), sigue este orden: ver → música → editar → revisar.
 
