@@ -34,3 +34,9 @@ Entorno: contenedor Linux, Python 3.13, Node 22 (Node 24 vía `npx node@24`), si
 ## 6. Worldonlyu/Google_AI_Pro_2Year_ZeroCost_Auto — NO EJECUTADO (decisión)
 - Solo leí el README. Es una herramienta para iniciar sesión de forma masiva en cuentas de Google ajenas/en lote, meter tarjetas y encadenar promociones gratis de Google AI Pro. Se vende con una tienda de cuentas ("卡网").
 - Es fraude de cuentas/promociones y puede implicar credenciales robadas. No la ejecuto ni la adapto. No se clonó nada más allá de leer el README.
+
+## Actualización: free-claude-code con clave de NVIDIA NIM — FUNCIONA DE EXTREMO A EXTREMO
+- Clave pasada solo como variable de entorno `NVIDIA_NIM_API_KEY` (no se guarda en el repo).
+- `/v1/messages` devuelve respuesta real del modelo `nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b` en español.
+- Streaming SSE y tool use (`tool_use` con `input_json_delta`) funcionan en formato Anthropic.
+- Pendiente: probar `fcc-claude` (Claude Code real sobre el proxy), cheap-ag y AutoCua.
