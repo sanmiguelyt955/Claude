@@ -1,4 +1,6 @@
-# Conectar video-claude en la nube (Hugging Face gratis) + Claude Code + Cowork
+# Conectar video-claude en Hugging Face (PRO) + Claude Code + Cowork
+
+> **Actualización:** Hugging Face ya exige el plan PRO (9 USD/mes) para los Spaces Docker. La opción **gratis 24/7** es Oracle Cloud: sigue **[ORACLE.md](ORACLE.md)**. Esta guía sirve solo si contratas Hugging Face PRO; en ese caso elige *CPU basic* al crear el Space.
 
 Todo el procesamiento corre en **tu Space gratuito de Hugging Face** (16 GB de RAM y 2 CPU). Los modelos son abiertos y no se usa ninguna API de pago.
 No hacen falta GitHub Actions ni tokens. Haz esto **una sola vez** (unos 5 min).

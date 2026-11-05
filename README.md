@@ -58,7 +58,7 @@ Prueba con clips reales de ESC-50 (aplausos, perro, risa, lluvia, sirena), músi
 
 ## En la nube, Claude Code y Cowork (plugin `video-claude`)
 
-- **Servidor en la nube:** Space gratuito de Hugging Face. Se sube a mano en la web con `dist/space-video-nube.zip`, sin Actions ni tokens. Pasos en **[CONECTAR.md](CONECTAR.md)**. El workflow `.github/workflows/desplegar-hf-space.yml` es opcional y solo sirve si algún día activas Actions.
+- **Servidor en la nube gratis 24/7:** Oracle Cloud Always Free, con un script de inicio que instala todo solo: **[ORACLE.md](ORACLE.md)** (`dist/oracle-video-nube.sh`; se regenera con `python nube/oracle_generar.py`). Alternativa de pago: Space de Hugging Face PRO. Se sube a mano en la web con `dist/space-video-nube.zip`, sin Actions ni tokens. Pasos en **[CONECTAR.md](CONECTAR.md)**. El workflow `.github/workflows/desplegar-hf-space.yml` es opcional y solo sirve si algún día activas Actions.
 - **Claude Code:**
   ```
   /plugin marketplace add sanmiguelyt955/claude
