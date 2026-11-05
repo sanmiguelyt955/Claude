@@ -40,3 +40,8 @@ Entorno: contenedor Linux, Python 3.13, Node 22 (Node 24 vía `npx node@24`), si
 - `/v1/messages` devuelve respuesta real del modelo `nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b` en español.
 - Streaming SSE y tool use (`tool_use` con `input_json_delta`) funcionan en formato Anthropic.
 - Pendiente: probar `fcc-claude` (Claude Code real sobre el proxy), cheap-ag y AutoCua.
+
+## fcc-claude (Claude Code real sobre el proxy FCC) — FUNCIONA
+- Claude Code (`claude -p`) contra `ANTHROPIC_BASE_URL=http://127.0.0.1:8082` y el lanzador `fcc-claude -p` crean archivos con la herramienta Write usando Nemotron de NVIDIA NIM.
+- Lección: el servidor debe arrancar con `NVIDIA_NIM_API_KEY` en su entorno; si ya hay una instancia en :8082 sin clave, Claude Code reintenta 503 y parece colgado. Matar la instancia y relanzar.
+- `--dangerously-skip-permissions` fue bloqueado por el clasificador; se usó `--allowedTools Write`.
