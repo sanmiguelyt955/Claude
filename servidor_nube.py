@@ -288,16 +288,22 @@ def ver_video(
     escenas: bool = False,
     formato: str = "auto",
     pagina: int = 1,
+    detalle: str = "gemini",
+    momentos: str = "",
+    sin_repetidos: bool | None = None,
 ):
-    """Ve y oye un video como Gemini, en local. processing='static': 1 FPS por defecto, cada cuadro con [MM:SS], lo que se dice y lo que suena (sonidos AudioSet + dB), resumen de audio (tramos sonoros, silencios, BPM, tono/emoción de la voz) y espectrograma. fps>1 para acción rápida; start_offset/end_offset en segundos (0 = final). escenas=True añade un cuadro en cada corte de escena. Las imágenes nunca se cortan: formato='auto' manda los cuadros uno a uno si caben y, si no, hojas de contacto (rejillas con el MM:SS grabado en cada cuadro); formato='cuadros' u 'hojas' lo fuerza. Si la respuesta termina con 'CONTINÚA', pide pagina=2, 3... con los mismos parámetros. processing='agentic': transcripción + mapa de sonidos + cortes, y después cargar_segmento. media_resolution: 'low' o 'default'."""
+    """Ve y oye un video como Gemini, en local. processing='static': 1 FPS por defecto, cada cuadro con [MM:SS], lo que se dice y lo que suena (sonidos AudioSet + dB), resumen de audio (tramos sonoros, silencios, BPM, tono/emoción de la voz) y espectrograma. fps>1 para acción rápida; start_offset/end_offset en segundos (0 = final). escenas=True añade un cuadro en cada corte de escena. Las imágenes nunca se cortan: formato='auto' manda los cuadros uno a uno si caben y, si no, hojas de contacto (rejillas con el MM:SS grabado en cada cuadro); formato='cuadros' u 'hojas' lo fuerza. Si la respuesta termina con 'CONTINÚA', pide pagina=2, 3... con los mismos parámetros. detalle: 'gemini' (por defecto: fps fijo), 'transcripcion' (sin cuadros, lo más barato), 'eficiente' (cuadros clave, máx. 50), 'equilibrado' (cambios de escena, máx. 100; recomendado para videos editados o largos) o 'maximo' (todas las escenas); los tres últimos quitan cuadros casi repetidos (sin_repetidos=false para conservarlos). momentos='4:32,7:10': añade cuadros exactos en esos instantes (p. ej. cuando en la transcripción dicen 'miren esto'). media_resolution 'high' (1024 px) para leer texto pequeño. processing='agentic': transcripción + mapa de sonidos + cortes, y después cargar_segmento. media_resolution: 'low' o 'default'."""
     import vision_local as vl
     try:
         if processing == "agentic":
             return json.dumps(vl.ver_agentic(video_path, idioma, escuchar), ensure_ascii=False)
         if processing != "static":
             raise vl.ErrorVision("processing debe ser 'static' o 'agentic'")
+        lista_momentos = [m for m in momentos.replace(";", ",").split(",") if m.strip()]
         return _contenido_intercalado(vl.ver_static(video_path, fps, start_offset, end_offset, media_resolution,
-                                                    idioma, escuchar=escuchar, escenas=escenas), formato, pagina)
+                                                    idioma, escuchar=escuchar, escenas=escenas, detalle=detalle,
+                                                    momentos=lista_momentos, sin_repetidos=sin_repetidos),
+                                      formato, pagina)
     except vl.ErrorVision as e:
         raise _error(e)
 

@@ -79,8 +79,9 @@ def registrar(mcp, _error, contenido_intercalado):
     from fastmcp.utilities.types import Image
 
     @mcp.tool
-    def ver_youtube(url: str, fps: float = 1.0, start_offset: float = 0, end_offset: float = 0, pagina: int = 1):
-        """Ve un video de YouTube (watch, shorts, youtu.be) SOLO con el enlace. Si el servidor puede descargarlo, lo ve completo como ver_video (cuadros [MM:SS] + voz + sonidos; usa fps/offsets/pagina igual). Si YouTube bloquea la descarga (casi siempre en servidores en la nube), devuelve modo='enlace': título, canal, portada y 3 cuadros públicos (~25/50/75 %) y te indica traer la TRANSCRIPCIÓN con Firecrawl (youtube-com/videos/video_transcript, con el idioma original de caption_tracks). En modo enlace solo has visto esas imágenes: dilo al responder."""
+    def ver_youtube(url: str, fps: float = 1.0, start_offset: float = 0, end_offset: float = 0, pagina: int = 1,
+                    detalle: str = "gemini", momentos: str = ""):
+        """Ve un video de YouTube (watch, shorts, youtu.be) SOLO con el enlace. Si el servidor puede descargarlo, lo ve completo como ver_video (cuadros [MM:SS] + voz + sonidos; fps, offsets, pagina, detalle y momentos funcionan igual: para videos largos usa detalle='equilibrado'). Si YouTube bloquea la descarga (casi siempre en servidores en la nube), devuelve modo='enlace': título, canal, portada y 3 cuadros públicos (~25/50/75 %) y te indica traer la TRANSCRIPCIÓN con Firecrawl (youtube-com/videos/video_transcript, con el idioma original de caption_tracks). En modo enlace solo has visto esas imágenes: dilo al responder."""
         import vision_local as vl
         vid = id_youtube(url)
         if not vid:
@@ -88,7 +89,8 @@ def registrar(mcp, _error, contenido_intercalado):
         limpio = f"https://www.youtube.com/watch?v={vid}"
         try:
             vl.resolver(limpio)
-            r = vl.ver_static(limpio, fps, start_offset, end_offset)
+            lista = [m for m in momentos.replace(";", ",").split(",") if m.strip()]
+            r = vl.ver_static(limpio, fps, start_offset, end_offset, detalle=detalle, momentos=lista)
             partes = contenido_intercalado(r, "auto", pagina)
             return [json.dumps({"modo": "completo", "video_id": vid}, ensure_ascii=False)] + partes
         except vl.ErrorVision as e:
