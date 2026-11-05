@@ -442,6 +442,14 @@ def preguntar_audio(path: str, descripciones: list[str], start_offset: float = 0
         raise _error(e)
 
 
+# Herramientas de música (qué canción le queda a un video). Van aparte para que el script de Oracle no crezca.
+try:
+    import herramientas_musica
+    herramientas_musica.registrar(mcp, _error)
+except ImportError:
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Modo nube (Hugging Face Space / cualquier servidor): MCP por HTTP + subida de archivos.
 # La URL lleva una clave secreta: https://<servidor>/<MCP_CLAVE>/mcp  y  .../<MCP_CLAVE>/subir

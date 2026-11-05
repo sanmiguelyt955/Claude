@@ -40,6 +40,9 @@ Herramientas MCP añadidas al mismo servidor `video-nube`:
 CLI: `python vision_local.py video.mp4 --fps 2 --start 30 --end 60 --res low`
 Skill para Claude Code: `.claude/skills/ver-video/SKILL.md`. Las salidas van a `datos/vision/` (ignorado por git).
 
+### Música para cada video (`musica-para-video`)
+Recomienda qué canción de tu biblioteca le queda a un video (ánimo, tempo, clímax, cortes, voz), sugiere tendencias de TikTok/Reels, la monta con ducking a -14 LUFS y aprende tu gusto (👍/👎, ejemplos tuyos y virales). Código: `musica_local.py` + `herramientas_musica.py`; skill: `.claude/skills/musica-para-video/SKILL.md`; lo aprendido se guarda en `musica/`.
+
 ## Que Claude "oiga" el audio (local)
 
 `escucha_local.py` traduce el sonido a texto e imágenes, porque Claude no acepta audio:
