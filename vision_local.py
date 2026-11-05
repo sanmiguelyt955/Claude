@@ -63,6 +63,14 @@ DESCARGAS = RAIZ / "datos" / "descargas"
 MAX_DESCARGA_MB = float(os.environ.get("MAX_DESCARGA_MB", 2000))
 
 
+def _id_drive(url):
+    """ID de archivo de un enlace de Google Drive (/file/d/<id>/..., ?id=<id>), o None."""
+    if not re.match(r"https?://(drive|docs)\.google\.com/|https?://drive\.usercontent\.google\.com/", url):
+        return None
+    m = re.search(r"/file/d/([A-Za-z0-9_-]{10,})", url) or re.search(r"[?&]id=([A-Za-z0-9_-]{10,})", url)
+    return m.group(1) if m else None
+
+
 def _es_media(f):
     """True si ffprobe encuentra una pista de video o audio (evita guardar una página HTML como si fuera un .mp4)."""
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(f)],
@@ -87,6 +95,10 @@ def resolver(entrada):
         if hechos:
             return hechos[0]
         directo = re.search(r"\.(mp4|mov|webm|mkv|avi|m4v|mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)", entrada, re.I)
+        drive = _id_drive(entrada)
+        if drive:   # Google Drive compartido "cualquier persona con el enlace": descarga directa oficial
+            entrada = f"https://drive.usercontent.google.com/download?id={drive}&export=download&confirm=t"
+            directo = True
         ytdlp = shutil.which("yt-dlp")
         if not directo and not ytdlp:
             raise ErrorVision("Para enlaces de páginas (YouTube, TikTok, Instagram...) hace falta yt-dlp: "
@@ -113,7 +125,7 @@ def resolver(entrada):
                         f"Detalle: {err[-200:]}")
                 raise ErrorVision(f"No se pudo descargar con yt-dlp: {err[-300:]}")
         else:
-            ext = (directo.group(1).lower() if directo else "mp4")
+            ext = (directo.group(1).lower() if hasattr(directo, "group") else "mp4")
             destino = DESCARGAS / f"{clave}.{ext}"
             req = urllib.request.Request(entrada, headers={"User-Agent": "Mozilla/5.0 (ver-video)"})
             try:
@@ -128,13 +140,18 @@ def resolver(entrada):
                             raise ErrorVision(f"El archivo supera {MAX_DESCARGA_MB:g} MB")
                         f.write(b)
             except urllib.error.URLError as e:
-                raise ErrorVision(f"No se pudo descargar {entrada}: {e}")
+                pista = (" Si es de Google Drive, revisa que esté compartido como «Cualquier persona con el enlace»."
+                         if drive else "")
+                raise ErrorVision(f"No se pudo descargar {entrada}: {e}.{pista}")
             Path(str(destino) + ".part").replace(destino)
         hechos = [f for f in DESCARGAS.glob(clave + ".*") if not f.name.endswith(".part")]
         if not hechos:
             raise ErrorVision("La descarga no produjo ningún archivo")
         if not _es_media(hechos[0]):
             hechos[0].unlink()
+            if "google.com" in entrada:
+                raise ErrorVision("Google Drive no entregó el archivo: compártelo como «Cualquier persona con el enlace» "
+                                  "(Compartir → Acceso general) y vuelve a pasar el enlace, o adjunta el video.")
             raise ErrorVision("El enlace no lleva a un video o audio (devolvió una página web). Usa el enlace directo "
                               "al archivo, o súbelo/adjúntalo.")
         return hechos[0]
