@@ -8,6 +8,7 @@ Solo escribe dentro de la carpeta datos/ de este repositorio.
 """
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -121,22 +122,156 @@ def _error(e):
     return ToolError(str(e))
 
 
-def _contenido_intercalado(r):
-    """Como Gemini en modo static: cada cuadro va precedido de su marca MM:SS, la voz y el sonido de ese instante."""
+# --- Empaquetado de la respuesta: que NUNCA se corten imágenes ------------------------------------------------
+# Claude Code corta la salida de una herramienta MCP a MAX_MCP_OUTPUT_TOKENS (25 000 por defecto) y descarta las
+# imágenes que no caben. Por eso medimos el coste de cada imagen (≈ ancho*alto/750 tokens, tras el reescalado de
+# Claude a ≤1568 px de lado y ≤1,15 MP) y, si no cabe todo, juntamos los cuadros en hojas de contacto con la marca
+# MM:SS dentro de cada cuadro y repartimos el resto en páginas (pagina=2, 3...).
+PRESUPUESTO = int(os.environ.get("VIDEO_NUBE_PRESUPUESTO_TOKENS", "18000"))
+LADO_MAX, AREA_MAX = 1568, 1_150_000
+
+
+def _tokens_imagen(w, h):
+    f = min(1.0, LADO_MAX / max(w, h), math.sqrt(AREA_MAX / (w * h)))
+    return math.ceil((w * f) * (h * f) / 750)
+
+
+def _tokens_texto(t):
+    return math.ceil(len(t) / 3) + 10
+
+
+def _tam(ruta):
+    try:
+        from PIL import Image as P
+        with P.open(ruta) as im:
+            return im.size
+    except ImportError:
+        o = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+                            "-of", "csv=p=0", str(ruta)], capture_output=True, text=True, check=True).stdout
+        w, h = o.strip().split(",")[:2]
+        return int(w), int(h)
+
+
+def _hay_pil():
+    try:
+        import PIL  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _marca(c):
+    """MM:SS como Gemini; con fps>1 añade las centésimas para distinguir cuadros del mismo segundo."""
+    t = c["tiempo_segundos"]
+    return c["tiempo_mmss"] if abs(t - round(t)) < 1e-3 else f"{c['tiempo_mmss']}.{int(round((t % 1) * 100)):02d}"
+
+
+def _hoja(celdas, destino, columnas, ancho_celda):
+    """Hoja de contacto: cuadros en rejilla (izq→der, arriba→abajo) con su MM:SS grabado en la esquina."""
+    from PIL import Image as P, ImageDraw, ImageFont
+    w0, h0 = _tam(celdas[0][0])
+    alto_celda = round(h0 * ancho_celda / w0)
+    filas = math.ceil(len(celdas) / columnas)
+    hoja = P.new("RGB", (columnas * ancho_celda + (columnas - 1) * 4, filas * alto_celda + (filas - 1) * 4), "black")
+    tam_letra = max(18, ancho_celda // 9)
+    try:
+        letra = ImageFont.load_default(size=tam_letra)
+    except TypeError:
+        letra = ImageFont.load_default()
+    for i, (ruta, etiqueta) in enumerate(celdas):
+        with P.open(ruta) as im:
+            c = im.convert("RGB").resize((ancho_celda, alto_celda), P.LANCZOS)
+        d = ImageDraw.Draw(c)
+        x0, y0, x1, y1 = d.textbbox((0, 0), etiqueta, font=letra)
+        d.rectangle((0, 0, x1 - x0 + 12, y1 - y0 + 12), fill="black")
+        d.text((6 - x0, 6 - y0), etiqueta, fill="yellow", font=letra)
+        hoja.paste(c, ((i % columnas) * (ancho_celda + 4), (i // columnas) * (alto_celda + 4)))
+    hoja.save(destino, quality=88)
+    return destino
+
+
+def _rejilla(w, h):
+    """Columnas, filas y ancho de celda para que la hoja quepa en 1568 px sin reescalar (vertical 4x2, horizontal 3x3)."""
+    if h > w * 1.2:
+        return 4, 2, 388
+    if w > h * 1.2:
+        return 3, 3, 520
+    return 3, 3, 440
+
+
+def _linea(c):
+    txt = f"[{_marca(c)}]" + (" (corte de escena)" if c.get("corte_de_escena") else "")
+    if c["voz"]:
+        txt += f" voz: «{c['voz']}»"
+    if c.get("sonido"):
+        txt += f" · sonido: {', '.join(c['sonido']['sonidos'])} · {c['sonido']['db']} dB"
+    return txt
+
+
+def _contenido_intercalado(r, formato="auto", pagina=1, presupuesto=None):
+    """Como Gemini en modo static: cada cuadro con su marca MM:SS, la voz y el sonido de ese instante.
+    formato='cuadros' (uno a uno), 'hojas' (hojas de contacto) o 'auto' (cuadros si caben; si no, hojas).
+    Lo que no cabe en el presupuesto de tokens pasa a la página siguiente, nunca se corta."""
     from fastmcp.utilities.types import Image
     import vision_local as vl
-    resumen = {k: v for k, v in r.items() if k not in ("linea_de_tiempo",)}
-    partes = [json.dumps(resumen, ensure_ascii=False)]
+    presupuesto = presupuesto or PRESUPUESTO
+    linea = r["linea_de_tiempo"]
+    resumen = {k: v for k, v in r.items() if k != "linea_de_tiempo"}
+    cabecera = json.dumps(resumen, ensure_ascii=False)
+    fijos = [cabecera]
+    coste_fijo = _tokens_texto(cabecera)
     if r.get("espectrograma"):
-        partes += [f"Espectrograma del audio ({r['start_offset']:g}-{r['end_offset']:g} s; el eje de tiempo empieza en 0):",
-                   Image(path=str(vl.RAIZ / r["espectrograma"]))]
-    for c in r["linea_de_tiempo"]:
-        txt = f"[{c['tiempo_mmss']}]" + (" (corte de escena)" if c.get("corte_de_escena") else "")
-        if c["voz"]:
-            txt += f" voz: «{c['voz']}»"
-        if c.get("sonido"):
-            txt += f" · sonido: {', '.join(c['sonido']['sonidos'])} · {c['sonido']['db']} dB"
-        partes += [txt, Image(path=str(vl.RAIZ / c["archivo"]))]
+        esp = vl.RAIZ / r["espectrograma"]
+        t = f"Espectrograma del audio ({r['start_offset']:g}-{r['end_offset']:g} s; el eje de tiempo empieza en 0):"
+        fijos += [t, Image(path=str(esp))]
+        coste_fijo += _tokens_texto(t) + _tokens_imagen(*_tam(esp))
+    if formato not in ("auto", "cuadros", "hojas"):
+        raise vl.ErrorVision("formato debe ser 'auto', 'cuadros' o 'hojas'")
+
+    # Bloques: (texto, ruta_imagen, coste). Un bloque es un cuadro suelto o una hoja de contacto.
+    bloques = []
+    if linea:
+        w, h = _tam(vl.RAIZ / linea[0]["archivo"])
+        sueltos = [(_linea(c), vl.RAIZ / c["archivo"], _tokens_texto(_linea(c)) + _tokens_imagen(w, h)) for c in linea]
+        if formato == "cuadros" or not _hay_pil() or (formato == "auto" and coste_fijo + sum(b[2] for b in sueltos) <= presupuesto):
+            bloques = sueltos
+        else:
+            cols, filas, ancho = _rejilla(w, h)
+            n = cols * filas
+            carpeta = (vl.RAIZ / linea[0]["archivo"]).parent / "hojas"
+            carpeta.mkdir(exist_ok=True)
+            for k in range(0, len(linea), n):
+                grupo = linea[k:k + n]
+                destino = carpeta / f"hoja_v2_{grupo[0]['tiempo_segundos']:.3f}-{grupo[-1]['tiempo_segundos']:.3f}_{cols}x{filas}.jpg"
+                if not destino.is_file():
+                    _hoja([(vl.RAIZ / c["archivo"], _marca(c)) for c in grupo], destino, cols, ancho)
+                txt = (f"Hoja de contacto {k // n + 1} ({_marca(grupo[0])}–{_marca(grupo[-1])}; "
+                       f"{len(grupo)} cuadros en orden izquierda→derecha, arriba→abajo; cada uno lleva su MM:SS en la "
+                       f"esquina):\n" + "\n".join(_linea(c) for c in grupo))
+                bloques.append((txt, destino, _tokens_texto(txt) + _tokens_imagen(*_tam(destino))))
+
+    # Reparto en páginas: la 1 lleva el resumen y el espectrograma; cada página cabe en el presupuesto.
+    paginas, actual, coste = [], [], coste_fijo
+    for b in bloques:
+        if actual and coste + b[2] > presupuesto:
+            paginas.append(actual)
+            actual, coste = [], 300
+        actual.append(b)
+        coste += b[2]
+    paginas.append(actual)
+    total = len(paginas)
+    if not 1 <= pagina <= total:
+        raise vl.ErrorVision(f"pagina debe estar entre 1 y {total}")
+    partes = list(fijos) if pagina == 1 else [
+        f"Página {pagina} de {total} (mismo video y parámetros; el resumen y el espectrograma están en la página 1)."]
+    for txt, ruta, _ in paginas[pagina - 1]:
+        partes += [txt, Image(path=str(ruta))]
+    if pagina < total:
+        quedan = sum(len(p) for p in paginas[pagina:])
+        partes.append(f"CONTINÚA: faltan {total - pagina} página(s) ({quedan} bloque(s) de cuadros). Vuelve a llamar con "
+                      f"los mismos parámetros y pagina={pagina + 1} antes de responder sobre ese tramo.")
+    elif total > 1:
+        partes.append(f"Fin: esta es la última página ({total} de {total}).")
     return partes
 
 
@@ -151,16 +286,24 @@ def ver_video(
     idioma: str = "auto",
     escuchar: bool = True,
     escenas: bool = False,
+    formato: str = "auto",
+    pagina: int = 1,
+    detalle: str = "gemini",
+    momentos: str = "",
+    sin_repetidos: bool | None = None,
 ):
-    """Ve y oye un video como Gemini, en local. processing='static': 1 FPS por defecto, cada cuadro con [MM:SS], lo que se dice y lo que suena (sonidos AudioSet + dB), resumen de audio (tramos sonoros, silencios, BPM, tono/emoción de la voz) y espectrograma. fps>1 para acción rápida; start_offset/end_offset en segundos (0 = final). escenas=True añade un cuadro en cada corte de escena. processing='agentic': transcripción + mapa de sonidos + cortes, y después cargar_segmento. media_resolution: 'low' o 'default'."""
+    """Ve y oye un video como Gemini, en local. processing='static': 1 FPS por defecto, cada cuadro con [MM:SS], lo que se dice y lo que suena (sonidos AudioSet + dB), resumen de audio (tramos sonoros, silencios, BPM, tono/emoción de la voz) y espectrograma. fps>1 para acción rápida; start_offset/end_offset en segundos (0 = final). escenas=True añade un cuadro en cada corte de escena. Las imágenes nunca se cortan: formato='auto' manda los cuadros uno a uno si caben y, si no, hojas de contacto (rejillas con el MM:SS grabado en cada cuadro); formato='cuadros' u 'hojas' lo fuerza. Si la respuesta termina con 'CONTINÚA', pide pagina=2, 3... con los mismos parámetros. detalle: 'gemini' (por defecto: fps fijo), 'transcripcion' (sin cuadros, lo más barato), 'eficiente' (cuadros clave, máx. 50), 'equilibrado' (cambios de escena, máx. 100; recomendado para videos editados o largos) o 'maximo' (todas las escenas); los tres últimos quitan cuadros casi repetidos (sin_repetidos=false para conservarlos). momentos='4:32,7:10': añade cuadros exactos en esos instantes (p. ej. cuando en la transcripción dicen 'miren esto'). media_resolution 'high' (1024 px) para leer texto pequeño. processing='agentic': transcripción + mapa de sonidos + cortes, y después cargar_segmento. media_resolution: 'low' o 'default'."""
     import vision_local as vl
     try:
         if processing == "agentic":
             return json.dumps(vl.ver_agentic(video_path, idioma, escuchar), ensure_ascii=False)
         if processing != "static":
             raise vl.ErrorVision("processing debe ser 'static' o 'agentic'")
+        lista_momentos = [m for m in momentos.replace(";", ",").split(",") if m.strip()]
         return _contenido_intercalado(vl.ver_static(video_path, fps, start_offset, end_offset, media_resolution,
-                                                    idioma, escuchar=escuchar, escenas=escenas))
+                                                    idioma, escuchar=escuchar, escenas=escenas, detalle=detalle,
+                                                    momentos=lista_momentos, sin_repetidos=sin_repetidos),
+                                      formato, pagina)
     except vl.ErrorVision as e:
         raise _error(e)
 
@@ -176,12 +319,14 @@ def cargar_segmento(
     idioma: str = "auto",
     escuchar: bool = True,
     escenas: bool = False,
+    formato: str = "auto",
+    pagina: int = 1,
 ):
-    """Modo agentic: carga solo los cuadros (y sonido) de un tramo, por id de segmento (seg_000...) o por inicio/fin en segundos."""
+    """Modo agentic: carga solo los cuadros (y sonido) de un tramo, por id de segmento (seg_000...) o por inicio/fin en segundos. formato y pagina funcionan igual que en ver_video (si termina con 'CONTINÚA', pide la página siguiente)."""
     import vision_local as vl
     try:
         return _contenido_intercalado(vl.cargar_segmento(video_path, id or None, inicio, fin, fps, media_resolution,
-                                                         idioma, escuchar, escenas))
+                                                         idioma, escuchar, escenas), formato, pagina)
     except vl.ErrorVision as e:
         raise _error(e)
 
@@ -301,6 +446,19 @@ def preguntar_audio(path: str, descripciones: list[str], start_offset: float = 0
         return json.dumps([{"descripcion": d, "probabilidad": pr} for d, pr in r], ensure_ascii=False)
     except vl.ErrorVision as e:
         raise _error(e)
+
+
+# Herramientas de música (qué canción le queda a un video). Van aparte para que el script de Oracle no crezca.
+try:
+    import herramientas_musica
+    herramientas_musica.registrar(mcp, _error)
+except ImportError:
+    pass
+try:
+    import herramientas_youtube
+    herramientas_youtube.registrar(mcp, _error, _contenido_intercalado)
+except ImportError:
+    pass
 
 
 # ---------------------------------------------------------------------------

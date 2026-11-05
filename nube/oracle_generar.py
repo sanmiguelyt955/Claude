@@ -18,12 +18,18 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
 ARCHIVOS = ["servidor_nube.py", "vision_local.py", "escucha_local.py", "oido_modelo.py"]
-LIMITE_BRUTO = 23_000   # 23 000 * 4/3 ≈ 30 700 en base64 (+ margen para una clave SSH corta)
+LIMITE_BRUTO = 23_500   # 23 500 * 4/3 ≈ 31 300 en base64 (la guía crea la instancia sin claves SSH)
+
+
+# En la nube no sirve la herramienta de prueba con ruta fija (datos/videos/prueba.mp4): se quita para ahorrar espacio.
+SOLO_LOCAL = {"_hhmmss", "_ffprobe", "_analizar", "analizar_video_nube"}
 
 
 def minificar(codigo):
-    """Quita docstrings (salvo las de herramientas MCP, que Claude lee) y comentarios. No cambia el código."""
+    """Quita docstrings (salvo las de herramientas MCP, que Claude lee), comentarios y la herramienta solo local."""
     arbol = ast.parse(codigo)
+    arbol.body = [n for n in arbol.body if not (isinstance(n, ast.FunctionDef) and n.name in SOLO_LOCAL)
+                  and not (isinstance(n, ast.Try) and "herramientas_" in ast.unparse(n))]   # módulos que no van a Oracle
     for n in ast.walk(arbol):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)) and n.body \
                 and isinstance(n.body[0], ast.Expr) and isinstance(getattr(n.body[0], "value", None), ast.Constant) \
@@ -56,13 +62,11 @@ set -x
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y python3-venv python3-dev build-essential ffmpeg caddy curl xz-utils
-# Las imágenes Ubuntu de Oracle solo abren el puerto 22: abrir 80 y 443 (HTTPS)
 iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
 iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
 netfilter-persistent save || true
 IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me)
 DOMINIO="$(echo "$IP" | tr . -).sslip.io"
-# Registro de instalación visible en https://<dominio>/<clave>/instalacion.txt (sin entrar al servidor)
 mkdir -p /var/www/estado
 systemd-run --unit=copia-registro bash -c 'while true; do cp /var/log/video-nube-instalacion.log /var/www/estado/instalacion.txt; chmod 644 /var/www/estado/instalacion.txt; sleep 15; done'
 cat > /etc/caddy/Caddyfile <<CADDY
@@ -130,11 +134,11 @@ def main():
     script = PLANTILLA.replace("__CODIGO__", codigo)
     destino = RAIZ / "dist" / "oracle-video-nube.sh"
     destino.parent.mkdir(exist_ok=True)
-    destino.write_text(script, encoding="utf-8")
     bruto, b64 = len(script.encode()), len(base64.b64encode(script.encode()))
     print(f"{destino}: {bruto} bytes (en base64: {b64} de 32000 permitidos)")
-    if bruto > LIMITE_BRUTO:
-        print("DEMASIADO GRANDE para los metadatos de Oracle"); return 1
+    if bruto > LIMITE_BRUTO:   # no se sobrescribe: se conserva el último script que sí cabe
+        print("DEMASIADO GRANDE para los metadatos de Oracle: se mantiene el script anterior"); return 1
+    destino.write_text(script, encoding="utf-8")
     return 0
 
 

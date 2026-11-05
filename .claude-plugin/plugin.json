@@ -1,7 +1,7 @@
 {
   "name": "video-claude",
   "version": "1.0.0",
-  "description": "Ver y oír videos y audios como Gemini (ver-video + conector video-nube) y editar videos profesionalmente (video-editor).",
+  "description": "Una sola skill para video: ver y oír videos y audios como Gemini (también YouTube solo con el enlace y videos largos), elegir la música que le queda y aprender tu gusto, y editar profesionalmente; con el conector video-nube.",
   "author": {
     "name": "sanmiguelyt955",
     "url": "https://github.com/sanmiguelyt955"

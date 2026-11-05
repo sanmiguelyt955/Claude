@@ -6,3 +6,5 @@ librosa
 soundfile
 scikit-learn
 pillow
+# Enlaces de YouTube/TikTok/Instagram (las plataformas pueden bloquear servidores)
+yt-dlp[default]

@@ -31,11 +31,11 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent
 SALIDA = RAIZ / "datos" / "vision"
 FORMATOS = {".mp4", ".mpeg", ".mov", ".avi", ".flv", ".mpg", ".webm", ".wmv", ".3gp", ".3gpp", ".m4v"}
-TOKENS_CUADRO = {"low": 66, "default": 258}          # documentación de Google
+TOKENS_CUADRO = {"low": 66, "default": 258, "high": 258}          # documentación de Google
 TOKENS_AUDIO_SEG = 32                                 # documentación de Google
-ANCHO = {"low": 384, "default": 768}                  # DECISIÓN: Google no publica píxeles
+ANCHO = {"low": 384, "default": 768, "high": 1024}   # high: para leer texto pequeño                  # DECISIÓN: Google no publica píxeles
 FPS_MAX = 24.0                                        # DECISIÓN: Google no publica un máximo
-MAX_CUADROS = 120                                     # DECISIÓN: límite por respuesta MCP
+MAX_CUADROS = 480                                     # DECISIÓN: con hojas de contacto y páginas ya no se corta nada
 
 
 class ErrorVision(Exception):
@@ -63,6 +63,21 @@ DESCARGAS = RAIZ / "datos" / "descargas"
 MAX_DESCARGA_MB = float(os.environ.get("MAX_DESCARGA_MB", 2000))
 
 
+def _id_drive(url):
+    """ID de archivo de un enlace de Google Drive (/file/d/<id>/..., ?id=<id>), o None."""
+    if not re.match(r"https?://(drive|docs)\.google\.com/|https?://drive\.usercontent\.google\.com/", url):
+        return None
+    m = re.search(r"/file/d/([A-Za-z0-9_-]{10,})", url) or re.search(r"[?&]id=([A-Za-z0-9_-]{10,})", url)
+    return m.group(1) if m else None
+
+
+def _es_media(f):
+    """True si ffprobe encuentra una pista de video o audio (evita guardar una página HTML como si fuera un .mp4)."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(f)],
+                       capture_output=True, text=True)
+    return r.returncode == 0 and any(t in r.stdout for t in ("video", "audio"))
+
+
 def resolver(entrada):
     """Ruta local | 'subida:<id>' (archivo subido a /subir) | URL http(s) (directa o YouTube/TikTok/Instagram
     vía yt-dlp). Devuelve un Path local; las descargas se guardan en caché en datos/descargas/."""
@@ -80,10 +95,20 @@ def resolver(entrada):
         if hechos:
             return hechos[0]
         directo = re.search(r"\.(mp4|mov|webm|mkv|avi|m4v|mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)", entrada, re.I)
-        if not directo and shutil.which("yt-dlp"):
-            cmd = ["yt-dlp", "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
+        drive = _id_drive(entrada)
+        if drive:   # Google Drive compartido "cualquier persona con el enlace": descarga directa oficial
+            entrada = f"https://drive.usercontent.google.com/download?id={drive}&export=download&confirm=t"
+            directo = True
+        ytdlp = shutil.which("yt-dlp")
+        if not directo and not ytdlp:
+            raise ErrorVision("Para enlaces de páginas (YouTube, TikTok, Instagram...) hace falta yt-dlp: "
+                              "pip install 'yt-dlp[default]'. Con un enlace directo al .mp4 no hace falta.")
+        if not directo:
+            cmd = [ytdlp, "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
                    "--merge-output-format", "mp4", "--max-filesize", f"{int(MAX_DESCARGA_MB)}M",
                    "-o", str(DESCARGAS / f"{clave}.%(ext)s")]
+            if os.environ.get("SSL_CERT_FILE"):     # proxy con CA propia: que yt-dlp use la del sistema, no certifi
+                cmd += ["--compat-options", "no-certifi"]
             cookies = os.environ.get("YTDLP_COOKIES", "").strip()   # opcional: cookies Netscape (secreto del Space)
             if cookies:
                 fc = DESCARGAS / ".cookies.txt"
@@ -92,13 +117,17 @@ def resolver(entrada):
                 cmd += ["--cookies", str(fc)]
             r = subprocess.run(cmd + [entrada], capture_output=True, text=True)
             if r.returncode != 0:
-                err = r.stderr.strip()[-300:]
-                pista = (" Las plataformas (YouTube, Vimeo, Instagram...) suelen bloquear descargas desde servidores: "
-                         "sube el archivo a /subir o usa un enlace directo al .mp4.") if ("403" in err or "logged-in" in err
-                                                                                        or "Sign in" in err) else ""
-                raise ErrorVision(f"No se pudo descargar con yt-dlp: {err}{pista}")
+                err = r.stderr.strip()
+                if any(k in err for k in ("403", "Sign in", "logged-in", "cookies", "bot", "login")):
+                    raise ErrorVision(
+                        "La plataforma bloqueó la descarga desde este servidor (pide iniciar sesión o confirmar que no "
+                        "es un bot; YouTube y Vimeo lo hacen con casi todos los servidores en la nube). Opciones: "
+                        "1) adjunta el video en el chat (o súbelo a /subir) y usa esa ruta; 2) usa un enlace directo al "
+                        "archivo .mp4; 3) en el servidor propio, pon tus cookies de la plataforma en YTDLP_COOKIES. "
+                        f"Detalle: {err[-200:]}")
+                raise ErrorVision(f"No se pudo descargar con yt-dlp: {err[-300:]}")
         else:
-            ext = (directo.group(1).lower() if directo else "mp4")
+            ext = (directo.group(1).lower() if hasattr(directo, "group") else "mp4")
             destino = DESCARGAS / f"{clave}.{ext}"
             req = urllib.request.Request(entrada, headers={"User-Agent": "Mozilla/5.0 (ver-video)"})
             try:
@@ -113,11 +142,20 @@ def resolver(entrada):
                             raise ErrorVision(f"El archivo supera {MAX_DESCARGA_MB:g} MB")
                         f.write(b)
             except urllib.error.URLError as e:
-                raise ErrorVision(f"No se pudo descargar {entrada}: {e}")
+                pista = (" Si es de Google Drive, revisa que esté compartido como «Cualquier persona con el enlace»."
+                         if drive else "")
+                raise ErrorVision(f"No se pudo descargar {entrada}: {e}.{pista}")
             Path(str(destino) + ".part").replace(destino)
         hechos = [f for f in DESCARGAS.glob(clave + ".*") if not f.name.endswith(".part")]
         if not hechos:
             raise ErrorVision("La descarga no produjo ningún archivo")
+        if not _es_media(hechos[0]):
+            hechos[0].unlink()
+            if "google.com" in entrada:
+                raise ErrorVision("Google Drive no entregó el archivo: compártelo como «Cualquier persona con el enlace» "
+                                  "(Compartir → Acceso general) y vuelve a pasar el enlace, o adjunta el video.")
+            raise ErrorVision("El enlace no lleva a un video o audio (devolvió una página web). Usa el enlace directo "
+                              "al archivo, o súbelo/adjúntalo.")
         return hechos[0]
     p = Path(entrada)
     return p if p.is_absolute() else RAIZ / p
@@ -177,7 +215,8 @@ def transcripcion(p, meta, idioma="auto"):
         wav = carpeta / "audio.wav"
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(p), "-vn", "-ac", "1", "-ar", "16000", str(wav)], check=True)
         from faster_whisper import WhisperModel
-        modelo = WhisperModel("small", device="cpu", compute_type="int8")
+        nombre = os.environ.get("VIDEO_NUBE_WHISPER") or ("base" if meta["duracion_segundos"] > 1800 else "small")
+        modelo = WhisperModel(nombre, device="cpu", compute_type="int8")
         # VAD: solo transcribe donde hay voz (evita que Whisper "alucine" texto en música, ruidos o silencio)
         segs, info = modelo.transcribe(leer_wav_16k(wav), language=None if idioma == "auto" else idioma,
                                        word_timestamps=True, vad_filter=True,
@@ -201,7 +240,7 @@ def cuadros(p, ini, fin, fps, media_resolution):
     if not (0 < fps <= FPS_MAX):
         raise ErrorVision(f"fps debe estar entre 0 y {FPS_MAX}")
     if media_resolution not in ANCHO:
-        raise ErrorVision("media_resolution debe ser 'low' o 'default'")
+        raise ErrorVision("media_resolution debe ser 'low', 'default' o 'high'")
     n = max(1, math.ceil((fin - ini) * fps - 1e-6))
     carpeta = SALIDA / _id(p) / f"cuadros_{media_resolution}_{fps:g}fps"
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -277,14 +316,17 @@ def _eventos(p, meta):
         ev = []
     else:
         import escucha_local as E
-        ev = E.eventos(p, meta["duracion_segundos"])
+        d = meta["duracion_segundos"]
+        ev = E.eventos(p, d, paso=1.0 if d <= 600 else 2.0 if d <= 1800 else 5.0)
     f.write_text(json.dumps(ev, ensure_ascii=False), encoding="utf-8")
     return ev
 
 
 def _sonido_en(ev, a, b):
     """Sonidos en [a, b): probabilidad máxima de cada etiqueta + volumen medio."""
-    sel = [e for e in ev if a - 1e-6 <= e["t"] < b - 1e-6] or [e for e in ev if e["t"] <= a < e["t"] + 1.0]
+    sel = [e for e in ev if a - 1e-6 <= e["t"] < b - 1e-6] or [max((e for e in ev if e["t"] <= a + 1e-6),
+                                                                      key=lambda e: e["t"], default=None)]
+    sel = [e for e in sel if e]
     if not sel:
         return None
     best = {}
@@ -332,20 +374,140 @@ def _cuadro_en(p, t, media_resolution, carpeta):
     return f
 
 
+# ----------------------------------------------------------------- niveles de detalle (idea de la skill /watch, MIT)
+DETALLES = {"eficiente": 50, "equilibrado": 100, "maximo": MAX_CUADROS}
+UMBRAL_ESCENA = 0.20
+MIN_ESCENAS, MIN_CLAVE = 8, 4
+LARGO = 900          # s: a partir de aquí, ajustes para videos largos (cuadros clave, sonidos cada 2-5 s, Whisper base)
+REPETIDO_LADO, REPETIDO_UMBRAL = 16, 2.0     # cuadros casi idénticos: miniatura 16x16, diferencia media ≤ 2/255
+
+
+def parse_tiempo(v):
+    """'75', '1:15' o '0:01:15' → segundos."""
+    v = str(v).strip()
+    if not v:
+        raise ErrorVision("Tiempo vacío")
+    try:
+        partes = [float(x) for x in v.split(":")]
+    except ValueError:
+        raise ErrorVision(f"Tiempo no válido: {v} (usa SS, MM:SS o HH:MM:SS)")
+    seg = 0.0
+    for x in partes:
+        seg = seg * 60 + x
+    return seg
+
+
+def _muestreo_parejo(lista, n):
+    """n elementos repartidos de forma pareja, conservando el primero y el último."""
+    if n is None or len(lista) <= n:
+        return lista
+    if n == 1:
+        return lista[:1]
+    idx = sorted({round(i * (len(lista) - 1) / (n - 1)) for i in range(n)})
+    return [lista[i] for i in idx]
+
+
+def _tiempos_clave(p, ini, fin):
+    """Tiempos de los cuadros clave (I-frames) leyendo solo los paquetes: instantáneo incluso en videos de horas.
+    Los codificadores ponen cuadros clave en los cortes y cada pocos segundos."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,flags",
+                        "-of", "csv=p=0", str(p)], capture_output=True, text=True)
+    ts = []
+    for linea in r.stdout.splitlines():
+        partes = linea.split(",")
+        if len(partes) >= 2 and "K" in partes[1]:
+            try:
+                t = float(partes[0])
+            except ValueError:
+                continue
+            if ini - 1e-3 <= t <= fin:
+                ts.append(round(t, 3))
+    return sorted(set(ts))
+
+
+def _tiempos_escena(p, ini, fin):
+    """Primer cuadro + cambios de escena (decodifica en pequeño para ir rápido)."""
+    import re
+    r = subprocess.run(["ffmpeg", "-v", "info", "-ss", f"{ini:.3f}", "-to", f"{fin:.3f}", "-i", str(p), "-an",
+                        "-vf", f"scale=320:-2,select='eq(n\\,0)+gt(scene\\,{UMBRAL_ESCENA})',showinfo",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    return [round(ini + float(x), 3) for x in re.findall(r"pts_time:([\d.]+)", r.stderr)]
+
+
+def _espaciar(ts, minimo=0.5):
+    """Quita candidatos pegados (sacudidas o fundidos dan varios 'cortes' seguidos)."""
+    out = []
+    for t in ts:
+        if not out or t - out[-1] >= minimo:
+            out.append(t)
+    return out
+
+
+def quitar_repetidos(lista, umbral=REPETIDO_UMBRAL):
+    """Quita cuadros casi idénticos al último conservado (diapositivas fijas, planos quietos). Devuelve (lista, n_quitados).
+    Ojo: cambios pequeños de texto o código pueden no notarse a 16x16."""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return lista, 0
+    conservados, ultimo, quitados = [], None, 0
+    for item in lista:
+        with Image.open(item[1]) as im:
+            mini = np.asarray(im.convert("RGB").resize((REPETIDO_LADO, REPETIDO_LADO)), dtype=np.float32)
+        if ultimo is not None and float(np.abs(mini - ultimo).mean()) <= umbral and not (len(item) > 2 and item[2]):
+            quitados += 1
+            continue
+        conservados.append(item)
+        ultimo = mini
+    return conservados, quitados
+
+
+def cuadros_por_detalle(p, ini, fin, detalle, media_resolution):
+    """eficiente: cuadros clave (cap 50); equilibrado: cambios de escena (cap 100); maximo: escenas (cap 480).
+    Videos de más de 15 min usan cuadros clave también en equilibrado/maximo (no hay que decodificar horas de video).
+    Si el video es casi estático (pocos candidatos), cae a muestreo uniforme. Devuelve (lista, motor, n_candidatos)."""
+    tope = DETALLES[detalle]
+    carpeta = SALIDA / _id(p) / f"cuadros_{media_resolution}_{detalle}"
+    carpeta.mkdir(parents=True, exist_ok=True)
+    largo = fin - ini > LARGO
+    if detalle == "eficiente" or largo:
+        cand, minimo, motor = _espaciar(_tiempos_clave(p, ini, fin), 1.0 if largo else 0.5), MIN_CLAVE, "cuadros clave"
+    else:
+        cand, minimo, motor = _espaciar(_tiempos_escena(p, ini, fin)), MIN_ESCENAS, "cambios de escena"
+    if len(cand) >= minimo:
+        elegidos = _muestreo_parejo(cand, tope)
+        return [(t, _cuadro_en(p, t, media_resolution, carpeta)) for t in elegidos], motor, len(cand)
+    fps = min(1.0 if detalle != "maximo" else 2.0, max(tope / max(fin - ini, 1e-6), 0.01))
+    uni = cuadros(p, ini, fin, round(fps, 4), media_resolution)
+    return _muestreo_parejo(uni, tope), "uniforme (video casi estático)", len(cand)
+
+
 def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resolution="default",
-               idioma="auto", max_cuadros=MAX_CUADROS, escuchar=True, escenas=False):
+               idioma="auto", max_cuadros=MAX_CUADROS, escuchar=True, escenas=False, detalle="gemini",
+               momentos=None, sin_repetidos=None):
     """Una sola pasada, como Gemini: por cada paso, el cuadro, lo que se dice y lo que suena.
     escenas=True (mejora propia, no existe en Gemini): añade además un cuadro en cada corte de escena."""
     p = _ruta(video_path)
     meta = metadatos(p)
     ini, fin = _rango(meta, start_offset, end_offset)
-    previstos = math.ceil((fin - ini) * fps - 1e-6)
+    if detalle not in ("gemini", "transcripcion", *DETALLES):
+        raise ErrorVision("detalle debe ser 'gemini', 'transcripcion', 'eficiente', 'equilibrado' o 'maximo'")
+    previstos = math.ceil((fin - ini) * fps - 1e-6) if detalle == "gemini" else 0
     if previstos > max_cuadros:
         raise ErrorVision(
             f"Serían {previstos} cuadros (máximo {max_cuadros} por respuesta). Como recomienda Google para videos "
             f"largos, usa processing='agentic', o baja fps, o recorta con start_offset/end_offset.")
     trans = transcripcion(p, meta, idioma)
-    lista = [(t, f, False) for t, f in cuadros(p, ini, fin, fps, media_resolution)]
+    motor, n_cand = "uniforme (como Gemini)", None
+    if detalle == "gemini":
+        lista = [(t, f, False) for t, f in cuadros(p, ini, fin, fps, media_resolution)]
+    elif detalle == "transcripcion":
+        lista, motor = [], "sin cuadros"
+    else:
+        sel, motor, n_cand = cuadros_por_detalle(p, ini, fin, detalle, media_resolution)
+        lista = [(t, f, False) for t, f in sel]
+        fps = len(lista) / max(fin - ini, 1e-6) if lista else 1.0
     paso = 1.0 / fps
     if escenas:
         carpeta = lista[0][1].parent if lista else SALIDA / _id(p)
@@ -354,13 +516,29 @@ def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resoluti
         extra = extra[:max(0, max_cuadros - len(lista))]
         lista += [(t, _cuadro_en(p, t, media_resolution, carpeta), True) for t in extra]
         lista.sort(key=lambda z: z[0])
+    pedidos = []
+    if momentos:
+        carpeta = SALIDA / _id(p) / f"cuadros_{media_resolution}_momentos"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        for m in momentos:
+            t = parse_tiempo(m) if not isinstance(m, (int, float)) else float(m)
+            if not (ini <= t <= fin):
+                continue
+            pedidos.append((round(t, 3), _cuadro_en(p, min(t, max(fin - 0.05, 0)), media_resolution, carpeta), "momento"))
+        lista = [x for x in lista if all(abs(x[0] - q[0]) > 0.2 for q in pedidos)] + pedidos
+        lista.sort(key=lambda z: z[0])
+    quitados = 0
+    if sin_repetidos if sin_repetidos is not None else detalle in DETALLES:
+        lista, quitados = quitar_repetidos(lista)
     ev = _eventos(p, meta) if escuchar else []
     linea = []
     for i, (t, f, corte) in enumerate(lista):
         sig = lista[i + 1][0] if i + 1 < len(lista) else min(t + paso, fin)
         c = {"tiempo_segundos": t, "tiempo_mmss": mmss(t), "archivo": str(f.relative_to(RAIZ)),
              "voz": _voz_en(trans, t, max(sig, t + 1e-3))}
-        if corte:
+        if corte == "momento":
+            c["momento_pedido"] = True
+        elif corte:
             c["corte_de_escena"] = True
         if escuchar:
             c["sonido"] = _sonido_en(ev, t, max(sig, t + 1.0))
@@ -368,6 +546,7 @@ def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resoluti
     resultado = {
         **meta, "processing": "static", "fps_muestreo": fps, "start_offset": ini, "end_offset": fin,
         "media_resolution": media_resolution, "idioma_detectado": trans["idioma"],
+        "detalle": detalle, "seleccion_de_cuadros": motor, "candidatos": n_cand, "repetidos_quitados": quitados,
         **_estimacion(len(linea), fin - ini, media_resolution),
         "audio": _resumen_audio(p, meta, ev, trans, ini, fin) if escuchar and meta["tiene_audio"] else None,
         "linea_de_tiempo": linea,
@@ -382,7 +561,7 @@ def ver_static(video_path, fps=1.0, start_offset=0, end_offset=0, media_resoluti
         if not esp.is_file():
             E.espectrograma(p, ini, fin, esp)
         resultado["espectrograma"] = str(esp.relative_to(RAIZ))
-    _guardar(p, f"static_{media_resolution}_{fps:g}fps_{ini:g}-{fin:g}{'_escenas' if escenas else ''}.json", resultado)
+    _guardar(p, f"static_{media_resolution}_{detalle}_{fps:.3g}fps_{ini:g}-{fin:g}{'_escenas' if escenas else ''}.json", resultado)
     return resultado
 
 
