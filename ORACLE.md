@@ -56,4 +56,4 @@ En la página de la instancia: **Primary VNIC** → enlace de la **Subnet** → 
 ## Si algo falla
 - **La URL no responde tras 30 min:** revisa el paso 4 (puertos 80 y 443).
 - **Ver cómo va la instalación (o por qué falló):** abre `https://150-136-10-20.sslip.io/<tu-clave>/instalacion.txt`, con tu IP con guiones. Se actualiza cada 15 s. Al final debe decir `INSTALACION TERMINADA`. Si ves un error, cópiame las últimas líneas (sin la clave).
-- **Actualizar el código más adelante:** te generaré un script nuevo. Lo más sencillo es crear otra instancia con él y borrar la anterior. Se puede volver a crear gratis cuantas veces quieras.
+- **Actualizar el código más adelante:** el código nuevo ya no cabe en el límite de 32 KB de Oracle, así que este script trae la versión del 5 de noviembre (sin niveles de detalle, YouTube ni música). Cuando tengas el servidor, te preparo una instalación que baje el código completo del repo con un token de solo lectura.

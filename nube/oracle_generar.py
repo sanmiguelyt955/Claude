@@ -134,11 +134,11 @@ def main():
     script = PLANTILLA.replace("__CODIGO__", codigo)
     destino = RAIZ / "dist" / "oracle-video-nube.sh"
     destino.parent.mkdir(exist_ok=True)
-    destino.write_text(script, encoding="utf-8")
     bruto, b64 = len(script.encode()), len(base64.b64encode(script.encode()))
     print(f"{destino}: {bruto} bytes (en base64: {b64} de 32000 permitidos)")
-    if bruto > LIMITE_BRUTO:
-        print("DEMASIADO GRANDE para los metadatos de Oracle"); return 1
+    if bruto > LIMITE_BRUTO:   # no se sobrescribe: se conserva el último script que sí cabe
+        print("DEMASIADO GRANDE para los metadatos de Oracle: se mantiene el script anterior"); return 1
+    destino.write_text(script, encoding="utf-8")
     return 0
 
 
