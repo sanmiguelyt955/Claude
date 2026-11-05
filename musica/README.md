@@ -1,4 +1,4 @@
-# Biblioteca musical (skill musica-para-video)
+# Biblioteca musical (skill video-claude → música)
 
 Lo guarda todo la herramienta; no hace falta editar a mano.
 

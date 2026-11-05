@@ -1,9 +1,4 @@
----
-name: ver-video
-description: Ve y OYE videos y audios como Gemini (según su documentación pública), con el conector video-nube (Hugging Face Space o local). Cada segundo [MM:SS] trae el cuadro, lo que se dice con quién lo dice (H1, H2...), lo que suena (AudioSet: música, perro, lluvia, aplausos, sirena...) y el volumen; además BPM, silencios, tono y emoción de la voz, espectrograma, cortes de escena, modo agentic para videos largos, y "oídos de verdad" (un modelo que escucha el audio original y responde preguntas). Úsala SIEMPRE que el usuario pida ver, escuchar, analizar, describir, transcribir, resumir o buscar momentos en un video o audio (archivo, subida o enlace), o cuando falle el conector de Gemini Video.
----
-
-# ver-video: ver y oír como Gemini
+# Ver y oír videos (como Gemini)
 
 Clean room de lo que Google documenta para Gemini (https://ai.google.dev/gemini-api/docs/video-understanding).
 No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AST/AudioSet, CLAP, WavLM, Gemma 4 E2B).

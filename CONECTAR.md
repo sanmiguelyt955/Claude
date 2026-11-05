@@ -35,8 +35,8 @@ Cambia `<MCP_CLAVE>` por tu clave. No compartas esta URL: quien la tenga puede u
 
 ## 5. Cowork y claude.ai
 1. **Conector:** Configuración → **Conectores** → **Añadir conector personalizado** → pega la URL del paso 4 → nombre `video-nube`.
-2. **Skills:** descarga `dist/ver-video.zip` y `dist/video-editor.zip` y súbelas en Configuración → **Capacidades / Skills** → **Subir skill**.
-   - Si tu Cowork admite plugins, puedes subir `dist/video-claude.plugin`, que trae las dos juntas. El conector se añade igualmente en el punto 1.
+2. **Skills:** descarga `dist/video-claude.zip` y súbela en Configuración → **Capacidades / Skills** → **Subir skill**.
+   - Si tu Cowork admite plugins, puedes subir `dist/video-claude.plugin`, que trae la skill. El conector se añade igualmente en el punto 1.
 
 ## 6. Claude Code (cualquier proyecto)
 ```

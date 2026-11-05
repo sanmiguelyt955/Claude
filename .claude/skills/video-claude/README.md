@@ -1,4 +1,4 @@
-# video-editor (skill de Claude Code)
+# video-claude (skill de Claude Code): ver, oír, musicalizar y editar videos
 
 Editor de video autónomo: transcripción por palabra, corte de silencios, subtítulos (viral / clean / cinematic, bilingües), motion graphics (Remotion), perfiles de marca multi-cliente, exportación 9:16 / 16:9 / 1:1 con audio normalizado.
 

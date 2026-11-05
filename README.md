@@ -38,10 +38,10 @@ Herramientas MCP añadidas al mismo servidor `video-nube`:
 - `cargar_segmento(video_path, id | inicio, fin, fps, media_resolution)`: carga un tramo en modo agentic.
 
 CLI: `python vision_local.py video.mp4 --fps 2 --start 30 --end 60 --res low`
-Skill para Claude Code: `.claude/skills/ver-video/SKILL.md`. Las salidas van a `datos/vision/` (ignorado por git).
+Skill única para Claude Code: `.claude/skills/video-claude/SKILL.md` (ver/oír, YouTube, música y edición). Las salidas van a `datos/vision/` (ignorado por git).
 
-### Música para cada video (`musica-para-video`)
-Recomienda qué canción de tu biblioteca le queda a un video (ánimo, tempo, clímax, cortes, voz), sugiere tendencias de TikTok/Reels, la monta con ducking a -14 LUFS y aprende tu gusto (👍/👎, ejemplos tuyos y virales). Código: `musica_local.py` + `herramientas_musica.py`; skill: `.claude/skills/musica-para-video/SKILL.md`; lo aprendido se guarda en `musica/`.
+### Música para cada video
+Recomienda qué canción de tu biblioteca le queda a un video (ánimo, tempo, clímax, cortes, voz), sugiere tendencias de TikTok/Reels, la monta con ducking a -14 LUFS y aprende tu gusto (👍/👎, ejemplos tuyos y virales). Código: `musica_local.py` + `herramientas_musica.py`; referencia: `.claude/skills/video-claude/references/musica.md`; lo aprendido se guarda en `musica/`.
 
 ## Que Claude "oiga" el audio (local)
 
@@ -67,7 +67,7 @@ Prueba con clips reales de ESC-50 (aplausos, perro, risa, lluvia, sirena), músi
   /plugin marketplace add sanmiguelyt955/claude
   /plugin install video-claude@sanmiguel
   ```
-- **Cowork / claude.ai:** conector personalizado con la URL del Space, y las skills de `dist/` (`ver-video.zip`, `video-editor.zip` o `video-claude.plugin`). Para regenerarlas: `nube/empaquetar.sh`.
+- **Cowork / claude.ai:** conector personalizado con la URL del Space, y las skills de `dist/` (`video-claude.zip` o `video-claude.plugin`). Para regenerarlas: `nube/empaquetar.sh`.
 
 ### Novedades del servidor
 - `oir`: **oídos de verdad**. Gemma 4 E2B (pesos abiertos, Apache 2.0, corre en el servidor) escucha el audio original, y opcionalmente ve los cuadros, y responde en lenguaje natural. Es excelente con la voz (tono, emoción, intención). Su respuesta incluye la evidencia de los detectores de hablantes y de sonidos para contrastarla.

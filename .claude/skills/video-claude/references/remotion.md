@@ -4,7 +4,7 @@ Plantillas en `remotion/src/`: `LowerThird`, `TitleCard`, `Counter` (todas recib
 
 ## Instalar (una vez por sesión)
 ```bash
-cd .claude/skills/video-editor/remotion && npm install --no-audit --no-fund
+cd .claude/skills/video-claude/remotion && npm install --no-audit --no-fund
 ```
 
 ## Renderizar un overlay con transparencia (probado)

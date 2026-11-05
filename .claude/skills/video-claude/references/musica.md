@@ -1,9 +1,4 @@
----
-name: musica-para-video
-description: Elige qué canción le queda a un video (por ritmo, energía, clímax, cortes, voz y sentimiento), desde la biblioteca musical del usuario o las tendencias de TikTok/Reels, la monta en el video (ducking bajo la voz, -14 LUFS) y aprende su gusto con 👍/👎 y con ejemplos suyos o virales. Úsala SIEMPRE que el usuario pregunte qué música/canción/sonido/audio ponerle a un video, quiera musicalizarlo, mande canciones para su biblioteca, califique una sugerencia o pase un video "con la música que le puse" o un viral como ejemplo.
----
-
-# musica-para-video
+# Música para cada video
 
 Motor local y gratis (CLAP, CLIP, AudioSet, librosa, ffmpeg) en las herramientas MCP de `video-nube`. Todo lo aprendido se guarda en el repo (`musica/`), así que vale para todos los chats: **haz commit y push de `musica/` cada vez que cambie.**
 
@@ -18,7 +13,7 @@ Motor local y gratis (CLAP, CLIP, AudioSet, librosa, ffmpeg) en las herramientas
 | `aprender_de_video(video, nota, viral, mio, cancion_id)` | Ejemplo ya editado (suyo o viral): en videos parecidos preferirá música parecida. |
 
 ## Flujo
-1. **Mira el video primero** con `ver_video` (skill ver-video): de qué trata, emoción, ritmo, momento fuerte, si es hablado. Tu criterio es parte del sistema.
+1. **Mira el video primero** con `ver_video` (ver `references/ver-y-oir.md`): de qué trata, emoción, ritmo, momento fuerte, si es hablado. Tu criterio es parte del sistema.
 2. Escribe la **`descripcion` en inglés**, concreta: género + ánimo + instrumentos + energía. Ej.: `"funny playful pizzicato strings"`, `"emotional piano build up to epic drums"`, `"upbeat latin reggaeton party"`. Vacía = automática por el ambiente visual (menos precisa).
 3. `recomendar_musica`. Presenta el **top 3-5** así: nombre · puntuación · **desde qué segundo** · por qué (ánimo, BPM vs. el que pide el video, subida alineada con el clímax, pulsos sobre los cortes, voces vs. habla, gusto aprendido). Añade tu propio juicio: si la #1 no encaja con la emoción que viste, dilo y propone otra.
 4. **Tendencias de TikTok/Reels**: busca en la web (herramientas de búsqueda) "canciones/sonidos en tendencia TikTok/Reels <mes año> <país del usuario>" y cruza con el `perfil_ideal` (género, ánimo, BPM, energía). Da 3-5 nombres con artista, por qué encajan y desde qué parte usarlos. **Aclara que no las escuchaste** (no se pueden descargar): son por descripción. Recomienda añadirlas **dentro de la app** (TikTok/Instagram) al publicar: así cuentan para la tendencia y tienen licencia. Si el usuario tiene el audio, `agregar_musica` y se analiza de verdad.

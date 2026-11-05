@@ -45,7 +45,7 @@ En la página de la instancia: **Primary VNIC** → enlace de la **Subnet** → 
    La primera vez, el servidor descarga unos 12 GB de modelos en segundo plano: las primeras herramientas pueden tardar unos minutos más.
 
 ## 6. Conectarlo
-- **Cowork / claude.ai:** Configuración → **Conectores** → **Añadir conector personalizado** → pega la URL → nombre `video-nube`. Sube también las skills `dist/ver-video.zip` y `dist/video-editor.zip` en Configuración → **Capacidades / Skills**.
+- **Cowork / claude.ai:** Configuración → **Conectores** → **Añadir conector personalizado** → pega la URL → nombre `video-nube`. Sube también la skill `dist/video-claude.zip` en Configuración → **Capacidades / Skills**.
 - **Claude Code (web y app):**
   ```
   /plugin marketplace add https://github.com/sanmiguelyt955/claude.git#claude/video-editing-skill-6wybxb
