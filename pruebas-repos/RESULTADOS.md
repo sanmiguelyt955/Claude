@@ -24,3 +24,13 @@ Entorno: contenedor Linux, Python 3.13, Node 22 (Node 24 vía `npx node@24`), si
 - `pnpm install --frozen-lockfile --ignore-scripts` con Node 24 OK.
 - `pnpm typecheck` y la suite completa de vitest superan el tiempo límite del contenedor. No se puede ver la GUI aquí.
 - Para probarlo de verdad: en un Mac o Windows, ver `docs/run-from-source.md`.
+
+## 5. OpenSelena/omniget — FRONTEND OK
+- App de escritorio Tauri (Rust + Svelte) para descargar vídeo, audio, cursos, torrents, etc. con herramientas extra (transcripción, PDF, lector).
+- `pnpm install` OK, `pnpm build` OK, vitest: **183 passed (31 archivos)**.
+- No compilé el backend Rust/Tauri (pesado y sin GUI en el contenedor).
+- Nota: incluye descargadores de cursos de pago (Udemy/Hotmart); usar solo con contenido propio/legítimo.
+
+## 6. Worldonlyu/Google_AI_Pro_2Year_ZeroCost_Auto — NO EJECUTADO (decisión)
+- Solo leí el README. Es una herramienta para iniciar sesión de forma masiva en cuentas de Google ajenas/en lote, meter tarjetas y encadenar promociones gratis de Google AI Pro. Se vende con una tienda de cuentas ("卡网").
+- Es fraude de cuentas/promociones y puede implicar credenciales robadas. No la ejecuto ni la adapto. No se clonó nada más allá de leer el README.
