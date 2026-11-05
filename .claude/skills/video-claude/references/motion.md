@@ -48,5 +48,8 @@ Para cada escena, dale los prompts listos:
 - **Lo que se mueve** (persona, producto, objeto): sobre **fondo verde liso** (o azul si el objeto es verde), sin sombras en el fondo, encuadre completo.
 - **Primer plano** (marco de ventana, rama, farola): sobre verde, con el hueco también en verde.
 - **Personas reales**: nunca inventar su cara; de espaldas, en silueta o solo manos, y avisar en pantalla si es una recreación.
-- Herramientas de imagen disponibles en esta cuenta: Higgsfield (conector, gasta créditos), Canva (`generate-image`), o las que el usuario use por su cuenta (Google Flow, etc.).
+- **Generar las capas tú mismo** (en este orden):
+  1. **`imagenes-flux`** (conector propio, gratis con la cuota diaria de Cloudflare): `generar_capas(estilo, fondo, elementos[], formato)` devuelve el fondo y cada elemento sobre croma, listos para el guion. Descarga las URLs junto al guion (`curl -o capa.jpg <url>`). Mira `cuota_imagenes` antes de escenas largas.
+  2. **Google Flow con Claude in Chrome**, solo cuando el usuario tenga **su computadora conectada** (Remote Control / navegador): usa la web normal de Flow en su sesión, como lo haría él, respetando sus reglas y límites (nada de llamadas internas ni de saltarse controles). Descarga cada imagen en 2K y súbela/pásala al guion.
+  3. Higgsfield (conector, gasta créditos: di el precio antes) o Canva (`generate-image`).
 - Si una persona tiene que moverse de verdad (parpadear, escribir), hace falta un clip corto de video con IA (créditos); úsalo solo ahí.
