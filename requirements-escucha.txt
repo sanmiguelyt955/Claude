@@ -1,0 +1,8 @@
+# Dependencias extra para que Claude "oiga" el audio (escucha_local.py). Todo local, sin APIs.
+# torch CPU:  pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu
+torch
+transformers
+librosa
+soundfile
+scikit-learn
+pillow

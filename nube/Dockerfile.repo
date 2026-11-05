@@ -1,0 +1,21 @@
+# Igual que nube/Dockerfile, pero construyendo desde la raíz del repo (Render: dockerfilePath=nube/Dockerfile.repo).
+FROM python:3.13-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -u 1000 user
+WORKDIR /app
+
+COPY nube/requirements-nube.txt .
+RUN pip install --no-cache-dir torch==2.15.0 torchaudio torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements-nube.txt
+
+COPY --chown=user servidor_nube.py vision_local.py escucha_local.py oido_modelo.py ./
+RUN mkdir -p /app/datos && chown -R user:user /app
+USER user
+ENV HOME=/home/user \
+    HF_HOME=/home/user/.cache/huggingface \
+    PRECARGAR_MODELOS=1 \
+    PYTHONUNBUFFERED=1
+# Render inyecta PORT; servidor_nube.py lo lee (7860 por defecto).
+CMD ["python", "servidor_nube.py", "--http"]
