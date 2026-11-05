@@ -107,6 +107,8 @@ def resolver(entrada):
             cmd = [ytdlp, "-q", "--no-playlist", "-f", "b[height<=720]/bv*[height<=720]+ba/b",
                    "--merge-output-format", "mp4", "--max-filesize", f"{int(MAX_DESCARGA_MB)}M",
                    "-o", str(DESCARGAS / f"{clave}.%(ext)s")]
+            if os.environ.get("SSL_CERT_FILE"):     # proxy con CA propia: que yt-dlp use la del sistema, no certifi
+                cmd += ["--compat-options", "no-certifi"]
             cookies = os.environ.get("YTDLP_COOKIES", "").strip()   # opcional: cookies Netscape (secreto del Space)
             if cookies:
                 fc = DESCARGAS / ".cookies.txt"

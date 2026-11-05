@@ -448,6 +448,11 @@ try:
     herramientas_musica.registrar(mcp, _error)
 except ImportError:
     pass
+try:
+    import herramientas_youtube
+    herramientas_youtube.registrar(mcp, _error, _contenido_intercalado)
+except ImportError:
+    pass
 
 
 # ---------------------------------------------------------------------------

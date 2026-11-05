@@ -27,9 +27,18 @@ No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AS
 | `escuchar_audio(path, start_offset, end_offset)` | Audio o pista de un video: transcripción con hablantes, sonidos por segundo, silencios, BPM, voz y espectrograma |
 | `oir(path, pregunta, start_offset, end_offset, con_cuadros=False)` | **Oídos de verdad**: un modelo multimodal escucha la señal original (y ve cuadros si `con_cuadros`) y responde. Ideal para tono, emoción, ironía, acento, intención. Tramos de ≤30 s |
 | `preguntar_audio(path, descripciones[], start_offset, end_offset)` | CLAP: probabilidad de cada descripción (en inglés), p. ej. `["a siren", "a dog barking", "rain"]` |
+| `ver_youtube(url, fps, start_offset, end_offset, pagina)` | **YouTube solo con el enlace** (watch, shorts, youtu.be). Si se puede descargar, lo ve completo. Si YouTube lo bloquea, `modo="enlace"`: título, canal y portada + 3 cuadros públicos (~25/50/75 %) |
 
 Entradas válidas: archivo adjunto en el chat o ruta local (modo local), `subida:<id>`, URL directa (`.mp4`, `.mp3`…), **enlace de Google Drive** (compartido como «Cualquier persona con el enlace») o enlace de página (TikTok, Instagram, X, YouTube… vía yt-dlp).
 **YouTube y Vimeo bloquean casi siempre las descargas desde servidores en la nube** (piden iniciar sesión o confirmar que no eres un bot). Si sale ese error, no lo intentes esquivar: pide al usuario que **adjunte el video** (desde el celular: descargarlo y adjuntarlo en el chat) o que dé un enlace directo al archivo.
+
+## 1b. YouTube solo con el enlace
+1. `ver_youtube(url)`. Si vuelve `modo="completo"`, trabaja igual que con `ver_video`.
+2. Si vuelve `modo="enlace"` (lo normal en la nube: YouTube bloquea la descarga desde servidores y **no se intenta saltar el bloqueo**), completa con el conector de Firecrawl:
+   - `firecrawl_scrape` con `alexandria: {provider: "youtube-com", capability: "videos/video_details", options: {url}}` → duración, idiomas (`caption_tracks`), vistas, fecha. 5 créditos.
+   - `firecrawl_scrape` con `alexandria: {provider: "youtube-com", capability: "videos/video_transcript", options: {url, language: "<idioma original, p. ej. es>"}}` → transcripción con tiempos (`start_ms`). 5 créditos.
+3. Responde citando `MM:SS` desde `start_ms` y separa: **lo que se dice** (transcripción completa), **lo que se ve** (solo la portada y 3 cuadros aproximados: dilo) y lo que no se puede saber (sonidos, música, gestos entre cuadros).
+4. Si el usuario necesita ver TODO el video (cada cuadro, sonidos): que lo descargue en el celular y lo adjunte, o usar el servidor propio con `YTDLP_COOKIES`.
 
 ## 2. Cómo trabajar (como Gemini)
 1. Video ≤ 2 min: `ver_video` static a 1 FPS.
