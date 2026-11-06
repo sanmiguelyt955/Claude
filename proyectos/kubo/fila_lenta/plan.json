@@ -698,7 +698,7 @@
    ],
    "escenario": "estudio",
    "cielo": "#9ad0ff",
-   "camara": "medio+empuje",
+   "camara": "medio",
    "clave": "fastest",
    "actores": [
     {
@@ -729,7 +729,7 @@
      "pos": [
       -1.5,
       0.6,
-      4.1
+      3.85
      ],
      "colores": [
       [
@@ -745,7 +745,7 @@
      "pos": [
       1.5,
       0.6,
-      4.1
+      3.85
      ],
      "colores": [
       [
@@ -761,7 +761,7 @@
      "pos": [
       0,
       0.6,
-      4.1
+      3.85
      ],
      "colores": [
       [
@@ -1592,7 +1592,7 @@
     "O sea, dos de cada tres veces otra fila te gana.",
     "Y tu cerebro lo empeora. Cuando tu fila gana, ni lo notas.",
     "Cuando pierde, la miras todo el tiempo.",
-    "Así que Kubo hizo lo más listo y se cambió de fila.",
+    "Kubo se pasó de fila.",
     "Y justo ahí su fila vieja salió volando.",
     "Cambiarte no te salva. Solo te da el doble de oportunidades de perder.",
     "Mándale esto al amigo que siempre se cambia de fila.",
@@ -1612,7 +1612,7 @@
     "gana",
     "notas",
     "tiempo",
-    "cambió",
+    "pasó",
     "volando",
     "doble",
     "amigo",
@@ -1636,7 +1636,7 @@
     "Ou seja, duas em cada três vezes outra fila ganha de você.",
     "E o seu cérebro piora tudo. Quando a sua fila ganha, você nem percebe.",
     "Quando perde, você fica olhando o tempo todo.",
-    "Então o Kubo fez a coisa esperta e trocou de fila.",
+    "O Kubo trocou de fila.",
     "E foi exatamente aí que a fila antiga saiu voando.",
     "Trocar não te salva. Só te dá o dobro de chances de perder.",
     "Manda isso pro amigo que sempre troca de fila.",

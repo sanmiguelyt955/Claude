@@ -596,7 +596,11 @@ def voz_idioma(plan, nombre, idioma, cfg, forzar=False):
         seg = x[int(a_ * sr):int(b_ * sr)]
         inicio = t0 + (toma["palabras"][0]["t"] if toma.get("palabras") else 0.08)
         hueco = max(0.3, t1 - inicio - 0.08)
-        factor = min(1.35, max(1.0, len(seg) / sr / hueco))
+        necesario = len(seg) / sr / hueco
+        if necesario > 1.35:
+            print(f"  AVISO {idioma} toma {k + 1}: la traducción es {necesario:.2f}× más larga que el espacio; "
+                  f"acórtala (máximo 1.35×)", flush=True)
+        factor = min(1.35, max(1.0, necesario))
         if factor > 1.0:                                    # acelerar sin cambiar el tono
             tmp_in, tmp_out = carpeta / "_seg.wav", carpeta / "_seg2.wav"
             sf.write(str(tmp_in), seg, sr)

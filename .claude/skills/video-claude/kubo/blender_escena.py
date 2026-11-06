@@ -923,7 +923,7 @@ SIGNOS = {"!": ("!", "#ff3b3b"), "?": ("?", "#ffd23f"), "$": ("$", "#2ecc71"), "
 
 def ef_signo(ef, bases, cam, n):
     """Signo flotante sobre la cabeza (! ? $ zzz ♥ +1 X OK, o «idea» = foco)."""
-    pos = _sobre(ef, bases, 3.2) + Vector((ef.get("lado", 1) * 1.2, -0.3, 0.3 if ef.get("texto") == "idea" else 0.0))
+    pos = _sobre(ef, bases, 3.2) + Vector((ef.get("lado", 1) * 0.95, -0.4, 0.3 if ef.get("texto") == "idea" else 0.0))
     f0, f1 = round(ef.get("en", 0) * FPS) + 1, round((ef.get("en", 0) + ef.get("dur", 1.2)) * FPS) + 1
     if ef.get("texto") == "idea":
         raiz = vacio(pos)
@@ -945,7 +945,7 @@ def ef_etiqueta(ef, bases, cam, n):
     """Etiqueta de texto que explica (p. ej. «1 IN 3», «PING 120ms», «CO₂ +60%»), con placa de color."""
     pos = _sobre(ef, bases, 4.0)
     f0 = round(ef.get("en", 0) * FPS) + 1
-    f1 = round((ef["hasta"] if "hasta" in ef else ef.get("en", 0) + ef.get("dur", 2.0)) * FPS) + 1
+    f1 = (round((ef["hasta"] if "hasta" in ef else ef["en"] + ef["dur"]) * FPS) + 1) if ("hasta" in ef or "dur" in ef) else n + 2
     raiz = texto3d(ef["texto"], ef.get("color", "#ffffff"), ef.get("tam", 0.5), ef.get("fondo", "#e74c3c"))
     raiz.location = pos
     _mirar_camara(raiz, cam)
