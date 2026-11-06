@@ -136,3 +136,68 @@ export const Luz: React.FC<{color?: string; fuerza?: number}> = ({color = '255,1
     </AbsoluteFill>
   );
 };
+
+// ---------------------------------------------------------------- estilo viral (Shorts/Reels)
+// Subtítulos virales: 1-3 palabras a la vez, blancas en negrita con borde negro, «pop» al entrar y la *clave* en
+// color de acento y más grande. Se cambia de grupo en cada pausa/puntuación o cada 3 palabras.
+export const gruposDePalabras = (ps: Palabra[], max = 3): Palabra[][] => {
+  const grupos: Palabra[][] = [];
+  let actual: Palabra[] = [];
+  ps.forEach((w, i) => {
+    actual.push(w);
+    const sig = ps[i + 1];
+    const corte = actual.length >= max || /[.,!?;:…]$/.test(limpia(w.p)) || esClave(w.p) || (sig && sig.t - w.t > 0.45);
+    if (corte || !sig) { grupos.push(actual); actual = []; }
+  });
+  return grupos;
+};
+
+export const SubtituloViral: React.FC<{palabras: Palabra[]; inicio?: number; colorClave?: string; tam?: number;
+  posicion?: 'arriba' | 'centro' | 'abajo'}> = ({palabras, inicio = 0, colorClave = '#FFD400', tam = 92, posicion = 'centro'}) => {
+  const frame = useCurrentFrame();
+  const {fps, height} = useVideoConfig();
+  const t = frame / fps - inicio;
+  const grupos = gruposDePalabras(palabras);
+  const k = grupos.findIndex((g, i) => t >= g[0].t && (i === grupos.length - 1 || t < grupos[i + 1][0].t));
+  if (k < 0) return null;
+  const g = grupos[k];
+  const top = posicion === 'arriba' ? height * 0.14 : posicion === 'abajo' ? height * 0.7 : height * 0.42;
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      <div style={{position: 'absolute', top, left: 50, right: 50, display: 'flex', flexWrap: 'wrap', justifyContent: 'center',
+        gap: `0 ${tam * 0.25}px`}}>
+        {g.map((w, i) => {
+          if (t < w.t) return null;
+          const s = spring({frame: frame - Math.round((w.t + inicio) * fps), fps, config: {damping: 11, stiffness: 300, mass: 0.5}});
+          const clave = esClave(w.p);
+          return (
+            <span key={i} style={{display: 'inline-block', fontFamily: '"Arial Black", "Inter", Arial, sans-serif', fontWeight: 900,
+              fontSize: tam * (clave ? 1.18 : 1), lineHeight: 1.1, color: clave ? colorClave : '#FFFFFF', textTransform: 'uppercase',
+              WebkitTextStroke: `${Math.round(tam * 0.09)}px #000`, paintOrder: 'stroke fill',
+              textShadow: '0 6px 0 rgba(0,0,0,0.55)', transform: `scale(${0.6 + 0.4 * s}) rotate(${clave ? -2 : 0}deg)`}}>
+              {limpia(w.p)}
+            </span>
+          );
+        })}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// Ritmo rápido: tiempos de «corte» (cambio de encuadre) en cada palabra *clave* y como máximo cada `maxToma` segundos.
+export const tiemposDeCorte = (palabras: Palabra[], dur: number, maxToma = 1.3): number[] => {
+  const claves = palabras.filter((w) => esClave(w.p)).map((w) => w.t);
+  const cortes: number[] = [];
+  let ultimo = 0;
+  const marcas = [...claves, dur].sort((a, b) => a - b);
+  for (const m of marcas) {
+    while (m - ultimo > maxToma) { ultimo += maxToma; cortes.push(ultimo); }
+    if (m < dur && m - ultimo > 0.35) { cortes.push(m); ultimo = m; }
+  }
+  return cortes;
+};
+
+// Encuadres para los cortes duros (zoom y desplazamiento): plano general, medio, cerrado…
+export const ENCUADRES = [
+  {s: 1.0, x: 0, y: 0}, {s: 1.22, x: -0.04, y: 0.03}, {s: 1.1, x: 0.05, y: -0.02}, {s: 1.34, x: 0.02, y: 0.05}, {s: 1.15, x: -0.06, y: -0.03},
+];

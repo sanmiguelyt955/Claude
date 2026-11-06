@@ -315,6 +315,28 @@ def para_movil(video, audio=True):
         print("Aviso: no se pudo convertir para móvil:", r.stderr.decode()[-300:], file=sys.stderr)
 
 
+def escribir_srt(escenas, destino, max_palabras=6):
+    """Subtítulos .srt desde las palabras alineadas con la voz (grupos de hasta 6 palabras o hasta una pausa)."""
+    def ts(x):
+        h, r = divmod(max(0, x), 3600); m, s_ = divmod(r, 60)
+        return f"{int(h):02d}:{int(m):02d}:{int(s_):02d},{int(round((s_ - int(s_)) * 1000)):03d}"
+    filas, t0 = [], 0.0
+    for e in escenas:
+        ps = [(t0 + w["t"], w["p"].replace("*", "")) for w in e.get("palabras", [])]
+        grupo = []
+        for i, (t, p) in enumerate(ps):
+            grupo.append((t, p))
+            fin_grupo = len(grupo) >= max_palabras or p.endswith((".", "?", "!", "…")) or i == len(ps) - 1
+            if fin_grupo:
+                fin = ps[i + 1][0] if i + 1 < len(ps) else t0 + e["dur"]
+                filas.append((grupo[0][0], min(fin, grupo[0][0] + 4), " ".join(x[1] for x in grupo)))
+                grupo = []
+        t0 += e["dur"]
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text("\n".join(f"{k}\n{ts(a)} --> {ts(b)}\n{txt}\n" for k, (a, b, txt) in enumerate(filas, 1)), encoding="utf-8")
+    return destino
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("modo", choices=["reel", "collage"])
@@ -325,6 +347,13 @@ def main():
     ap.add_argument("--musica")
     ap.add_argument("--banda", action="store_true",
                     help="banda sonora propia (sonido.py): música por «animo» de escena + efectos «sfx» + whoosh y ducking")
+    ap.add_argument("--estilo-musica", default="cinematico", help="con --banda: cinematico | vintage | pulso")
+    ap.add_argument("--sin-musica", action="store_true", help="con --banda: solo voz + efectos (para poner un sonido de la app)")
+    ap.add_argument("--densidad", default="medios", choices=["pocos", "medios", "muchos"], help="cantidad de efectos de sonido")
+    ap.add_argument("--subtitulos", choices=["papel", "viral"], help="estilo de subtítulos (collage)")
+    ap.add_argument("--ritmo", choices=["normal", "rapido"], help="rapido = corte de encuadre en cada palabra clave (~1/s)")
+    ap.add_argument("--stems", action="store_true", help="además: pistas separadas (voz, música, efectos) + subtítulos .srt")
+    ap.add_argument("--escenas", help="solo estas escenas para revisar una toma, p. ej. 5 o 5-8 (con su voz)")
     ap.add_argument("--formato", default="9:16", choices=list(FORMATOS))
     ap.add_argument("--control", action="store_true", help="solo render rápido + hoja de cuadros de control")
     ap.add_argument("--nombre")
@@ -371,11 +400,27 @@ def main():
         import sonido
         for e in props.get("escenas", []):
             e.setdefault("dur", 3)
-        _, secciones = sonido.banda(props["escenas"], public / props["voz"] if props.get("voz") else None, public / "banda.wav")
+        _, secciones = sonido.banda(props["escenas"], public / props["voz"] if props.get("voz") else None, public / "banda.wav",
+                                    estilo=a.estilo_musica, con_musica=not a.sin_musica, densidad=a.densidad,
+                                    stems=(trabajo / "stems") if a.stems else None)
         props["musica"], props["volumenMusica"] = "banda.wav", 1.0
         print("Banda sonora:", ", ".join(f"{a_}@{t0:.1f}s" for a_, t0, _ in secciones), file=sys.stderr)
     for e in props.get("escenas", []):
         e.setdefault("dur", 3)
+    if a.subtitulos:
+        props["subtitulos"] = a.subtitulos
+    if a.ritmo:
+        props["ritmo"] = a.ritmo
+    if a.stems:
+        escribir_srt(props["escenas"], trabajo / "stems" / "subtitulos.srt")
+        if props.get("voz"):
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(public / props["voz"]), "-ar", "48000",
+                            str(trabajo / "stems" / "voz.wav")], check=False)
+    if a.escenas:                     # revisar solo unas tomas: recorta escenas y arranca el audio en su sitio
+        ini, _, fin = a.escenas.partition("-")
+        i0, i1 = int(ini) - 1, int(fin or ini)
+        props["desdeAudio"] = round(sum(e["dur"] for e in props["escenas"][:i0]), 3)
+        props["escenas"] = props["escenas"][i0:i1]
 
     ancho, alto = FORMATOS[a.formato]
     duracion = sum(e["dur"] for e in props["escenas"])

@@ -263,11 +263,53 @@ def caja(d=1.2):
     return _norm(out)
 
 
+def vine_boom(d=1.6):
+    """Golpe grave de remate de chiste (sub + saturación + cola larga)."""
+    t = _t(d)
+    sub = np.sin(2 * np.pi * (52 + 90 * np.exp(-t * 18)) * t) * _env(len(t), 0.001, 0.55)
+    y = np.tanh(3.0 * (sub + 0.35 * _lp(_ruido(d), 900) * _env(len(t), 0.001, 0.05)))
+    return _norm(_reverb(y, 1.2, 0.2))
+
+
+def zumbido(d=3.0):
+    """Zumbido de lámparas fluorescentes (60 Hz + armónicos y parpadeo)."""
+    t = _t(d)
+    y = sum(np.sin(2 * np.pi * 60 * k * t) / k for k in (1, 2, 3, 5)) * (0.85 + 0.15 * np.sin(2 * np.pi * 7.3 * t))
+    y += 0.08 * _bp(_ruido(d), 2000, 6000)
+    return _norm(y * np.minimum(1, t / 0.2) * np.minimum(1, (d - t) / 0.3), 0.5)
+
+
+def pasos_alfombra(d=2.0, ritmo=0.45):
+    """Pasos apagados sobre alfombra húmeda."""
+    y = np.zeros(int(d * SR))
+    for k, s in enumerate(np.arange(0, d - 0.2, ritmo)):
+        i = int(s * SR); n = int(0.16 * SR)
+        y[i:i + n] += _lp(_ruido(0.16), 260)[:n] * _env(n, 0.004, 0.05) * (0.8 + 0.2 * (k % 2))
+        y[i:i + n] += 0.15 * _bp(_ruido(0.16), 600, 1800)[:n] * _env(n, 0.002, 0.03)
+    return _norm(_reverb(y, 0.6, 0.2))
+
+
+def remate(d=0.6):
+    """Golpe seco y corto para un remate o una palabra clave (más corto que impacto)."""
+    t = _t(d)
+    y = np.sin(2 * np.pi * (80 + 160 * np.exp(-t * 35)) * t) * _env(len(t), 0.001, 0.12)
+    y += 0.5 * _hp(_ruido(d), 1200) * _env(len(t), 0.0005, 0.02)
+    return _norm(y)
+
+
+def pop(d=0.18):
+    """«Pop» corto para la entrada de una palabra o un objeto."""
+    t = _t(d)
+    return _norm(np.sin(2 * np.pi * (600 + 900 * np.exp(-t * 60)) * t) * _env(len(t), 0.0005, 0.03), 0.6)
+
+
 EFECTOS = {f.__name__: f for f in (whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina,
-                                    papel, tren, riser, latido, reloj, campana, revelacion, caja)}
+                                    papel, tren, riser, latido, reloj, campana, revelacion, caja,
+                                    vine_boom, zumbido, pasos_alfombra, remate, pop)}
 VOLUMEN = {"whoosh": 0.35, "impacto": 0.7, "sello": 0.7, "camara": 0.6, "pasos": 0.45, "puerta": 0.5, "llave": 0.5,
            "silbato": 0.45, "multitud": 0.35, "maquina": 0.45, "papel": 0.4, "tren": 0.5, "riser": 0.45, "latido": 0.6,
-           "reloj": 0.35, "campana": 0.45, "revelacion": 0.6, "caja": 0.5}
+           "reloj": 0.35, "campana": 0.45, "revelacion": 0.6, "caja": 0.5,
+           "vine_boom": 0.75, "zumbido": 0.25, "pasos_alfombra": 0.45, "remate": 0.55, "pop": 0.35}
 
 
 # ------------------------------------------------------------------ música por secciones
@@ -378,7 +420,10 @@ def _env_voz(voz, n):
     return np.clip(e / (np.percentile(e[e > 1e-4], 70) + 1e-9), 0, 1) if np.any(e > 1e-4) else e
 
 
-def banda(escenas, voz, salida, estilo="cinematico", con_musica=True):
+def banda(escenas, voz, salida, estilo="cinematico", con_musica=True, densidad="medios", stems=None):
+    """densidad: «pocos» (solo los sfx del guion), «medios» (+ whoosh en transiciones y golpe en titulares) o «muchos»
+    (+ «pop» en cada palabra clave y golpe de remate al final de cada escena con titular). stems: carpeta donde guardar
+    musica.wav y efectos.wav por separado (para editar después)."""
     """escenas ya alineadas (con dur y palabras). Escribe la banda (música + efectos) en WAV estéreo."""
     total = sum(e["dur"] for e in escenas) + 0.8
     n = int(total * SR)
@@ -399,10 +444,14 @@ def banda(escenas, voz, salida, estilo="cinematico", con_musica=True):
             if actual:
                 secciones.append((actual[0], actual[1], t0))
             actual = (animo, t0)
-        if k > 0 and (escenas[k - 1].get("transicion") or "fundido") != "corte":
+        if densidad != "pocos" and k > 0 and (escenas[k - 1].get("transicion") or "fundido") != "corte":
             poner(whoosh(), t0 - 0.45, VOLUMEN["whoosh"])
-        if e.get("titular"):
+        if densidad != "pocos" and e.get("titular"):
             poner(sello(), clave, 0.65)
+        if densidad == "muchos":
+            for w in e.get("palabras", []):
+                if w["p"].startswith("*"):
+                    poner(pop(), t0 + w["t"], VOLUMEN["pop"])
         for s in e.get("sfx", []):
             s = {"tipo": s} if isinstance(s, str) else s
             f = EFECTOS.get(s["tipo"])
@@ -436,6 +485,10 @@ def banda(escenas, voz, salida, estilo="cinematico", con_musica=True):
     est = np.stack([mezcla, np.roll(mezcla, 180)], 1)
     import soundfile as sf
     sf.write(str(salida), est, SR)
+    if stems:                                    # pistas separadas, sin ducking, para mezclar en otro editor
+        Path(stems).mkdir(parents=True, exist_ok=True)
+        sf.write(str(Path(stems) / "musica.wav"), np.stack([mus * 0.5] * 2, 1).clip(-1, 1), SR)
+        sf.write(str(Path(stems) / "efectos.wav"), np.stack([fx * 0.5] * 2, 1).clip(-1, 1), SR)
     return salida, secciones
 
 

@@ -59,3 +59,22 @@ Para cada escena, dale los prompts listos:
   2. **Google Flow con Claude in Chrome**, solo cuando el usuario tenga **su computadora conectada** (Remote Control / navegador): usa la web normal de Flow en su sesión, como lo haría él, respetando sus reglas y límites (nada de llamadas internas ni de saltarse controles). Descarga cada imagen en 2K y súbela/pásala al guion.
   3. Higgsfield (conector, gasta créditos: di el precio antes) o Canva (`generate-image`).
 - Si una persona tiene que moverse de verdad (parpadear, escribir), hace falta un clip corto de video con IA (créditos); úsalo solo ahí.
+
+
+## Revisar y corregir: una toma o todo el video
+- **Una toma**: `motion.py collage guion.json --voz v.mp3 --banda --control --escenas 7` (o `--escenas 5-8`) renderiza solo
+  esas escenas con su parte de la voz y la música: rápido para revisar un cambio.
+- **Todo el video**: cambia lo global del guion (`subtitulos`, `ritmo`, `textura`, `marca`, estilo de música) y vuelve a
+  hacer `--control` completo.
+- Pídele al usuario los cambios así: «en la toma 7, …» o «en todo el video, …».
+
+## Estilo Shorts (viral)
+- `--subtitulos viral` (1-3 palabras blancas con borde negro, la clave en amarillo) y `--ritmo rapido` (corte de
+  encuadre en cada palabra clave y como máximo cada ~1.3 s).
+- `--densidad pocos|medios|muchos` (efectos), `--estilo-musica cinematico|vintage|pulso`, `--sin-musica`.
+- `--stems`: además guarda `stems/voz.wav`, `stems/musica.wav`, `stems/efectos.wav` y `stems/subtitulos.srt`.
+- Efectos nuevos: vine_boom (remate), zumbido (lámparas), pasos_alfombra, remate (golpe corto), pop.
+
+## Voz
+- `scripts/voz.py "texto o archivo.txt" voz.mp3 --voz Charon --estilo "narra con suspenso"`: Gemini TTS (clave de
+  AI Studio; acepta [risa], [suspiro]) y, si falla, Aura de Cloudflare. Dice siempre qué motor usó y por qué.

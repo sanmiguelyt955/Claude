@@ -3,7 +3,7 @@
 // partículas, transiciones con sentido y letras al ritmo de la voz.
 import React from 'react';
 import {AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, CalculateMetadataFunction, Easing} from 'remotion';
-import {Marca, MARCA_DEFECTO, Palabra, PalabraAPalabra, partir, esClave, Grano, Papel, Vineta, Particulas, Luz} from './comun';
+import {Marca, MARCA_DEFECTO, Palabra, PalabraAPalabra, partir, esClave, Grano, Papel, Vineta, Particulas, Luz, SubtituloViral, tiemposDeCorte, ENCUADRES} from './comun';
 
 export type Capa = {
   src: string;              // imagen en la carpeta pública (PNG con transparencia si es recorte)
@@ -36,6 +36,10 @@ export type CollageProps = {
   textura?: {grano?: number; papel?: number; vineta?: number; luz?: number; colorLuz?: string};
   serif?: boolean;          // letras de estilo archivo (serif + cursiva en la clave)
   colorClave?: string;      // color de la palabra destacada sobre el papel (por defecto rojo oscuro, o el acento de la marca)
+  subtitulos?: 'papel' | 'viral';   // papel = tarjeta de archivo; viral = palabras blancas con borde negro, 1-3 a la vez
+  posSubtitulo?: 'arriba' | 'centro' | 'abajo';
+  ritmo?: 'normal' | 'rapido';      // rapido = corte de encuadre en cada palabra clave y cada ~1.3 s (estilo Shorts)
+  desdeAudio?: number;              // s: para revisar solo unas tomas con su parte de la voz/música
   voz?: string;
   musica?: string;
   volumenMusica?: number;
@@ -84,7 +88,8 @@ const CapaVista: React.FC<{c: Capa; p: number; e: EscenaCollage; zoomExtra: numb
 };
 
 const EscenaVista: React.FC<{e: EscenaCollage; m: Marca; serif?: boolean; entra?: EscenaCollage['transicion']; durTotal: number; offset: number;
-  focoPrevio?: {x: number; y: number}; colorClave: string}> = ({e, m, serif, entra, durTotal, offset, focoPrevio, colorClave}) => {
+  focoPrevio?: {x: number; y: number}; colorClave: string; subtitulos?: 'papel' | 'viral'; posSubtitulo?: 'arriba' | 'centro' | 'abajo';
+  ritmo?: 'normal' | 'rapido'}> = ({e, m, serif, entra, durTotal, offset, focoPrevio, colorClave, subtitulos, posSubtitulo, ritmo}) => {
   const frame = useCurrentFrame();
   const {fps, height} = useVideoConfig();
   const n = durTotal * fps;
@@ -120,13 +125,21 @@ const EscenaVista: React.FC<{e: EscenaCollage; m: Marca; serif?: boolean; entra?
   const sac = dt >= 0 && dt < 0.4 * fps ? (1 - dt / (0.4 * fps)) * 18 : 0;
   const sx = sac * Math.sin(frame * 2.7), sy = sac * Math.cos(frame * 3.3);
   const pos = e.posTexto || 'abajo';
+  // Ritmo rápido: cortes duros de encuadre en las palabras clave
+  const tEsc = frame / fps - offset;
+  const nCorte = ritmo === 'rapido' && palabras.length ? tiemposDeCorte(palabras, e.dur).filter((c) => tEsc >= c).length : 0;
+  const enc = ENCUADRES[nCorte % ENCUADRES.length];
   return (
     <AbsoluteFill style={{opacity: opacidad, transform: `scale(${escalaEntrada})`, overflow: 'hidden', clipPath: frame < sol ? recorte : undefined}}>
-      <AbsoluteFill style={{transform: `translate(${sx}px, ${sy}px) scale(${golpe})`}}>
+      <AbsoluteFill style={{transform: `translate(${sx + enc.x * 1080}px, ${sy + enc.y * 1920}px) scale(${golpe * enc.s})`}}>
         {capas.map((c, i) => <CapaVista key={i} c={c} p={p} e={e} zoomExtra={zoomExtra} />)}
       </AbsoluteFill>
       {e.particulas && <Particulas tipo={e.particulas} n={e.particulas === 'nieve' ? 70 : 35} />}
-      {palabras.length > 0 && (
+      {palabras.length > 0 && subtitulos === 'viral' && (
+        <SubtituloViral palabras={palabras} inicio={offset} colorClave={colorClave === '#8B1E1E' ? '#FFD400' : colorClave}
+          posicion={posSubtitulo || (pos === 'abajo' ? 'abajo' : pos)} />
+      )}
+      {palabras.length > 0 && subtitulos !== 'viral' && (
         <AbsoluteFill style={{justifyContent: pos === 'arriba' ? 'flex-start' : pos === 'centro' ? 'center' : 'flex-end', alignItems: 'center',
           padding: `${height * 0.12}px 70px`}}>
           <Sequence from={Math.round(offset * fps)} layout="none">
@@ -162,7 +175,8 @@ const EscenaVista: React.FC<{e: EscenaCollage; m: Marca; serif?: boolean; entra?
   );
 };
 
-export const Collage: React.FC<CollageProps> = ({escenas, marca, textura, serif = true, voz, musica, volumenMusica = 0.22, colorClave}) => {
+export const Collage: React.FC<CollageProps> = ({escenas, marca, textura, serif = true, voz, musica, volumenMusica = 0.22, colorClave,
+  subtitulos = 'papel', posSubtitulo, ritmo = 'normal', desdeAudio = 0}) => {
   const m = {...MARCA_DEFECTO, ...(marca || {})};
   const {fps} = useVideoConfig();
   const tx = {grano: 0.12, papel: 0.16, vineta: 0.5, luz: 0.3, colorLuz: '255,190,120', ...(textura || {})};
@@ -178,7 +192,8 @@ export const Collage: React.FC<CollageProps> = ({escenas, marca, textura, serif 
         return (
           <Sequence key={i} from={desde} durationInFrames={dur}>
             <EscenaVista e={e} m={m} serif={serif} entra={prev} durTotal={e.dur + solapa} offset={solapa}
-              focoPrevio={i > 0 ? escenas[i - 1].foco : undefined} colorClave={colorClave || (marca ? m.accent : '#8B1E1E')} />
+              focoPrevio={i > 0 ? escenas[i - 1].foco : undefined} colorClave={colorClave || (marca ? m.accent : '#8B1E1E')}
+              subtitulos={subtitulos} posSubtitulo={posSubtitulo} ritmo={ritmo} />
           </Sequence>
         );
       })}
@@ -186,8 +201,8 @@ export const Collage: React.FC<CollageProps> = ({escenas, marca, textura, serif 
       {tx.papel > 0 && <Papel fuerza={tx.papel} />}
       {tx.vineta > 0 && <Vineta fuerza={tx.vineta} />}
       {tx.grano > 0 && <Grano fuerza={tx.grano} />}
-      {voz && <Audio src={staticFile(voz)} />}
-      {musica && <Audio src={staticFile(musica)} volume={voz ? volumenMusica : 0.8} />}
+      {voz && <Audio src={staticFile(voz)} startFrom={Math.round(desdeAudio * fps)} />}
+      {musica && <Audio src={staticFile(musica)} volume={voz ? volumenMusica : 0.8} startFrom={Math.round(desdeAudio * fps)} />}
     </AbsoluteFill>
   );
 };

@@ -23,3 +23,12 @@ if ! sha256sum --check --status "$pyhashes" 2>/dev/null; then
   python3 -m pip install -q -r requirements.txt -r requirements-escucha.txt
   sha256sum .claude/hooks/session-start.sh requirements.txt requirements-escucha.txt > "$pyhashes" || rm -f "$pyhashes"
 fi
+
+# /watch (skill de terceros): motor Gemini con un modelo menos saturado. La clave NO va aquí: la pone el proxy si el
+# entorno tiene el secreto de red generativelanguage.googleapis.com (x-goog-api-key). Solo añade lo que falte.
+mkdir -p "$HOME/.config/watch"
+w="$HOME/.config/watch/.env"
+touch "$w"; chmod 600 "$w"
+grep -q '^WATCH_ENGINE=' "$w" || echo 'WATCH_ENGINE="gemini"' >> "$w"
+grep -q '^WATCH_GEMINI_MODEL=' "$w" || echo 'WATCH_GEMINI_MODEL="gemini-3-flash-preview"' >> "$w"
+grep -q '^GEMINI_API_KEY=.' "$w" || { sed -i '/^GEMINI_API_KEY=$/d' "$w"; echo 'GEMINI_API_KEY=proxy-injected' >> "$w"; }
