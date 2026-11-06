@@ -27,13 +27,15 @@ No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AS
 Entradas válidas: archivo adjunto en el chat o ruta local (modo local), `subida:<id>`, URL directa (`.mp4`, `.mp3`…), **enlace de Google Drive** (compartido como «Cualquier persona con el enlace») o enlace de página (TikTok, Instagram, X, YouTube… vía yt-dlp).
 **YouTube y Vimeo bloquean casi siempre las descargas desde servidores en la nube** (piden iniciar sesión o confirmar que no eres un bot). Si sale ese error, no lo intentes esquivar: pide al usuario que **adjunte el video** (desde el celular: descargarlo y adjuntarlo en el chat) o que dé un enlace directo al archivo.
 
-## 1b. YouTube solo con el enlace
-1. `ver_youtube(url)`. Si vuelve `modo="completo"`, trabaja igual que con `ver_video`.
-2. Si vuelve `modo="enlace"` (lo normal en la nube: YouTube bloquea la descarga desde servidores y **no se intenta saltar el bloqueo**), completa con el conector de Firecrawl:
-   - `firecrawl_scrape` con `alexandria: {provider: "youtube-com", capability: "videos/video_details", options: {url}}` → duración, idiomas (`caption_tracks`), vistas, fecha. 5 créditos.
-   - `firecrawl_scrape` con `alexandria: {provider: "youtube-com", capability: "videos/video_transcript", options: {url, language: "<idioma original, p. ej. es>"}}` → transcripción con tiempos (`start_ms`). 5 créditos.
-3. Responde citando `MM:SS` desde `start_ms` y separa: **lo que se dice** (transcripción completa), **lo que se ve** (solo la portada y 3 cuadros aproximados: dilo) y lo que no se puede saber (sonidos, música, gestos entre cuadros).
-4. Si el usuario necesita ver TODO el video (cada cuadro, sonidos): que lo descargue en el celular y lo adjunte, o usar el servidor propio con `YTDLP_COOKIES`.
+## 1b. YouTube solo con el enlace (SIN descargar: preferencia del usuario)
+1. `ver_youtube(url)` en modo enlace (por defecto no descarga): título, canal, portada y 3 cuadros públicos (~25/50/75 %).
+   Si el servidor `video-nube` aún corre una versión vieja que intenta descargar, haz lo mismo a mano: oEmbed +
+   `https://i.ytimg.com/vi/<id>/{hqdefault,hq1,hq2,hq3}.jpg`.
+2. Transcripción completa con Firecrawl:
+   - `alexandria: {provider: "youtube-com", capability: "videos/video_details", options: {url}}` → duración, idiomas. 5 créditos.
+   - `alexandria: {provider: "youtube-com", capability: "videos/video_transcript", options: {url, language: "<idioma original>"}}` → texto con `start_ms`. 5 créditos (pide varios videos en una sola llamada).
+3. Lo visual completo: conector **Gemini Video** `ver_video(video_url=<link>, prompt=...)` (Google lee el link; no descargamos). Si da 503 (saturado), reintenta a los minutos; acota con `start_offset_seconds/end_offset_seconds`.
+4. Responde separando: **lo que se dice** (transcripción), **lo que se ve** (las 4 imágenes públicas y, si funcionó, Gemini) y lo que no se pudo saber, con el porqué y las opciones: reintentar Gemini, que el usuario adjunte el archivo (lo vemos cuadro por cuadro con `ver_video`), o su computadora conectada.
 
 ## 1c. Nivel de detalle (cualquier duración)
 | `detalle` | Qué cuadros elige | Para qué |
