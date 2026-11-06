@@ -1,8 +1,8 @@
 """Herramienta MCP ver_youtube: ver un video de YouTube solo con el enlace.
 
-1. Intenta descargarlo (yt-dlp). Si se puede (computadora de casa, servidor con YTDLP_COOKIES...), lo ve completo
-   como ver_video: cuadros con MM:SS, voz, sonidos.
-2. Si YouTube bloquea la descarga desde servidores, NO intenta saltarse el bloqueo: usa lo que YouTube publica
+Por defecto NO descarga nada (preferencia del usuario: ver por link). Solo con descargar=True (p. ej. en la
+computadora de casa) intenta yt-dlp y lo ve completo como ver_video.
+Modo enlace (por defecto): usa lo que YouTube publica
    abiertamente: título y canal (oEmbed) y sus imágenes públicas (portada y 3 cuadros automáticos a ~25/50/75 %).
    La transcripción la trae Claude con el conector de Firecrawl (youtube-com/videos/video_transcript).
 """
@@ -80,14 +80,17 @@ def registrar(mcp, _error, contenido_intercalado):
 
     @mcp.tool
     def ver_youtube(url: str, fps: float = 1.0, start_offset: float = 0, end_offset: float = 0, pagina: int = 1,
-                    detalle: str = "gemini", momentos: str = ""):
-        """Ve un video de YouTube (watch, shorts, youtu.be) SOLO con el enlace. Si el servidor puede descargarlo, lo ve completo como ver_video (cuadros [MM:SS] + voz + sonidos; fps, offsets, pagina, detalle y momentos funcionan igual: para videos largos usa detalle='equilibrado'). Si YouTube bloquea la descarga (casi siempre en servidores en la nube), devuelve modo='enlace': título, canal, portada y 3 cuadros públicos (~25/50/75 %) y te indica traer la TRANSCRIPCIÓN con Firecrawl (youtube-com/videos/video_transcript, con el idioma original de caption_tracks). En modo enlace solo has visto esas imágenes: dilo al responder."""
+                    detalle: str = "gemini", momentos: str = "", descargar: bool = False):
+        """Ve un video de YouTube (watch, shorts, youtu.be) SOLO con el enlace, SIN descargarlo (por defecto). Para ver TODO lo visual sin descargar usa el conector Gemini Video (Google lee el link). Con descargar=True y si el servidor puede descargarlo, lo ve completo como ver_video (cuadros [MM:SS] + voz + sonidos; fps, offsets, pagina, detalle y momentos funcionan igual: para videos largos usa detalle='equilibrado'). Si YouTube bloquea la descarga (casi siempre en servidores en la nube), devuelve modo='enlace': título, canal, portada y 3 cuadros públicos (~25/50/75 %) y te indica traer la TRANSCRIPCIÓN con Firecrawl (youtube-com/videos/video_transcript, con el idioma original de caption_tracks). En modo enlace solo has visto esas imágenes: dilo al responder."""
         import vision_local as vl
         vid = id_youtube(url)
         if not vid:
             raise _error(vl.ErrorVision("No parece un enlace de YouTube (watch, shorts, live, embed o youtu.be)"))
         limpio = f"https://www.youtube.com/watch?v={vid}"
+        bloqueo = "No se descarga: el usuario prefiere ver los videos solo con el link."
         try:
+            if not descargar:
+                raise vl.ErrorVision(bloqueo)
             vl.resolver(limpio)
             lista = [m for m in momentos.replace(";", ",").split(",") if m.strip()]
             r = vl.ver_static(limpio, fps, start_offset, end_offset, detalle=detalle, momentos=lista)
@@ -104,7 +107,7 @@ def registrar(mcp, _error, contenido_intercalado):
         datos = {
             "modo": "enlace", "video_id": vid, "url": limpio,
             "titulo": info.get("title"), "canal": info.get("author_name"), "canal_url": info.get("author_url"),
-            "por_que": "YouTube no deja descargar el video desde este servidor; no se intenta saltar el bloqueo.",
+            "por_que": bloqueo if not descargar else "YouTube no deja descargar el video desde este servidor; no se intenta saltar el bloqueo.",
             "detalle_bloqueo": bloqueo[:300],
             "imagenes": hoja[1] if hoja else [],
             "siguiente_paso": ("Trae la transcripción con timestamps: firecrawl_scrape alexandria "

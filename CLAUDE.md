@@ -13,3 +13,11 @@
 1. Analízalo (skill `video-claude`).
 2. Recomienda TODAS las mejoras que se te ocurran para las skills, apps, conectores y herramientas que ya tenemos (repo, Workers, MCP, etc.).
 3. Pregunta siempre, adaptado al caso: «¿Quisieras que yo tuviera la capacidad de hacer lo que se hizo en ese video? Lo haríamos así: [pasos], con estas herramientas gratuitas: [lista], y funcionaría así: [cómo se usaría]. ¿Lo hago tal cual está en el video o hacemos la tuya propia y la vamos modificando?». Detalla lo que harías si dice que sí, y no lo construyas hasta que responda.
+
+## Videos de YouTube / Shorts: solo con el link, sin descargar
+
+- No descargues videos desde la nube. Míralos con acceso por link: datos públicos (título, portada, cuadros públicos), transcripción (Firecrawl) o el conector Gemini Video (Google ve el link directamente).
+
+## Cuando no puedas hacer algo
+
+- Di siempre POR QUÉ no se puede y da las diferentes maneras de solucionarlo (con sus pros y contras).
