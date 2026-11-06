@@ -10,7 +10,7 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 | Si el usuario quiere… | Haz esto | Detalle completo |
 |---|---|---|
 | **Ver / oír / analizar** un video o audio (adjunto, enlace, Drive) | `ver_video`, `escuchar_audio`, `oir`, `preguntar_audio`, `cargar_segmento` | `references/ver-y-oir.md` |
-| **YouTube** solo con el link, SIN descargar (Shorts o videos completos) | 1) `ver_youtube` (modo enlace: título, portada y 3 cuadros, sin descargar) + transcripción con Firecrawl; 2) para ver TODO lo visual, complementa con el conector **Gemini Video** `ver_video(video_url=<link>)` (Google lee el link; si da 503, reintenta en unos minutos) | `references/ver-y-oir.md` §1b |
+| **YouTube** solo con el link (Shorts o videos completos) | 1) `ver_youtube` (intenta descargar; si YouTube lo bloquea, modo enlace: título, portada y 3 cuadros) + transcripción con Firecrawl; 2) para ver TODO lo visual, complementa con el conector **Gemini Video** `ver_video(video_url=<link>)` (Google lee el link; si da 503, reintenta en unos minutos) | `references/ver-y-oir.md` §1b |
 | **Videos largos** (10 min a horas) | `processing="agentic"` y luego `detalle="equilibrado"`, tramos o `momentos` | `references/ver-y-oir.md` §1c |
 | **Qué canción le queda**, ponerle música, aprender su gusto | `recomendar_musica`, `montar_musica`, `agregar_musica`, `calificar_musica`, `aprender_de_video` | `references/musica.md` |
 | **Editar** (cortes, subtítulos, motion graphics, 9:16, marca) | scripts de `scripts/` + Remotion | `references/editar.md`, `references/remotion.md` |

@@ -27,10 +27,9 @@ No usa Gemini ni APIs de pago: modelos abiertos en nuestro servidor (Whisper, AS
 Entradas válidas: archivo adjunto en el chat o ruta local (modo local), `subida:<id>`, URL directa (`.mp4`, `.mp3`…), **enlace de Google Drive** (compartido como «Cualquier persona con el enlace») o enlace de página (TikTok, Instagram, X, YouTube… vía yt-dlp).
 **YouTube y Vimeo bloquean casi siempre las descargas desde servidores en la nube** (piden iniciar sesión o confirmar que no eres un bot). Si sale ese error, no lo intentes esquivar: pide al usuario que **adjunte el video** (desde el celular: descargarlo y adjuntarlo en el chat) o que dé un enlace directo al archivo.
 
-## 1b. YouTube solo con el enlace (SIN descargar: preferencia del usuario)
-1. `ver_youtube(url)` en modo enlace (por defecto no descarga): título, canal, portada y 3 cuadros públicos (~25/50/75 %).
-   Si el servidor `video-nube` aún corre una versión vieja que intenta descargar, haz lo mismo a mano: oEmbed +
-   `https://i.ytimg.com/vi/<id>/{hqdefault,hq1,hq2,hq3}.jpg`.
+## 1b. YouTube solo con el enlace
+1. `ver_youtube(url)`: intenta descargar y verlo completo (`modo="completo"`). Desde la nube YouTube casi siempre lo
+   bloquea y vuelve `modo="enlace"`: título, canal, portada y 3 cuadros públicos (~25/50/75 %). No saltes el bloqueo.
 2. Transcripción completa con Firecrawl:
    - `alexandria: {provider: "youtube-com", capability: "videos/video_details", options: {url}}` → duración, idiomas. 5 créditos.
    - `alexandria: {provider: "youtube-com", capability: "videos/video_transcript", options: {url, language: "<idioma original>"}}` → texto con `start_ms`. 5 créditos (pide varios videos en una sola llamada).
