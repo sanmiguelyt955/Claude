@@ -81,7 +81,7 @@ def _color_fondo(img):
     return None
 
 
-VERSION_RECORTE = 4   # súbela al cambiar el algoritmo: invalida los recortes guardados
+VERSION_RECORTE = 5   # súbela al cambiar el algoritmo: invalida los recortes guardados
 
 
 def _mascara_croma(a, nombre):
@@ -138,11 +138,15 @@ def recortar_croma(origen, destino, forzar=False):
     esq = np.unique(np.concatenate([lab_o[:k, :k].ravel(), lab_o[:k, -k:].ravel(), lab_o[-k:, :k].ravel(), lab_o[-k:, -k:].ravel()]))
     fondo = np.maximum(fondo, np.where(np.isin(lab_o, esq[esq > 0]) & (oscuro > 0.35), oscuro, 0.0))
     # 3) Huecos interiores: solo croma verde SATURADO y grande (no vidrio, metal ni reflejos claros)
-    lab_i, n_i = nd.label((t_dom > 0.95) & (sat > 0.7) & ~exterior)
+    # Verde/turquesa intenso y GRANDE dentro del objeto (p. ej. el hueco vacío de un marco) = fondo; el brillo pequeño
+    # de un vidrio o metal (lupa) se queda.
+    verdoso = (a[..., 1] >= a[..., 0]) & (a[..., 1] >= a[..., 2] * 0.9) & (sat > 0.4)
+    interior = (((t_dom > 0.95) & (sat > 0.7)) | (verdoso & (t_dom > 0.5)))
+    lab_i, n_i = nd.label(interior & ~exterior)
     if n_i:
         areas = nd.sum(np.ones_like(t), lab_i, range(1, n_i + 1))
-        grandes = np.isin(lab_i, 1 + np.flatnonzero(areas >= h * w * 0.0015))
-        fondo = np.maximum(fondo, np.where(grandes, t_dom, 0.0))
+        grandes = np.isin(lab_i, 1 + np.flatnonzero(areas >= h * w * 0.03))
+        fondo = np.maximum(fondo, np.where(grandes, np.maximum(t_dom, 0.9 * verdoso), 0.0))
     # 4) Islas sueltas de sujeto (manchas) fuera
     sujeto = fondo < 0.5
     lab_s, n_s = nd.label(sujeto)
