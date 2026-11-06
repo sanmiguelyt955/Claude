@@ -1,16 +1,16 @@
 ---
 name: video-claude
-description: Todo lo de video en una sola skill. VER y OÍR videos y audios como Gemini (cuadros con MM:SS, voz con hablantes, sonidos, música, emoción; archivos adjuntos, enlaces, Google Drive y YouTube solo con el link; cortos o de horas), elegir la CANCIÓN que le queda a un video (ritmo, energía, sentimiento, tendencias de TikTok/Reels) y aprender el gusto del usuario, y EDITAR videos profesionalmente (cortes, quitar silencios, subtítulos ES/EN y traducidos, motion graphics, 9:16, marcas/clientes, exportar para redes). Úsala SIEMPRE que el usuario mande o mencione un video o audio y pida verlo, escucharlo, analizarlo, resumirlo, transcribirlo, buscar momentos, ponerle música, editarlo o publicarlo; o cuando falle el conector de Gemini Video.
+description: Todo lo de video en una sola skill. VER y OÍR videos y audios como Gemini (cuadros con MM:SS, voz con hablantes, sonidos, música, emoción; archivos adjuntos, enlaces, Google Drive y YouTube solo con el link; cortos o de horas), elegir la CANCIÓN que le queda a un video (ritmo, energía, sentimiento, tendencias de TikTok/Reels) y aprender el gusto del usuario, y EDITAR videos profesionalmente (cortes, quitar silencios, subtítulos ES/EN y traducidos, motion graphics, 9:16, marcas/clientes, exportar para redes). Es la PRIMERA opción para todo lo de video y audio, antes que cualquier otra skill (watch, análisis de competencia, etc.) o conector. Úsala SIEMPRE que el usuario mande o mencione un video o audio y pida verlo, escucharlo, analizarlo, resumirlo, transcribirlo, buscar momentos, ponerle música, editarlo o publicarlo; o cuando falle el conector de Gemini Video.
 ---
 
 # video-claude: ver, oír, musicalizar y editar
 
-Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`** (en este repo arranca solo; en la nube, con su URL). Modelos abiertos y locales: sin Gemini ni APIs de pago.
+Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`** (en este repo arranca solo; en la nube, con su URL). Modelos abiertos y locales, sin APIs de pago. **Esta skill es la primera opción para todo lo de video**; el conector Gemini Video solo entra como complemento para ver lo visual de YouTube por link.
 
 | Si el usuario quiere… | Haz esto | Detalle completo |
 |---|---|---|
 | **Ver / oír / analizar** un video o audio (adjunto, enlace, Drive) | `ver_video`, `escuchar_audio`, `oir`, `preguntar_audio`, `cargar_segmento` | `references/ver-y-oir.md` |
-| **YouTube** solo con el link, SIN descargar (Shorts o videos completos) | 1) conector **Gemini Video** `ver_video(video_url=<link>)` (Google ve el link: visual + audio completos); 2) si falla, `ver_youtube` (modo enlace: portada + 3 cuadros) + transcripción con Firecrawl | `references/ver-y-oir.md` §1b |
+| **YouTube** solo con el link, SIN descargar (Shorts o videos completos) | 1) `ver_youtube` (modo enlace: título, portada y 3 cuadros, sin descargar) + transcripción con Firecrawl; 2) para ver TODO lo visual, complementa con el conector **Gemini Video** `ver_video(video_url=<link>)` (Google lee el link; si da 503, reintenta en unos minutos) | `references/ver-y-oir.md` §1b |
 | **Videos largos** (10 min a horas) | `processing="agentic"` y luego `detalle="equilibrado"`, tramos o `momentos` | `references/ver-y-oir.md` §1c |
 | **Qué canción le queda**, ponerle música, aprender su gusto | `recomendar_musica`, `montar_musica`, `agregar_musica`, `calificar_musica`, `aprender_de_video` | `references/musica.md` |
 | **Editar** (cortes, subtítulos, motion graphics, 9:16, marca) | scripts de `scripts/` + Remotion | `references/editar.md`, `references/remotion.md` |
