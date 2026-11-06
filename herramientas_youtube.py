@@ -75,12 +75,48 @@ def imagenes_publicas(vid, carpeta, vertical=False):
     return destino, [e for _, e in piezas]
 
 
+GEMINI_MODELO = __import__("os").environ.get("VIDEO_NUBE_GEMINI_MODELO", "gemini-2.5-flash")
+GEMINI_PROMPT = ("Responde en español. Analiza este video completo, imagen y audio. 1) Resumen en 2 frases. 2) Escena por "
+                 "escena con marcas MM:SS: qué SE VE (planos, texto en pantalla, tipografías, colores, gráficos, "
+                 "transiciones, cortes, zooms), qué SE DICE y qué SUENA (música, efectos). 3) Estilo de edición: ritmo "
+                 "(duración típica de cada plano), recursos que se repiten. No inventes lo que no se ve.")
+
+
+def gemini_youtube(url, prompt=None, timeout=240):
+    """Pide a la API de Gemini que vea el video de YouTube por su link (Google lo lee; aquí no se descarga nada).
+    Devuelve (texto, estado). Regla del usuario: si da 503 (saturado) — o cualquier otro error, o no hay clave —
+    se descarta y la herramienta sigue solo con las 4 imágenes públicas. La clave la inyecta el proxy del entorno
+    (secreto de red para generativelanguage.googleapis.com) o la variable GEMINI_API_KEY."""
+    import os
+    import urllib.error
+    cuerpo = json.dumps({"contents": [{"parts": [{"file_data": {"file_uri": url}},
+                                                 {"text": prompt or GEMINI_PROMPT}]}]}).encode()
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODELO}:generateContent", cuerpo,
+        {"Content-Type": "application/json", "User-Agent": "video-claude/1.0",
+         "x-goog-api-key": os.environ.get("GEMINI_API_KEY", "proxy-injected")})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            res = json.loads(r.read())
+        texto = "".join(p.get("text", "") for c in res.get("candidates", []) for p in c.get("content", {}).get("parts", []))
+        return (texto, "ok") if texto.strip() else (None, "Gemini no devolvió texto")
+    except urllib.error.HTTPError as e:
+        if e.code == 503:
+            return None, "Gemini saturado (503): descartado, se usan solo las 4 imágenes públicas"
+        cuerpo_err = e.read().decode(errors="ignore")[:400] if hasattr(e, "read") else ""
+        if e.code in (401, 403) or "API key" in cuerpo_err or "API_KEY" in cuerpo_err:
+            return None, f"Gemini sin clave válida ({e.code}): añade la clave de Google AI Studio en el entorno"
+        return None, f"Gemini falló ({e.code}): descartado"
+    except Exception as e:  # noqa: BLE001
+        return None, f"Gemini no respondió ({type(e).__name__}): descartado"
+
+
 def registrar(mcp, _error, contenido_intercalado):
     from fastmcp.utilities.types import Image
 
     @mcp.tool
     def ver_youtube(url: str, fps: float = 1.0, start_offset: float = 0, end_offset: float = 0, pagina: int = 1,
-                    detalle: str = "gemini", momentos: str = "", descargar: bool = True):
+                    detalle: str = "gemini", momentos: str = "", descargar: bool = True, gemini: bool = True, pregunta: str = ""):
         """Ve un video de YouTube (watch, shorts, youtu.be) SOLO con el enlace. Si el servidor puede descargarlo, lo ve completo como ver_video (cuadros [MM:SS] + voz + sonidos; fps, offsets, pagina, detalle y momentos funcionan igual: para videos largos usa detalle='equilibrado'). Si YouTube bloquea la descarga (casi siempre en servidores en la nube), devuelve modo='enlace': título, canal, portada y 3 cuadros públicos (~25/50/75 %) y te indica traer la TRANSCRIPCIÓN con Firecrawl (youtube-com/videos/video_transcript, con el idioma original de caption_tracks). En modo enlace solo has visto esas imágenes: dilo al responder."""
         import vision_local as vl
         vid = id_youtube(url)
@@ -104,12 +140,14 @@ def registrar(mcp, _error, contenido_intercalado):
         except Exception:
             pass
         hoja = imagenes_publicas(vid, vl.SALIDA / "youtube", vertical="/shorts/" in url)
+        analisis, estado_gemini = gemini_youtube(limpio, pregunta or None) if gemini else (None, "no pedido")
         datos = {
             "modo": "enlace", "video_id": vid, "url": limpio,
             "titulo": info.get("title"), "canal": info.get("author_name"), "canal_url": info.get("author_url"),
             "por_que": bloqueo if not descargar else "YouTube no deja descargar el video desde este servidor; no se intenta saltar el bloqueo.",
             "detalle_bloqueo": bloqueo[:300],
             "imagenes": hoja[1] if hoja else [],
+            "gemini": estado_gemini,
             "siguiente_paso": ("Trae la transcripción con timestamps: firecrawl_scrape alexandria "
                                "{provider:'youtube-com', capability:'videos/video_details', options:{url}} para ver idiomas "
                                "(caption_tracks) y duración, y después {capability:'videos/video_transcript', "
@@ -118,6 +156,9 @@ def registrar(mcp, _error, contenido_intercalado):
                                "propio con YTDLP_COOKIES."),
         }
         partes = [json.dumps(datos, ensure_ascii=False)]
+        if analisis:
+            partes.append("Análisis COMPLETO del video hecho por Gemini (vio imagen y audio por el link; es su "
+                          "descripción, no cuadros vistos aquí):\n" + analisis)
         if hoja:
             partes += ["Imágenes públicas de YouTube (portada y cuadros automáticos aproximados; no son todos los "
                        "cuadros):", Image(path=str(hoja[0]))]
