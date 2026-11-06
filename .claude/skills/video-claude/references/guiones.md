@@ -21,3 +21,21 @@
 - Pon la palabra clave al final de la frase (ahí caen el corte, el golpe y el sello).
 - Cada 3-5 s algo nuevo: giro, pregunta, dato, cambio de lugar.
 - Lee el guion en voz alta con `scripts/voz.py`: si sobra aire, recorta.
+
+## Banco de ideas para pruebas A/B (formatos que llevan a 10-70M en canales de animación)
+Probar 2 versiones del MISMO tema cambiando UNA sola cosa (gancho, formato, duración, con/sin voz) y quedarse con la que
+retenga más (YouTube Studio → retención a los 3 s y % que vio completo). Estudiar antes el canal con `canal_viral.py`.
+
+| Formato | Plantilla | Ideas para Kubo |
+|---|---|---|
+| Contraste A/B | «Con mamá / con papá», «Lo que ven mis papás / lo que veo yo» | dormir, la bici, el súper, la tarea, el parque |
+| Línea de tiempo | «Objeto 2000 vs 2026 vs 2050» | celular, escuela, cumpleaños, pizza, puerta |
+| Escalera | «1s / 10s / 1min / 1h» (barra de opciones) | malvavisco, palomitas, siesta, pensar una respuesta |
+| Tipos de personas | «Tipos de personas cuando…» | batería al 10 %, examen, se va la luz, wifi lento |
+| Cómo funciona (absurdo) | «Cómo funciona X por dentro» | impresora, microondas, cajero, elevador |
+| Historia de 20 s | Situación → error → caos → remate que contradice | papá chef, el perro y la tarea, el primo influencer |
+| Pregunta al público | «¿Cuál elegirías?» (empuja comentarios) | poderes, mascotas, dulces |
+| Serie con continuidad | Episodios con los mismos personajes y un gag fijo | la cabeza de Kubo que sale volando |
+
+Desencadenantes que más se repiten: identificación («eso me pasa»), contraste, escalada hasta el exceso, sorpresa en
+el último 30 %, humor físico, baja carga cognitiva (se entiende sin idioma) y final cortado en seco (loop).

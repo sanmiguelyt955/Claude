@@ -2,13 +2,15 @@
 música que cambia de ánimo por secciones y mezcla con «ducking» bajo la voz.
 
 En el guion de collage, cada escena puede llevar:
-  "animo": "misterio" | "robo" | "panico" | "investigacion" | "giro" | "final"   (la música cambia al cambiar)
+  "animo": "misterio" | "robo" | "panico" | "investigacion" | "giro" | "final" | "alegre" | "caos"
+           (la música cambia al cambiar; alegre/caos van con el estilo «caricatura» de Kubo)
   "sfx":   ["pasos", {"tipo": "sello", "en": "clave"}, {"tipo": "silbato", "en": 1.2}]
            en = "inicio" (por defecto) | "clave" (cuando la voz dice la palabra *clave*) | segundos desde el inicio
 Además se pone solo un «whoosh» en cada transición y un golpe cuando aparece un «titular».
 
 Efectos: whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina, papel, tren, riser,
-latido, reloj, campana, revelacion, caja.
+latido, reloj, campana, revelacion, caja, vine_boom, zumbido, pasos_alfombra, remate, pop.
+Caricatura (Kubo): boing, grito, ronquido, fuego, soplido, masticar, deslizar, caida, burbuja, tada.
 
 Uso directo: python3 sonido.py props.json voz.mp3 salida.wav   (props con escenas ya alineadas)
 """
@@ -303,13 +305,110 @@ def pop(d=0.18):
     return _norm(np.sin(2 * np.pi * (600 + 900 * np.exp(-t * 60)) * t) * _env(len(t), 0.0005, 0.03), 0.6)
 
 
+# ------------------------------------------------------------------ efectos de caricatura (Kubo)
+
+def boing(d=0.6):
+    """Resorte de caricatura (salto, rebote)."""
+    t = _t(d)
+    f = 180 + 260 * np.abs(np.sin(2 * np.pi * 9 * t)) * np.exp(-t * 3)
+    return _norm(np.sin(2 * np.pi * np.cumsum(f) / SR) * _env(len(t), 0.002, d / 2), 0.7)
+
+
+def grito(d=1.2):
+    """Grito exagerado de caricatura (sierra que sube con vibrato y saturación)."""
+    t = _t(d)
+    f = 320 + 380 * np.minimum(1, t / 0.25) + 25 * np.sin(2 * np.pi * 7 * t)
+    fase = np.cumsum(f) / SR
+    y = sum(((2 * ((k * fase) % 1) - 1) / k) for k in (1, 2, 3))
+    y = _bp(np.tanh(2.5 * y), 400, 4000) * np.minimum(1, t / 0.03) * np.minimum(1, (d - t) / 0.15)
+    return _norm(y, 0.7)
+
+
+def ronquido(d=2.0):
+    """Ronquido: inhalación ruidosa y exhalación con silbido."""
+    t = _t(d)
+    ciclo = (t % 1.0)
+    inh = _lp(_ruido(d), 500) * (np.sin(2 * np.pi * 45 * t) > 0) * (ciclo < 0.55) * np.sin(np.pi * np.clip(ciclo / 0.55, 0, 1))
+    exh = np.sin(2 * np.pi * (900 + 300 * ciclo) * t) * 0.2 * (ciclo >= 0.6) * np.sin(np.pi * np.clip((ciclo - 0.6) / 0.4, 0, 1))
+    return _norm(inh + exh, 0.6)
+
+
+def fuego(d=2.0):
+    """Fogata: rumor grave + chasquidos."""
+    t = _t(d)
+    y = 0.4 * _lp(_ruido(d), 400) * (0.7 + 0.3 * np.sin(2 * np.pi * 0.7 * t))
+    for s in RNG.uniform(0, d - 0.05, int(d * 14)):
+        i = int(s * SR); n = int(0.01 * SR)
+        y[i:i + n] += RNG.uniform(0.3, 1) * _hp(_ruido(0.01), 2000)[:n]
+    return _norm(y * np.minimum(1, t / 0.1) * np.minimum(1, (d - t) / 0.2), 0.6)
+
+
+def soplido(d=0.8):
+    t = _t(d)
+    return _norm(_bp(_ruido(d), 300, 2500) * np.sin(np.pi * t / d) ** 1.5, 0.5)
+
+
+def masticar(d=1.0):
+    y = np.zeros(int(d * SR))
+    for s in np.arange(0, d - 0.1, 0.22):
+        i = int(s * SR); n = int(0.09 * SR)
+        y[i:i + n] += _bp(_ruido(0.09), 500, 3000)[:n] * _env(n, 0.002, 0.03)
+    return _norm(y, 0.5)
+
+
+def deslizar(d=0.7, sube=True):
+    """Silbato de émbolo (slide whistle): sube o baja de tono."""
+    t = _t(d)
+    f = (500 + 1100 * t / d) if sube else (1600 - 1100 * t / d)
+    return _norm(np.sin(2 * np.pi * np.cumsum(f * (1 + 0.01 * np.sin(2 * np.pi * 6 * t))) / SR)
+                 * np.minimum(1, t / 0.03) * np.minimum(1, (d - t) / 0.08), 0.6)
+
+
+def caida(d=0.9):
+    return deslizar(d, sube=False)
+
+
+def burbuja(d=0.25):
+    t = _t(d)
+    return _norm(np.sin(2 * np.pi * (300 + 1500 * t / d) * t) * _env(len(t), 0.002, 0.08), 0.5)
+
+
+def tada(d=1.6):
+    """Fanfarria corta de logro."""
+    y = np.zeros(int(d * SR))
+    for k, (nota, s) in enumerate((("C5", 0), ("E5", 0.1), ("G5", 0.2), ("C6", 0.3))):
+        x = _nota(_f(nota), d - s, "campana")
+        i = int(s * SR); y[i:i + len(x)] += x[: len(y) - i] * (0.6 if k < 3 else 1)
+    return _norm(y, 0.7)
+
+
+MOTIVO = ["F5", "A5", "C6"]      # las 3 notas de la marca Kubo (firma + tema de la música)
+
+
+def firma(d=1.3):
+    """Firma sonora de Kubo: «bip-bip-DING» (el foco que se prende). Va al inicio y al final de cada video para que el
+    canal se reconozca solo por el oído (como un logotipo de sonido)."""
+    y = np.zeros(int(d * SR))
+    for k, (nota, s, dd) in enumerate(((MOTIVO[0], 0, 0.12), (MOTIVO[1], 0.13, 0.12), (MOTIVO[2], 0.28, d - 0.3))):
+        t = _t(dd)
+        f = _f(nota)
+        x = (np.sin(2 * np.pi * f * t) + 0.3 * np.sin(2 * np.pi * 2 * f * t)) * _env(len(t), 0.002, 0.05 if k < 2 else 0.4)
+        if k == 2:
+            x = 0.6 * x + 0.5 * _nota(f, dd, "campana")
+        i = int(s * SR); y[i:i + len(x)] += x[: len(y) - i]
+    return _norm(y, 0.8)
+
+
 EFECTOS = {f.__name__: f for f in (whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina,
                                     papel, tren, riser, latido, reloj, campana, revelacion, caja,
-                                    vine_boom, zumbido, pasos_alfombra, remate, pop)}
+                                    vine_boom, zumbido, pasos_alfombra, remate, pop,
+                                    boing, grito, ronquido, fuego, soplido, masticar, deslizar, caida, burbuja, tada, firma)}
 VOLUMEN = {"whoosh": 0.35, "impacto": 0.7, "sello": 0.7, "camara": 0.6, "pasos": 0.45, "puerta": 0.5, "llave": 0.5,
            "silbato": 0.45, "multitud": 0.35, "maquina": 0.45, "papel": 0.4, "tren": 0.5, "riser": 0.45, "latido": 0.6,
            "reloj": 0.35, "campana": 0.45, "revelacion": 0.6, "caja": 0.5,
-           "vine_boom": 0.75, "zumbido": 0.25, "pasos_alfombra": 0.45, "remate": 0.55, "pop": 0.35}
+           "vine_boom": 0.75, "zumbido": 0.25, "pasos_alfombra": 0.45, "remate": 0.55, "pop": 0.35,
+           "boing": 0.5, "grito": 0.45, "ronquido": 0.45, "fuego": 0.4, "soplido": 0.4, "masticar": 0.45, "deslizar": 0.45,
+           "caida": 0.45, "burbuja": 0.4, "tada": 0.5, "firma": 0.55}
 
 
 # ------------------------------------------------------------------ música por secciones
@@ -329,6 +428,10 @@ ESTILOS = {
     # Pulso moderno: La menor, 110 BPM, bombo y hi-hat, arpegios de campana (para tendencias de Shorts/Reels)
     "pulso": dict(bpm=110, escala=["A4", "C5", "D5", "E5", "G5", "A5"], pad=0.07, melodia="campana", kick=True,
                   acordes=[("A2", "C3", "E3"), ("F2", "A2", "C3"), ("C3", "E3", "G3"), ("G2", "B2", "D3")]),
+    # Caricatura (Kubo): Fa mayor, 128 BPM, bombo, palmas y marimba alegre — para animos «alegre» y «caos»
+    "caricatura": dict(bpm=128, escala=["F4", "G4", "A4", "C5", "D5", "F5"], pad=0.04, melodia="campana", kick=True,
+                       motivo=["F5", "A5", "C6"],
+                       acordes=[("F2", "A2", "C3"), ("D2", "F2", "A2"), ("Bb2", "D3", "F3"), ("C3", "E3", "G3")]),
 }
 
 
@@ -392,6 +495,19 @@ def _seccion(animo, d, t0, cfg):
         elif animo == "giro":           # casi silencio: dron grave que crece
             tt = _t(beat)
             poner(np.sin(2 * np.pi * 36.7 * tt) * 0.5 * min(1, (s + beat) / d), s, 0.5)
+        elif animo in ("alegre", "caos"):   # caricatura: bajo saltarín, palmas en 2 y 4, marimba en corcheas
+            rapido = animo == "caos"
+            poner(_pluck(_f(acorde[0][:-1] + "2"), 0.3, 0.3), s, 0.35)
+            poner(_pluck(_f(acorde[2][:-1] + "2"), 0.25, 0.3), s + beat / 2, 0.22)
+            if b % 2 == 1:
+                poner(_bp(_ruido(0.08), 900, 5000) * _env(int(0.08 * SR), 0.001, 0.025), s, 0.25)
+            if b % 8 == 0 and not rapido:            # el tema de la marca (mismas notas que la firma) cada 2 compases
+                for k, nota in enumerate(cfg.get("motivo", [])):
+                    poner(_nota(_f(nota), 0.4 if k < 2 else 0.9, "campana"), s + k * beat / 2, 0.11)
+                continue
+            for k in range(4 if rapido else 2):
+                nota = cfg["escala"][(b * 3 + k * 2) % len(cfg["escala"])]
+                poner(_nota(_f(nota), 0.25, "campana"), s + k * beat / (4 if rapido else 2), 0.09)
         elif animo == "final":          # resolución en mayor con arpegio de campana
             if b % 4 == 0:
                 for nota in ("D3", "F#3", "A3"):

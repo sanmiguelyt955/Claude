@@ -1,0 +1,458 @@
+{
+ "formato": "9:16",
+ "estilo": "cabezon",
+ "musica": "caricatura",
+ "personajes": {
+  "kubo": {
+   "piel": "#3dd6c6",
+   "ropa": "#ff8c1a",
+   "pantalon": "#24304a",
+   "antena": true,
+   "altura": 0.75
+  },
+  "papa": {
+   "piel": "#3dd6c6",
+   "ropa": "#ffffff",
+   "pantalon": "#34495e",
+   "altura": 1.08,
+   "gorro_chef": true
+  },
+  "bombero": {
+   "piel": "#ffb07c",
+   "ropa": "#f1c40f",
+   "pantalon": "#2d3436",
+   "gorra": "#c0392b"
+  }
+ },
+ "tomas": [
+  {
+   "rango": [
+    0,
+    10
+   ],
+   "escenario": "cocina",
+   "camara": "medio+empuje",
+   "animo": "alegre",
+   "sfx": [
+    "pop"
+   ],
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      1.0,
+      -0.4
+     ],
+     "mira": -20,
+     "cara": "sospecha",
+     "accion": "quieto",
+     "habla": true
+    },
+    {
+     "id": "papa",
+     "pos": [
+      -1.0,
+      0.3
+     ],
+     "mira": 15,
+     "cara": "feliz",
+     "accion": "celebrar"
+    }
+   ],
+   "props": [
+    {
+     "tipo": "estufa",
+     "pos": [
+      -2.6,
+      2.6
+     ]
+    }
+   ]
+  },
+  {
+   "rango": [
+    11,
+    16
+   ],
+   "escenario": "cocina",
+   "camara": "cerca",
+   "objetivo": "papa",
+   "clave": "recetas",
+   "actores": [
+    {
+     "id": "papa",
+     "pos": [
+      0,
+      0
+     ],
+     "cara": "pensando",
+     "accion": "pensar"
+    }
+   ],
+   "props": [
+    {
+     "tipo": "mesa",
+     "pos": [
+      0,
+      -1.1
+     ]
+    },
+    {
+     "tipo": "libro",
+     "pos": [
+      0,
+      -1.1
+     ],
+     "z": 0.98
+    }
+   ]
+  },
+  {
+   "rango": [
+    17,
+    22
+   ],
+   "escenario": "cocina",
+   "camara": "cerca+golpe",
+   "objetivo": "papa",
+   "clave": "cinco",
+   "sfx": [
+    {
+     "tipo": "remate",
+     "en": "clave"
+    }
+   ],
+   "actores": [
+    {
+     "id": "papa",
+     "pos": [
+      0,
+      0
+     ],
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       0.9,
+       "enojado"
+      ]
+     ],
+     "accion": "quieto"
+    }
+   ],
+   "props": [
+    {
+     "tipo": "mesa",
+     "pos": [
+      0,
+      -1.1
+     ]
+    },
+    {
+     "tipo": "libro",
+     "pos": [
+      0,
+      -1.1
+     ],
+     "z": 0.98,
+     "giro": 90
+    }
+   ]
+  },
+  {
+   "rango": [
+    23,
+    26
+   ],
+   "escenario": "cocina",
+   "camara": "medio+contrapicado",
+   "objetivo": "papa",
+   "clave": "necesito",
+   "sfx": [
+    {
+     "tipo": "vine_boom",
+     "en": 0.1
+    }
+   ],
+   "actores": [
+    {
+     "id": "papa",
+     "pos": [
+      0,
+      0
+     ],
+     "cara": "malvado",
+     "accion": "celebrar",
+     "habla": true
+    }
+   ]
+  },
+  {
+   "rango": [
+    27,
+    36
+   ],
+   "escenario": "cocina",
+   "camara": "medio+orbita",
+   "clave": "máximo",
+   "animo": "caos",
+   "sfx": [
+    {
+     "tipo": "fuego",
+     "en": 0.6,
+     "dur": 2.5
+    }
+   ],
+   "actores": [
+    {
+     "id": "papa",
+     "pos": [
+      -0.6,
+      0.6
+     ],
+     "mira": 160,
+     "cara": "feliz",
+     "accion": "agitar"
+    },
+    {
+     "id": "kubo",
+     "pos": [
+      1.6,
+      -0.6
+     ],
+     "mira": -30,
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       1.6,
+       "miedo"
+      ]
+     ],
+     "accion": "quieto",
+     "habla": true
+    }
+   ],
+   "props": [
+    {
+     "tipo": "estufa",
+     "pos": [
+      -0.6,
+      2.0
+     ]
+    },
+    {
+     "tipo": "fogata",
+     "pos": [
+      -0.6,
+      2.0
+     ],
+     "z": 1.25,
+     "escala": 1.3
+    }
+   ]
+  },
+  {
+   "rango": [
+    37,
+    40
+   ],
+   "escenario": "cocina",
+   "camara": "lejos+temblor",
+   "clave": "minutos",
+   "animo": "caos",
+   "sfx": [
+    {
+     "tipo": "fuego",
+     "dur": 3
+    },
+    {
+     "tipo": "grito",
+     "en": 0.8
+    }
+   ],
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      1.4,
+      -1.0
+     ],
+     "cara": "grito",
+     "accion": "susto",
+     "salto_en": 0.5
+    },
+    {
+     "id": "papa",
+     "pos": [
+      -1.0,
+      -0.6
+     ],
+     "cara": "ko",
+     "accion": "temblar"
+    }
+   ],
+   "props": [
+    {
+     "tipo": "estufa",
+     "pos": [
+      -0.6,
+      2.0
+     ]
+    },
+    {
+     "tipo": "fogata",
+     "pos": [
+      -0.6,
+      2.0
+     ],
+     "z": 1.25,
+     "escala": 3
+    },
+    {
+     "tipo": "humo",
+     "pos": [
+      -0.4,
+      2.4
+     ],
+     "escala": 1.2
+    }
+   ]
+  },
+  {
+   "rango": [
+    41,
+    42
+   ],
+   "escenario": "calle",
+   "camara": "medio+paneo",
+   "clave": "bomberos",
+   "animo": "caos",
+   "sfx": [
+    "silbato",
+    {
+     "tipo": "deslizar",
+     "en": 0.2
+    }
+   ],
+   "actores": [
+    {
+     "id": "bombero",
+     "pos": [
+      -1.0,
+      -0.3
+     ],
+     "cara": "enojado",
+     "accion": "senalar"
+    },
+    {
+     "id": "bombero",
+     "pos": [
+      1.2,
+      0.4
+     ],
+     "cara": "sorpresa",
+     "accion": "correr",
+     "hasta": [
+      2.5,
+      -0.5
+     ]
+    }
+   ],
+   "props": [
+    {
+     "tipo": "coche",
+     "pos": [
+      0,
+      3.0
+     ],
+     "escala": 1.6,
+     "color": "#e74c3c"
+    },
+    {
+     "tipo": "humo",
+     "pos": [
+      3,
+      7
+     ],
+     "escala": 1.6
+    }
+   ]
+  },
+  {
+   "rango": [
+    43,
+    52
+   ],
+   "escenario": "cocina",
+   "camara": "medio+empuje",
+   "clave": "deliciosa",
+   "animo": "alegre",
+   "sfx": [
+    {
+     "tipo": "masticar",
+     "en": 1.0
+    },
+    {
+     "tipo": "remate",
+     "en": "clave"
+    }
+   ],
+   "actores": [
+    {
+     "id": "papa",
+     "pos": [
+      -0.9,
+      0
+     ],
+     "mira": 10,
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       1.8,
+       "extasis"
+      ]
+     ],
+     "accion": "comer"
+    },
+    {
+     "id": "kubo",
+     "pos": [
+      1.1,
+      -0.4
+     ],
+     "mira": -20,
+     "cara": "sospecha",
+     "accion": "quieto",
+     "habla": true
+    }
+   ],
+   "props": [
+    {
+     "tipo": "humo",
+     "pos": [
+      -2.5,
+      3.0
+     ],
+     "escala": 0.7,
+     "color": "#2d3436"
+    },
+    {
+     "tipo": "estufa",
+     "pos": [
+      -2.6,
+      2.6
+     ],
+     "color": "#2d3436"
+    }
+   ]
+  }
+ ]
+}

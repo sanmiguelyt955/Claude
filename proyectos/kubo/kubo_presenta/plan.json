@@ -1,0 +1,16 @@
+{"formato":"9:16","musica":"caricatura",
+ "personajes":{"kubo":{"piel":"#3dd6c6","ropa":"#ff8c1a","pantalon":"#24304a","antena":true}},
+ "tomas":[
+  {"dur":2.0,"escenario":"estudio","cielo":"#ffd166","camara":"medio+empuje","cabecera":"ESTE ES KUBO","animo":"alegre","sfx":[{"tipo":"pop","en":0.1}],
+   "actores":[{"id":"kubo","caras":[[0,"normal"],[0.6,"feliz"]],"accion":"agitar"}]},
+  {"dur":1.6,"escenario":"estudio","cielo":"#ff8fa3","camara":"cerca","cabecera":"SI SE ENOJA…","sfx":[{"tipo":"remate","en":0.3}],
+   "actores":[{"id":"kubo","caras":[[0,"sospecha"],[0.3,"enojado"]],"accion":"quieto"}]},
+  {"dur":1.6,"escenario":"estudio","cielo":"#9ad0ff","camara":"cerca","cabecera":"SI ESTÁ TRISTE…","sfx":[{"tipo":"caida","en":0.2}],
+   "actores":[{"id":"kubo","caras":[[0,"normal"],[0.3,"triste"]],"accion":"quieto"}]},
+  {"dur":1.6,"escenario":"estudio","cielo":"#c3f584","camara":"cerca+empuje","cabecera":"SI TIENE UNA IDEA…","sfx":[{"tipo":"burbuja","en":0.3}],
+   "actores":[{"id":"kubo","caras":[[0,"pensando"]],"accion":"pensar"}]},
+  {"dur":2.0,"escenario":"estudio","cielo":"#2b2d42","camara":"medio+golpe","cabecera":"Y SI SE ASUSTA…","animo":"caos","sfx":[{"tipo":"grito","en":0.35},{"tipo":"boing","en":0.6}],
+   "actores":[{"id":"kubo","caras":[[0,"sospecha"],[0.35,"grito"]],"accion":"susto","salto_en":0.35}]},
+  {"dur":2.6,"escenario":"parque","camara":"medio+orbita","cabecera":"¡SÍGUELO!","animo":"alegre","sfx":[{"tipo":"boing","en":0.1},{"tipo":"boing","en":0.55},{"tipo":"tada","en":1.0}],
+   "actores":[{"id":"kubo","caras":[[0,"feliz"],[0.9,"extasis"]],"accion":"saltar"}]}
+ ]}
