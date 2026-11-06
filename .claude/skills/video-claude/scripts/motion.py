@@ -241,12 +241,21 @@ def hoja_control(video, escenas, destino):
     return destino
 
 
-def normalizar_audio(video):
+def para_movil(video, audio=True):
+    """Deja el MP4 reproducible en cualquier celular (iPhone incluido) y ligero para mandarlo o subirlo:
+    H.264 High 4.1, yuv420p de rango limitado (Remotion saca yuvj420p, que iOS rechaza), ~6 Mbps máx., faststart,
+    y audio a -14 LUFS."""
     tmp = video.with_suffix(".tmp.mp4")
-    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-c:v", "copy", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-                        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(tmp)], capture_output=True)
+    cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video),
+           "-vf", "scale=in_range=full:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
+           "-maxrate", "6M", "-bufsize", "12M", "-profile:v", "high", "-level", "4.1", "-color_range", "tv",
+           "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-tag:v", "avc1"]
+    cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio else ["-an"]
+    r = subprocess.run(cmd + ["-movflags", "+faststart", str(tmp)], capture_output=True)
     if r.returncode == 0:
         tmp.replace(video)
+    else:
+        print("Aviso: no se pudo convertir para móvil:", r.stderr.decode()[-300:], file=sys.stderr)
 
 
 def main():
@@ -313,8 +322,7 @@ def main():
     salida = Path(a.salida or (trabajo / f"{nombre}.mp4")).resolve()
     salida.parent.mkdir(parents=True, exist_ok=True)
     render(a.modo, props, public, salida, ancho, alto)
-    if a.voz or a.musica:
-        normalizar_audio(salida)
+    para_movil(salida, audio=bool(a.voz or a.musica))
     print(json.dumps({"salida": str(salida), "duracion": round(duracion, 2), "formato": a.formato}, ensure_ascii=False))
 
 
