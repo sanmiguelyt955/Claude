@@ -18,15 +18,29 @@ export const fuente = (m: Marca, titulo = false) => (titulo ? m.font_title || m.
 // Una palabra con su tiempo (segundos desde el inicio de la escena). *palabra* = destacada.
 export type Palabra = {t: number; p: string};
 
+// «*Torre Eiffel*» → cada palabra marcada por separado (*Torre* *Eiffel*), para resaltar claves de varias palabras.
+export const marcarClaves = (ps: string[]): string[] => {
+  let dentro = false;
+  return ps.map((p) => {
+    const abre = p.startsWith('*'), cierra = /\*[.,!?;:…]*$/.test(p) && (p.length > 1 || dentro);
+    const base = p.replace(/^\*/, '').replace(/\*([.,!?;:…]*)$/, '$1');
+    const clave = dentro || abre;
+    if (abre && !cierra) dentro = true;
+    else if (cierra) dentro = false;
+    return clave ? `*${base.replace(/([.,!?;:…]*)$/, '*$1')}` : base;
+  });
+};
+
 export const partir = (texto: string, dur: number, inicio = 0.15): Palabra[] => {
   // Sin tiempos de la voz: reparte las palabras de forma pareja en la primera mitad larga de la escena.
-  const ps = texto.split(/\s+/).filter(Boolean);
-  const hueco = Math.max(0.12, Math.min(0.45, (dur * 0.7) / Math.max(ps.length, 1)));
+  const ps = marcarClaves(texto.split(/\s+/).filter(Boolean));
+  // Sin voz: la frase completa en el primer ~40 % de la escena (retención: que se lea pronto y quede visible).
+  const hueco = Math.max(0.09, Math.min(0.28, (dur * 0.4) / Math.max(ps.length, 1)));
   return ps.map((p, i) => ({t: inicio + i * hueco, p}));
 };
 
-export const esClave = (p: string) => /^\*.+\*[.,!?;:]*$/.test(p);
-export const limpia = (p: string) => p.replace(/^\*/, '').replace(/\*([.,!?;:]*)$/, '$1');
+export const esClave = (p: string) => /^\*.+\*[.,!?;:…]*$/.test(p);
+export const limpia = (p: string) => p.replace(/^\*/, '').replace(/\*([.,!?;:…]*)$/, '$1');
 
 // Texto que entra palabra a palabra (al ritmo de la voz si hay tiempos), con la clave en color acento.
 export const PalabraAPalabra: React.FC<{

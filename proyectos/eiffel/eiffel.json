@@ -1,0 +1,201 @@
+{
+ "serif": true,
+ "textura": {
+  "grano": 0.13,
+  "papel": 0.14,
+  "vineta": 0.55,
+  "luz": 0.28
+ },
+ "escenas": [
+  {
+   "dur": 3.5,
+   "camara": "avanzar",
+   "fuerza": 1.4,
+   "foco": {
+    "x": 0.5,
+    "y": 0.3
+   },
+   "transicion": "hueco",
+   "particulas": "polvo",
+   "texto": "En 1925, un hombre vendió la *Torre Eiffel*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e1_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e1_hombre.jpg",
+     "z": 0.6,
+     "x": 0.3,
+     "y": 0.78,
+     "ancho": 0.4,
+     "mov": "respirar"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "derecha",
+   "transicion": "tapa",
+   "texto": "Se hizo pasar por funcionario del *gobierno*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e2_fondo.jpg",
+     "z": 0,
+     "ancho": 1.35
+    },
+    {
+     "src": "img/e2_carta.jpg",
+     "z": 0.6,
+     "x": 0.5,
+     "y": 0.66,
+     "ancho": 0.68,
+     "mov": "balanceo"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "retroceder",
+   "foco": {
+    "x": 0.5,
+    "y": 0.62
+   },
+   "transicion": "hueco",
+   "particulas": "polvo",
+   "texto": "Citó a 6 chatarreros en un hotel de *lujo*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e3_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e3_maletin.jpg",
+     "z": 0.55,
+     "x": 0.5,
+     "y": 0.78,
+     "ancho": 0.55,
+     "mov": "flotar"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "subir",
+   "fuerza": 1.2,
+   "transicion": "tapa",
+   "texto": "Les dijo que la torre iba a ser *desmantelada*",
+   "posTexto": "abajo",
+   "capas": [
+    {
+     "src": "img/e4_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e4_periodico.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.5,
+     "ancho": 0.66,
+     "mov": "balanceo"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "avanzar",
+   "fuerza": 1.6,
+   "foco": {
+    "x": 0.52,
+    "y": 0.47
+   },
+   "transicion": "hueco",
+   "texto": "Uno le pagó... y él *huyó* con el dinero",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e5_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e5_dinero.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.76,
+     "ancho": 0.66,
+     "mov": "flotar"
+    }
+   ]
+  },
+  {
+   "dur": 4,
+   "camara": "izquierda",
+   "transicion": "fundido",
+   "texto": "La víctima no lo denunció por *vergüenza*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e6_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e6_sombrero_c.jpg",
+     "z": 0.55,
+     "x": 0.5,
+     "y": 0.7,
+     "ancho": 0.45,
+     "mov": "respirar"
+    }
+   ]
+  },
+  {
+   "dur": 4.5,
+   "camara": "avanzar",
+   "fuerza": 1.3,
+   "foco": {
+    "x": 0.55,
+    "y": 0.4
+   },
+   "transicion": "fundido",
+   "particulas": "chispas",
+   "texto": "Así que volvió... e intentó venderla *otra vez*",
+   "posTexto": "arriba",
+   "capas": [
+    {
+     "src": "img/e7_fondo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e1_hombre.jpg",
+     "z": 0.7,
+     "x": 0.3,
+     "y": 0.78,
+     "ancho": 0.5
+    }
+   ]
+  },
+  {
+   "dur": 3.5,
+   "camara": "retroceder",
+   "particulas": "chispas",
+   "texto": "Sígueme para más historias *reales*",
+   "posTexto": "centro",
+   "capas": [
+    {
+     "src": "img/e7_fondo.jpg",
+     "z": 0,
+     "ancho": 1.4
+    }
+   ]
+  }
+ ]
+}

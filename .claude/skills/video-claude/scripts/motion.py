@@ -136,6 +136,22 @@ def palabras_voz(voz):
     return pal
 
 
+def _marcar_claves(ps):
+    """«*Torre Eiffel*» → «*Torre*», «*Eiffel*» (claves de varias palabras), igual que marcarClaves en comun.tsx."""
+    out, dentro = [], False
+    for p in ps:
+        abre = p.startswith("*")
+        cierra = bool(re.search(r"\*[.,!?;:…]*$", p)) and (len(p) > 1 or dentro)
+        base = re.sub(r"\*([.,!?;:…]*)$", r"\1", p.lstrip("*"))
+        clave = dentro or abre
+        if abre and not cierra:
+            dentro = True
+        elif cierra:
+            dentro = False
+        out.append(re.sub(r"([.,!?;:…]*)$", r"*\1", "*" + base, count=1) if clave else base)
+    return out
+
+
 def alinear(escenas, pal, total):
     """Reparte las palabras de la voz entre las escenas en orden (según cuántas palabras dice cada una: «texto», o los
     «items» de una lista) y fija la duración de cada escena y el momento en que entra cada palabra.
@@ -143,7 +159,7 @@ def alinear(escenas, pal, total):
     i = 0
     tramos = []                              # (inicio_voz, fin_voz) de cada escena o None
     for e in escenas:
-        texto = (e.get("texto") or " ".join(e.get("items") or [])).split()
+        texto = _marcar_claves((e.get("texto") or " ".join(e.get("items") or [])).split())
         if not texto or i >= len(pal):
             tramos.append(None)
             continue
