@@ -81,7 +81,7 @@ def _color_fondo(img):
     return None
 
 
-VERSION_RECORTE = 3   # súbela al cambiar el algoritmo: invalida los recortes guardados
+VERSION_RECORTE = 4   # súbela al cambiar el algoritmo: invalida los recortes guardados
 
 
 def _mascara_croma(a, nombre):
@@ -108,7 +108,9 @@ def _mascara_croma(a, nombre):
 
 
 def recortar_croma(origen, destino, forzar=False):
-    """PNG con transparencia: quita el fondo verde/azul (sombras y viñeta incluidas) con borde limpio y sin reflejo."""
+    """PNG con transparencia. Fondo = croma conectado con el borde (incluye sombras verdes, viñeta de esquina y manchas
+    del croma mal iluminado). Dentro del objeto NO se borra nada salvo croma verde muy saturado y grande: el vidrio,
+    el metal y los reflejos claros se conservan. El borde es suave (sin escalera) y se quita el reflejo verde."""
     import numpy as np
     from PIL import Image
     from scipy import ndimage as nd
@@ -120,50 +122,47 @@ def recortar_croma(origen, destino, forzar=False):
         tipo = ("verde", (0, 177, 64))
     nombre = tipo[0]
     a = np.asarray(img, dtype=np.float32)
+    h, w = a.shape[:2]
     t_dom, t_hue, oscuro = _mascara_croma(a, nombre)
-    t = np.maximum(t_dom, t_hue)       # el tono solo cuenta para el fondo exterior; los huecos internos, croma estricto
-    h, w = t.shape
-    # El fondo es el croma conectado con el borde. Lo casi negro solo cuenta si viene de una ESQUINA (viñeta),
-    # para no comerse un traje oscuro que toca el borde de abajo.
+    t = np.maximum(t_dom, t_hue)
+    mx, mn = a.max(-1), a.min(-1)
+    sat = (mx - mn) / (mx + 1e-6)
+    # 1) Fondo exterior: croma conectado con el borde de la imagen
     lab, _ = nd.label(t > 0.35)
     borde = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
     exterior = np.isin(lab, borde[borde > 0])
+    fondo = np.where(exterior, t, 0.0)
+    # 2) Viñeta: lo casi negro solo si está en una esquina y conectado con ella
     lab_o, _ = nd.label(oscuro > 0.35)
     k = max(3, min(h, w) // 40)
     esq = np.unique(np.concatenate([lab_o[:k, :k].ravel(), lab_o[:k, -k:].ravel(), lab_o[-k:, :k].ravel(), lab_o[-k:, -k:].ravel()]))
-    vineta = np.isin(lab_o, esq[esq > 0]) & (oscuro > 0.35)
-    fondo = np.where(exterior, t, 0)
-    fondo = np.maximum(fondo, np.where(vineta, oscuro, 0))
-    # Huecos interiores (asa de la maleta, entre brazo y cuerpo): solo zonas grandes de croma claro
-    lab_i, n_i = nd.label((t_dom > 0.85) & ~exterior)
+    fondo = np.maximum(fondo, np.where(np.isin(lab_o, esq[esq > 0]) & (oscuro > 0.35), oscuro, 0.0))
+    # 3) Huecos interiores: solo croma verde SATURADO y grande (no vidrio, metal ni reflejos claros)
+    lab_i, n_i = nd.label((t_dom > 0.95) & (sat > 0.7) & ~exterior)
     if n_i:
         areas = nd.sum(np.ones_like(t), lab_i, range(1, n_i + 1))
         grandes = np.isin(lab_i, 1 + np.flatnonzero(areas >= h * w * 0.0015))
-        fondo = np.maximum(fondo, np.where(grandes, t_dom, 0))
+        fondo = np.maximum(fondo, np.where(grandes, t_dom, 0.0))
+    # 4) Islas sueltas de sujeto (manchas) fuera
     sujeto = fondo < 0.5
-    # Quita islas sueltas (manchas, sombras cortadas) y rellena agujeros diminutos del sujeto
-    lab, n = nd.label(sujeto)
-    if n:
-        areas = nd.sum(sujeto, lab, range(1, n + 1))
-        toca = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))) - {0}
-        mayor = 1 + int(np.argmax(areas))
-        # fuera las islas pequeñas y los trozos secundarios cortados por el borde (marcos, muebles de la foto)
-        sujeto = np.isin(lab, [q for q in range(1, n + 1) if q == mayor or (
-            areas[q - 1] >= max(areas.max() * 0.02, 200) and (q not in toca or areas[q - 1] >= areas.max() * 0.5))])
-    # Borde: encoge 1 px (adiós halo) y suaviza con la transición del croma
-    duro = nd.binary_erosion(sujeto, iterations=1)
-    alfa = np.where(duro, 1 - np.where(nd.binary_erosion(duro, iterations=2), 0, fondo), 0)
-    alfa = np.clip((alfa - 0.15) / 0.7, 0, 1)        # sin semitransparencias sucias: el borde es corto y limpio
-    alfa = nd.gaussian_filter(alfa.astype(np.float32), 0.7) * duro
-    # Despill: en todo el sujeto limita el canal croma al máximo de los otros (más fuerte cerca del borde)
+    lab_s, n_s = nd.label(sujeto)
+    if n_s:
+        areas = nd.sum(sujeto, lab_s, range(1, n_s + 1))
+        keep = 1 + np.flatnonzero(areas >= max(areas.max() * 0.003, 150))
+        sujeto_ok = np.isin(lab_s, keep)
+        fondo = np.where(sujeto_ok, fondo, 1.0)
+    # 5) Alfa suave: transición de 0.1 a 0.9 de croma, sin binarizar (así no hay escalera)
+    alfa = 1 - np.clip((fondo - 0.1) / 0.8, 0, 1)
+    alfa = nd.gaussian_filter(alfa.astype(np.float32), 0.6)
+    # 6) Despill: quita el verde del objeto; en los bordes semitransparentes, más fuerte
     ci = 1 if nombre == "verde" else 2
     otros = np.maximum(a[..., 0], a[..., 2]) if ci == 1 else np.maximum(a[..., 0], a[..., 1])
-    cerca = 1 - nd.binary_erosion(duro, iterations=6)
-    tope = otros + np.where(cerca, 2, 14)
+    borde_px = (alfa < 0.98)
+    tope = otros + np.where(borde_px, 4, 16)
     a[..., ci] = np.minimum(a[..., ci], tope)
     out = np.dstack([a, alfa * 255]).clip(0, 255).astype(np.uint8)
     im = Image.fromarray(out, "RGBA")
-    caja = im.getchannel("A").point(lambda v: 255 if v > 20 else 0).getbbox()
+    caja = im.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox()
     if caja:
         im = im.crop(caja)
     im.save(destino)

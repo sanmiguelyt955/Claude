@@ -67,7 +67,7 @@ const CapaVista: React.FC<{c: Capa; p: number; e: EscenaCollage; zoomExtra: numb
   if (cam === 'bajar') dy = (p - 0.5) * desp * 2;
   // Hacia el foco: al acercarse, las capas se alejan del punto de foco (sensación de meterse dentro)
   const foco = e.foco || {x: 0.5, y: 0.5};
-  const zoom = esc * (1 + zoomExtra * (0.5 + z));
+  const zoom = Math.min(2.0, esc * (1 + zoomExtra * (0.5 + z)));   // tope: más zoom pixelea las capas de 768 px
   const cx = (c.x ?? 0.5) * width, cy = (c.y ?? 0.5) * height;
   const fx = foco.x * width, fy = foco.y * height;
   const x = fx + (cx - fx) * zoom + dx;

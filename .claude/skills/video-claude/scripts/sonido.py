@@ -277,9 +277,22 @@ ACORDES = [("D3", "F3", "A3"), ("Bb2", "D3", "F3"), ("G2", "Bb2", "D3"), ("A2", 
 ESCALA = ["D4", "E4", "F4", "G4", "A4", "Bb4", "C#5", "D5"]
 
 
-def _seccion(animo, d, t0):
+# ------------------------------------------------------------------ estilos musicales (misma estructura, otro sonido)
+ESTILOS = {
+    # Suspenso de cine: Re menor, 100 BPM, pads y pizzicatos (el de la versión actual)
+    "cinematico": dict(bpm=100, acordes=ACORDES, escala=ESCALA, pad=0.10, melodia="piano"),
+    # Años 20: Do mayor, 120 BPM, piano «stride» a contratiempo y melodía de piano
+    "vintage": dict(bpm=120, escala=["C4", "D4", "E4", "G4", "A4", "C5", "D5", "E5"], pad=0.06, melodia="piano", swing=True,
+                    acordes=[("C3", "E3", "G3"), ("A2", "C3", "E3"), ("D3", "F3", "A3"), ("G2", "B2", "D3")]),
+    # Pulso moderno: La menor, 110 BPM, bombo y hi-hat, arpegios de campana (para tendencias de Shorts/Reels)
+    "pulso": dict(bpm=110, escala=["A4", "C5", "D5", "E5", "G5", "A5"], pad=0.07, melodia="campana", kick=True,
+                  acordes=[("A2", "C3", "E3"), ("F2", "A2", "C3"), ("C3", "E3", "G3"), ("G2", "B2", "D3")]),
+}
+
+
+def _seccion(animo, d, t0, cfg):
     n = int(d * SR); y = np.zeros(n + SR * 2)
-    beat = 60 / BPM
+    beat = 60 / cfg["bpm"]
     compas = 4 * beat
 
     def poner(x, s, g=1.0):
@@ -290,14 +303,21 @@ def _seccion(animo, d, t0):
     nb = int(np.ceil(d / beat)) + 1
     for b in range(nb):
         s = b * beat
-        acorde = ACORDES[int((t0 + s) // compas) % 4]
+        acorde = cfg["acordes"][int((t0 + s) // compas) % 4]
+        if cfg.get("kick") and animo != "giro":          # pulso electrónico: bombo en cada tiempo y hi-hat en cada corchea
+            tt = _t(0.2)
+            poner(np.sin(2 * np.pi * (48 + 50 * np.exp(-tt * 25)) * tt) * _env(len(tt), 0.001, 0.09), s, 0.35)
+            poner(_hp(_ruido(0.05), 7000) * _env(int(0.05 * SR), 0.0005, 0.012), s + beat / 2, 0.10)
+        if cfg.get("swing") and animo not in ("giro", "final") and b % 2 == 1:   # vintage: acordes «stride» a contratiempo
+            for nota in acorde:
+                poner(_nota(_f(nota), 0.35, "piano"), s, 0.07)
         if b % 4 == 0 and animo != "giro":
             for nota in acorde:
-                poner(_nota(_f(nota), compas + 0.3, "pad"), s, 0.10 if animo != "final" else 0.16)
+                poner(_nota(_f(nota), compas + 0.3, "pad"), s, cfg["pad"] if animo != "final" else cfg["pad"] * 1.6)
         if animo == "misterio":
             poner(reloj(0.06), s, 0.25)
             if b % 2 == 0 and RNG.random() < 0.6:
-                poner(_nota(_f(RNG.choice(ESCALA)), 1.5, "piano"), s + beat * 0.5, 0.18)
+                poner(_nota(_f(RNG.choice(cfg["escala"])), 1.5, cfg["melodia"]), s + beat * 0.5, 0.18)
             if b % 4 == 0:
                 poner(latido(0.6), s, 0.35)
         elif animo == "robo":           # pizzicato sigiloso + bombo suave + shaker
@@ -326,7 +346,7 @@ def _seccion(animo, d, t0):
                 poner(_bp(_ruido(0.18), 2000, 8000) * _env(int(0.18 * SR), 0.01, 0.06), s, 0.12)
             poner(reloj(0.06), s + beat / 2, 0.12)
             if b % 4 == 2:
-                poner(_nota(_f(RNG.choice(ESCALA[:5])), 0.9, "piano"), s, 0.12)
+                poner(_nota(_f(RNG.choice(cfg["escala"][:5])), 0.9, cfg["melodia"]), s, 0.12)
         elif animo == "giro":           # casi silencio: dron grave que crece
             tt = _t(beat)
             poner(np.sin(2 * np.pi * 36.7 * tt) * 0.5 * min(1, (s + beat) / d), s, 0.5)
@@ -338,10 +358,10 @@ def _seccion(animo, d, t0):
     return y[:n]
 
 
-def musica(secciones, total):
+def musica(secciones, total, cfg):
     y = np.zeros(int((total + 1) * SR))
     for animo, t0, t1 in secciones:
-        x = _seccion(animo, t1 - t0 + 0.4, t0)
+        x = _seccion(animo, t1 - t0 + 0.4, t0, cfg)
         x *= np.minimum(1, np.arange(len(x)) / (0.25 * SR)) * np.minimum(1, (len(x) - np.arange(len(x))) / (0.35 * SR))
         i = int(t0 * SR); y[i:i + len(x)] += _norm(x, 0.6 if animo != "giro" else 0.35)[: len(y) - i]
     return y
@@ -358,7 +378,7 @@ def _env_voz(voz, n):
     return np.clip(e / (np.percentile(e[e > 1e-4], 70) + 1e-9), 0, 1) if np.any(e > 1e-4) else e
 
 
-def banda(escenas, voz, salida):
+def banda(escenas, voz, salida, estilo="cinematico"):
     """escenas ya alineadas (con dur y palabras). Escribe la banda (música + efectos) en WAV estéreo."""
     total = sum(e["dur"] for e in escenas) + 0.8
     n = int(total * SR)
@@ -403,14 +423,14 @@ def banda(escenas, voz, salida):
         else:
             unidas.append(sec)
     secciones = unidas
-    mus = musica(secciones, total)[:n]
+    mus = musica(secciones, total, ESTILOS[estilo])[:n]
     mus = np.pad(mus, (0, n - len(mus)))
     # Mezcla: la VOZ manda. Al hablar, la música baja ~14 dB y los efectos ~8 dB más; en silencio, la banda queda
     # unos 12 dB por debajo de la voz. Sin normalizar a pico (eso subía todo y tapaba la voz).
     env = _env_voz(voz, n) if voz else np.zeros(n)
     duck_mus = 1 - 0.85 * env
     duck_fx = 1 - 0.85 * env
-    mezcla = mus * 0.22 * duck_mus + fx * 0.35 * duck_fx
+    mezcla = mus * 0.22 * duck_mus + fx * 0.16 * duck_fx   # efectos bajos: la música y la voz mandan
     mezcla *= np.minimum(1, (total - np.arange(n) / SR) / 0.8)
     mezcla = np.tanh(mezcla * 1.2) / np.tanh(1.2)
     est = np.stack([mezcla, np.roll(mezcla, 180)], 1)
