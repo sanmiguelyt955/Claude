@@ -378,7 +378,7 @@ def _env_voz(voz, n):
     return np.clip(e / (np.percentile(e[e > 1e-4], 70) + 1e-9), 0, 1) if np.any(e > 1e-4) else e
 
 
-def banda(escenas, voz, salida, estilo="cinematico"):
+def banda(escenas, voz, salida, estilo="cinematico", con_musica=True):
     """escenas ya alineadas (con dur y palabras). Escribe la banda (música + efectos) en WAV estéreo."""
     total = sum(e["dur"] for e in escenas) + 0.8
     n = int(total * SR)
@@ -423,7 +423,7 @@ def banda(escenas, voz, salida, estilo="cinematico"):
         else:
             unidas.append(sec)
     secciones = unidas
-    mus = musica(secciones, total, ESTILOS[estilo])[:n]
+    mus = musica(secciones, total, ESTILOS[estilo])[:n] if con_musica else np.zeros(n)   # sin música: para poner un sonido de la app (Shorts/Reels)
     mus = np.pad(mus, (0, n - len(mus)))
     # Mezcla: la VOZ manda. Al hablar, la música baja ~14 dB y los efectos ~8 dB más; en silencio, la banda queda
     # unos 12 dB por debajo de la voz. Sin normalizar a pico (eso subía todo y tapaba la voz).

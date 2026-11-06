@@ -7,3 +7,9 @@
 - Haz commit con un mensaje claro y push a la rama designada de la sesión. No crees Pull Request salvo que el usuario lo pida.
 - Si algo no cabe en el repo (secretos, claves, tokens), no lo subas: avisa al usuario.
 - El usuario habla español: responde en español.
+
+## Cuando el usuario manda un video o un link de video
+
+1. Analízalo (skill `video-claude`).
+2. Recomienda TODAS las mejoras que se te ocurran para las skills, apps, conectores y herramientas que ya tenemos (repo, Workers, MCP, etc.).
+3. Pregunta siempre, adaptado al caso: «¿Quisieras que yo tuviera la capacidad de hacer lo que se hizo en ese video? Lo haríamos así: [pasos], con estas herramientas gratuitas: [lista], y funcionaría así: [cómo se usaría]. ¿Lo hago tal cual está en el video o hacemos la tuya propia y la vamos modificando?». Detalla lo que harías si dice que sí, y no lo construyas hasta que responda.
