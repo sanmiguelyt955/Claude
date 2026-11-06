@@ -75,49 +75,11 @@ def imagenes_publicas(vid, carpeta, vertical=False):
     return destino, [e for _, e in piezas]
 
 
-# Modelos en orden. Si uno ya no existe (404) se prueba el siguiente; si da 503 (saturado) se descarta todo (regla del usuario).
-GEMINI_MODELOS = [m for m in __import__("os").environ.get(
-    "VIDEO_NUBE_GEMINI_MODELOS", "gemini-3-flash-preview,gemini-flash-latest,gemini-3.8-flash").split(",") if m.strip()]
-GEMINI_PROMPT = ("Responde en español. Analiza este video completo, imagen y audio. 1) Resumen en 2 frases. 2) Escena por "
-                 "escena con marcas MM:SS: qué SE VE (planos, texto en pantalla, tipografías, colores, gráficos, "
-                 "transiciones, cortes, zooms), qué SE DICE y qué SUENA (música, efectos). 3) Estilo de edición: ritmo "
-                 "(duración típica de cada plano), recursos que se repiten. No inventes lo que no se ve.")
-
-
-def gemini_youtube(url, prompt=None, timeout=240):
-    """Pide a la API de Gemini que vea el video de YouTube por su link (Google lo lee; aquí no se descarga nada).
-    Devuelve (texto, estado). Regla del usuario: si da 503 (saturado) — o cualquier otro error, o no hay clave —
-    se descarta y la herramienta sigue solo con las 4 imágenes públicas. La clave la inyecta el proxy del entorno
-    (secreto de red para generativelanguage.googleapis.com) o la variable GEMINI_API_KEY."""
-    import os
-    import urllib.error
-    cuerpo = json.dumps({"contents": [{"parts": [{"file_data": {"file_uri": url}},
-                                                 {"text": prompt or GEMINI_PROMPT}]}]}).encode()
-    estado = "sin modelos configurados"
-    for modelo in GEMINI_MODELOS:
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{modelo.strip()}:generateContent", cuerpo,
-            {"Content-Type": "application/json", "User-Agent": "video-claude/1.0",
-             "x-goog-api-key": os.environ.get("GEMINI_API_KEY", "proxy-injected")})
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                res = json.loads(r.read())
-            texto = "".join(p.get("text", "") for c in res.get("candidates", [])
-                            for p in c.get("content", {}).get("parts", []))
-            return (texto, f"ok ({modelo})") if texto.strip() else (None, "Gemini no devolvió texto")
-        except urllib.error.HTTPError as e:
-            cuerpo_err = e.read().decode(errors="ignore")[:400] if hasattr(e, "read") else ""
-            if e.code == 503:
-                return None, "Gemini saturado (503): descartado, se usan solo las 4 imágenes públicas"
-            if e.code == 404:                       # el modelo ya no existe: probar el siguiente
-                estado = f"modelo {modelo} no disponible (404)"
-                continue
-            if e.code in (401, 403) or "API key" in cuerpo_err or "API_KEY" in cuerpo_err:
-                return None, f"Gemini sin clave válida ({e.code}): añade la clave de Google AI Studio en el entorno"
-            return None, f"Gemini falló ({e.code}): descartado"
-        except Exception as e:  # noqa: BLE001
-            return None, f"Gemini no respondió ({type(e).__name__}): descartado"
-    return None, f"Gemini: {estado}; descartado"
+# El análisis con Gemini vive en la skill (una sola versión): .claude/skills/video-claude/scripts/youtube_gemini.py
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent / ".claude" / "skills" / "video-claude" / "scripts"))
+from youtube_gemini import gemini_youtube, GEMINI_PROMPT, GEMINI_MODELOS  # noqa: E402,F401
 
 
 def registrar(mcp, _error, contenido_intercalado):

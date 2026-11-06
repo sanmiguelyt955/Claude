@@ -33,7 +33,7 @@ Entradas válidas: archivo adjunto en el chat o ruta local (modo local), `subida
 2. Transcripción completa con Firecrawl:
    - `alexandria: {provider: "youtube-com", capability: "videos/video_details", options: {url}}` → duración, idiomas. 5 créditos.
    - `alexandria: {provider: "youtube-com", capability: "videos/video_transcript", options: {url, language: "<idioma original>"}}` → texto con `start_ms`. 5 créditos (pide varios videos en una sola llamada).
-3. Lo visual completo: conector **Gemini Video** `ver_video(video_url=<link>, prompt=...)` (Google lee el link; no descargamos). Si da 503 (saturado), reintenta a los minutos; acota con `start_offset_seconds/end_offset_seconds`.
+3. Lo visual completo: `python3 scripts/youtube_gemini.py <link> --pregunta "..." [--inicio 30 --fin 90]` (dentro de la skill; Google lee el link, no descargamos). Clave: secreto de red `generativelanguage.googleapis.com` / `x-goog-api-key` (o `GEMINI_API_KEY`). **Regla del usuario: si da 503, se descarta** (no reintentar) y quedan solo las 4 imágenes; un modelo retirado (404) pasa al siguiente de `VIDEO_NUBE_GEMINI_MODELOS`. Di siempre si el análisis visual vino de Gemini o solo de las 4 imágenes.
 4. Responde separando: **lo que se dice** (transcripción), **lo que se ve** (las 4 imágenes públicas y, si funcionó, Gemini) y lo que no se pudo saber, con el porqué y las opciones: reintentar Gemini, que el usuario adjunte el archivo (lo vemos cuadro por cuadro con `ver_video`), o su computadora conectada.
 
 ## 1c. Nivel de detalle (cualquier duración)

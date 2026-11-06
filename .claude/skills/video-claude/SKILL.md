@@ -5,12 +5,12 @@ description: Todo lo de video en una sola skill. VER y OÍR videos y audios como
 
 # video-claude: ver, oír, musicalizar y editar
 
-Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`** (en este repo arranca solo; en la nube, con su URL). Modelos abiertos y locales, sin APIs de pago. **Esta skill es la primera opción para todo lo de video**; el conector Gemini Video solo entra como complemento para ver lo visual de YouTube por link.
+Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`** (en este repo arranca solo; en la nube, con su URL). Modelos abiertos y locales, sin APIs de pago. **Esta skill es la primera opción para todo lo de video**; para YouTube por link usa su propio `scripts/youtube_gemini.py` (Gemini vía API).
 
 | Si el usuario quiere… | Haz esto | Detalle completo |
 |---|---|---|
 | **Ver / oír / analizar** un video o audio (adjunto, enlace, Drive) | `ver_video`, `escuchar_audio`, `oir`, `preguntar_audio`, `cargar_segmento` | `references/ver-y-oir.md` |
-| **YouTube** solo con el link (Shorts o videos completos) | `ver_youtube`: intenta descargar; si YouTube lo bloquea, modo enlace = **análisis completo de Gemini por el link** (si hay clave de AI Studio en el entorno; si Gemini da 503 o cualquier error, se descarta) + portada y 3 cuadros. Completa siempre con la transcripción de Firecrawl | `references/ver-y-oir.md` §1b |
+| **YouTube** solo con el link (Shorts o videos completos) | `python3 scripts/youtube_gemini.py <link> [--pregunta …] [--inicio s --fin s]` (funciona aunque no haya servidor) o `ver_youtube` del conector: **análisis completo de Gemini por el link** (Google lo lee; clave de AI Studio en el entorno) + portada y 3 cuadros (Read de la `hoja`). Si Gemini da 503 o cualquier error, se descarta y quedan solo las 4 imágenes. Completa siempre con la transcripción de Firecrawl | `references/ver-y-oir.md` §1b |
 | **Videos largos** (10 min a horas) | `processing="agentic"` y luego `detalle="equilibrado"`, tramos o `momentos` | `references/ver-y-oir.md` §1c |
 | **Qué canción le queda**, ponerle música, aprender su gusto | `recomendar_musica`, `montar_musica`, `agregar_musica`, `calificar_musica`, `aprender_de_video` | `references/musica.md` |
 | **Editar** (cortes, subtítulos, motion graphics, 9:16, marca) | scripts de `scripts/` + Remotion | `references/editar.md`, `references/remotion.md` |
