@@ -562,13 +562,13 @@ def pose(accion, t, tl, rnd, act):
         p["inclina"] = R(-8) * e
         p["cab"] = (R(-5) * e, 0, 0)
     elif accion in ("temblar", "miedo"):
-        p["x"] = rnd.uniform(-.05, .05)
+        p["x"] = 0.035 * math.sin(t * 37) + 0.02 * math.sin(t * 53 + 1.3)
         p["inclina"] = R(10)
         p["sz"] = 0.94 + rnd.uniform(-.02, .02)
         p["bi"] = (R(-75), R(35), 0)
         p["bd"] = (R(-75), R(-35), 0)
-        p["pi"] = (R(rnd.uniform(-6, 6)), 0, 0)
-        p["pd"] = (R(rnd.uniform(-6, 6)), 0, 0)
+        p["pi"] = (R(5) * math.sin(t * 31), 0, 0)
+        p["pd"] = (R(5) * math.sin(t * 29 + 2), 0, 0)
     elif accion == "susto":
         te = tl - act.get("salto_en", 0.15)
         if te < 0:                                   # anticipación: se encoge antes del susto
@@ -581,7 +581,7 @@ def pose(accion, t, tl, rnd, act):
             p["bi"] = (R(-30) * math.sin(te * 30), ag + R(15), 0)
             p["bd"] = (R(30) * math.sin(te * 30), -ag - R(15), 0)
             if te > 0.55:
-                p["x"] = rnd.uniform(-.04, .04)
+                p["x"] = 0.03 * math.sin(t * 41) + 0.015 * math.sin(t * 59)
     elif accion == "pensar":
         e = _resorte(tl, 7, 10)
         p["bd"] = (R(-115) * e, R(-25) * e, R(15) * e)       # mano a la barbilla
@@ -684,7 +684,12 @@ def animar_actor(piezas, act, n, planos):
         raiz.location = base + Vector((po["x"], po["y"], po["z"]))
         sz = po["sz"]
         raiz.scale = (a0 / math.sqrt(sz), a0 / math.sqrt(sz), a0 * sz)
-        raiz.rotation_euler = (0, 0, R(piezas["mira"]) + R(act.get("gira", 0)) * _suave(u))
+        yaw = R(piezas["mira"])
+        if piezas.get("mirar_a") is not None:
+            dx, dy = piezas["mirar_a"][0] - raiz.location.x, piezas["mirar_a"][1] - raiz.location.y
+            if abs(dx) + abs(dy) > 0.05:
+                yaw = math.atan2(dx, -dy) * act.get("cuanto_gira", 0.55)   # 0.55: gira el cuerpo pero la cara se ve
+        raiz.rotation_euler = (0, 0, yaw + R(act.get("gira", 0)) * _suave(u))
         cuerpo.rotation_euler = (po["inclina"], po["ladeo"], 0)
         pop = 1.0
         for tc in cambios:
@@ -775,10 +780,21 @@ def camara(toma, objetivo, n, ancho_grupo=0.0):
         if g is not None and f / FPS >= g:          # «punch-in» en la palabra clave: entra rápido y vuelve suave
             dg = f / FPS - g
             d *= 1 - 0.13 * min(1, dg / 0.06) * math.exp(-max(0, dg - 0.06) * 3.5)
-        if "temblor" in partes or ("golpe" in partes and u < 0.25):
-            cam.location += Vector((rnd.uniform(-.08, .08), 0, rnd.uniform(-.08, .08)))
+        tt = f / FPS
+        fuerza = 0.03 if "temblor" in partes else 0.0              # temblor de fondo, suave
+        for te, k in toma.get("sacudidas", []):                    # picos pegados a cada golpe/efecto
+            dt = tt - te
+            if dt >= 0:
+                fuerza += 0.09 * k * min(1, dt / 0.04) * math.exp(-dt * 5)
+        if "golpe" in partes:
+            fuerza += 0.08 * math.exp(-tt * 6)
+        if fuerza:
+            cam.location += Vector((fuerza * (math.sin(tt * 47) + 0.6 * math.sin(tt * 83 + 1)), 0,
+                                    fuerza * (math.sin(tt * 53 + 2) + 0.5 * math.sin(tt * 71))))
         direc = Vector(obj.location) - cam.location
         cam.rotation_euler = direc.to_track_quat("-Z", "Y").to_euler()
+        if fuerza:                                                  # un poco de giro: se siente el golpe
+            cam.rotation_euler[1] += fuerza * 0.25 * math.sin(tt * 61)
         cam.keyframe_insert("location", frame=f)
         cam.keyframe_insert("rotation_euler", frame=f)
         obj.keyframe_insert("location", frame=f)
@@ -842,11 +858,21 @@ def render_toma(i, toma, plan, ancho, alto, paso):
                 if pr.get("giro"):
                     o.rotation_euler[2] += math.radians(pr["giro"])
     centros = []
+    posiciones = {a["id"]: a.get("pos", [0, 0]) for a in toma.get("actores", [])}
+    for pr in toma.get("props", []):
+        posiciones.setdefault(pr["tipo"], pr.get("pos", [0, 0]))
     for k, act in enumerate(toma.get("actores", [])):
         defn = plan.get("personajes", {}).get(act["id"], {})
         pos = act.get("pos", [k * 2.2 - (len(toma["actores"]) - 1) * 1.1, 0])
         piezas = personaje(defn, pos, act.get("mira", 0), act["id"])
         usadas = sorted({c[1] for c in (act.get("caras") or [])} | {act.get("cara", "normal")})
+        objetivo_vista = act.get("mirar_a")
+        if objetivo_vista is None and "mira" not in act and len(toma.get("actores", [])) == 2:
+            otro = [a for a in toma["actores"] if a is not act][0]      # en diálogo se miran un poco entre ellos
+            objetivo_vista, act = otro["id"], {**act, "cuanto_gira": act.get("cuanto_gira", 0.35)}
+        if isinstance(objetivo_vista, str):
+            objetivo_vista = posiciones.get(objetivo_vista)
+        piezas["mirar_a"] = objetivo_vista
         planos = caras_de(piezas, usadas)
         bpy.ops.mesh.primitive_plane_add(size=1, location=(pos[0], pos[1], 0.012))
         piezas["sombra"] = bpy.context.active_object

@@ -229,6 +229,25 @@ def sincronizar(plan, pal):
     return plan
 
 
+SACUDE = {"impacto": 1.0, "vine_boom": 0.9, "remate": 0.45, "grito": 0.6, "fuego": 0.35, "boing": 0.2, "caida": 0.3}
+
+
+def sacudidas(toma):
+    """Momentos en que la cámara se sacude, sacados de los efectos de la toma (manuales y de los movimientos): la
+    sacudida cae justo con el sonido, exagerada pero corta (≈0.3 s), para retener sin marear."""
+    out = []
+    for x in list(toma.get("sfx", [])) + sfx_de_movimientos(toma):
+        x = {"tipo": x} if isinstance(x, str) else x
+        k = SACUDE.get(x["tipo"])
+        if not k:
+            continue
+        en = x.get("en", 0)
+        if en == "clave":
+            en = next((w["t"] for w in toma.get("palabras", []) if w["p"].startswith("*")), 0)
+        out.append([float(en), k * x.get("sacude", 1.0)])
+    return out
+
+
 def _plan_con_cuadros(nombre, paso):
     plan = json.loads((proyecto(nombre) / "plan.json").read_text(encoding="utf-8"))
     pal = json.loads((proyecto(nombre) / "palabras.json").read_text()) if (proyecto(nombre) / "palabras.json").exists() else []
@@ -236,6 +255,8 @@ def _plan_con_cuadros(nombre, paso):
     for toma, (ini, n) in zip(plan["tomas"], cuadros_por_toma(plan, paso)):
         toma["cuadro0"], toma["cuadros"] = ini, n
         toma["dur"] = n / FPS
+        if toma.get("sacudir", True):
+            toma["sacudidas"] = sacudidas(toma)
     return plan
 
 
