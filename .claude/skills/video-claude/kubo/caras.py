@@ -40,12 +40,14 @@ EXPRESIONES = {
 }
 
 
-def _ojo(d, cx, cy, tipo, lado):
+def _ojo(d, cx, cy, tipo, lado, mirada=0):
+    cx += mirada * 24                    # mirada: -1 izquierda, +1 derecha (los ojos voltean hacia el otro)
     if tipo in ("ovalo", "grande", "entrecerrado"):
         rx, ry = (34, 50) if tipo == "ovalo" else (46, 62) if tipo == "grande" else (36, 20)
         d.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), fill=N)
         b = 13 if tipo != "entrecerrado" else 7
-        d.ellipse((cx - rx * 0.35 - b, cy - ry * 0.45 - b, cx - rx * 0.35 + b, cy - ry * 0.45 + b), fill=BLANCO)
+        bx = cx + rx * 0.35 * mirada if mirada else cx - rx * 0.35      # el brillo se va al lado hacia donde mira
+        d.ellipse((bx - b, cy - ry * 0.45 - b, bx + b, cy - ry * 0.45 + b), fill=BLANCO)
     elif tipo == "feliz":
         d.arc((cx - 38, cy - 30, cx + 38, cy + 40), 200, 340, fill=N, width=16)
     elif tipo == "cerrado":
@@ -111,7 +113,7 @@ def _boca(d, tipo, abierta):
             d.line((caja[0] + 12, cy + ry * 0.3, caja[2] - 12, cy + ry * 0.3), fill=BLANCO, width=8)
 
 
-def cara(expresion, abierta=False, parpadeo=False):
+def cara(expresion, abierta=False, parpadeo=False, mirada=0):
     e = dict(EXPRESIONES[expresion])
     if parpadeo and e["ojo"] in ("ovalo", "grande", "entrecerrado", "estrella", "corazon"):
         e["ojo"] = "cerrado"
@@ -121,7 +123,7 @@ def cara(expresion, abierta=False, parpadeo=False):
         for cx in (130, 382):
             d.ellipse((cx - 42, 290, cx + 42, 330), fill=ROSA)
     for lado, cx in ((-1, 180), (1, 332)):
-        _ojo(d, cx, 220, e["ojo"], lado)
+        _ojo(d, cx, 220, e["ojo"], lado, mirada)
         _ceja(d, cx, 220, *e["ceja"], lado)
     if e.get("lagrima"):
         d.ellipse((140, 280, 170, 330), fill=(90, 170, 255, 230))
@@ -148,8 +150,9 @@ def generar(destino):
     sombra().save(destino / "sombra.png")
     for nombre in EXPRESIONES:
         for ab in (0, 1):
-            cara(nombre, bool(ab)).save(destino / f"{nombre}_{ab}.png")
-            cara(nombre, bool(ab), True).save(destino / f"{nombre}_{ab}p.png")      # parpadeo
+            for m, suf in ((0, ""), (-1, "i"), (1, "d")):          # mirada al frente, izquierda, derecha
+                cara(nombre, bool(ab), mirada=m).save(destino / f"{nombre}_{ab}{suf}.png")
+                cara(nombre, bool(ab), True, m).save(destino / f"{nombre}_{ab}p{suf}.png")      # parpadeo
     return destino
 
 

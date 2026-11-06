@@ -45,7 +45,9 @@
      ],
      "cara": "sospecha",
      "accion": "quieto",
-     "habla": true
+     "habla": true,
+     "mirar_a": "papa",
+     "cuanto_gira": 0.75
     },
     {
      "id": "papa",
@@ -72,7 +74,9 @@
        1.3,
        "extasis"
       ]
-     ]
+     ],
+     "mirar_a": "kubo",
+     "cuanto_gira": 0.75
     }
    ],
    "props": [
@@ -515,7 +519,9 @@
        1.6,
        "celebrar"
       ]
-     ]
+     ],
+     "mirar_a": "kubo",
+     "cuanto_gira": 0.7
     },
     {
      "id": "kubo",
@@ -525,7 +531,9 @@
      ],
      "cara": "sospecha",
      "accion": "quieto",
-     "habla": true
+     "habla": true,
+     "mirar_a": "papa",
+     "cuanto_gira": 0.75
     }
    ],
    "props": [

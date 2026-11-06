@@ -467,7 +467,7 @@ def personaje(defn, pos, mira, nombre):
     return piezas
 
 
-def caras_de(piezas, usadas):
+def caras_de(piezas, usadas, mirada=""):
     """Un plano por cara usada (expresión × boca); se muestran/ocultan por cuadro."""
     planos = {}
     x, y, z = piezas["frente"]
@@ -476,7 +476,7 @@ def caras_de(piezas, usadas):
             for pp in ("", "p"):
                 bpy.ops.mesh.primitive_plane_add(size=piezas["alto_cara"], location=(x, y, z), rotation=(math.radians(90), 0, 0))
                 o = bpy.context.active_object
-                o.data.materials.append(mat_imagen(CARAS / f"{nombre}_{ab}{pp}.png"))
+                o.data.materials.append(mat_imagen(CARAS / f"{nombre}_{ab}{pp}{mirada}.png"))
                 colgar(o, piezas["cabeza"])
                 planos[(nombre, ab, pp)] = o
     piezas["focos"] = {}
@@ -684,11 +684,18 @@ def animar_actor(piezas, act, n, planos):
         raiz.location = base + Vector((po["x"], po["y"], po["z"]))
         sz = po["sz"]
         raiz.scale = (a0 / math.sqrt(sz), a0 / math.sqrt(sz), a0 * sz)
-        yaw = R(piezas["mira"])
+        yaw, yaw_cab = R(piezas["mira"]), 0.0
         if piezas.get("mirar_a") is not None:
-            dx, dy = piezas["mirar_a"][0] - raiz.location.x, piezas["mirar_a"][1] - raiz.location.y
+            dx, dy = piezas["mirar_a"][0] - base.x, piezas["mirar_a"][1] - base.y   # base: SIN bailes ni temblores
             if abs(dx) + abs(dy) > 0.05:
-                yaw = math.atan2(dx, -dy) * act.get("cuanto_gira", 0.55)   # 0.55: gira el cuerpo pero la cara se ve
+                ang = math.atan2(dx, -dy)
+                k = act.get("cuanto_gira", 0.55)
+                tope = R(act.get("max_giro", 45))                # nunca de perfil: la cara se ve, los ojos hacen el resto
+                total = max(-tope, min(tope, ang * k))
+                yaw, yaw_cab = total * 0.6, total * 0.4          # el cuerpo gira un poco, la cabeza un poco más
+        if k_voltea := act.get("voltea_en"):                      # voltear a ver en un momento: con resorte
+            e = min(1.05, _resorte(t - k_voltea, 9, 12)) if t >= k_voltea else 0.0
+            yaw, yaw_cab = R(piezas["mira"]) + (yaw - R(piezas["mira"])) * e, yaw_cab * e
         raiz.rotation_euler = (0, 0, yaw + R(act.get("gira", 0)) * _suave(u))
         cuerpo.rotation_euler = (po["inclina"], po["ladeo"], 0)
         pop = 1.0
@@ -698,7 +705,7 @@ def animar_actor(piezas, act, n, planos):
                 pop = 1 + 0.13 * math.exp(-d * 9) * math.cos(d * 22)
         cabeza.scale = (pop, pop, pop)
         cabeza.location = cab0 + Vector((0, 0, po["cab_z"]))
-        cabeza.rotation_euler = po["cab"]
+        cabeza.rotation_euler = (po["cab"][0], po["cab"][1], po["cab"][2] + yaw_cab)
         bi.rotation_euler, bd.rotation_euler = po["bi"], po["bd"]
         pi_.rotation_euler, pd.rotation_euler = po["pi"], po["pd"]
         if "antena" in piezas:                      # resorte amortiguado: reacciona a cada evento y al salto
@@ -869,11 +876,15 @@ def render_toma(i, toma, plan, ancho, alto, paso):
         objetivo_vista = act.get("mirar_a")
         if objetivo_vista is None and "mira" not in act and len(toma.get("actores", [])) == 2:
             otro = [a for a in toma["actores"] if a is not act][0]      # en diálogo se miran un poco entre ellos
-            objetivo_vista, act = otro["id"], {**act, "cuanto_gira": act.get("cuanto_gira", 0.35)}
+            objetivo_vista, act = otro["id"], {**act, "cuanto_gira": act.get("cuanto_gira", 0.55)}
         if isinstance(objetivo_vista, str):
             objetivo_vista = posiciones.get(objetivo_vista)
         piezas["mirar_a"] = objetivo_vista
-        planos = caras_de(piezas, usadas)
+        mirada = act.get("mirada", "")                             # "", "i" o "d"
+        if objetivo_vista is not None and "mirada" not in act:
+            dxv = objetivo_vista[0] - pos[0]
+            mirada = "d" if dxv > 0.3 else "i" if dxv < -0.3 else ""
+        planos = caras_de(piezas, usadas, mirada)
         bpy.ops.mesh.primitive_plane_add(size=1, location=(pos[0], pos[1], 0.012))
         piezas["sombra"] = bpy.context.active_object
         piezas["sombra"].data.materials.append(mat_imagen(CARAS / "sombra.png"))
