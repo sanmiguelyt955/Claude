@@ -1,0 +1,1667 @@
+{
+ "formato": "9:16",
+ "idioma": "en",
+ "musica": "caricatura",
+ "personajes": {
+  "kubo": {
+   "piel": "#3dd6c6",
+   "ropa": "#ff8c1a",
+   "pantalon": "#24304a",
+   "antena": true
+  },
+  "abuela": {
+   "piel": "#f1c27d",
+   "ropa": "#8e44ad",
+   "pantalon": "#5b2c6f",
+   "pelo": "#ecf0f1",
+   "altura": 0.92
+  },
+  "cajero": {
+   "piel": "#c68642",
+   "ropa": "#27ae60",
+   "pantalon": "#1e3d2f",
+   "gorra": "#27ae60"
+  },
+  "senor": {
+   "piel": "#ffb07c",
+   "ropa": "#c0392b",
+   "pantalon": "#2d3436",
+   "pelo": "#5d4037",
+   "altura": 1.08
+  },
+  "nina": {
+   "piel": "#8d5524",
+   "ropa": "#f78fb3",
+   "pantalon": "#574b90",
+   "pelo": "#2d3436",
+   "altura": 0.78
+  },
+  "chico": {
+   "piel": "#f1c27d",
+   "ropa": "#f1c40f",
+   "pantalon": "#34495e",
+   "gorra": "#2980b9"
+  }
+ },
+ "tomas": [
+  {
+   "frases": [
+    0,
+    0
+   ],
+   "escenario": "tienda",
+   "camara": "medio+empuje",
+   "animo": "alegre",
+   "clave": "slowest",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      -0.9,
+      -1.1
+     ],
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       1.2,
+       "enojado"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       1.2,
+       "zapatear"
+      ]
+     ],
+     "mirar_a": [
+      -0.9,
+      0.2
+     ],
+     "cuanto_gira": 0.3
+    },
+    {
+     "id": "abuela",
+     "pos": [
+      -0.9,
+      0.2
+     ],
+     "cara": "normal",
+     "mira": 160
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "!?",
+     "sobre": "kubo",
+     "en": 1.3
+    }
+   ],
+   "control_en": 1.6
+  },
+  {
+   "frases": [
+    1,
+    1
+   ],
+   "escenario": "tienda",
+   "camara": "cerca",
+   "clave": "luck",
+   "objetivo": "kubo",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      0
+     ],
+     "caras": [
+      [
+       0,
+       "pensando"
+      ],
+      [
+       0.6,
+       "sorpresa"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "pensar"
+      ]
+     ],
+     "habla": true
+    }
+   ],
+   "props": [],
+   "efectos": [
+    {
+     "tipo": "particulas",
+     "clase": "estrellas",
+     "pos": [
+      0,
+      0,
+      3.0
+     ],
+     "en": 0.6,
+     "n": 10
+    }
+   ],
+   "control_en": 1.0
+  },
+  {
+   "frases": [
+    2,
+    3
+   ],
+   "escenario": "tienda",
+   "camara": "lejos+paneo",
+   "clave": "perfect",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      -0.9,
+      -3.5
+     ],
+     "hasta": [
+      -0.9,
+      -1.1
+     ],
+     "gestos": [
+      [
+       0,
+       "caminar"
+      ],
+      [
+       2.0,
+       "celebrar"
+      ]
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       2.0,
+       "extasis"
+      ]
+     ],
+     "mira": 0
+    },
+    {
+     "id": "abuela",
+     "pos": [
+      -0.9,
+      0.2
+     ],
+     "cara": "normal",
+     "mira": 160
+    },
+    {
+     "id": "cajero",
+     "pos": [
+      0.9,
+      2.0
+     ],
+     "cara": "feliz",
+     "accion": "agitar",
+     "mira": -60
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "pos": [
+      0.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#2ecc71"
+      ]
+     ]
+    },
+    {
+     "tipo": "signo",
+     "texto": "ok",
+     "sobre": "kubo",
+     "en": 2.1
+    }
+   ],
+   "control_en": 2.4
+  },
+  {
+   "frases": [
+    4,
+    4
+   ],
+   "escenario": "tienda",
+   "camara": "medio",
+   "clave": "coupon",
+   "objetivo": "abuela",
+   "actores": [
+    {
+     "id": "abuela",
+     "pos": [
+      0,
+      0.4
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       1.5,
+       "risa"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       1.2,
+       "senalar"
+      ]
+     ],
+     "mirar_a": "cajero",
+     "cuanto_gira": 0.6
+    },
+    {
+     "id": "cajero",
+     "pos": [
+      1.8,
+      1.0
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       2.0,
+       "ko"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       2.0,
+       "golpe"
+      ]
+     ],
+     "mirar_a": "abuela",
+     "cuanto_gira": 0.6
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      1.2,
+      1.5
+     ]
+    },
+    {
+     "tipo": "cupon",
+     "pos": [
+      0.7,
+      0.0,
+      1.6
+     ],
+     "escala": 1.4
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "?",
+     "sobre": "cajero",
+     "en": 2.1
+    },
+    {
+     "tipo": "indicador",
+     "pos": [
+      0.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#2ecc71"
+      ],
+      [
+       2.1,
+       "#e74c3c"
+      ]
+     ]
+    }
+   ],
+   "control_en": 2.8
+  },
+  {
+   "frases": [
+    5,
+    5
+   ],
+   "escenario": "tienda",
+   "camara": "medio+lateral+paneo",
+   "clave": "one",
+   "objetivo": "chico",
+   "actores": [
+    {
+     "id": "chico",
+     "pos": [
+      -3.9,
+      -1.1
+     ],
+     "hasta": [
+      -3.9,
+      0.2
+     ],
+     "gestos": [
+      [
+       0,
+       "caminar"
+      ]
+     ],
+     "cara": "feliz",
+     "mira": 180
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "pos": [
+      -3.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ],
+      [
+       0.3,
+       "#2ecc71"
+      ]
+     ]
+    }
+   ],
+   "control_en": 0.9,
+   "angulo": 80
+  },
+  {
+   "frases": [
+    6,
+    6
+   ],
+   "escenario": "tienda",
+   "camara": "medio+lateral+paneo",
+   "clave": "three",
+   "objetivo": "nina",
+   "actores": [
+    {
+     "id": "nina",
+     "pos": [
+      2.1,
+      -1.1
+     ],
+     "hasta": [
+      2.1,
+      0.2
+     ],
+     "gestos": [
+      [
+       0,
+       "caminar"
+      ]
+     ],
+     "cara": "feliz",
+     "mira": 180
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "pos": [
+      3.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ],
+      [
+       0.3,
+       "#2ecc71"
+      ]
+     ]
+    }
+   ],
+   "control_en": 0.9,
+   "angulo": -80
+  },
+  {
+   "frases": [
+    7,
+    7
+   ],
+   "escenario": "tienda",
+   "camara": "cerca+empuje",
+   "clave": "move",
+   "objetivo": "kubo",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      0
+     ],
+     "caras": [
+      [
+       0,
+       "triste"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "zzz",
+     "sobre": "kubo",
+     "en": 0.4,
+     "dur": 1.6
+    }
+   ],
+   "control_en": 1.2
+  },
+  {
+   "frases": [
+    8,
+    8
+   ],
+   "escenario": "tienda",
+   "camara": "medio+orbita",
+   "clave": "cake",
+   "actores": [
+    {
+     "id": "senor",
+     "pos": [
+      -2.4,
+      0.8
+     ],
+     "hasta": [
+      1.8,
+      -1.4
+     ],
+     "gestos": [
+      [
+       0,
+       "caminar"
+      ],
+      [
+       2.4,
+       "celebrar"
+      ]
+     ],
+     "cara": "feliz",
+     "mira": -60,
+     "lleva": "pastel"
+    },
+    {
+     "id": "kubo",
+     "pos": [
+      0.4,
+      0.6
+     ],
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       2.2,
+       "enojado"
+      ]
+     ],
+     "mirar_a": "senor",
+     "cuanto_gira": 0.6,
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       2.2,
+       "zapatear"
+      ]
+     ]
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -1.6,
+      2.6
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "particulas",
+     "clase": "confeti",
+     "pos": [
+      1.5,
+      -1.0,
+      3.0
+     ],
+     "en": 2.4,
+     "n": 18
+    }
+   ],
+   "control_en": 2.6
+  },
+  {
+   "frases": [
+    9,
+    10
+   ],
+   "escenario": "estudio",
+   "cielo": "#9ad0ff",
+   "camara": "medio+empuje",
+   "clave": "fastest",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "pensando"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "pensar"
+      ]
+     ],
+     "habla": true
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      -1.5,
+      0.6,
+      4.1
+     ],
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ]
+     ],
+     "tam": 0.28
+    },
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      1.5,
+      0.6,
+      4.1
+     ],
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ]
+     ],
+     "tam": 0.28
+    },
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      0,
+      0.6,
+      4.1
+     ],
+     "colores": [
+      [
+       0,
+       "#bdc3c7"
+      ],
+      [
+       2.0,
+       "#2ecc71"
+      ]
+     ],
+     "tam": 0.28
+    },
+    {
+     "tipo": "signo",
+     "texto": "idea",
+     "sobre": "kubo",
+     "en": 0.4,
+     "lado": -1
+    }
+   ],
+   "control_en": 2.6
+  },
+  {
+   "frases": [
+    11,
+    11
+   ],
+   "escenario": "estudio",
+   "cielo": "#9ad0ff",
+   "camara": "medio",
+   "clave": "three",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "senalar"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "etiqueta",
+     "texto": "1/3",
+     "pos": [
+      0,
+      0.2,
+      4.25
+     ],
+     "en": 0.4,
+     "tam": 0.9,
+     "fondo": "#2ecc71"
+    },
+    {
+     "tipo": "particulas",
+     "clase": "estrellas",
+     "pos": [
+      0,
+      0.2,
+      4.25
+     ],
+     "en": 0.45,
+     "n": 12
+    }
+   ],
+   "control_en": 1.6
+  },
+  {
+   "frases": [
+    12,
+    12
+   ],
+   "escenario": "estudio",
+   "cielo": "#ff8fa3",
+   "camara": "medio+golpe",
+   "clave": "beats",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "sorpresa"
+      ],
+      [
+       1.5,
+       "triste"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "sorpresa"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "etiqueta",
+     "texto": "2/3",
+     "pos": [
+      0,
+      0.2,
+      4.25
+     ],
+     "en": 0.3,
+     "tam": 0.9,
+     "fondo": "#e74c3c"
+    },
+    {
+     "tipo": "estallido",
+     "pos": [
+      0,
+      0.2,
+      4.25
+     ],
+     "en": 0.3,
+     "tam": 1.4,
+     "color": "#ffd23f"
+    }
+   ],
+   "control_en": 1.0
+  },
+  {
+   "frases": [
+    13,
+    14
+   ],
+   "escenario": "tienda",
+   "camara": "medio",
+   "clave": "notice",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      -0.9,
+      -1.1
+     ],
+     "caras": [
+      [
+       0,
+       "normal"
+      ],
+      [
+       1.8,
+       "feliz"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ]
+     ],
+     "mira": -20
+    },
+    {
+     "id": "abuela",
+     "pos": [
+      -0.9,
+      0.2
+     ],
+     "hasta": [
+      -0.9,
+      3.5
+     ],
+     "gestos": [
+      [
+       1.6,
+       "caminar"
+      ]
+     ],
+     "cara": "feliz",
+     "mira": 180
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "pos": [
+      0.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ],
+      [
+       1.8,
+       "#2ecc71"
+      ]
+     ]
+    },
+    {
+     "tipo": "signo",
+     "texto": "ok",
+     "sobre": "kubo",
+     "en": 2.0,
+     "tam": 0.5
+    }
+   ],
+   "control_en": 2.4
+  },
+  {
+   "frases": [
+    15,
+    15
+   ],
+   "escenario": "tienda",
+   "camara": "cerca+empuje",
+   "clave": "stare",
+   "objetivo": "kubo",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      0
+     ],
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ]
+     ],
+     "mirada": "d",
+     "mira": 15
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "!",
+     "sobre": "kubo",
+     "en": 0.6,
+     "lado": -1
+    },
+    {
+     "tipo": "indicador",
+     "pos": [
+      2.0,
+      0.8,
+      2.6
+     ],
+     "tam": 0.3,
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ]
+     ]
+    }
+   ],
+   "control_en": 1.4
+  },
+  {
+   "frases": [
+    16,
+    16
+   ],
+   "escenario": "tienda",
+   "camara": "lejos",
+   "clave": "switched",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      -0.9,
+      -1.1
+     ],
+     "hasta": [
+      2.1,
+      -1.1
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       0.8,
+       "correr"
+      ]
+     ],
+     "caras": [
+      [
+       0,
+       "pensando"
+      ],
+      [
+       0.8,
+       "feliz"
+      ]
+     ],
+     "mira": -80
+    },
+    {
+     "id": "abuela",
+     "pos": [
+      -0.9,
+      0.2
+     ],
+     "cara": "normal",
+     "mira": 160
+    },
+    {
+     "id": "nina",
+     "pos": [
+      2.1,
+      0.2
+     ],
+     "cara": "normal",
+     "mira": 180
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "lineas",
+     "sobre": "kubo",
+     "en": 0.8,
+     "dur": 1.4,
+     "sentido": -1
+    }
+   ],
+   "control_en": 1.6
+  },
+  {
+   "frases": [
+    17,
+    17
+   ],
+   "escenario": "tienda",
+   "camara": "medio+golpe",
+   "clave": "flying",
+   "animo": "caos",
+   "actores": [
+    {
+     "id": "abuela",
+     "pos": [
+      -0.9,
+      0.2
+     ],
+     "hasta": [
+      -0.9,
+      4.0
+     ],
+     "gestos": [
+      [
+       0.2,
+       "correr"
+      ]
+     ],
+     "cara": "risa",
+     "mira": 180
+    },
+    {
+     "id": "senor",
+     "pos": [
+      -0.9,
+      -2.4
+     ],
+     "hasta": [
+      -0.9,
+      2.5
+     ],
+     "gestos": [
+      [
+       0.2,
+       "correr"
+      ]
+     ],
+     "cara": "feliz",
+     "mira": 180
+    },
+    {
+     "id": "kubo",
+     "pos": [
+      2.1,
+      -1.1
+     ],
+     "caras": [
+      [
+       0,
+       "sorpresa"
+      ],
+      [
+       0.9,
+       "grito"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       0.9,
+       "susto"
+      ]
+     ],
+     "salto_en": 0.1,
+     "mirar_a": [
+      -0.9,
+      0
+     ],
+     "cuanto_gira": 0.5
+    }
+   ],
+   "props": [
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      -3.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      0.0,
+      1.5
+     ]
+    },
+    {
+     "tipo": "caja_cobro",
+     "pos": [
+      3.0,
+      1.5
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "lineas",
+     "sobre": "abuela",
+     "en": 0.3,
+     "dur": 1.6,
+     "sentido": 1
+    },
+    {
+     "tipo": "indicador",
+     "pos": [
+      0.0,
+      1.0,
+      2.9
+     ],
+     "tam": 0.32,
+     "poste": true,
+     "colores": [
+      [
+       0,
+       "#e74c3c"
+      ],
+      [
+       0.3,
+       "#2ecc71"
+      ]
+     ]
+    },
+    {
+     "tipo": "particulas",
+     "clase": "polvo",
+     "pos": [
+      -0.9,
+      -1.0,
+      0.3
+     ],
+     "en": 0.3,
+     "n": 12
+    },
+    {
+     "tipo": "estallido",
+     "sobre": "kubo",
+     "en": 1.0,
+     "tam": 1.1
+    }
+   ],
+   "control_en": 1.2,
+   "objetivo": "kubo"
+  },
+  {
+   "frases": [
+    18,
+    19
+   ],
+   "escenario": "estudio",
+   "cielo": "#2b2d42",
+   "camara": "medio+empuje",
+   "clave": "twice",
+   "animo": "final",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "triste"
+      ],
+      [
+       1.8,
+       "ko"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       1.8,
+       "golpe"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "etiqueta",
+     "texto": "x2",
+     "pos": [
+      0,
+      0.2,
+      3.9
+     ],
+     "en": 1.4,
+     "tam": 1.0,
+     "fondo": "#e74c3c"
+    },
+    {
+     "tipo": "grieta",
+     "pos": [
+      0,
+      -0.6
+     ],
+     "en": 1.8,
+     "dur": 0.4
+    }
+   ],
+   "control_en": 3.0
+  },
+  {
+   "frases": [
+    20,
+    20
+   ],
+   "escenario": "estudio",
+   "cielo": "#ffd166",
+   "camara": "medio+empuje",
+   "clave": "friend",
+   "animo": "alegre",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       1.0,
+       "risa"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "agitar"
+      ],
+      [
+       1.6,
+       "celebrar"
+      ]
+     ],
+     "habla": true
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "♥",
+     "sobre": "kubo",
+     "en": 0.5
+    },
+    {
+     "tipo": "particulas",
+     "clase": "corazones",
+     "pos": [
+      0,
+      0,
+      2.6
+     ],
+     "en": 0.6,
+     "n": 14
+    }
+   ],
+   "control_en": 1.0
+  },
+  {
+   "frases": [
+    21,
+    24
+   ],
+   "escenario": "estudio",
+   "cielo": "#c3f584",
+   "camara": "lejos+empuje",
+   "clave": "four",
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -0.3
+     ],
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       1.2,
+       "pensando"
+      ],
+      [
+       5.0,
+       "sospecha"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "senalar"
+      ],
+      [
+       1.2,
+       "pensar"
+      ]
+     ],
+     "habla": true
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      -1.2,
+      0.6,
+      4.0
+     ],
+     "tam": 0.22,
+     "colores": [
+      [
+       0,
+       "#bdc3c7"
+      ]
+     ]
+    },
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      -0.4,
+      0.6,
+      4.0
+     ],
+     "tam": 0.22,
+     "colores": [
+      [
+       0,
+       "#bdc3c7"
+      ]
+     ]
+    },
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      0.4,
+      0.6,
+      4.0
+     ],
+     "tam": 0.22,
+     "colores": [
+      [
+       0,
+       "#bdc3c7"
+      ]
+     ]
+    },
+    {
+     "tipo": "indicador",
+     "forma": "barra",
+     "pos": [
+      1.2,
+      0.6,
+      4.0
+     ],
+     "tam": 0.22,
+     "colores": [
+      [
+       0,
+       "#bdc3c7"
+      ]
+     ]
+    },
+    {
+     "tipo": "etiqueta",
+     "texto": "?/4",
+     "pos": [
+      0,
+      0.6,
+      4.75
+     ],
+     "en": 1.6,
+     "hasta": 20,
+     "tam": 0.8,
+     "fondo": "#8e44ad"
+    },
+    {
+     "tipo": "signo",
+     "texto": "?",
+     "sobre": "kubo",
+     "en": 2.0,
+     "dur": 3.0
+    }
+   ],
+   "control_en": 3.5
+  }
+ ],
+ "cola": 1.2,
+ "idiomas": {
+  "es": {
+   "voz": "Puck",
+   "estilo": "Narra como un cuentacuentos divertido explicando un misterio cotidiano. Ritmo medio, pausas cortas entre frases. Español latino neutro",
+   "tomas": [
+    "Siempre eliges la fila más lenta del súper.",
+    "Y no, no es mala suerte.",
+    "Kubo elige la fila dos. Fila corta, cajero rápido, perfecto.",
+    "Entonces la señora de enfrente saca un cupón de otra tienda.",
+    "La fila uno avanza.",
+    "La fila tres avanza.",
+    "La fila de Kubo no se mueve nada.",
+    "El señor que estaba detrás de él en la fila uno ya se va con un pastel de cumpleaños.",
+    "Aquí van las matemáticas. Con tres filas, solo una puede ser la más rápida.",
+    "Así que la probabilidad de que gane la tuya es solo una de tres.",
+    "O sea, dos de cada tres veces otra fila te gana.",
+    "Y tu cerebro lo empeora. Cuando tu fila gana, ni lo notas.",
+    "Cuando pierde, la miras todo el tiempo.",
+    "Así que Kubo hizo lo más listo y se cambió de fila.",
+    "Y justo ahí su fila vieja salió volando.",
+    "Cambiarte no te salva. Solo te da el doble de oportunidades de perder.",
+    "Mándale esto al amigo que siempre se cambia de fila.",
+    "Ahora te toca. Con cuatro filas, ¿qué probabilidad hay de que la tuya sea la más rápida? Escribe tu respuesta en los comentarios. Fijaré la primera correcta."
+   ],
+   "claves": [
+    "lenta",
+    "suerte",
+    "perfecto",
+    "cupón",
+    "uno",
+    "tres",
+    "nada",
+    "pastel",
+    "rápida",
+    "tres",
+    "gana",
+    "notas",
+    "tiempo",
+    "cambió",
+    "volando",
+    "doble",
+    "amigo",
+    "cuatro"
+   ]
+  },
+  "pt": {
+   "voz": "Puck",
+   "estilo": "Narre como um contador de histórias divertido explicando um mistério do dia a dia. Ritmo médio, pausas curtas. Português do Brasil",
+   "tomas": [
+    "Você sempre escolhe a fila mais lenta do mercado.",
+    "E não, não é azar.",
+    "O Kubo escolhe a fila dois. Fila curta, caixa rápido, perfeito.",
+    "Aí a senhora da frente tira um cupom de outra loja.",
+    "A fila um anda.",
+    "A fila três anda.",
+    "A fila do Kubo não anda nada.",
+    "O cara que estava atrás dele na fila um já está saindo com um bolo de aniversário.",
+    "Vamos à matemática. Com três filas, só uma pode ser a mais rápida.",
+    "Então a chance de a sua ganhar é só uma em três.",
+    "Ou seja, duas em cada três vezes outra fila ganha de você.",
+    "E o seu cérebro piora tudo. Quando a sua fila ganha, você nem percebe.",
+    "Quando perde, você fica olhando o tempo todo.",
+    "Então o Kubo fez a coisa esperta e trocou de fila.",
+    "E foi exatamente aí que a fila antiga saiu voando.",
+    "Trocar não te salva. Só te dá o dobro de chances de perder.",
+    "Manda isso pro amigo que sempre troca de fila.",
+    "Agora é a sua vez. Com quatro filas, qual a chance de a sua ser a mais rápida? Escreva sua resposta nos comentários. Vou fixar a primeira certa."
+   ],
+   "claves": [
+    "lenta",
+    "azar",
+    "perfeito",
+    "cupom",
+    "um",
+    "três",
+    "nada",
+    "bolo",
+    "rápida",
+    "três",
+    "ganha",
+    "percebe",
+    "todo",
+    "trocou",
+    "voando",
+    "dobro",
+    "amigo",
+    "quatro"
+   ]
+  }
+ }
+}

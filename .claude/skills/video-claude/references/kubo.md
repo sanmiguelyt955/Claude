@@ -58,6 +58,36 @@ Tiempos medidos (4 CPU, sin GPU): `normal` (720p, animado en dos) ≈ 7 s de ren
   sale la cabeza), golpe (reacción a impacto), zapatear (enojo), caminar, correr (con «hasta»), volar, caer.
 - **Personajes**: piel, ropa, mangas, pantalon, altura, cabeza (cubo|esfera), pelo, gorra, gorro_chef, orejas, antena.
 
+## Efectos visuales (`"efectos"` por toma; cada uno suena solo y sacude la cámara si toca)
+```json
+{"tipo": "signo", "texto": "!|?|!?|$|zzz|♥|+|x|ok|idea", "sobre": "kubo", "en": 0.4, "dur": 1.2, "lado": 1}
+{"tipo": "etiqueta", "texto": "1/3", "pos": [0, 0.2, 4.2], "en": 0.4, "hasta": 3.0, "fondo": "#2ecc71", "tam": 0.9}
+{"tipo": "particulas", "clase": "monedas|estrellas|chispas|polvo|confeti|corazones|gotas|humo|fuego", "sobre": "kubo", "en": 0.5, "n": 18}
+{"tipo": "estallido", "texto": "POW!", "sobre": "kubo", "en": 1.0, "tam": 1.2, "color": "#ffd23f"}
+{"tipo": "grieta", "pos": [0, -0.6], "plano": "piso|pared", "z": 1.5, "en": 1.8, "dur": 0.4, "tam": 1.6}
+{"tipo": "indicador", "forma": "esfera|barra|panel", "pos": [x, y, z], "poste": true, "colores": [[0, "#e74c3c"], [1.5, "#2ecc71"]]}
+{"tipo": "flecha", "de": [x, y, z], "a": [x, y, z], "en": 0.5, "dur": 2, "color": "#ff3b3b"}
+{"tipo": "lineas", "sobre": "kubo", "en": 0.8, "dur": 1.4, "sentido": -1}
+```
+Sonidos automáticos: signo ! → pop, ? → burbuja, idea → destello, $ → monedas, x → error, ok/+ → correcto;
+monedas → ka-ching, estrellas → destello, confeti → tada; estallido → remate + golpe; grieta → crujido; indicador →
+correcto (verde) / error (rojo); flecha → swoosh. Más un swoosh en cada corte y la firma al inicio y al final.
+`"control_en": 1.5` en una toma = qué instante muestra `revisar` (para ver los efectos).
+
+Otros: `"frases": [a, b]` (la toma cubre las frases a..b del guion: más fácil que `rango`), `"lleva": "pastel"`
+(objeto en la mano que sigue al brazo), `"mirar_a"` / `"cuanto_gira"` / `"max_giro"` / `"mirada": "i|d"` (miradas de
+3/4 con los ojos hacia el otro, nunca de perfil), `"angulo"` de cámara (80 = de lado). Objetos nuevos: caja_cobro,
+pastel, cupon.
+
+## Idiomas: una pista de audio por idioma (`kubo.py idiomas NOMBRE`)
+En el plan: `"idioma": "en"` (el del render) y `"idiomas": {"es": {"voz": "Puck", "estilo": "…", "tomas": [un texto
+por toma], "claves": [palabra amarilla por toma], "cabeceras": [opcional]}, "pt": {…}, …}`. Claude escribe las
+traducciones (naturales, no literales, mismo sentido por toma). Para cada idioma: voz (Gemini TTS) → Whisper → cada
+frase se coloca donde empezaba la original y se acelera hasta 1.35× si no cabe → banda con ducking → salen
+`audio_<idioma>.m4a` (subir en YouTube Studio → Idiomas → Agregar audio), `subtitulos_<idioma>.srt` y
+`NOMBRE_<idioma>.mp4` con subtítulos quemados (TikTok/Reels/Facebook). Además `NOMBRE_global.mp4`: el video sin
+subtítulos quemados, para subir a YouTube con todas las pistas y los .srt.
+
 ## El personaje de la marca: Kubo
 Cubo turquesa con sudadera naranja y **antena con foco que cambia de color con la emoción** (amarillo feliz, rojo
 enojo, azul triste, blanco miedo, verde idea, morado sospecha). Gag fijo: **se le sale la cabeza del susto**. Por qué se
@@ -77,5 +107,6 @@ que cuenta la emoción sin idioma y un gag repetible que la audiencia espera.
 1. Gancho en 0-2 s: acción o cara fuerte desde el primer cuadro, nunca un personaje quieto.
 2. Una toma por idea (1-3 s). Corta en cada frase; el clímax hacia el 70 %.
 3. Cada toma tiene movimiento: `gestos` encadenados, `caras` que cambian, cámara que se mueve.
+3b. Guion con la plantilla de `references/guiones.md` (≥ 61 s, gancho → explicación visual → giro → CTA → reto).
 4. Revisar con `revisar` antes de renderizar; render `normal` para probar y `final` para publicar.
 5. Textos en pantalla (`cabecera`, `barra`) solo cuando el formato los necesita.

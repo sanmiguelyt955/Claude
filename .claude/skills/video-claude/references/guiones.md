@@ -39,3 +39,25 @@ retenga más (YouTube Studio → retención a los 3 s y % que vio completo). Est
 
 Desencadenantes que más se repiten: identificación («eso me pasa»), contraste, escalada hasta el exceso, sorpresa en
 el último 30 %, humor físico, baja carga cognitiva (se entiende sin idioma) y final cortado en seco (loop).
+
+## Plantilla Kubo: guion monetizable (61-75 s, para cobrar en TikTok y retener en Shorts/Reels)
+Duración mínima **61 s** (TikTok Creator Rewards paga solo videos de más de 1 minuto). ~190-210 palabras en inglés con
+narración de ritmo medio y pausas cortas (pedirlo en `--estilo-voz`). Cada bloque = 1-3 tomas de 1.5-5 s.
+
+| Bloque | % del video | Qué va | Ejemplo («la fila lenta») |
+|---|---|---|---|
+| 1. Gancho | 0-6 % | Premisa imposible, pregunta cotidiana o acusación al espectador, en la primera frase | «You always pick the slowest line at the supermarket.» |
+| 2. Promesa | 6-10 % | Rompe la creencia («no es suerte») → abre la brecha de curiosidad | «And no, it's not bad luck.» |
+| 3. Historia | 10-40 % | El personaje vive el problema, con escalada (pasos, día a día, «luego…») | Kubo elige la fila, la señora y su cupón, las otras avanzan, el del pastel |
+| 4. Explicación | 40-65 % | El dato real, **muy visual**: etiquetas (1/3, 2/3), barras de color, flechas, comparaciones | 3 filas → solo una gana → 1/3 → 2/3 pierdes; el cerebro nota solo las derrotas |
+| 5. Giro | 65-80 % | Lo inesperado, con el gag de Kubo (se le sale la cabeza) | Se cambia de fila y la vieja sale volando |
+| 6. Remate | 80-87 % | La lección en una frase | «Switching just gives you twice as many chances to lose.» |
+| 7. CTA compartir | 87-92 % | «Send this to the friend who…» (concreto: alguien que el espectador conoce) | «…who always switches lines.» |
+| 8. Reto final | 92-100 % | Pregunta que se responde en comentarios + promesa («fijaré la primera correcta») | «With four lines, what are the chances…?» |
+
+Reglas visuales:
+- Cada idea abstracta tiene su **metáfora de color** (rojo = malo/lento, verde = bueno/rápido) o una **etiqueta**.
+- Textos en 3D (etiquetas, signos) **neutros de idioma**: números, símbolos, «x2», «1/3», «?», «OK». Las palabras van
+  en subtítulos o cabeceras (que cambian por idioma).
+- Un efecto con sonido en cada acción importante (sale solo con `sfx_auto`).
+- Termina con la firma sonora y un último cuadro que conecte con el primero (loop).

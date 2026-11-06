@@ -410,6 +410,32 @@ def estufa(p, s, c):
     caja((p[0], p[1] - 0.51 * s, 0.55 * s), (1.0 * s, 0.02 * s, 0.6 * s), "#636e72", borde=False)
 
 
+@prop
+def caja_cobro(p, s, c):
+    """Caja de súper: mostrador con banda, registradora con pantalla y número de caja."""
+    caja((p[0], p[1], 0.5 * s), (1.1 * s, 2.4 * s, 1.0 * s), c or "#dfe6e9", bisel=0.03)
+    caja((p[0], p[1] - 0.2 * s, 1.02 * s), (0.9 * s, 1.8 * s, 0.05 * s), "#2d3436", borde=False)
+    caja((p[0] + 0.25 * s, p[1] + 0.9 * s, 1.3 * s), (0.5 * s, 0.4 * s, 0.5 * s), "#636e72", bisel=0.03)
+    caja((p[0] + 0.25 * s, p[1] + 0.68 * s, 1.4 * s), (0.4 * s, 0.02 * s, 0.22 * s), "#74b9ff", borde=False)
+    cilindro((p[0] - 0.4 * s, p[1] + 1.0 * s, 1.8 * s), 0.04 * s, 1.6 * s, "#b2bec3")
+
+
+@prop
+def pastel(p, s, c):
+    z = p[2] if len(p) > 2 else 0
+    cilindro((p[0], p[1], z + 0.15 * s), 0.35 * s, 0.3 * s, c or "#ff8fab")
+    cilindro((p[0], p[1], z + 0.4 * s), 0.25 * s, 0.22 * s, "#fff5e6")
+    cilindro((p[0], p[1], z + 0.6 * s), 0.025 * s, 0.18 * s, "#3498db", borde=False)
+    esfera((p[0], p[1], z + 0.72 * s), 0.04 * s, "#ffd23f", borde=False)
+
+
+@prop
+def cupon(p, s, c):
+    caja((p[0], p[1], (p[2] if len(p) > 2 else 1.0)), (0.5 * s, 0.02 * s, 0.28 * s), c or "#fdfefe")
+    caja((p[0] - 0.12 * s, p[1] - 0.012 * s, (p[2] if len(p) > 2 else 1.0)), (0.16 * s, 0.01 * s, 0.16 * s),
+         "#e74c3c", borde=False)
+
+
 # ------------------------------------------------------------------ personajes
 def personaje(defn, pos, mira, nombre):
     """Cabezón de bloques. Devuelve (raiz, piezas). La cabeza mide ~1.3 y el cuerpo ~1.6: proporción caricatura."""
@@ -808,6 +834,342 @@ def camara(toma, objetivo, n, ancho_grupo=0.0):
     return cam
 
 
+# ------------------------------------------------------------------ efectos visuales (cada uno con su momento «en»)
+FUENTE_3D = "/usr/share/fonts/opentype/inter/Inter-ExtraBold.otf"
+_FUENTE = None
+POPS = []          # objetos con «pop» de entrada/salida (se animan al final)
+
+
+def _fuente():
+    global _FUENTE
+    if _FUENTE is None:
+        try:
+            _FUENTE = bpy.data.fonts.load(FUENTE_3D, check_existing=True)
+        except Exception:  # noqa: BLE001
+            _FUENTE = False
+    return _FUENTE or None
+
+
+def _mirar_camara(o, cam):
+    c = o.constraints.new("TRACK_TO")
+    c.target, c.track_axis, c.up_axis = cam, "TRACK_Z", "UP_Y"
+
+
+def _aparece(o, f0, f1, escala=1.0, flota=0.0, n=None):
+    """Entrada con rebote (0 → 1.25 → 1), flota hacia arriba y sale encogiéndose: el «pop» de caricatura."""
+    z0 = o.location.z
+    for f in range(max(1, f0 - 1), min(n or f1 + 2, f1 + 2) + 1):
+        t = (f - f0) / FPS
+        if f < f0:
+            k = 0.0
+        elif f >= f1:
+            k = 0.0
+        else:
+            k = min(1.15, _resorte(t, 14, 18)) * min(1.0, (f1 - f) / 5)
+        o.scale = (escala * k,) * 3
+        o.location.z = z0 + flota * max(0.0, t)
+        o.keyframe_insert("scale", frame=f)
+        o.keyframe_insert("location", frame=f)
+
+
+def _sobre(ef, bases, alto=3.4):
+    if ef.get("pos") is not None:
+        p = list(ef["pos"]) + [alto] * (3 - len(ef["pos"]))
+        return Vector(p)
+    b = bases.get(ef.get("sobre"))
+    if b:
+        return Vector((b[0], b[1], (alto if ef.get("tipo") != "particulas" else 2.2) * b[2]))
+    return Vector((0, 0, alto))
+
+
+def texto3d(txt, color, tam=0.6, fondo=None, borde="#111111"):
+    """Texto 3D con borde negro (y placa de color opcional) que mira a cámara."""
+    bpy.ops.object.text_add()
+    t = bpy.context.active_object
+    t.data.body = txt
+    if _fuente():
+        t.data.font = _fuente()
+    t.data.align_x, t.data.align_y = "CENTER", "CENTER"
+    t.data.size, t.data.extrude = tam, tam * 0.08
+    t.data.materials.append(mat(color))
+    raiz = vacio(t.location)
+    colgar(t, raiz)
+    bpy.ops.object.text_add()
+    b = bpy.context.active_object
+    b.data.body = txt
+    if _fuente():
+        b.data.font = _fuente()
+    b.data.align_x, b.data.align_y = "CENTER", "CENTER"
+    b.data.size, b.data.offset = tam, tam * 0.07
+    b.data.materials.append(mat(borde))
+    b.location = t.location
+    b.delta_location = (0, 0, -tam * 0.04)       # detrás del texto (en el eje del texto)
+    colgar(b, raiz)
+    if fondo:
+        bpy.ops.mesh.primitive_plane_add(size=1)
+        pl = bpy.context.active_object
+        n_c = max(1, len(txt))
+        pl.scale = (tam * 0.72 * n_c + tam * 0.6, tam * 1.35, 1)
+        pl.location.z -= tam * 0.09
+        pl.data.materials.append(mat(fondo))
+        colgar(pl, raiz)
+    return raiz
+
+
+SIGNOS = {"!": ("!", "#ff3b3b"), "?": ("?", "#ffd23f"), "$": ("$", "#2ecc71"), "zzz": ("Z z z", "#9ad0ff"),
+          "♥": ("<3", "#ff5c8a"), "+": ("+1", "#2ecc71"), "x": ("X", "#ff3b3b"), "ok": ("OK", "#2ecc71"),
+          "!?": ("!?", "#ff9f1a")}
+
+
+def ef_signo(ef, bases, cam, n):
+    """Signo flotante sobre la cabeza (! ? $ zzz ♥ +1 X OK, o «idea» = foco)."""
+    pos = _sobre(ef, bases, 3.2) + Vector((ef.get("lado", 1) * 1.2, -0.3, 0.3 if ef.get("texto") == "idea" else 0.0))
+    f0, f1 = round(ef.get("en", 0) * FPS) + 1, round((ef.get("en", 0) + ef.get("dur", 1.2)) * FPS) + 1
+    if ef.get("texto") == "idea":
+        raiz = vacio(pos)
+        foco = esfera(pos, 0.3, "#ffe14d", raiz)
+        caja(pos - Vector((0, 0, 0.36)), (0.22, 0.22, 0.18), "#7f8c8d", raiz)
+        for k in range(8):                        # rayos
+            a = k * math.pi / 4
+            caja(pos + Vector((0.55 * math.cos(a), 0, 0.55 * math.sin(a))), (0.18, 0.04, 0.05), "#ffe14d", raiz,
+                 borde=False, rot=(0, -a, 0))
+    else:
+        txt, color = SIGNOS.get(ef.get("texto", "!"), (ef.get("texto", "!"), ef.get("color", "#ffd23f")))
+        raiz = texto3d(txt, ef.get("color", color), ef.get("tam", 0.65))
+        raiz.location = pos
+    _mirar_camara(raiz, cam)
+    _aparece(raiz, f0, f1, 1.0, ef.get("flota", 0.25), n)
+
+
+def ef_etiqueta(ef, bases, cam, n):
+    """Etiqueta de texto que explica (p. ej. «1 IN 3», «PING 120ms», «CO₂ +60%»), con placa de color."""
+    pos = _sobre(ef, bases, 4.0)
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    f1 = round((ef["hasta"] if "hasta" in ef else ef.get("en", 0) + ef.get("dur", 2.0)) * FPS) + 1
+    raiz = texto3d(ef["texto"], ef.get("color", "#ffffff"), ef.get("tam", 0.5), ef.get("fondo", "#e74c3c"))
+    raiz.location = pos
+    _mirar_camara(raiz, cam)
+    _aparece(raiz, f0, f1, 1.0, 0.0, n)
+
+
+PARTICULAS = {
+    "monedas": dict(color=["#f1c40f", "#f39c12"], forma="moneda", v=4.5, g=9.8, tam=0.14),
+    "estrellas": dict(color=["#ffe14d", "#ffffff"], forma="estrella", v=3.5, g=4.0, tam=0.16),
+    "chispas": dict(color=["#ffd23f", "#ff7f11", "#ffffff"], forma="bola", v=5.5, g=6.0, tam=0.05),
+    "polvo": dict(color=["#b8a88a", "#d5c7a8"], forma="nube", v=1.2, g=-0.6, tam=0.22),
+    "confeti": dict(color=["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"], forma="papel", v=5.0, g=5.0, tam=0.1),
+    "corazones": dict(color=["#ff5c8a", "#ff8fab"], forma="bola", v=2.0, g=-1.0, tam=0.12),
+    "gotas": dict(color=["#5dade2", "#aed6f1"], forma="bola", v=3.0, g=9.8, tam=0.07),
+    "humo": dict(color=["#7f8c8d", "#95a5a6"], forma="nube", v=0.8, g=-1.2, tam=0.35),
+    "fuego": dict(color=["#ff7f11", "#ffd23f", "#e74c3c"], forma="bola", v=1.5, g=-3.0, tam=0.09),
+}
+
+
+def ef_particulas(ef, bases, cam, n):
+    """Ráfaga de partículas con física simple (velocidad inicial, gravedad, giro) que se encogen al final."""
+    cfg = PARTICULAS.get(ef.get("clase", "estrellas"), PARTICULAS["estrellas"])
+    rnd = random.Random(int(ef.get("en", 0) * 100) + len(ef.get("clase", "")))
+    centro = _sobre(ef, bases)
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    dur = ef.get("dur", 1.3)
+    nf = round(dur * FPS)
+    for k in range(ef.get("n", 18)):
+        col = rnd.choice(cfg["color"])
+        tam = cfg["tam"] * rnd.uniform(0.7, 1.3) * ef.get("escala", 1.0)
+        if cfg["forma"] == "moneda":
+            o = cilindro(centro, tam, tam * 0.3, col, rot=(R(90), 0, 0), verts=16)
+        elif cfg["forma"] == "papel":
+            o = caja(centro, (tam, tam * 0.6, 0.01), col, borde=False)
+        elif cfg["forma"] == "estrella":
+            vs = [((tam if j % 2 == 0 else tam * 0.45) * math.cos(j * math.pi / 5 + math.pi / 2),
+                   (tam if j % 2 == 0 else tam * 0.45) * math.sin(j * math.pi / 5 + math.pi / 2), 0) for j in range(10)]
+            me = bpy.data.meshes.new("estrella")
+            me.from_pydata(vs + [(0, 0, 0)], [], [(j, (j + 1) % 10, 10) for j in range(10)])
+            o = bpy.data.objects.new("estrella", me)
+            bpy.context.collection.objects.link(o)
+            o.data.materials.append(mat(col))
+            o.location = centro
+        elif cfg["forma"] == "nube":
+            o = esfera(centro, tam, col, borde=False)
+        else:
+            o = esfera(centro, tam, col, borde=False)
+        ang = rnd.uniform(0, 2 * math.pi)
+        abre = ef.get("abre", 0.8)
+        v = Vector((math.cos(ang) * abre, math.sin(ang) * abre * 0.5, rnd.uniform(0.6, 1.0))) * cfg["v"] * rnd.uniform(0.6, 1.1)
+        giro = Vector((rnd.uniform(-9, 9), rnd.uniform(-9, 9), rnd.uniform(-9, 9)))
+        for f in range(max(1, f0 - 1), min(n, f0 + nf) + 1):
+            t = max(0.0, (f - f0) / FPS)
+            o.location = centro + v * t + Vector((0, 0, -0.5 * cfg["g"] * t * t))
+            o.rotation_euler = giro * t
+            vida = 0.0 if f < f0 else min(1.0, t / 0.06) * min(1.0, (dur - t) / 0.35)
+            if cfg["forma"] == "nube":
+                vida *= 1 + t * 1.5
+            o.scale = (max(0.0, vida),) * 3
+            o.keyframe_insert("location", frame=f)
+            o.keyframe_insert("rotation_euler", frame=f)
+            o.keyframe_insert("scale", frame=f)
+
+
+def ef_estallido(ef, bases, cam, n):
+    """Estrella de cómic de impacto (¡POW!) con anillo blanco: dura ~0.35 s."""
+    pos = _sobre(ef, bases, 2.3)
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    verts, picos = [], 12
+    for k in range(picos * 2):
+        r = (1.0 if k % 2 == 0 else 0.55) * ef.get("tam", 1.0)
+        a = k * math.pi / picos
+        verts.append((r * math.cos(a), r * math.sin(a), 0))
+    me = bpy.data.meshes.new("estallido")
+    me.from_pydata(verts + [(0, 0, 0)], [], [(k, (k + 1) % len(verts), len(verts)) for k in range(len(verts))])
+    o = bpy.data.objects.new("estallido", me)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(mat(ef.get("color", "#ffd23f")))
+    o.location = pos
+    raiz = vacio(pos)
+    colgar(o, raiz)
+    if ef.get("texto"):
+        tx = texto3d(ef["texto"], "#e74c3c", 0.45 * ef.get("tam", 1.0))
+        tx.location = pos + Vector((0, 0, 0.02))
+        colgar(tx, raiz)
+    _mirar_camara(raiz, cam)
+    _aparece(raiz, f0, f0 + round(ef.get("dur", 0.45) * FPS), 1.0, 0.0, n)
+
+
+def ef_grieta(ef, bases, cam, n):
+    """Grietas que crecen desde un punto (piso o pared): ramas en zigzag que aparecen poco a poco."""
+    rnd = random.Random(int(ef.get("en", 0) * 77) + 3)
+    x0, y0 = ef.get("pos", [0, 0])[:2]
+    pared = ef.get("plano", "piso") == "pared"
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    crece = max(2, round(ef.get("dur", 0.5) * FPS))
+    tam = ef.get("tam", 1.6)
+    for rama in range(ef.get("ramas", 6)):
+        ang = rama * 2 * math.pi / 6 + rnd.uniform(-0.4, 0.4)
+        p = Vector((0, 0))
+        segs = rnd.randint(3, 5)
+        for k in range(segs):
+            ang += rnd.uniform(-0.6, 0.6)
+            largo = tam / segs * rnd.uniform(0.7, 1.3)
+            q = p + Vector((math.cos(ang), math.sin(ang))) * largo
+            m = (p + q) / 2
+            grosor = 0.07 * (1 - k / segs) + 0.02
+            if pared:
+                loc, dim, rot = (x0 + m.x, y0 - 0.12, ef.get("z", 1.5) + m.y), (largo, 0.02, grosor), (0, -ang, 0)
+            else:
+                loc, dim, rot = (x0 + m.x, y0 + m.y, 0.02), (largo, grosor, 0.02), (0, 0, ang)
+            o = caja(loc, dim, ef.get("color", "#1a1a1a"), borde=False, rot=rot)
+            fk = f0 + round(crece * (rama * 0.15 + k) / (segs + 1))
+            o.scale = (0, 0, 0)
+            o.keyframe_insert("scale", frame=max(1, fk - 1))
+            o.scale = (1, 1, 1)
+            o.keyframe_insert("scale", frame=fk + 1)
+            p = q
+
+
+def ef_indicador(ef, bases, cam, n):
+    """Metáfora de color: una luz/barra/panel que cambia de color en momentos dados (rojo → verde, etc.)."""
+    pos = Vector(list(ef.get("pos", [0, 0])) + [2.5] * (3 - len(ef.get("pos", [0, 0]))))
+    tam = ef.get("tam", 0.4)
+    cambios = sorted(ef.get("colores", [[0, "#e74c3c"]]))
+    objs = {}
+    for _, col in cambios:
+        if col in objs:
+            continue
+        if ef.get("forma") == "barra":
+            objs[col] = caja(pos, (tam * 3, tam * 0.6, tam * 0.6), col, bisel=0.03)
+        elif ef.get("forma") == "panel":
+            objs[col] = caja(pos, (tam * 2, 0.08, tam * 1.4), col, bisel=0.03)
+        else:
+            objs[col] = esfera(pos, tam, col)
+    if ef.get("poste"):
+        cilindro(pos - Vector((0, 0, pos.z / 2)), 0.05, pos.z, "#2d3436")
+    actual = None
+    for f in range(1, n + 1):
+        t = (f - 1) / FPS
+        col = [c for tt, c in cambios if t >= tt]
+        col = col[-1] if col else cambios[0][1]
+        if col != actual:
+            for c, o in objs.items():
+                o.hide_render = (c != col)
+                o.keyframe_insert("hide_render", frame=f)
+                o.scale = (1.25, 1.25, 1.25) if c == col and actual is not None else (1, 1, 1)
+                o.keyframe_insert("scale", frame=f)
+                o.scale = (1, 1, 1)
+                o.keyframe_insert("scale", frame=f + 3)
+            actual = col
+
+
+def ef_flecha(ef, bases, cam, n):
+    """Flecha que crece de un punto a otro para señalar o explicar."""
+    a, b = Vector(ef["de"]), Vector(ef["a"])
+    d = b - a
+    largo = d.length
+    raiz = vacio(a)
+    raiz.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
+    col = ef.get("color", "#ff3b3b")
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.06, depth=largo * 0.8, location=(0, 0, largo * 0.4), vertices=16)
+    cu = bpy.context.active_object
+    cu.data.materials.append(mat(col))
+    contorno(cu, 0.02)
+    cu.parent = raiz
+    bpy.ops.mesh.primitive_cone_add(radius1=0.18, depth=largo * 0.2, location=(0, 0, largo * 0.9), vertices=16)
+    pu = bpy.context.active_object
+    pu.data.materials.append(mat(col))
+    contorno(pu, 0.02)
+    pu.parent = raiz
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    f1 = round((ef.get("en", 0) + ef.get("dur", 2.0)) * FPS) + 1
+    for f in range(max(1, f0 - 1), min(n, f1 + 1) + 1):
+        t = (f - f0) / FPS
+        k = 0.0 if f < f0 or f > f1 else min(1.0, _resorte(t, 12, 14)) * min(1.0, (f1 - f) / 4)
+        raiz.scale = (max(k, 0.001), max(k, 0.001), max(k, 0.001))
+        raiz.keyframe_insert("scale", frame=f)
+
+
+def ef_lineas(ef, bases, cam, n, caminos=None):
+    """Líneas de velocidad detrás de un actor que corre (siguen su recorrido)."""
+    rnd = random.Random(5)
+    f0 = round(ef.get("en", 0) * FPS) + 1
+    f1 = round((ef.get("en", 0) + ef.get("dur", 1.0)) * FPS) + 1
+    camino = (caminos or {}).get(ef.get("sobre"))
+    lineas = [caja((0, 0, 0), (rnd.uniform(0.8, 1.6), 0.03, 0.03), "#ffffff", borde=False) for _ in range(ef.get("n", 7))]
+    off = [Vector((-rnd.uniform(0.9, 2.2), rnd.uniform(-0.3, 0.3), rnd.uniform(0.4, 2.8))) for _ in lineas]
+    for f in range(max(1, f0 - 1), min(n, f1 + 1) + 1):
+        u = (f - 1) / max(1, n - 1)
+        base = camino(u) if camino else _sobre(ef, bases, 0)
+        for o, d in zip(lineas, off):
+            vis = f0 <= f <= f1
+            o.location = Vector((base.x, base.y, 0)) + d * Vector((ef.get("sentido", 1), 1, 1)) + \
+                Vector((rnd.uniform(-0.1, 0.1), 0, 0))
+            o.scale = (1, 1, 1) if vis else (0, 0, 0)
+            o.keyframe_insert("location", frame=f)
+            o.keyframe_insert("scale", frame=f)
+
+
+EFECTOS = {"signo": ef_signo, "etiqueta": ef_etiqueta, "particulas": ef_particulas, "estallido": ef_estallido,
+           "grieta": ef_grieta, "indicador": ef_indicador, "flecha": ef_flecha, "lineas": ef_lineas}
+
+
+def poner_efectos(toma, plan, cam, n):
+    bases, caminos = {}, {}
+    for a in toma.get("actores", []):
+        p = a.get("pos", [0, 0])
+        alt = plan.get("personajes", {}).get(a["id"], {}).get("altura", 1.0)
+        bases.setdefault(a["id"], (p[0], p[1], alt))
+        if a.get("hasta"):
+            p0, p1 = Vector((p[0], p[1], 0)), Vector((a["hasta"][0], a["hasta"][1], 0))
+            caminos[a["id"]] = (lambda u, p0=p0, p1=p1: p0.lerp(p1, _suave(u * 1.05)))
+    for ef in toma.get("efectos", []):
+        f = EFECTOS.get(ef.get("tipo"))
+        if not f:
+            print(f"KUBO aviso: efecto desconocido «{ef.get('tipo')}» (hay: {', '.join(EFECTOS)})", flush=True)
+            continue
+        if f is ef_lineas:
+            f(ef, bases, cam, n, caminos)
+        else:
+            f(ef, bases, cam, n)
+
+
 # ------------------------------------------------------------------ escena y render
 def limpiar():
     bpy.ops.object.select_all(action="SELECT")
@@ -884,6 +1246,17 @@ def render_toma(i, toma, plan, ancho, alto, paso):
         if objetivo_vista is not None and "mirada" not in act:
             dxv = objetivo_vista[0] - pos[0]
             mirada = "d" if dxv > 0.3 else "i" if dxv < -0.3 else ""
+        if act.get("lleva"):                      # objeto en la mano derecha: sigue al brazo
+            ll = act["lleva"] if isinstance(act["lleva"], dict) else {"tipo": act["lleva"]}
+            fprop = PROPS.get(ll.get("tipo"))
+            if fprop:
+                antes = set(bpy.data.objects)
+                mano = (pos[0] + 0.69, pos[1] - 0.25, 0.62)
+                fprop([mano[0], mano[1], mano[2]] if ll["tipo"] in ("pastel", "cupon", "malvavisco") else [mano[0], mano[1]],
+                      ll.get("escala", 0.7), ll.get("color"))
+                for o in set(bpy.data.objects) - antes:
+                    if o.parent is None:
+                        colgar(o, piezas["brazo1"])
         planos = caras_de(piezas, usadas, mirada)
         bpy.ops.mesh.primitive_plane_add(size=1, location=(pos[0], pos[1], 0.012))
         piezas["sombra"] = bpy.context.active_object
@@ -894,9 +1267,10 @@ def render_toma(i, toma, plan, ancho, alto, paso):
             centros.append(Vector((pos[0], pos[1], (2.45 if cerca else 2.0) * defn.get("altura", 1.0))))
     objetivo = toma.get("mirar_a") or (sum(centros, Vector()) / len(centros) if centros else Vector((0, 0, 1.5)))
     xs = [a.get("pos", [0, 0])[0] for a in toma.get("actores", []) if not toma.get("objetivo") or toma["objetivo"] == a["id"]]
-    camara(toma, Vector(objetivo), n, (max(xs) - min(xs)) if len(xs) > 1 else 0.0)
+    cam = camara(toma, Vector(objetivo), n, (max(xs) - min(xs)) if len(xs) > 1 else 0.0)
+    poner_efectos(toma, plan, cam, n)
     if CONTROL:
-        sc.frame_set(n // 2)
+        sc.frame_set(min(n, round(toma["control_en"] * FPS) + 1) if "control_en" in toma else n // 2)
         sc.render.filepath = str(SALIDA / f"control_{i:02d}.png")
         bpy.ops.render.render(write_still=True)
     else:

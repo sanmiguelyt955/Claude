@@ -382,6 +382,61 @@ def tada(d=1.6):
     return _norm(y, 0.7)
 
 
+# ------------------------------------------------------------------ sonidos de los efectos visuales de Kubo
+
+def monedas(d=0.9):
+    """«Ka-ching»: monedas que caen + campanita de caja registradora."""
+    y = np.zeros(int(d * SR))
+    for k, s0 in enumerate(np.sort(RNG.uniform(0, d * 0.6, 9))):
+        t = _t(0.12); f = RNG.uniform(2500, 4200)
+        x = np.sin(2 * np.pi * f * t) * np.exp(-t * 40)
+        i = int(s0 * SR); y[i:i + len(x)] += 0.5 * x[: len(y) - i]
+    c = _nota(_f("E6"), d * 0.8, "campana")
+    y[:len(c)] += 0.6 * c[: len(y)]
+    return _norm(y, 0.7)
+
+
+def destello(d=0.8):
+    """Brillo mágico: arpegio agudo que sube (estrellas, idea, logro)."""
+    y = np.zeros(int(d * SR))
+    for k, n_ in enumerate(("C6", "E6", "G6", "C7")):
+        x = _nota(_f(n_), d - k * 0.06, "campana")
+        i = int(k * 0.06 * SR); y[i:i + len(x)] += x[: len(y) - i] * (0.6 + 0.1 * k)
+    return _norm(y, 0.6)
+
+
+def grieta(d=0.7):
+    """Crujido de algo que se agrieta (piso, vidrio, pared)."""
+    y = np.zeros(int(d * SR))
+    for s0 in np.sort(RNG.uniform(0, d * 0.7, 14)):
+        n = int(0.02 * SR); i = int(s0 * SR)
+        y[i:i + n] += RNG.uniform(0.4, 1) * _hp(_ruido(0.02), 1800)[:n] * _env(n, 0.0005, 0.006)
+    t = _t(d)
+    y += 0.5 * np.sin(2 * np.pi * (70 + 50 * np.exp(-t * 20)) * t) * _env(len(t), 0.001, 0.12)
+    return _norm(y, 0.8)
+
+
+def correcto(d=0.5):
+    """Dos tonos que suben: «¡bien!» (indicador en verde, respuesta correcta)."""
+    y = np.zeros(int(d * SR))
+    for k, n_ in enumerate(("E5", "A5")):
+        x = _nota(_f(n_), 0.3, "campana")
+        i = int(k * 0.12 * SR); y[i:i + len(x)] += x[: len(y) - i]
+    return _norm(y, 0.6)
+
+
+def error(d=0.45):
+    """Zumbido de «incorrecto» (indicador en rojo)."""
+    t = _t(d)
+    y = np.sign(np.sin(2 * np.pi * 110 * t)) * 0.5 + np.sign(np.sin(2 * np.pi * 116 * t)) * 0.5
+    return _norm(_lp(y, 1800) * np.minimum(1, (d - t) / 0.05), 0.5)
+
+
+def swoosh(d=0.32):
+    """Swoosh corto para cada corte de cámara."""
+    return whoosh(d)
+
+
 MOTIVO = ["F5", "A5", "C6"]      # las 3 notas de la marca Kubo (firma + tema de la música)
 
 
@@ -402,13 +457,15 @@ def firma(d=1.3):
 EFECTOS = {f.__name__: f for f in (whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina,
                                     papel, tren, riser, latido, reloj, campana, revelacion, caja,
                                     vine_boom, zumbido, pasos_alfombra, remate, pop,
-                                    boing, grito, ronquido, fuego, soplido, masticar, deslizar, caida, burbuja, tada, firma)}
+                                    boing, grito, ronquido, fuego, soplido, masticar, deslizar, caida, burbuja, tada, firma,
+                                    monedas, destello, grieta, correcto, error, swoosh)}
 VOLUMEN = {"whoosh": 0.35, "impacto": 0.7, "sello": 0.7, "camara": 0.6, "pasos": 0.45, "puerta": 0.5, "llave": 0.5,
            "silbato": 0.45, "multitud": 0.35, "maquina": 0.45, "papel": 0.4, "tren": 0.5, "riser": 0.45, "latido": 0.6,
            "reloj": 0.35, "campana": 0.45, "revelacion": 0.6, "caja": 0.5,
            "vine_boom": 0.75, "zumbido": 0.25, "pasos_alfombra": 0.45, "remate": 0.55, "pop": 0.35,
            "boing": 0.5, "grito": 0.45, "ronquido": 0.45, "fuego": 0.4, "soplido": 0.4, "masticar": 0.45, "deslizar": 0.45,
-           "caida": 0.45, "burbuja": 0.4, "tada": 0.5, "firma": 0.55}
+           "caida": 0.45, "burbuja": 0.4, "tada": 0.5, "firma": 0.55,
+           "monedas": 0.45, "destello": 0.4, "grieta": 0.55, "correcto": 0.4, "error": 0.35, "swoosh": 0.22}
 
 
 # ------------------------------------------------------------------ música por secciones

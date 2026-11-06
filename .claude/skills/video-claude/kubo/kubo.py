@@ -8,6 +8,8 @@ Flujo (cada paso guarda su resultado en el proyecto; se puede repetir cualquiera
   3. revisar   un cuadro de cada toma en una hoja (segundos) → corregir el plan antes de renderizar
   4. render    Blender (Workbench) cuadro por cuadro: borrador 540p · normal 720p · final 1080p
   5. exportar  subtítulos virales + textos en pantalla + música y efectos + voz → MP4 9:16 listo para Shorts/Reels/TikTok
+  idiomas      una pista de audio por idioma (plan.idiomas): .m4a para YouTube, .srt y un MP4 por idioma,
+               + versión global sin subtítulos quemados para subir a YouTube con todas las pistas
   todo         2→5 de una vez (si el plan ya existe, no lo pisa)
 
     python3 kubo.py nuevo NOMBRE --guion "texto o archivo.txt" [--voz audio.mp3] [--voz-motor gemini|aura]
@@ -202,6 +204,13 @@ def cuadros_por_toma(plan, paso):
 def sincronizar(plan, pal):
     """Tomas con «rango»: [primera, última] palabra de la voz → dur, palabras (subtítulos) y tramos de boca de los
     actores con «habla»: true. La clave (amarilla) es «clave» (texto de la palabra) o la palabra más larga."""
+    if pal and any("frases" in t for t in plan["tomas"]):      # frases [a, b] → rango de palabras
+        fines = [k for k, w in enumerate(pal) if re.search(r"[.!?]['\")»]*$", w[0])]
+        inicios = [0] + [f + 1 for f in fines]
+        for t in plan["tomas"]:
+            if "frases" in t:
+                fa, fb = t["frases"] if isinstance(t["frases"], list) else (t["frases"], t["frases"])
+                t["rango"] = [inicios[fa], fines[fb] if fb < len(fines) else len(pal) - 1]
     if not pal or not any("rango" in t for t in plan["tomas"]):
         return plan
     total = pal[-1][2] + plan.get("cola", 0.7)
@@ -229,7 +238,8 @@ def sincronizar(plan, pal):
     return plan
 
 
-SACUDE = {"impacto": 1.0, "vine_boom": 0.9, "remate": 0.45, "grito": 0.6, "fuego": 0.35, "boing": 0.2, "caida": 0.3}
+SACUDE = {"impacto": 1.0, "vine_boom": 0.9, "remate": 0.45, "grito": 0.6, "fuego": 0.35, "boing": 0.2, "caida": 0.3,
+          "grieta": 0.6}
 
 
 def sacudidas(toma):
@@ -352,8 +362,43 @@ def sfx_de_movimientos(toma):
                 out.append({"tipo": "pop", "en": tg, "vol": 0.35})
             elif acc == "zapatear":
                 out += [{"tipo": "remate", "en": tg + j / 4 + 0.12, "vol": 0.25} for j in range(int((fin - tg) * 4))]
+    out += sfx_de_efectos(toma)
     ya = {(x if isinstance(x, str) else x.get("tipo")) for x in toma.get("sfx", [])}
     return [x for x in out if x["tipo"] not in ya and x["en"] < dur]
+
+
+SON_SIGNO = {"!": "pop", "?": "burbuja", "idea": "destello", "$": "monedas", "x": "error", "ok": "correcto",
+             "+": "correcto", "!?": "pop", "zzz": "ronquido"}
+SON_PARTICULAS = {"monedas": "monedas", "estrellas": "destello", "confeti": "tada", "chispas": "remate",
+                  "corazones": "burbuja", "gotas": "burbuja", "fuego": "fuego"}
+
+
+def sfx_de_efectos(toma):
+    """Cada efecto visual suena justo cuando aparece (sonido y imagen coherentes)."""
+    out = []
+    for ef in toma.get("efectos", []):
+        en, tipo = ef.get("en", 0), ef.get("tipo")
+        son = None
+        if tipo == "signo":
+            son = SON_SIGNO.get(ef.get("texto", "!"), "pop")
+        elif tipo == "etiqueta":
+            son = "pop"
+        elif tipo == "particulas":
+            son = SON_PARTICULAS.get(ef.get("clase"))
+        elif tipo == "estallido":
+            son = "remate"
+            out.append({"tipo": "impacto", "en": en, "vol": 0.35})
+        elif tipo == "grieta":
+            son = "grieta"
+        elif tipo == "flecha":
+            son = "swoosh"
+        elif tipo == "indicador":
+            for tt, col in sorted(ef.get("colores", []))[1:]:
+                verde = col.lower() in ("#2ecc71", "#27ae60", "#00c853", "#4caf50", "#7dff6b")
+                out.append({"tipo": "correcto" if verde else "error", "en": tt})
+        if son and ef.get("sonido", True):
+            out.append({"tipo": ef.get("sonido") if isinstance(ef.get("sonido"), str) else son, "en": en})
+    return out
 
 
 # ------------------------------------------------------------------ 5. exportar
@@ -414,43 +459,41 @@ def subtitulos_ass(plan, destino, ancho, alto, con_subs=True):
     return destino
 
 
-def cmd_exportar(a):
-    import sonido
-    info = json.loads((pesado(a.nombre) / "render.json").read_text()) if (pesado(a.nombre) / "render.json").exists() else None
-    if not info:
-        fallo(f"primero renderiza: python3 kubo.py render {a.nombre}")
-    paso = info["paso"]
-    plan = _plan_con_cuadros(a.nombre, paso)
-    p, w = proyecto(a.nombre), pesado(a.nombre)
-    cuadros = w / "cuadros"
-    if not list(cuadros.glob("t*_*.png")):
-        fallo("no hay cuadros renderizados")
-    ancho, alto = (1080, 1920) if plan.get("formato", "9:16") == "9:16" else (1920, 1080)
-    total = sum(t["cuadros"] for t in plan["tomas"]) / FPS
-    # banda: música por ánimo + efectos del plan
-    escenas = [{"dur": t["dur"], "palabras": t.get("palabras", []), "animo": t.get("animo") or ("alegre" if t is plan["tomas"][0] else None),
-                "sfx": list(t.get("sfx", [])) + (sfx_de_movimientos(t) if plan.get("sfx_auto", True) else []), "transicion": t.get("transicion", "corte"), "titular": t.get("titular")}
-               for t in plan["tomas"]]
+def _escenas_banda(plan):
+    escenas = [{"dur": t["dur"], "palabras": t.get("palabras", []),
+                "animo": t.get("animo") or ("alegre" if t is plan["tomas"][0] else None),
+                "sfx": list(t.get("sfx", [])) + (sfx_de_movimientos(t) if plan.get("sfx_auto", True) else []),
+                "transicion": t.get("transicion", "corte"), "titular": t.get("titular")} for t in plan["tomas"]]
+    if plan.get("swoosh_cortes", True):           # swoosh corto en cada corte de cámara (ritmo de edición)
+        for e in escenas[1:]:
+            e["sfx"] = [{"tipo": "swoosh", "en": -0.14, "vol": 0.2}] + list(e["sfx"])
     if plan.get("firma", True) and escenas:   # firma sonora al inicio y al final (reconocimiento de marca y loop)
         escenas[0]["sfx"] = [{"tipo": "firma", "en": 0, "vol": 0.35}] + list(escenas[0]["sfx"])
         escenas[-1]["sfx"] = list(escenas[-1]["sfx"]) + [{"tipo": "firma", "en": max(0, escenas[-1]["dur"] - 1.3)}]
-    voz = p / "voz.mp3" if (p / "voz.mp3").exists() else None
-    estilo = a.musica or plan.get("musica", "caricatura")
-    banda = w / "banda.wav"
-    sonido.banda(escenas, str(voz) if voz else None, banda, estilo=estilo if estilo != "ninguna" else "caricatura",
-                 con_musica=estilo != "ninguna", densidad=a.densidad, stems=w / "stems")
-    ass = subtitulos_ass(plan, w / "subtitulos.ass", ancho, alto, not a.sin_subtitulos)
-    salida = w / f"{a.nombre}.mp4"
-    filtro = (f"[0:v]fps={FPS},scale={ancho}:{alto}:flags=lanczos,"
-              f"ass={ass}:fontsdir=/usr/share/fonts/opentype/inter,format=yuv420p[v]")
-    entradas = ["-framerate", str(FPS / paso), "-pattern_type", "glob", "-i", str(cuadros / "t*_*.png"), "-i", str(banda)]
+    return escenas
+
+
+def _mezclar(voz, banda, total, salida, lufs):
+    """Voz + banda → una pista (WAV) a «lufs» LUFS, de la duración exacta del video."""
     if voz:
-        entradas += ["-i", str(voz)]
-        audio = f"[1:a]volume=1.0[b];[2:a]aresample=44100,pan=stereo|c0=c0|c1=c0[vz];[vz][b]amix=inputs=2:normalize=0:duration=longest,"
+        ent = ["-i", str(banda), "-i", str(voz)]
+        f = ("[1:a]aresample=44100,pan=stereo|c0=c0|c1=c0[vz];[vz][0:a]amix=inputs=2:normalize=0:duration=longest,"
+             f"atrim=0:{total:.3f},apad=whole_dur={total:.3f},loudnorm=I={lufs}:TP=-1.5:LRA=11[a]")
     else:
-        audio = "[1:a]"
-    audio += f"atrim=0:{total:.3f},loudnorm=I={a.lufs}:TP=-1.5:LRA=11[a]"
-    cmd = ["ffmpeg", "-y", "-v", "error", *entradas, "-filter_complex", f"{filtro};{audio}", "-map", "[v]", "-map", "[a]",
+        ent = ["-i", str(banda)]
+        f = f"[0:a]atrim=0:{total:.3f},apad=whole_dur={total:.3f},loudnorm=I={lufs}:TP=-1.5:LRA=11[a]"
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", *ent, "-filter_complex", f, "-map", "[a]", "-ar", "48000",
+                        str(salida)], capture_output=True, text=True)
+    if r.returncode != 0:
+        fallo("ffmpeg falló al mezclar el audio: " + r.stderr[-500:])
+    return salida
+
+
+def _codificar(cuadros, paso, ass, audio, total, ancho, alto, salida):
+    sub = f"ass={ass}:fontsdir=/usr/share/fonts/opentype/inter," if ass else ""
+    filtro = f"[0:v]fps={FPS},scale={ancho}:{alto}:flags=lanczos,{sub}format=yuv420p[v]"
+    cmd = ["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS / paso), "-pattern_type", "glob",
+           "-i", str(cuadros / "t*_*.png"), "-i", str(audio), "-filter_complex", filtro, "-map", "[v]", "-map", "1:a",
            "-c:v", "libx264", "-preset", "medium", "-crf", "21", "-maxrate", "6M", "-bufsize", "12M", "-profile:v", "high",
            "-level", "4.1", "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
            "-tag:v", "avc1", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-t", f"{total:.3f}",
@@ -458,9 +501,171 @@ def cmd_exportar(a):
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         fallo("ffmpeg falló al exportar: " + r.stderr[-600:])
+    return salida
+
+
+def _preparar_export(nombre):
+    info = json.loads((pesado(nombre) / "render.json").read_text()) if (pesado(nombre) / "render.json").exists() else None
+    if not info:
+        fallo(f"primero renderiza: python3 kubo.py render {nombre}")
+    plan = _plan_con_cuadros(nombre, info["paso"])
+    cuadros = pesado(nombre) / "cuadros"
+    if not list(cuadros.glob("t*_*.png")):
+        fallo("no hay cuadros renderizados")
+    ancho, alto = (1080, 1920) if plan.get("formato", "9:16") == "9:16" else (1920, 1080)
+    total = sum(t["cuadros"] for t in plan["tomas"]) / FPS
+    return info["paso"], plan, cuadros, ancho, alto, total
+
+
+def cmd_exportar(a):
+    import sonido
+    paso, plan, cuadros, ancho, alto, total = _preparar_export(a.nombre)
+    p, w = proyecto(a.nombre), pesado(a.nombre)
+    voz = p / "voz.mp3" if (p / "voz.mp3").exists() else None
+    estilo = a.musica or plan.get("musica", "caricatura")
+    banda = w / "banda.wav"
+    sonido.banda(_escenas_banda(plan), str(voz) if voz else None, banda,
+                 estilo=estilo if estilo != "ninguna" else "caricatura", con_musica=estilo != "ninguna",
+                 densidad=a.densidad, stems=w / "stems")
+    ass = subtitulos_ass(plan, w / "subtitulos.ass", ancho, alto, not a.sin_subtitulos)
+    idioma = plan.get("idioma", "en")
+    audio = _mezclar(voz, banda, total, w / f"audio_{idioma}.wav", a.lufs)
+    salida = _codificar(cuadros, paso, ass, audio, total, ancho, alto, w / f"{a.nombre}.mp4")
+    import motion
+    motion.escribir_srt([{"dur": t["dur"], "palabras": t.get("palabras", [])} for t in plan["tomas"]], w / f"subtitulos_{idioma}.srt")
     shutil.copy(ass, p / "subtitulos.ass")
     print(f"Video listo ({total:.1f} s, {salida.stat().st_size / 1e6:.1f} MB): {salida}\n"
           f"Pistas separadas (música, efectos) en {w / 'stems'}")
+
+
+# ------------------------------------------------------------------ 6. idiomas: una pista de audio por idioma
+def _duracion(ruta):
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                 str(ruta)], capture_output=True, text=True).stdout or 0)
+
+
+def _leer(ruta, sr=44100):
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(ruta), "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"],
+                         capture_output=True).stdout
+    return np.frombuffer(raw, np.float32).astype(np.float64)
+
+
+def voz_idioma(plan, nombre, idioma, cfg, forzar=False):
+    """Voz en otro idioma acomodada a las tomas del video (que ya está renderizado en el idioma base).
+
+    Por toma: la frase traducida empieza donde empezaba la voz original; si dura más que el espacio de la toma se
+    acelera (hasta 1.35×) para no pisar la siguiente. Devuelve (wav de voz, palabras por toma con tiempos)."""
+    import numpy as np
+    import soundfile as sf
+    import motion
+    import voz as vz
+    carpeta = proyecto(nombre) / "idiomas" / idioma
+    carpeta.mkdir(parents=True, exist_ok=True)
+    textos = cfg["tomas"]
+    if len(textos) != len(plan["tomas"]):
+        fallo(f"idioma {idioma}: hay {len(textos)} textos y {len(plan['tomas'])} tomas (debe haber uno por toma)")
+    guion = " ".join(t for t in textos if t)
+    bruta = carpeta / "voz_bruta.mp3"
+    previo = (carpeta / "guion.txt").read_text(encoding="utf-8") if (carpeta / "guion.txt").exists() else None
+    if forzar or not bruta.exists() or previo != guion:
+        print(f"  {idioma}: voz…", flush=True)
+        try:
+            print("  ", vz.narrar(guion, bruta, cfg.get("motor", "gemini"), cfg.get("voz", "Puck"), cfg.get("estilo", "")))
+        except RuntimeError as e:
+            fallo(f"{e}. Opciones: espera unos minutos, usa \"motor\": \"aura\" en el idioma, o graba la voz.")
+        (carpeta / "guion.txt").write_text(guion, encoding="utf-8")
+        pal = corregir_con_guion(motion.palabras_voz(bruta), guion)
+        (carpeta / "palabras.json").write_text(json.dumps(pal, ensure_ascii=False))
+    pal = json.loads((carpeta / "palabras.json").read_text())
+    sr = 44100
+    x = _leer(bruta, sr)
+    total = sum(t["cuadros"] for t in plan["tomas"]) / FPS
+    pista = np.zeros(int((total + 1) * sr))
+    i, palabras_tomas = 0, []
+    for k, (toma, texto) in enumerate(zip(plan["tomas"], textos)):
+        n = len(texto.split()) if texto else 0
+        ws = pal[i:i + n]
+        i += n
+        t0 = toma["cuadro0"] / FPS
+        t1 = t0 + toma["cuadros"] / FPS
+        if not ws:
+            palabras_tomas.append([])
+            continue
+        a_, b_ = max(0.0, ws[0][1] - 0.04), ws[-1][2] + 0.12
+        seg = x[int(a_ * sr):int(b_ * sr)]
+        inicio = t0 + (toma["palabras"][0]["t"] if toma.get("palabras") else 0.08)
+        hueco = max(0.3, t1 - inicio - 0.08)
+        factor = min(1.35, max(1.0, len(seg) / sr / hueco))
+        if factor > 1.0:                                    # acelerar sin cambiar el tono
+            tmp_in, tmp_out = carpeta / "_seg.wav", carpeta / "_seg2.wav"
+            sf.write(str(tmp_in), seg, sr)
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(tmp_in), "-filter:a", f"atempo={factor:.3f}",
+                            str(tmp_out)], check=True)
+            seg = _leer(tmp_out, sr)
+        j = int(inicio * sr)
+        pista[j:j + len(seg)] += seg[: len(pista) - j]
+        lab = clave_idioma(cfg, k, ws)
+        palabras_tomas.append([{"t": round(inicio - t0 + (w[1] - a_) / factor, 3),
+                                "p": ("*" + w[0]) if lab and re.sub(r"\W", "", w[0].lower()) == lab else w[0]} for w in ws])
+    salida = carpeta / "voz.wav"
+    sf.write(str(salida), pista[: int(total * sr)].clip(-1, 1), sr)
+    return salida, palabras_tomas
+
+
+def clave_idioma(cfg, k, ws):
+    claves = cfg.get("claves") or []
+    c = claves[k] if k < len(claves) and claves[k] else max((w[0] for w in ws), key=lambda x: len(re.sub(r"\W", "", x)))
+    return re.sub(r"\W", "", c.lower())
+
+
+def cmd_idiomas(a):
+    """Por cada idioma de plan["idiomas"]: pista de audio (voz + música + efectos) para subirla a YouTube como
+    «pista de audio» del mismo video, subtítulos .srt y un MP4 con subtítulos quemados (TikTok/Reels/Facebook).
+    Además: versión global sin subtítulos quemados (la que se sube a YouTube con todas las pistas)."""
+    import sonido
+    import motion
+    paso, plan, cuadros, ancho, alto, total = _preparar_export(a.nombre)
+    w = pesado(a.nombre)
+    idiomas = plan.get("idiomas") or {}
+    pedidos = a.solo.split(",") if a.solo else list(idiomas)
+    base = plan.get("idioma", "en")
+    voz_base = proyecto(a.nombre) / "voz.mp3"
+    estilo = a.musica or plan.get("musica", "caricatura")
+    salidas = {}
+    # versión global: idioma base sin subtítulos quemados (cabeceras sí, si no dependen del idioma)
+    banda = w / f"banda_{base}.wav"
+    sonido.banda(_escenas_banda(plan), str(voz_base) if voz_base.exists() else None, banda,
+                 estilo=estilo if estilo != "ninguna" else "caricatura", con_musica=estilo != "ninguna", densidad=a.densidad)
+    audio_base = _mezclar(voz_base if voz_base.exists() else None, banda, total, w / f"audio_{base}.wav", a.lufs)
+    _codificar(cuadros, paso, None, audio_base, total, ancho, alto, w / f"{a.nombre}_global.mp4")
+    for idioma in pedidos:
+        cfg = idiomas.get(idioma)
+        if not cfg:
+            fallo(f"no hay traducción para «{idioma}» en plan.json (plan.idiomas.{idioma}.tomas)")
+        print(f"Idioma {idioma}:", flush=True)
+        voz, pals = voz_idioma(plan, a.nombre, idioma, cfg, a.forzar)
+        plan_l = json.loads(json.dumps(plan))
+        for t, ps, k in zip(plan_l["tomas"], pals, range(len(pals))):
+            t["palabras"] = ps
+            if cfg.get("cabeceras") and k < len(cfg["cabeceras"]):
+                t["cabecera"] = cfg["cabeceras"][k]
+        banda_l = w / f"banda_{idioma}.wav"
+        sonido.banda(_escenas_banda(plan_l), str(voz), banda_l, estilo=estilo if estilo != "ninguna" else "caricatura",
+                     con_musica=estilo != "ninguna", densidad=a.densidad)
+        audio = _mezclar(voz, banda_l, total, w / f"audio_{idioma}.wav", a.lufs)
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-c:a", "aac", "-b:a", "192k",
+                        str(w / f"audio_{idioma}.m4a")], check=True)
+        motion.escribir_srt([{"dur": t["dur"], "palabras": t["palabras"]} for t in plan_l["tomas"]], w / f"subtitulos_{idioma}.srt")
+        ass = subtitulos_ass(plan_l, w / f"subtitulos_{idioma}.ass", ancho, alto, True)
+        _codificar(cuadros, paso, ass, audio, total, ancho, alto, w / f"{a.nombre}_{idioma}.mp4")
+        salidas[idioma] = str(w / f"{a.nombre}_{idioma}.mp4")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(audio_base), "-c:a", "aac", "-b:a", "192k",
+                    str(w / f"audio_{base}.m4a")], check=True)
+    print(json.dumps({"global (YouTube, sin subtítulos quemados)": str(w / f"{a.nombre}_global.mp4"),
+                      "pistas de audio (YouTube → Idiomas → Agregar audio)": sorted(str(x) for x in w.glob("audio_*.m4a")),
+                      "subtítulos .srt": sorted(str(x) for x in w.glob("subtitulos_*.srt")),
+                      "un MP4 por idioma (TikTok/Reels/Facebook)": salidas}, ensure_ascii=False, indent=1))
 
 
 def cmd_todo(a):
@@ -481,7 +686,7 @@ def cmd_estado(a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for n in ("nuevo", "plan", "revisar", "render", "exportar", "todo", "estado"):
+    for n in ("nuevo", "plan", "revisar", "render", "exportar", "idiomas", "todo", "estado"):
         s = sub.add_parser(n)
         s.add_argument("nombre")
         if n == "nuevo":
@@ -496,7 +701,10 @@ def main():
         if n in ("render", "todo"):
             s.add_argument("--calidad", default="normal", choices=list(PASO))
             s.add_argument("--tomas")
-        if n in ("exportar", "todo"):
+        if n == "idiomas":
+            s.add_argument("--solo", help="idiomas separados por coma (por defecto todos los del plan)")
+            s.add_argument("--forzar", action="store_true", help="rehacer la voz aunque ya exista")
+        if n in ("exportar", "todo", "idiomas"):
             s.add_argument("--musica")
             s.add_argument("--densidad", default="pocos", choices=["pocos", "medios", "muchos"])
             s.add_argument("--sin-subtitulos", action="store_true")
