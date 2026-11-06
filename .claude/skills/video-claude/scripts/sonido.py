@@ -405,11 +405,14 @@ def banda(escenas, voz, salida):
     secciones = unidas
     mus = musica(secciones, total)[:n]
     mus = np.pad(mus, (0, n - len(mus)))
-    duck = 1 - 0.55 * _env_voz(voz, n) if voz else 1
-    mezcla = mus * 0.5 * duck + fx * 0.8
+    # Mezcla: la VOZ manda. Al hablar, la música baja ~14 dB y los efectos ~8 dB más; en silencio, la banda queda
+    # unos 12 dB por debajo de la voz. Sin normalizar a pico (eso subía todo y tapaba la voz).
+    env = _env_voz(voz, n) if voz else np.zeros(n)
+    duck_mus = 1 - 0.85 * env
+    duck_fx = 1 - 0.85 * env
+    mezcla = mus * 0.22 * duck_mus + fx * 0.35 * duck_fx
     mezcla *= np.minimum(1, (total - np.arange(n) / SR) / 0.8)
     mezcla = np.tanh(mezcla * 1.2) / np.tanh(1.2)
-    mezcla = _norm(mezcla, 0.85)
     est = np.stack([mezcla, np.roll(mezcla, 180)], 1)
     import soundfile as sf
     sf.write(str(salida), est, SR)
