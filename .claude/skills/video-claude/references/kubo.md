@@ -16,7 +16,7 @@ palabra y se corrige contra el guion (acentos, «la estufa»). Idioma: el del gu
 mundial; el modo `--sin-voz` sirve para todos los idiomas).
 
 Tiempos medidos (4 CPU, sin GPU): `normal` (720p, animado en dos) ≈ 7 s de render por segundo de video;
-`final` (1080p, 24 cuadros/s, antialias 16) ≈ 30 s por segundo de video. Exportar ≈ 15 s.
+`final` (1080p, 24 cuadros/s, antialias 16) ≈ 50 s por segundo de video (17 s → 15 min). Exportar ≈ 15 s.
 
 ## Cómo funciona el conector de Blender (`kubo/blender_escena.py`)
 1. `kubo.py` calcula los cuadros exactos de cada toma (sin acumular error con la voz) y escribe `_plan.json`.
