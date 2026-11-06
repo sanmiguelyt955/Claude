@@ -17,7 +17,7 @@ Dos modos, los dos con Remotion y `scripts/motion.py`. Todo se anima con código
 - Música: elígela con `recomendar_musica` (ver `musica.md`) y pásala con `--musica`; con voz se baja sola.
 - O **banda sonora propia** con `--banda` (`scripts/sonido.py`): música sintetizada que cambia por `animo` de escena + efectos `sfx` + whoosh en las transiciones + ducking bajo la voz. Sin derechos de autor ni conectores.
 - **Voz gratis**: Cloudflare Workers AI `@cf/deepgram/aura-2-es` (voces `alvaro`, `javier`, `nestor`, `sirio`, `aquila`…; `alvaro` = narrador grave y expresivo) con la cuenta de Cloudflare del usuario: `POST /accounts/<id>/ai/run/@cf/deepgram/aura-2-es` con `{"text", "speaker", "encoding": "mp3"}`.
-- **Salida para celular**: el MP4 final siempre sale en H.264 yuv420p (rango tv), máx. 6 Mbps, faststart y -14 LUFS (`para_movil`), porque el `yuvj420p` que saca Remotion no abre en el iPhone.
+- **Salida para celular**: el MP4 final siempre sale en H.264 yuv420p (rango tv), máx. 4 Mbps, faststart y -14 LUFS (`para_movil`), porque el `yuvj420p` que saca Remotion no abre en el iPhone.
 
 ## Modo `reel`: escenas
 | `tipo` | Campos | Qué hace |

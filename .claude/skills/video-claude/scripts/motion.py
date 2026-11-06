@@ -81,6 +81,9 @@ def _color_fondo(img):
     return None
 
 
+VERSION_RECORTE = 3   # súbela al cambiar el algoritmo: invalida los recortes guardados
+
+
 def _mascara_croma(a, nombre):
     """0 = sujeto … 1 = fondo, por TONO (no por brillo): las sombras verde oscuro y el viñeteado negro de las
     esquinas que pinta la IA cuentan como fondo, aunque no sean «verde puro»."""
@@ -298,8 +301,8 @@ def para_movil(video, audio=True):
     y audio a -14 LUFS."""
     tmp = video.with_suffix(".tmp.mp4")
     cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(video),
-           "-vf", "scale=in_range=full:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "21",
-           "-maxrate", "6M", "-bufsize", "12M", "-profile:v", "high", "-level", "4.1", "-color_range", "tv",
+           "-vf", "scale=in_range=full:out_range=tv,format=yuv420p", "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+           "-maxrate", "4M", "-bufsize", "8M", "-profile:v", "high", "-level", "4.1", "-color_range", "tv",
            "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-tag:v", "avc1"]
     cmd += ["-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"] if audio else ["-an"]
     r = subprocess.run(cmd + ["-movflags", "+faststart", str(tmp)], capture_output=True)
@@ -344,7 +347,7 @@ def main():
                     fallo(f"Falta la imagen {src}")
                 croma = c.pop("croma", None)
                 if croma is not False:
-                    destino = public / (re.sub(r"[^A-Za-z0-9._-]", "_", src.stem) + "_recorte2.png")
+                    destino = public / (re.sub(r"[^A-Za-z0-9._-]", "_", src.stem) + f"_recorte{VERSION_RECORTE}.png")
                     if (destino.is_file() and destino.stat().st_mtime >= src.stat().st_mtime) or \
                             recortar_croma(src, destino, forzar=bool(croma)):
                         c["src"] = destino.name
