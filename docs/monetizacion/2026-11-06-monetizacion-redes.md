@@ -12,8 +12,10 @@ nicho, época del año y música con derechos.
 |---|---|---|
 | **YouTube (YPP) — hoy** | 1,000 suscriptores **y** 4,000 h de vista pública en videos largos (12 meses) **o** 10 M vistas de Shorts (90 días). Nivel inicial (sin anuncios: membresías, Super Thanks, Shopping): 500 suscriptores + 3 videos en 90 días + 3,000 h o 3 M vistas de Shorts | AdSense, verificación en 2 pasos, país con YPP (México sí), seguir las políticas |
 | **YouTube — desde el 1-feb-2027 (solo canales nuevos)** | **8,000 h** en 12 meses **o 20 M vistas de Shorts** en 90 días. Para cobrar Shorts hay que **mantener 10 M vistas de Shorts cada 90 días** | Los que ya estén en YPP antes no se ven afectados → **conviene entrar antes del 1-feb-2027** |
-| **TikTok Creator Rewards** | 18+, 10,000 seguidores, 100,000 vistas en 30 días, cuenta personal en país elegible, videos **de más de 1 minuto**, originales | Solo cuentan vistas «calificadas» (Para ti, >5 s, no fraudulentas); revisar si México está en la lista de países |
+| **TikTok Creator Rewards** | 18+, 10,000 seguidores, 100,000 vistas en 30 días, cuenta personal en país elegible, videos **de más de 1 minuto**, originales | Solo cuentan vistas «calificadas» (Para ti, >5 s, no fraudulentas); países: EE. UU., Reino Unido, Alemania, Japón, Corea, Francia, **México** y Brasil |
 | **Facebook Content Monetization** | Modo profesional + **invitación** (o formulario de interés / Creator Fast Track); seguir políticas de monetización | Reels mínimo 10 s; no paga contenido de otros (derechos) |
+| **Snapchat** | 18+, **50,000 seguidores**, **15,000 h de vista en 28 días** (3,000 h de Spotlight); desde 7-may-2026 mínimo 100 h de Spotlight en 28 días para el pago máximo; país elegible | Reparto de anuncios entre Snaps; pago mínimo $100 |
+| **X (Twitter)** | Suscripción Premium (≈ $8/mes), **5 M de impresiones orgánicas en 3 meses**, **500 seguidores verificados**, 18+, 2FA | Pago cada 2 semanas, mínimo $30; cuenta sobre todo lo que ven usuarios Premium |
 | **Instagram** | No hay pago general por vistas. Bonos solo por invitación; Regalos (500 seguidores), Suscripciones (10,000), marcas | Sirve para crecer y vender, casi no paga por vistas |
 
 ## Cuánto pagan (por 1,000 vistas)
@@ -24,6 +26,8 @@ nicho, época del año y música con derechos.
 | YouTube **videos largos** | Entretenimiento/animación $1 – $4 · historia/educación $3 – $12 · **«hecho para niños» ≈ $0.33** | $1,000 – $12,000 (≈ $330 si es para niños) |
 | TikTok Creator Rewards (videos > 1 min) | $0.40 – $1.00 por 1,000 **calificadas** (≈ 50 % de las vistas califican) | $200 – $500 reales |
 | Facebook Reels | $0.02 – $0.60 (muy variable; EE. UU. más alto) | $20 – $600 |
+| Snapchat Spotlight | no publica tarifa (reparto de anuncios) | muy variable |
+| X (videos/posts) | ≈ $8 – $12 por **millón** de impresiones de usuarios verificados | ≈ $8 – $12 |
 | Instagram Reels | ≈ $0 (bonos por invitación ≈ $0.01–0.05) | ≈ $0 – $50 |
 
 ### Ejemplo con 10 M de vistas al mes (Shorts de Kubo en 3 idiomas, audiencia mixta)
@@ -49,3 +53,8 @@ de copiar clips, personajes o música de otros.
 Si un video de caricatura se marca para niños: sin anuncios personalizados (RPM ≈ $0.33), sin comentarios y sin
 notificaciones. Kubo debe ser **humor familiar para todo público** (adolescentes y adultos), no infantil: chistes de
 la vida diaria, temas de adultos sanos (trabajo, papás, escuela, dinero), y no marcar «para niños» salvo que lo sea.
+
+## Truco de los grandes: un video, varios idiomas
+Zack D Films sube cada Short con **varias pistas de audio** (inglés, árabe, español…: función «multi-language audio» de
+YouTube). Las vistas de todos los idiomas se suman en el mismo video → más rápido a los 10 M de Shorts. Kubo ya hace
+la voz en cualquier idioma: falta exportar la pista de cada idioma para subirlas juntas.
