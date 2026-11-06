@@ -21,8 +21,8 @@ const FORMATOS: Record<string, [number, number]> = {
 }
 
 const CROMA: Record<string, string> = {
-  verde: 'isolated on a perfectly flat solid chroma key green background (#00B140), evenly lit, no shadows or gradients on the background, the whole subject fully visible with margin around it',
-  azul: 'isolated on a perfectly flat solid chroma key blue background (#0047BB), evenly lit, no shadows or gradients on the background, the whole subject fully visible with margin around it',
+  verde: 'isolated on a perfectly flat solid chroma key green background (#00B140), evenly lit studio cutout, subject floating with NO cast shadow, no floor, no reflection, no vignette, no dark corners, no gradients on the background, the whole subject fully visible with margin around it',
+  azul: 'isolated on a perfectly flat solid chroma key blue background (#0047BB), evenly lit studio cutout, subject floating with NO cast shadow, no floor, no reflection, no vignette, no dark corners, no gradients on the background, the whole subject fully visible with margin around it',
 }
 
 // Neuronas según la tabla oficial de precios de Workers AI.
@@ -66,7 +66,9 @@ async function generar(env: Env, origen: string, o: Opciones) {
   const modelo = o.modelo === 'klein' || formato !== '1:1' ? KLEIN : SCHNELL
   const pasos = Math.max(1, Math.min(8, Math.round(o.pasos ?? 6)))
   const fondo = o.fondo && CROMA[o.fondo] ? CROMA[o.fondo] : ''
-  const prompt = [o.estilo?.trim(), o.prompt.trim(), fondo].filter(Boolean).join('. ')
+  // Con croma, el estilo no debe traer viñeta ni sombras (se verían como manchas al recortar)
+  const estilo = fondo ? o.estilo?.replace(/\b(heavy |dark |strong )?(vignett(e|ing)|dark corners|dramatic shadows?)\b,?/gi, '').trim() : o.estilo?.trim()
+  const prompt = [estilo, o.prompt.trim(), fondo].filter(Boolean).join('. ')
   const coste = neuronas(modelo, w, h, pasos)
   const ya = await usado(env)
   if (ya + coste > CUOTA) {

@@ -15,6 +15,9 @@ Dos modos, los dos con Remotion y `scripts/motion.py`. Todo se anima con código
 5. **Final**: el mismo comando sin `--control` (opcional `--salida`, `--formato 9:16|16:9|1:1|4:5`). Normaliza a -14 LUFS si hay audio. Entrega el MP4 con la herramienta de enviar archivos.
 - Tiempos medidos en este servidor: unos 2 min por cada 15 s de video en el final; el control tarda bastante menos.
 - Música: elígela con `recomendar_musica` (ver `musica.md`) y pásala con `--musica`; con voz se baja sola.
+- O **banda sonora propia** con `--banda` (`scripts/sonido.py`): música sintetizada que cambia por `animo` de escena + efectos `sfx` + whoosh en las transiciones + ducking bajo la voz. Sin derechos de autor ni conectores.
+- **Voz gratis**: Cloudflare Workers AI `@cf/deepgram/aura-2-es` (voces `alvaro`, `javier`, `nestor`, `sirio`, `aquila`…; `alvaro` = narrador grave y expresivo) con la cuenta de Cloudflare del usuario: `POST /accounts/<id>/ai/run/@cf/deepgram/aura-2-es` con `{"text", "speaker", "encoding": "mp3"}`.
+- **Salida para celular**: el MP4 final siempre sale en H.264 yuv420p (rango tv), máx. 6 Mbps, faststart y -14 LUFS (`para_movil`), porque el `yuvj420p` que saca Remotion no abre en el iPhone.
 
 ## Modo `reel`: escenas
 | `tipo` | Campos | Qué hace |
@@ -29,7 +32,10 @@ Cada escena: `dur` en segundos (con voz se calcula sola). Global: `estilo` = `bo
 
 ## Modo `collage`: escenas por capas (2.5D)
 Cada escena: `dur`, `capas[]`, `camara`, `fuerza`, `foco`, `texto`, `posTexto`, `transicion`, `particulas`.
-- **Capa**: `src` (ruta relativa al guion), `z` (0 = fondo lejano … 1 = pegado a la cámara), `x`, `y` (centro 0-1), `ancho` (fracción del ancho del video), `mov` (`flotar`, `respirar`, `balanceo`), `croma` (true/false; por defecto se detecta solo el fondo verde o azul y se recorta).
+- **Golpes visuales (retención)**: `titular` (palabra-sello roja que cae con sacudida y sonido justo cuando la voz dice la *clave*: «ROBADA», «1913», «¿Picasso?»), `efecto` (`flash` al entrar, `flashClave` en la clave, `sacudida` al entrar). Cada *clave* da además un pequeño golpe de zoom. Úsalos cada 2-3 escenas, no en todas.
+- **Sonido por escena** (con `--banda`): `animo` (`misterio`, `robo`, `panico`, `investigacion`, `giro`, `final`: la música cambia de estilo al cambiar el ánimo) y `sfx` (`["pasos", {"tipo": "sello", "en": "clave"}, {"tipo": "tren", "en": 1.2, "dur": 3, "vol": 0.4}]`). Efectos: whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina, papel, tren, riser (termina en el momento indicado), latido, reloj, campana, revelacion, caja. Los whoosh de cada transición y el golpe de cada titular se ponen solos, y la música baja sola bajo la voz.
+- **Historias largas (1-2 min)**: escena nueva cada 2-5 s (una frase por escena), ánimo que cambia cada 3-5 escenas, un titular o flash cada 2-3 escenas y un giro (`giro`: casi silencio) antes de cada revelación.
+- **Capa**: `src` (ruta relativa al guion), `z` (0 = fondo lejano … 1 = pegado a la cámara), `x`, `y` (centro 0-1), `ancho` (fracción del ancho del video), `mov` (`flotar`, `respirar`, `balanceo`), `croma` (true/false; por defecto se detecta solo el fondo verde o azul y se recorta). El recorte va por **tono** (no solo «verde puro»): quita también las sombras verde oscuro que pinta la IA, las sombras de contacto casi negras, las manchas lima del croma mal iluminado y la viñeta oscura de las esquinas; elimina islas sueltas y trozos cortados por el borde, encoge 1 px el borde y quita el reflejo verde. Revisa siempre los recortes sobre magenta antes del render.
 - **Cámara**: `avanzar`, `retroceder`, `izquierda`, `derecha`, `subir`, `bajar`, `fija`; `fuerza` 1 normal, 2 «métete con fuerza». Las capas cercanas se mueven más que las lejanas (paralaje) y el fondo y el primerísimo plano se desenfocan un poco (profundidad).
 - **Transición a la siguiente**: `hueco` (la cámara se mete por el `foco` y la escena nueva aparece por un círculo que crece desde ahí: ideal con una ventana, una puerta o un cristal en primer plano), `tapa` (se descubre detrás de una franja oscura), `fundido`, `corte`.
 - **Algo que siempre se mueve**: `particulas` = `nieve`, `polvo`, `chispas`; y la luz cálida que cruza (global).
@@ -49,7 +55,7 @@ Para cada escena, dale los prompts listos:
 - **Primer plano** (marco de ventana, rama, farola): sobre verde, con el hueco también en verde.
 - **Personas reales**: nunca inventar su cara; de espaldas, en silueta o solo manos, y avisar en pantalla si es una recreación.
 - **Generar las capas tú mismo** (en este orden):
-  1. **`imagenes-flux`** (conector propio, gratis con la cuota diaria de Cloudflare): `generar_capas(estilo, fondo, elementos[], formato)` devuelve el fondo y cada elemento sobre croma, listos para el guion. Descarga las URLs junto al guion (`curl -o capa.jpg <url>`). Mira `cuota_imagenes` antes de escenas largas.
+  1. **`imagenes-flux`** (conector propio, gratis con la cuota diaria de Cloudflare): `generar_capas(estilo, fondo, elementos[], formato)` devuelve el fondo y cada elemento sobre croma, listos para el guion. Descarga las URLs junto al guion (`curl -o capa.jpg <url>`). Mira `cuota_imagenes` antes de escenas largas. Para un proyecto entero usa `scripts/flux_lote.py lista.json carpeta` (lee la URL del MCP con clave de `IMAGENES_FLUX_URL`; nunca la guardes en el repo).
   2. **Google Flow con Claude in Chrome**, solo cuando el usuario tenga **su computadora conectada** (Remote Control / navegador): usa la web normal de Flow en su sesión, como lo haría él, respetando sus reglas y límites (nada de llamadas internas ni de saltarse controles). Descarga cada imagen en 2K y súbela/pásala al guion.
   3. Higgsfield (conector, gasta créditos: di el precio antes) o Canva (`generate-image`).
 - Si una persona tiene que moverse de verdad (parpadear, escribir), hace falta un clip corto de video con IA (créditos); úsalo solo ahí.

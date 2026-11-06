@@ -70,7 +70,7 @@ def _color_fondo(img):
     esquinas = np.concatenate([a[:k, :k].reshape(-1, 3), a[:k, -k:].reshape(-1, 3), a[-k:, :k].reshape(-1, 3), a[-k:, -k:].reshape(-1, 3)])
     for muestra in (esquinas, a.reshape(-1, 3)):
         r, g, b = muestra[:, 0], muestra[:, 1], muestra[:, 2]
-        verdes = (g > 90) & (g > r * 1.35) & (g > b * 1.2)
+        verdes = (g > 60) & (g > r * 1.35) & (g > b * 1.2)
         azules = (b > 90) & (b > r * 1.35) & (b > g * 1.15)
         # esquinas: casi todas de color croma; imagen entera (p. ej. un marco con el hueco verde): al menos 20 %
         umbral = 0.6 if muestra is esquinas else 0.2
@@ -81,33 +81,84 @@ def _color_fondo(img):
     return None
 
 
+def _mascara_croma(a, nombre):
+    """0 = sujeto … 1 = fondo, por TONO (no por brillo): las sombras verde oscuro y el viñeteado negro de las
+    esquinas que pinta la IA cuentan como fondo, aunque no sean «verde puro»."""
+    import numpy as np
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx, mn = a.max(-1), a.min(-1)
+    sat = (mx - mn) / (mx + 1e-6)
+    c, o1, o2 = (g, r, b) if nombre == "verde" else (b, r, g)
+    dom = (c - np.maximum(o1, o2)) / (c + 1e-6)          # dominancia RELATIVA del canal croma (vale igual en la sombra)
+    t = np.clip((dom - 0.12) / 0.22, 0, 1) * np.clip((sat - 0.18) / 0.2, 0, 1)
+    t = np.maximum(t, np.clip((dom - 0.3) / 0.2, 0, 1) * np.clip((45 - mx) / 25, 0, 1))   # sombra oscura MUY teñida
+    # Por tono: el croma iluminado desparejo (manchas lima/amarillentas o turquesa) sigue siendo fondo
+    hue = np.degrees(np.arctan2(np.sqrt(3) * (g - b), 2 * r - g - b)) % 360
+    lo, hi = (62, 168) if nombre == "verde" else (195, 250)     # verde: de lima a verde puro, sin turquesa ni azul
+    dentro = np.minimum(hue - lo, hi - hue)
+    t_hue = np.clip(dentro / 12, 0, 1) * np.clip((sat - 0.3) / 0.15, 0, 1) * np.clip((mx - 45) / 30, 0, 1)
+    # Sombra de contacto casi negra pero teñida de croma y sin nada de rojo (la madera, la piel o un traje sí tienen)
+    dif = (g - r) if nombre == "verde" else (b - r)
+    t_hue = np.maximum(t_hue, np.clip((dif - 10) / 8, 0, 1) * np.clip((dif / (mx + 1e-6) - 0.4) / 0.15, 0, 1) * (mx < 50))
+    oscuro = np.clip((22 - mx) / 12, 0, 1)                   # casi negro (viñeta): fondo solo si toca el borde (abajo)
+    return t, t_hue, oscuro
+
+
 def recortar_croma(origen, destino, forzar=False):
-    """PNG con transparencia: quita el fondo verde/azul con borde suave y elimina el reflejo de color (despill)."""
+    """PNG con transparencia: quita el fondo verde/azul (sombras y viñeta incluidas) con borde limpio y sin reflejo."""
     import numpy as np
     from PIL import Image
+    from scipy import ndimage as nd
     img = Image.open(origen).convert("RGB")
     tipo = _color_fondo(img)
     if not tipo:
         if not forzar:
             return False
         tipo = ("verde", (0, 177, 64))
-    nombre, ref = tipo
+    nombre = tipo[0]
     a = np.asarray(img, dtype=np.float32)
-    r, g, b = a[..., 0], a[..., 1], a[..., 2]
-    if nombre == "verde":
-        dominio = g - np.maximum(r, b)          # cuánto «más verde» que el resto
-        ref_d = ref[1] - max(ref[0], ref[2])
-    else:
-        dominio = b - np.maximum(r, g)
-        ref_d = ref[2] - max(ref[0], ref[1])
-    t = np.clip((dominio - ref_d * 0.25) / max(ref_d * 0.45, 1), 0, 1)   # 0 = sujeto, 1 = fondo
-    alfa = (1 - t) * 255
-    # despill: limita el canal del croma al máximo de los otros dos en el borde
-    if nombre == "verde":
-        a[..., 1] = np.minimum(g, np.maximum(r, b) + 8)
-    else:
-        a[..., 2] = np.minimum(b, np.maximum(r, g) + 8)
-    out = np.dstack([a, alfa]).clip(0, 255).astype(np.uint8)
+    t_dom, t_hue, oscuro = _mascara_croma(a, nombre)
+    t = np.maximum(t_dom, t_hue)       # el tono solo cuenta para el fondo exterior; los huecos internos, croma estricto
+    h, w = t.shape
+    # El fondo es el croma conectado con el borde. Lo casi negro solo cuenta si viene de una ESQUINA (viñeta),
+    # para no comerse un traje oscuro que toca el borde de abajo.
+    lab, _ = nd.label(t > 0.35)
+    borde = np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))
+    exterior = np.isin(lab, borde[borde > 0])
+    lab_o, _ = nd.label(oscuro > 0.35)
+    k = max(3, min(h, w) // 40)
+    esq = np.unique(np.concatenate([lab_o[:k, :k].ravel(), lab_o[:k, -k:].ravel(), lab_o[-k:, :k].ravel(), lab_o[-k:, -k:].ravel()]))
+    vineta = np.isin(lab_o, esq[esq > 0]) & (oscuro > 0.35)
+    fondo = np.where(exterior, t, 0)
+    fondo = np.maximum(fondo, np.where(vineta, oscuro, 0))
+    # Huecos interiores (asa de la maleta, entre brazo y cuerpo): solo zonas grandes de croma claro
+    lab_i, n_i = nd.label((t_dom > 0.85) & ~exterior)
+    if n_i:
+        areas = nd.sum(np.ones_like(t), lab_i, range(1, n_i + 1))
+        grandes = np.isin(lab_i, 1 + np.flatnonzero(areas >= h * w * 0.0015))
+        fondo = np.maximum(fondo, np.where(grandes, t_dom, 0))
+    sujeto = fondo < 0.5
+    # Quita islas sueltas (manchas, sombras cortadas) y rellena agujeros diminutos del sujeto
+    lab, n = nd.label(sujeto)
+    if n:
+        areas = nd.sum(sujeto, lab, range(1, n + 1))
+        toca = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))) - {0}
+        mayor = 1 + int(np.argmax(areas))
+        # fuera las islas pequeñas y los trozos secundarios cortados por el borde (marcos, muebles de la foto)
+        sujeto = np.isin(lab, [q for q in range(1, n + 1) if q == mayor or (
+            areas[q - 1] >= max(areas.max() * 0.02, 200) and (q not in toca or areas[q - 1] >= areas.max() * 0.5))])
+    # Borde: encoge 1 px (adiós halo) y suaviza con la transición del croma
+    duro = nd.binary_erosion(sujeto, iterations=1)
+    alfa = np.where(duro, 1 - np.where(nd.binary_erosion(duro, iterations=2), 0, fondo), 0)
+    alfa = np.clip((alfa - 0.15) / 0.7, 0, 1)        # sin semitransparencias sucias: el borde es corto y limpio
+    alfa = nd.gaussian_filter(alfa.astype(np.float32), 0.7) * duro
+    # Despill: en todo el sujeto limita el canal croma al máximo de los otros (más fuerte cerca del borde)
+    ci = 1 if nombre == "verde" else 2
+    otros = np.maximum(a[..., 0], a[..., 2]) if ci == 1 else np.maximum(a[..., 0], a[..., 1])
+    cerca = 1 - nd.binary_erosion(duro, iterations=6)
+    tope = otros + np.where(cerca, 2, 14)
+    a[..., ci] = np.minimum(a[..., ci], tope)
+    out = np.dstack([a, alfa * 255]).clip(0, 255).astype(np.uint8)
     im = Image.fromarray(out, "RGBA")
     caja = im.getchannel("A").point(lambda v: 255 if v > 20 else 0).getbbox()
     if caja:
@@ -266,6 +317,8 @@ def main():
     ap.add_argument("--marca")
     ap.add_argument("--voz")
     ap.add_argument("--musica")
+    ap.add_argument("--banda", action="store_true",
+                    help="banda sonora propia (sonido.py): música por «animo» de escena + efectos «sfx» + whoosh y ducking")
     ap.add_argument("--formato", default="9:16", choices=list(FORMATOS))
     ap.add_argument("--control", action="store_true", help="solo render rápido + hoja de cuadros de control")
     ap.add_argument("--nombre")
@@ -291,7 +344,7 @@ def main():
                     fallo(f"Falta la imagen {src}")
                 croma = c.pop("croma", None)
                 if croma is not False:
-                    destino = public / (re.sub(r"[^A-Za-z0-9._-]", "_", src.stem) + "_recorte.png")
+                    destino = public / (re.sub(r"[^A-Za-z0-9._-]", "_", src.stem) + "_recorte2.png")
                     if (destino.is_file() and destino.stat().st_mtime >= src.stat().st_mtime) or \
                             recortar_croma(src, destino, forzar=bool(croma)):
                         c["src"] = destino.name
@@ -307,6 +360,14 @@ def main():
         props["escenas"] = alinear(props["escenas"], palabras_voz(public / props["voz"]), total)
     if a.musica:
         props["musica"] = copiar(a.musica, public, "musica" + Path(a.musica).suffix.lower())
+    if a.banda:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import sonido
+        for e in props.get("escenas", []):
+            e.setdefault("dur", 3)
+        _, secciones = sonido.banda(props["escenas"], public / props["voz"] if props.get("voz") else None, public / "banda.wav")
+        props["musica"], props["volumenMusica"] = "banda.wav", 1.0
+        print("Banda sonora:", ", ".join(f"{a_}@{t0:.1f}s" for a_, t0, _ in secciones), file=sys.stderr)
     for e in props.get("escenas", []):
         e.setdefault("dur", 3)
 
@@ -322,7 +383,7 @@ def main():
     salida = Path(a.salida or (trabajo / f"{nombre}.mp4")).resolve()
     salida.parent.mkdir(parents=True, exist_ok=True)
     render(a.modo, props, public, salida, ancho, alto)
-    para_movil(salida, audio=bool(a.voz or a.musica))
+    para_movil(salida, audio=bool(a.voz or a.musica or a.banda))
     print(json.dumps({"salida": str(salida), "duracion": round(duracion, 2), "formato": a.formato}, ensure_ascii=False))
 
 

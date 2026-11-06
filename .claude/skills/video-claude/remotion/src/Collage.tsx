@@ -2,8 +2,8 @@
 // distancias; la cámara se mueve y cada capa se desplaza según su profundidad (paralaje). Grano, papel, luz,
 // partículas, transiciones con sentido y letras al ritmo de la voz.
 import React from 'react';
-import {AbsoluteFill, Audio, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig, CalculateMetadataFunction, Easing} from 'remotion';
-import {Marca, MARCA_DEFECTO, Palabra, PalabraAPalabra, partir, Grano, Papel, Vineta, Particulas, Luz} from './comun';
+import {AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig, CalculateMetadataFunction, Easing} from 'remotion';
+import {Marca, MARCA_DEFECTO, Palabra, PalabraAPalabra, partir, esClave, Grano, Papel, Vineta, Particulas, Luz} from './comun';
 
 export type Capa = {
   src: string;              // imagen en la carpeta pública (PNG con transparencia si es recorte)
@@ -25,6 +25,9 @@ export type EscenaCollage = {
   posTexto?: 'arriba' | 'centro' | 'abajo';
   transicion?: 'hueco' | 'tapa' | 'fundido' | 'corte';   // cómo pasa a la SIGUIENTE escena
   particulas?: 'nieve' | 'polvo' | 'chispas';
+  titular?: string;         // palabra-sello grande que cae con golpe cuando la voz dice la *clave* (p. ej. «ROBADA»)
+  efecto?: 'flash' | 'sacudida' | 'flashClave';   // flash blanco al entrar / sacudida al entrar / flash en la clave
+  animo?: string; sfx?: unknown[];   // los usa sonido.py (banda sonora); aquí se ignoran
 };
 
 export type CollageProps = {
@@ -107,10 +110,21 @@ const EscenaVista: React.FC<{e: EscenaCollage; m: Marca; serif?: boolean; entra?
   if (entra === 'fundido') opacidad *= ini;
   const capas = [...e.capas].sort((a, b) => a.z - b.z);
   const palabras = e.palabras || (e.texto ? partir(e.texto, e.dur) : []);
+  // Momento clave: cuando aparece la primera palabra *clave* (o al 40 % si no hay)
+  const kc = palabras.find((w) => esClave(w.p));
+  const fClave = Math.round(((kc ? kc.t : e.dur * 0.4) + offset) * fps);
+  const g = spring({frame: frame - fClave, fps, config: {damping: 9, stiffness: 220, mass: 0.5}});
+  const golpe = frame >= fClave ? 1 + 0.045 * Math.max(0, 1 - (frame - fClave) / (0.35 * fps)) * (1 - Math.abs(1 - g)) : 1;
+  const fSac = e.efecto === 'sacudida' ? Math.round(offset * fps) : e.titular ? fClave : -999;
+  const dt = frame - fSac;
+  const sac = dt >= 0 && dt < 0.4 * fps ? (1 - dt / (0.4 * fps)) * 18 : 0;
+  const sx = sac * Math.sin(frame * 2.7), sy = sac * Math.cos(frame * 3.3);
   const pos = e.posTexto || 'abajo';
   return (
     <AbsoluteFill style={{opacity: opacidad, transform: `scale(${escalaEntrada})`, overflow: 'hidden', clipPath: frame < sol ? recorte : undefined}}>
-      {capas.map((c, i) => <CapaVista key={i} c={c} p={p} e={e} zoomExtra={zoomExtra} />)}
+      <AbsoluteFill style={{transform: `translate(${sx}px, ${sy}px) scale(${golpe})`}}>
+        {capas.map((c, i) => <CapaVista key={i} c={c} p={p} e={e} zoomExtra={zoomExtra} />)}
+      </AbsoluteFill>
       {e.particulas && <Particulas tipo={e.particulas} n={e.particulas === 'nieve' ? 70 : 35} />}
       {palabras.length > 0 && (
         <AbsoluteFill style={{justifyContent: pos === 'arriba' ? 'flex-start' : pos === 'centro' ? 'center' : 'flex-end', alignItems: 'center',
@@ -122,6 +136,24 @@ const EscenaVista: React.FC<{e: EscenaCollage; m: Marca; serif?: boolean; entra?
           </Sequence>
         </AbsoluteFill>
       )}
+      {e.titular && frame >= fClave && (() => {
+        const s2 = spring({frame: frame - fClave, fps, config: {damping: 12, stiffness: 260, mass: 0.7}});
+        return (
+          <AbsoluteFill style={{justifyContent: 'center', alignItems: 'center', pointerEvents: 'none'}}>
+            <div style={{transform: `rotate(-8deg) scale(${2.6 - 1.6 * s2})`, opacity: Math.min(1, s2 * 2), border: `10px solid ${colorClave}`,
+              color: colorClave, padding: '10px 34px', fontFamily: 'Georgia, "Times New Roman", serif', fontWeight: 900, fontSize: 118,
+              letterSpacing: 6, textTransform: 'uppercase', background: 'rgba(245,236,214,0.18)', mixBlendMode: 'multiply',
+              boxShadow: `inset 0 0 0 4px rgba(245,236,214,0.4)`, filter: 'url(#tinta)'}}>{e.titular}</div>
+            <svg width="0" height="0"><filter id="tinta"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed={3} />
+              <feDisplacementMap in="SourceGraphic" scale="6" /></filter></svg>
+          </AbsoluteFill>
+        );
+      })()}
+      {(e.efecto === 'flash' || e.efecto === 'flashClave') && (() => {
+        const f0 = e.efecto === 'flash' ? Math.round(offset * fps) : fClave;
+        const o = interpolate(frame - f0, [0, 2, 10], [0, 0.9, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+        return o > 0 ? <AbsoluteFill style={{background: '#fffaf0', opacity: o}} /> : null;
+      })()}
       {entra === 'tapa' && frame < sol && (
         <div style={{position: 'absolute', top: 0, bottom: 0, width: width * 0.18, left: `${(1 - ini) * 100}%`,
           background: 'linear-gradient(90deg, rgba(20,14,8,0.95) 0%, rgba(20,14,8,0) 100%)'}} />

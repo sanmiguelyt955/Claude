@@ -1,0 +1,904 @@
+{
+ "serif": true,
+ "textura": {
+  "grano": 0.13,
+  "papel": 0.14,
+  "vineta": 0.5,
+  "luz": 0.25
+ },
+ "escenas": [
+  {
+   "texto": "Este cuadro no era el más famoso del mundo... hasta que alguien lo *robó*.",
+   "capas": [
+    {
+     "src": "img/f01_galeria.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e01_monalisa.jpg",
+     "z": 0.6,
+     "x": 0.5,
+     "y": 0.52,
+     "ancho": 0.62,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.3,
+   "foco": {
+    "x": 0.5,
+    "y": 0.5
+   },
+   "transicion": "hueco",
+   "titular": "Robada",
+   "animo": "misterio",
+   "sfx": [
+    {
+     "tipo": "riser",
+     "en": "clave",
+     "dur": 1.6
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "París, agosto de *1911*. Es lunes, y el Louvre está *cerrado*.",
+   "capas": [
+    {
+     "src": "img/f02_louvre.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e06_llave.jpg",
+     "z": 0.75,
+     "x": 0.72,
+     "y": 0.8,
+     "ancho": 0.42,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "bajar",
+   "transicion": "tapa",
+   "titular": "Cerrado",
+   "animo": "misterio",
+   "sfx": [
+    "reloj"
+   ],
+   "particulas": "polvo",
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Un hombre con bata blanca camina por los pasillos... y *nadie* lo detiene.",
+   "capas": [
+    {
+     "src": "img/f03_pasillo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e03_obrero.jpg",
+     "z": 0.55,
+     "x": 0.5,
+     "y": 0.68,
+     "ancho": 0.42,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.2,
+   "foco": {
+    "x": 0.5,
+    "y": 0.42
+   },
+   "transicion": "fundido",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "pasos",
+     "dur": 4.0
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Se llama *Vincenzo Peruggia*, y conoce el museo de memoria.",
+   "capas": [
+    {
+     "src": "img/f01_galeria.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e03_obrero.jpg",
+     "z": 0.7,
+     "x": 0.32,
+     "y": 0.7,
+     "ancho": 0.5,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "derecha",
+   "transicion": "hueco",
+   "foco": {
+    "x": 0.32,
+    "y": 0.5
+   },
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "maquina",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Porque él mismo ayudó a poner los *cristales* que protegen los cuadros.",
+   "capas": [
+    {
+     "src": "img/f03_pasillo.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e04_cristal.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.62,
+     "ancho": 0.75,
+     "mov": "flotar"
+    }
+   ],
+   "camara": "retroceder",
+   "transicion": "tapa",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "campana",
+     "en": "clave",
+     "vol": 0.3
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Se detiene frente a una mujer que sonríe. La *Mona Lisa*.",
+   "capas": [
+    {
+     "src": "img/f01_galeria.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e01_monalisa.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.5,
+     "ancho": 0.7,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.6,
+   "foco": {
+    "x": 0.5,
+    "y": 0.45
+   },
+   "transicion": "hueco",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "latido",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "La descuelga de la pared... en *segundos*.",
+   "capas": [
+    {
+     "src": "img/f07_pared.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e01_monalisa.jpg",
+     "z": 0.7,
+     "x": 0.5,
+     "y": 0.42,
+     "ancho": 0.6,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "subir",
+   "transicion": "corte",
+   "efecto": "sacudida",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "impacto",
+     "en": "clave",
+     "vol": 0.5
+    },
+    {
+     "tipo": "reloj",
+     "dur": 2
+    }
+   ],
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "En una escalera le quita el *marco*, y la esconde bajo su bata.",
+   "capas": [
+    {
+     "src": "img/f04_escalera.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e05_marco.jpg",
+     "z": 0.55,
+     "x": 0.38,
+     "y": 0.62,
+     "ancho": 0.55,
+     "mov": "balanceo"
+    },
+    {
+     "src": "img/e02_tabla.jpg",
+     "z": 0.8,
+     "x": 0.7,
+     "y": 0.78,
+     "ancho": 0.34,
+     "mov": "flotar"
+    }
+   ],
+   "camara": "bajar",
+   "transicion": "fundido",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "papel",
+     "en": "clave"
+    },
+    {
+     "tipo": "pasos",
+     "en": 1.5,
+     "dur": 2
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Pero la puerta de salida está cerrada con *llave*.",
+   "capas": [
+    {
+     "src": "img/f05_puerta.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e06_llave.jpg",
+     "z": 0.75,
+     "x": 0.5,
+     "y": 0.7,
+     "ancho": 0.5,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.4,
+   "foco": {
+    "x": 0.5,
+    "y": 0.45
+   },
+   "transicion": "hueco",
+   "animo": "giro",
+   "sfx": [
+    {
+     "tipo": "puerta",
+     "en": 0.3
+    },
+    {
+     "tipo": "latido",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Entonces aparece un *fontanero*... y le abre la puerta.",
+   "capas": [
+    {
+     "src": "img/f05_puerta.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e07_herramientas.jpg",
+     "z": 0.7,
+     "x": 0.5,
+     "y": 0.76,
+     "ancho": 0.6,
+     "mov": "flotar"
+    }
+   ],
+   "camara": "izquierda",
+   "transicion": "tapa",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "llave",
+     "en": "clave"
+    },
+    {
+     "tipo": "puerta",
+     "en": 2.0
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Peruggia sale a la calle con la Mona Lisa bajo el *brazo*.",
+   "capas": [
+    {
+     "src": "img/f06_calle.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e03_obrero.jpg",
+     "z": 0.7,
+     "x": 0.36,
+     "y": 0.74,
+     "ancho": 0.44,
+     "mov": "respirar"
+    },
+    {
+     "src": "img/e02_tabla.jpg",
+     "z": 0.8,
+     "x": 0.58,
+     "y": 0.66,
+     "ancho": 0.2,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "derecha",
+   "transicion": "hueco",
+   "foco": {
+    "x": 0.4,
+    "y": 0.6
+   },
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "multitud",
+     "dur": 4,
+     "vol": 0.2
+    },
+    {
+     "tipo": "pasos",
+     "dur": 3
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Y lo más increíble: en más de un día, *nadie* se da cuenta.",
+   "capas": [
+    {
+     "src": "img/f07_pared.jpg",
+     "z": 0,
+     "ancho": 1.3
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.5,
+   "foco": {
+    "x": 0.5,
+    "y": 0.5
+   },
+   "transicion": "fundido",
+   "titular": "Nadie",
+   "animo": "misterio",
+   "sfx": [
+    "reloj"
+   ],
+   "particulas": "polvo",
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "Los guardias creen que se la llevaron a *fotografiar*.",
+   "capas": [
+    {
+     "src": "img/f01_galeria.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e08_camara.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.66,
+     "ancho": 0.72,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "retroceder",
+   "transicion": "corte",
+   "efecto": "flashClave",
+   "animo": "misterio",
+   "sfx": [
+    {
+     "tipo": "camara",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Cuando por fin lo descubren, París entra en *pánico*.",
+   "capas": [
+    {
+     "src": "img/f08_policia.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e09_periodico.jpg",
+     "z": 0.7,
+     "x": 0.5,
+     "y": 0.6,
+     "ancho": 0.72,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.8,
+   "foco": {
+    "x": 0.5,
+    "y": 0.55
+   },
+   "transicion": "hueco",
+   "efecto": "sacudida",
+   "titular": "Pánico",
+   "animo": "panico",
+   "sfx": [
+    {
+     "tipo": "silbato",
+     "en": "clave"
+    },
+    {
+     "tipo": "impacto"
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Cierran el Louvre una semana, y revisan cada *tren* y cada barco.",
+   "capas": [
+    {
+     "src": "img/f09_estacion.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e10_kepi.jpg",
+     "z": 0.8,
+     "x": 0.72,
+     "y": 0.8,
+     "ancho": 0.4,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "izquierda",
+   "transicion": "tapa",
+   "animo": "panico",
+   "sfx": [
+    {
+     "tipo": "tren",
+     "en": "clave"
+    }
+   ],
+   "particulas": "polvo",
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Y miles de personas hacen fila... para ver el *hueco* vacío en la pared.",
+   "capas": [
+    {
+     "src": "img/f10_fila.jpg",
+     "z": 0,
+     "ancho": 1.3
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.3,
+   "foco": {
+    "x": 0.5,
+    "y": 0.3
+   },
+   "transicion": "hueco",
+   "animo": "misterio",
+   "sfx": [
+    {
+     "tipo": "multitud",
+     "dur": 5,
+     "vol": 0.35
+    }
+   ],
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "La policía arresta a un poeta, e interroga a un joven pintor: *Pablo Picasso*.",
+   "capas": [
+    {
+     "src": "img/f08_policia.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e11_paleta.jpg",
+     "z": 0.65,
+     "x": 0.5,
+     "y": 0.66,
+     "ancho": 0.66,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "derecha",
+   "transicion": "corte",
+   "efecto": "flashClave",
+   "titular": "¿Picasso?",
+   "animo": "investigacion",
+   "sfx": [
+    {
+     "tipo": "maquina"
+    },
+    {
+     "tipo": "impacto",
+     "en": "clave",
+     "vol": 0.55
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Pero ninguno de los dos la *tenía*.",
+   "capas": [
+    {
+     "src": "img/f07_pared.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e05_marco.jpg",
+     "z": 0.6,
+     "x": 0.5,
+     "y": 0.5,
+     "ancho": 0.7,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "retroceder",
+   "transicion": "fundido",
+   "animo": "investigacion",
+   "sfx": [
+    {
+     "tipo": "latido",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "La Mona Lisa seguía en París, escondida en un *baúl*.",
+   "capas": [
+    {
+     "src": "img/f11_cuarto.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e12_baul.jpg",
+     "z": 0.7,
+     "x": 0.5,
+     "y": 0.72,
+     "ancho": 0.66,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.6,
+   "foco": {
+    "x": 0.5,
+    "y": 0.72
+   },
+   "transicion": "hueco",
+   "animo": "investigacion",
+   "sfx": [
+    {
+     "tipo": "puerta",
+     "en": "clave",
+     "vol": 0.4
+    }
+   ],
+   "particulas": "polvo",
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "La policía incluso habló con Peruggia... y no la *vio*.",
+   "capas": [
+    {
+     "src": "img/f11_cuarto.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e10_kepi.jpg",
+     "z": 0.6,
+     "x": 0.3,
+     "y": 0.66,
+     "ancho": 0.4,
+     "mov": "balanceo"
+    },
+    {
+     "src": "img/e12_baul.jpg",
+     "z": 0.8,
+     "x": 0.72,
+     "y": 0.82,
+     "ancho": 0.42,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "izquierda",
+   "transicion": "tapa",
+   "titular": "No la vio",
+   "animo": "investigacion",
+   "sfx": [
+    {
+     "tipo": "pasos",
+     "dur": 2
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Dos años después, él viaja a *Florencia* e intenta venderla.",
+   "capas": [
+    {
+     "src": "img/f12_florencia.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e14_carta.jpg",
+     "z": 0.75,
+     "x": 0.5,
+     "y": 0.76,
+     "ancho": 0.6,
+     "mov": "flotar"
+    }
+   ],
+   "camara": "subir",
+   "transicion": "hueco",
+   "foco": {
+    "x": 0.5,
+    "y": 0.6
+   },
+   "titular": "1913",
+   "animo": "robo",
+   "sfx": [
+    {
+     "tipo": "tren",
+     "dur": 3,
+     "vol": 0.35
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "El comprador revisa el sello del Louvre en la parte de atrás. Es *auténtica*.",
+   "capas": [
+    {
+     "src": "img/f13_tienda.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e02_tabla.jpg",
+     "z": 0.6,
+     "x": 0.42,
+     "y": 0.6,
+     "ancho": 0.55,
+     "mov": "respirar"
+    },
+    {
+     "src": "img/e13_lupa.jpg",
+     "z": 0.85,
+     "x": 0.68,
+     "y": 0.62,
+     "ancho": 0.4,
+     "mov": "flotar"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 1.5,
+   "foco": {
+    "x": 0.5,
+    "y": 0.55
+   },
+   "transicion": "corte",
+   "titular": "Auténtica",
+   "animo": "giro",
+   "sfx": [
+    {
+     "tipo": "papel"
+    },
+    {
+     "tipo": "riser",
+     "en": "clave",
+     "dur": 2.2
+    }
+   ],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Y llama a la *policía*.",
+   "capas": [
+    {
+     "src": "img/f13_tienda.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e10_kepi.jpg",
+     "z": 0.7,
+     "x": 0.5,
+     "y": 0.6,
+     "ancho": 0.6,
+     "mov": "balanceo"
+    }
+   ],
+   "camara": "avanzar",
+   "fuerza": 2.0,
+   "foco": {
+    "x": 0.5,
+    "y": 0.5
+   },
+   "transicion": "hueco",
+   "efecto": "flash",
+   "sfx": [
+    {
+     "tipo": "impacto"
+    },
+    {
+     "tipo": "silbato",
+     "en": "clave"
+    }
+   ],
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "Peruggia dijo que solo quería devolverla a *Italia*.",
+   "capas": [
+    {
+     "src": "img/f12_florencia.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e03_obrero.jpg",
+     "z": 0.6,
+     "x": 0.5,
+     "y": 0.72,
+     "ancho": 0.42,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "retroceder",
+   "transicion": "fundido",
+   "animo": "investigacion",
+   "sfx": [],
+   "posTexto": "arriba",
+   "dur": 3.5
+  },
+  {
+   "texto": "Pero su robo logró algo que nadie esperaba: convirtió a la Mona Lisa en el cuadro más *famoso* del mundo.",
+   "capas": [
+    {
+     "src": "img/f14_final.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e01_monalisa.jpg",
+     "z": 0.55,
+     "x": 0.5,
+     "y": 0.36,
+     "ancho": 0.52,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "retroceder",
+   "fuerza": 1.3,
+   "transicion": "fundido",
+   "efecto": "flashClave",
+   "animo": "final",
+   "sfx": [
+    {
+     "tipo": "revelacion",
+     "en": "clave"
+    },
+    {
+     "tipo": "multitud",
+     "dur": 6,
+     "vol": 0.25
+    },
+    {
+     "tipo": "camara",
+     "en": 1.0,
+     "vol": 0.3
+    }
+   ],
+   "particulas": "chispas",
+   "posTexto": "abajo",
+   "dur": 3.5
+  },
+  {
+   "texto": "Sígueme para más historias *reales*.",
+   "capas": [
+    {
+     "src": "img/f14_final.jpg",
+     "z": 0,
+     "ancho": 1.3
+    },
+    {
+     "src": "img/e01_monalisa.jpg",
+     "z": 0.55,
+     "x": 0.5,
+     "y": 0.36,
+     "ancho": 0.52,
+     "mov": "respirar"
+    }
+   ],
+   "camara": "fija",
+   "transicion": "fundido",
+   "animo": "final",
+   "sfx": [
+    {
+     "tipo": "sello",
+     "en": "clave"
+    }
+   ],
+   "particulas": "chispas",
+   "posTexto": "abajo",
+   "dur": 3.5
+  }
+ ]
+}
