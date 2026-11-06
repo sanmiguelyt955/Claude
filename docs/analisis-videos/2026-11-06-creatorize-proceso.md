@@ -157,10 +157,10 @@ El video producido (09:07 - 09:45) muestra:
 
 | Creatorize | Kubo |
 |---|---|
-| New project: nombre, audio o guion, estilo, 9:16, motor |  (voz Gemini TTS o tu audio) |
+| New project: nombre, audio o guion, estilo, 9:16, motor | `kubo.py nuevo` (voz Gemini TTS o tu audio) |
 | Clean + Time (Parakeet) | Whisper con tiempos por palabra + corrección contra el guion |
-| Build con agentes de Claude (lista de tomas) |  + Claude dirige  (sin costo extra: es esta misma sesión) |
-| Vista Solid / Look |  (hoja de control en segundos) |
-| Render Blender (GPU) |  Workbench en CPU (normal 720p / final 1080p) |
-| Timeline: imagen, voz, efectos, ambiente, música | : voz + música por ánimo + efectos pegados al movimiento + stems |
+| Build con agentes de Claude (lista de tomas) | `kubo.py plan` + Claude dirige `plan.json` (en esta misma sesión) |
+| Vista Solid / Look | `kubo.py revisar` (hoja de control en segundos) |
+| Render Blender (GPU) | `kubo.py render` Workbench en CPU (normal 720p / final 1080p) |
+| Timeline: imagen, voz, efectos, ambiente, música | `kubo.py exportar`: voz + música por ánimo + efectos pegados al movimiento + stems |
 | Subtítulos quemados | ASS virales (clave en amarillo, pop, punch-in de cámara) |
