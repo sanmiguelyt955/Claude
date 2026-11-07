@@ -32,7 +32,7 @@ listos para subir a redes.
 
 ## Decisiones pendientes
 
-1. **Stack**: escritorio (Electron o Tauri), web o Python con interfaz local.
+1. **Stack** (decidido): motor en Node.js 22 + FFmpeg; interfaz local y empaquetado de escritorio, pendientes.
 2. **Motor de vídeo**: FFmpeg para cortes, concatenación y exportación.
 3. **Modelos de IA** para la función 4 (separación de voz) y para la 3 (texto en pantalla): elegir uno local.
 4. **Primer hito**: función 1 (combinar clips en serie) con exportación 1080x1920.

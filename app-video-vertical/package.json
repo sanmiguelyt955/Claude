@@ -1,0 +1,13 @@
+{
+  "name": "app-video-vertical",
+  "version": "0.1.0",
+  "description": "Genera vídeos verticales distintos combinando clips por roles. Procesado local con FFmpeg.",
+  "private": true,
+  "type": "commonjs",
+  "bin": { "video-vertical": "bin/cli.js" },
+  "scripts": {
+    "test": "node --test",
+    "cli": "node bin/cli.js"
+  },
+  "engines": { "node": ">=22" }
+}
