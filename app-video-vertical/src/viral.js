@@ -73,7 +73,10 @@ async function getOcr() {
   if (!workerPromise) {
     workerPromise = (async () => {
       const { createWorker } = require('tesseract.js');
-      return createWorker(process.env.VV_OCR_LANGS || 'spa+eng');
+      // El idioma se descarga una vez y se guarda en una caché del usuario, no en la carpeta actual.
+      const cachePath = process.env.VV_OCR_CACHE || path.join(require('node:os').homedir(), '.cache', 'vertiflow-ocr');
+      fs.mkdirSync(cachePath, { recursive: true });
+      return createWorker(process.env.VV_OCR_LANGS || 'spa+eng', 1, { cachePath });
     })().catch((err) => {
       workerPromise = null;
       throw err;
