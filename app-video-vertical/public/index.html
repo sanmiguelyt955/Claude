@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vertiflow</title>
+  <link rel="icon" href="icono.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <aside class="lateral">
+    <div class="marca">
+      <img src="icono.svg" alt="" width="32" height="32">
+      <div><strong>Vertiflow</strong><small id="version"></small></div>
+    </div>
+    <nav>
+      <button class="pestana activa" data-vista="montaje">Montaje</button>
+      <button class="pestana" data-vista="viral">Analizar viral</button>
+      <button class="pestana" data-vista="separar">Separar voz</button>
+      <button class="pestana" data-vista="movil">Al móvil</button>
+      <button class="pestana" data-vista="asistente">Asistente</button>
+    </nav>
+    <p class="nota-local">Todo se procesa en este ordenador.</p>
+  </aside>
+
+  <main>
+    <div id="aviso-version" class="aviso" hidden></div>
+
+    <!-- MONTAJE -->
+    <section class="vista activa" id="vista-montaje">
+      <header class="cabecera">
+        <h1>Montaje</h1>
+        <p>Sube clips en cada fase. Cada vídeo usa uno de cada fase, sin repetir combinaciones.</p>
+      </header>
+
+      <div class="fases" id="fases"></div>
+
+      <div class="tarjeta" id="tarjeta-musica">
+        <div class="tarjeta-cab">
+          <h2>Música</h2>
+          <label class="boton secundario">Subir canción<input type="file" accept="audio/*" id="subir-musica" hidden></label>
+        </div>
+        <div id="musica-vacia" class="vacio">Sin música: los vídeos usan el audio de los clips.</div>
+        <div id="musica-cargada" hidden>
+          <div class="musica-info"><span id="musica-nombre"></span><button class="enlace" id="quitar-musica">Quitar</button></div>
+          <canvas id="onda" height="90"></canvas>
+          <p class="ayuda">El marcador rojo es el momento fuerte. Coincide con la entrada del producto (fase Demostración). Pulsa sobre la onda para moverlo.</p>
+          <div class="fila">
+            <span>Momento fuerte: <strong id="drop-valor"></strong></span>
+            <button class="boton secundario" id="escuchar-drop">Escuchar desde ahí</button>
+            <button class="enlace" id="drop-auto">Volver al detectado</button>
+            <label class="control">Volumen música <input type="range" id="vol-musica" min="0" max="2" step="0.05"></label>
+          </div>
+          <audio id="audio-musica" preload="metadata"></audio>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="tarjeta-cab"><h2>Generar</h2><span id="posibles" class="etiqueta"></span></div>
+        <div class="fila">
+          <label class="control">Vídeos <input type="number" id="cantidad" value="10" min="1" max="500"></label>
+          <label class="control">Calidad
+            <select id="resolucion">
+              <option value="720p">720p</option>
+              <option value="1080p" selected>1080p (Full HD)</option>
+              <option value="1440p">1440p (2K)</option>
+              <option value="4k">4K</option>
+            </select>
+          </label>
+          <label class="control">Audio de los clips <input type="range" id="vol-clips" min="0" max="1" step="0.05" value="0.35"></label>
+          <button class="boton" id="generar">Generar vídeos</button>
+          <button class="boton secundario" id="cancelar" hidden>Cancelar</button>
+        </div>
+        <div class="progreso" id="progreso" hidden><div></div><span></span></div>
+        <p class="ayuda">Salida vertical 9:16, sin marca de agua y sin metadatos.</p>
+        <div class="resultados" id="resultados"></div>
+      </div>
+    </section>
+
+    <!-- VIRAL -->
+    <section class="vista" id="vista-viral">
+      <header class="cabecera">
+        <h1>Analizar viral</h1>
+        <p>Pega el enlace de un vídeo (TikTok, Reels, Shorts) o súbelo. Verás cada cambio de plano y los textos que lleva.</p>
+      </header>
+      <div class="tarjeta">
+        <form class="fila" id="form-viral">
+          <input type="url" id="url-viral" placeholder="https://www.tiktok.com/@cuenta/video/..." class="crece">
+          <button class="boton">Analizar</button>
+          <label class="boton secundario">Subir vídeo<input type="file" accept="video/*" id="archivo-viral" hidden></label>
+        </form>
+        <label class="control">Sensibilidad de cortes <input type="range" id="umbral" min="0.1" max="0.6" step="0.05" value="0.3"></label>
+        <div class="progreso" id="progreso-viral" hidden><div></div><span></span></div>
+      </div>
+      <div id="resultado-viral"></div>
+    </section>
+
+    <!-- SEPARAR -->
+    <section class="vista" id="vista-separar">
+      <header class="cabecera">
+        <h1>Separar voz y música</h1>
+        <p>Aparta la voz del fondo musical en cualquier clip o canción.</p>
+      </header>
+      <div class="tarjeta">
+        <label class="zona" id="zona-separar">
+          <input type="file" accept="video/*,audio/*" id="archivo-separar" hidden>
+          <strong>Suelta aquí un vídeo o un audio</strong><span>o pulsa para elegirlo</span>
+        </label>
+        <p class="ayuda" id="metodo-separar"></p>
+        <div class="progreso" id="progreso-separar" hidden><div></div><span></span></div>
+        <div id="resultado-separar"></div>
+      </div>
+    </section>
+
+    <!-- MÓVIL -->
+    <section class="vista" id="vista-movil">
+      <header class="cabecera">
+        <h1>Al móvil</h1>
+        <p>Escanea el código con el teléfono conectado a la misma WiFi y guarda los vídeos generados.</p>
+      </header>
+      <div class="tarjeta movil">
+        <div id="qr"></div>
+        <div>
+          <p>O abre este enlace en el móvil:</p>
+          <p><code id="url-movil"></code></p>
+          <p class="ayuda">El enlace solo funciona en tu red y lleva una clave que cambia cada vez que abres la app.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ASISTENTE -->
+    <section class="vista" id="vista-asistente">
+      <header class="cabecera">
+        <h1>Trabajar con Claude</h1>
+        <p>Conecta Vertiflow a Claude y pídele que prepare los vídeos por ti.</p>
+      </header>
+      <div class="tarjeta">
+        <h2>Claude Desktop o Claude Code</h2>
+        <p>Añade este servidor MCP a tu configuración:</p>
+        <pre id="config-mcp"></pre>
+        <h2>Ejemplos de lo que puedes pedir</h2>
+        <ul class="ejemplos">
+          <li>«Genera 20 vídeos en 1080p con la música actual.»</li>
+          <li>«Analiza este TikTok y dime cuánto dura cada plano y qué textos usa.»</li>
+          <li>«Separa la voz de este clip.»</li>
+          <li>«¿Cuántas combinaciones puedo sacar con los clips que tengo?»</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <template id="plantilla-fase">
+    <div class="tarjeta fase">
+      <div class="tarjeta-cab"><h2></h2><span class="etiqueta contador"></span></div>
+      <p class="ayuda descripcion"></p>
+      <label class="zona">
+        <input type="file" accept="video/*" multiple hidden>
+        <strong>Suelta clips aquí</strong><span>o pulsa para elegirlos</span>
+      </label>
+      <ul class="clips"></ul>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
