@@ -33,7 +33,8 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === "/") return new Response("Buzón de videos para IAs. Pide clave.\n");
     const auth = req.headers.get("authorization") || "";
-    if (!env.CLAVE || !iguales(auth, `Bearer ${env.CLAVE}`)) return json({ error: "clave incorrecta" }, 401);
+    const k = (env.CLAVE || "").trim();               // por si se pegó con un salto de línea
+    if (!k || !iguales(auth.trim(), `Bearer ${k}`)) return json({ error: "clave incorrecta" }, 401);
 
     if (req.method === "PUT" && url.pathname === "/subir") {
       if (!req.body) return json({ error: "no llegó el video" }, 400);
