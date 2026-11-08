@@ -4,6 +4,7 @@ Uso con la carpeta «Videos para IAs» de Sanmi (atajo de iPhone «Bajar para IA
   1. Buscar el más nuevo con el conector de Google Drive:
        search_files  query: title contains '' and parentId = '<ID de la carpeta>'   orderBy: modifiedTime desc
      (o  mimeType contains 'video/' and modifiedTime > '<fecha>')
+     o sin conector:  python3 drive_publico.py --listar   /   python3 drive_publico.py --ultimo  (baja el más nuevo)
   2. python3 drive_publico.py <ID o link> [carpeta]   → imprime la ruta del video bajado
   3. Analizarlo con la skill (ver_video / motion) y BORRARLO al terminar:  python3 drive_publico.py --borrar <ruta>
 
@@ -15,12 +16,24 @@ import urllib.request
 from http.cookiejar import CookieJar
 from pathlib import Path
 
+CARPETA_IAS = "1durviUs0zFmhovA3D85kP1LKw-KdWI7h"   # «Videos para IAs» de Sanmi (compartida con link, rol Lector)
 SCRATCH = Path("/tmp/claude-0") if Path("/tmp/claude-0").exists() else Path("/tmp")
 
 
 def id_de(texto):
     m = re.search(r"(?:/d/|id=|folders/)([A-Za-z0-9_-]{20,})", texto)
     return m.group(1) if m else texto.strip()
+
+
+def listar(carpeta_id=CARPETA_IAS):
+    """Archivos de una carpeta pública de Drive, del más nuevo al más viejo (sin iniciar sesión).
+    Devuelve [(id, nombre)] tal como los muestra la vista pública de la carpeta."""
+    html = urllib.request.urlopen(urllib.request.Request(
+        f"https://drive.google.com/embeddedfolderview?id={carpeta_id}#list",
+        headers={"User-Agent": "video-claude/1.0"}), timeout=60).read().decode("utf-8", "ignore")
+    items = re.findall(r'href="https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)/view[^"]*"[^>]*>.*?'
+                       r'flip-entry-title">([^<]+)<', html, re.S)
+    return items
 
 
 def bajar(id_o_link, carpeta=None):
@@ -47,7 +60,15 @@ def bajar(id_o_link, carpeta=None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "--borrar":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--listar":
+        for fid, nombre in listar(sys.argv[2] if len(sys.argv) > 2 else CARPETA_IAS):
+            print(fid, nombre)
+    elif len(sys.argv) >= 2 and sys.argv[1] == "--ultimo":
+        items = listar(sys.argv[2] if len(sys.argv) > 2 else CARPETA_IAS)
+        if not items:
+            sys.exit("La carpeta «Videos para IAs» está vacía.")
+        print(bajar(items[0][0]))
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--borrar":
         Path(sys.argv[2]).unlink(missing_ok=True)
         print("borrado:", sys.argv[2])
     elif len(sys.argv) >= 2:
