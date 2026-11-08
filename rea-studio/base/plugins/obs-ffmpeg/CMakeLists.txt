@@ -28,6 +28,7 @@ target_sources(
     $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD>:vaapi-utils.h>
     obs-ffmpeg-audio-encoders.c
     obs-ffmpeg-av1.c
+    obs-ffmpeg-extra-video.c
     obs-ffmpeg-compat.h
     obs-ffmpeg-formats.h
     obs-ffmpeg-openh264.c

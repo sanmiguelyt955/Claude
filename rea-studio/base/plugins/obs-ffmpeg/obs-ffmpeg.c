@@ -35,6 +35,11 @@ extern struct obs_encoder_info pcm24_encoder_info;
 extern struct obs_encoder_info pcm32_encoder_info;
 extern struct obs_encoder_info alac_encoder_info;
 extern struct obs_encoder_info flac_encoder_info;
+extern struct obs_encoder_info mp3_encoder_info;
+extern struct obs_encoder_info ac3_encoder_info;
+extern struct obs_encoder_info vorbis_encoder_info;
+extern struct obs_encoder_info x265_encoder_info;
+extern struct obs_encoder_info vp9_encoder_info;
 extern struct obs_encoder_info openh264_encoder_info;
 #ifdef ENABLE_FFMPEG_NVENC
 extern struct obs_encoder_info h264_nvenc_encoder_info;
@@ -359,6 +364,11 @@ bool obs_module_load(void)
 	obs_register_encoder(&pcm32_encoder_info);
 	obs_register_encoder(&alac_encoder_info);
 	obs_register_encoder(&flac_encoder_info);
+	register_encoder_if_available(&mp3_encoder_info, "libmp3lame");
+	register_encoder_if_available(&ac3_encoder_info, "ac3");
+	register_encoder_if_available(&vorbis_encoder_info, "libvorbis");
+	register_encoder_if_available(&x265_encoder_info, "libx265");
+	register_encoder_if_available(&vp9_encoder_info, "libvpx-vp9");
 #ifdef ENABLE_FFMPEG_NVENC
 	bool h264 = false;
 	bool hevc = false;

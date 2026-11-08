@@ -97,6 +97,24 @@ static const char *flac_getname(void *unused)
 	return obs_module_text("FFmpegFLAC");
 }
 
+static const char *mp3_getname(void *unused)
+{
+	UNUSED_PARAMETER(unused);
+	return "FFmpeg MP3";
+}
+
+static const char *ac3_getname(void *unused)
+{
+	UNUSED_PARAMETER(unused);
+	return "FFmpeg AC3 (Dolby Digital)";
+}
+
+static const char *vorbis_getname(void *unused)
+{
+	UNUSED_PARAMETER(unused);
+	return "FFmpeg Vorbis";
+}
+
 static void enc_destroy(void *data)
 {
 	struct enc_encoder *enc = data;
@@ -339,6 +357,21 @@ static void *flac_create(obs_data_t *settings, obs_encoder_t *encoder)
 	return enc_create(settings, encoder, "flac", NULL, AV_SAMPLE_FMT_S16);
 }
 
+static void *mp3_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return enc_create(settings, encoder, "libmp3lame", NULL, AV_SAMPLE_FMT_FLTP);
+}
+
+static void *ac3_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return enc_create(settings, encoder, "ac3", NULL, AV_SAMPLE_FMT_FLTP);
+}
+
+static void *vorbis_create(obs_data_t *settings, obs_encoder_t *encoder)
+{
+	return enc_create(settings, encoder, "libvorbis", NULL, AV_SAMPLE_FMT_FLTP);
+}
+
 static bool do_encode(struct enc_encoder *enc, struct encoder_packet *packet, bool *received_packet)
 {
 	AVRational time_base = {1, enc->context->sample_rate};
@@ -555,6 +588,51 @@ struct obs_encoder_info flac_encoder_info = {
 	.codec = "flac",
 	.get_name = flac_getname,
 	.create = flac_create,
+	.destroy = enc_destroy,
+	.encode = enc_encode,
+	.get_frame_size = enc_frame_size,
+	.get_defaults = enc_defaults,
+	.get_properties = enc_properties,
+	.get_extra_data = enc_extra_data,
+	.get_audio_info = enc_audio_info,
+};
+
+struct obs_encoder_info mp3_encoder_info = {
+	.id = "ffmpeg_mp3",
+	.type = OBS_ENCODER_AUDIO,
+	.codec = "mp3",
+	.get_name = mp3_getname,
+	.create = mp3_create,
+	.destroy = enc_destroy,
+	.encode = enc_encode,
+	.get_frame_size = enc_frame_size,
+	.get_defaults = enc_defaults,
+	.get_properties = enc_properties,
+	.get_extra_data = enc_extra_data,
+	.get_audio_info = enc_audio_info,
+};
+
+struct obs_encoder_info ac3_encoder_info = {
+	.id = "ffmpeg_ac3",
+	.type = OBS_ENCODER_AUDIO,
+	.codec = "ac3",
+	.get_name = ac3_getname,
+	.create = ac3_create,
+	.destroy = enc_destroy,
+	.encode = enc_encode,
+	.get_frame_size = enc_frame_size,
+	.get_defaults = enc_defaults,
+	.get_properties = enc_properties,
+	.get_extra_data = enc_extra_data,
+	.get_audio_info = enc_audio_info,
+};
+
+struct obs_encoder_info vorbis_encoder_info = {
+	.id = "ffmpeg_vorbis",
+	.type = OBS_ENCODER_AUDIO,
+	.codec = "vorbis",
+	.get_name = vorbis_getname,
+	.create = vorbis_create,
 	.destroy = enc_destroy,
 	.encode = enc_encode,
 	.get_frame_size = enc_frame_size,

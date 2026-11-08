@@ -11,6 +11,7 @@ Nombre de trabajo: **REA Studio** — se cambia en un solo sitio (`NOMBRE` en `s
   - `rea_audio.py` — cadenas de filtros de audio (voz limpia, anti-eco, ducking de música, limitador) con parámetros editables.
   - `rea_subtitulos.py` + `subtitulos_whisper.py` — subtítulos en vivo: Whisper local escribe a un archivo y OBS lo muestra.
 - `plugins/rea-audio-lab/` — plugin C con filtro de audio propio: pasa‑altos, EQ de 4 bandas, de‑esser, compresor y limitador. El procesado (`rea_dsp.h`) tiene pruebas con señales sintéticas (`test_dsp.c`, 5/5 correctas); el cableado a OBS aún no está probado.
+- `docs/CODIFICADORES.md` — lista de codificadores de audio y video (incluye x265, VP9, MP3, AC3 y Vorbis añadidos).
 - `docs/REA.md` — cómo usar REA (morluto/rea) para entender OBS y planear cambios.
 
 ## Legalidad (resumen)
