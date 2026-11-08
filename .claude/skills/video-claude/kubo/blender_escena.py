@@ -252,6 +252,29 @@ def noche(cielo):
 
 
 @escenario
+def maqueta(cielo):
+    """Diorama tipo juego de construir (vista de pájaro): tablero flotante con pasillos de estantes, mostrador y
+    puerta. Ideal con cámara «vuelo» y el efecto «cursor». Estantes: x ∈ {-3.2, 0, 3.2}, y ∈ {-2.5, 0.5, 3.5}."""
+    fondo = cielo or "#2b2d42"
+    caja((0, 0, -3.05), (90, 90, 0.1), fondo, borde=False)                            # suelo lejano (sin z-fighting)
+    caja((0, 0.5, -0.3), (12, 14, 0.6), "#f4f1de", borde=True, bisel=0.05)          # tablero
+    caja((0, 7.45, 0.6), (12, 0.12, 1.2), "#e07a5f", borde=False)                    # bardas
+    caja((-5.95, 0.5, 0.6), (0.12, 14, 1.2), "#e07a5f", borde=False)
+    caja((5.95, 0.5, 0.6), (0.12, 14, 1.2), "#e07a5f", borde=False)
+    caja((-3.5, -6.45, 0.6), (5, 0.12, 1.2), "#e07a5f", borde=False)                 # frente con puerta al centro
+    caja((3.5, -6.45, 0.6), (5, 0.12, 1.2), "#e07a5f", borde=False)
+    rnd = random.Random(11)
+    for x in (-3.2, 0, 3.2):
+        for y in (-2.5, 0.5, 3.5):
+            caja((x, y, 0.55), (2.2, 0.8, 1.1), "#3d405b")
+            for k in range(-2, 3):
+                caja((x + k * 0.42, y - 0.42, 0.75), (0.3, 0.06, 0.32),
+                     rnd.choice(["#81b29a", "#f2cc8f", "#e07a5f", "#ffffff"]), borde=False)
+    caja((4.2, -5.2, 0.5), (2.2, 0.9, 1.0), "#81b29a")                                # caja de cobro
+    return fondo
+
+
+@escenario
 def estudio(cielo):
     """Fondo liso de color, sin paredes (para comparaciones y memes)."""
     _piso(cielo or "#ffd166")
@@ -776,8 +799,32 @@ def animar_actor(piezas, act, n, planos):
 TIROS = {"cerca": 3.0, "medio": 5.0, "lejos": 9.0, "plano_general": 14, "detalle": 2.0}
 
 
+def _catmull(p0, p1, p2, p3, u):
+    return 0.5 * ((2 * p1) + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (-p0 + 3 * p1 - 3 * p2 + p3) * u ** 3)
+
+
+def _vuelo_en(claves, tt):
+    """Posición y punto de mira de la cámara en el segundo tt: curva suave (Catmull-Rom) que pasa por cada clave y
+    frena un poco al llegar a cada una (la «toma única» que vuela sobre la maqueta)."""
+    ts = [c["t"] for c in claves]
+    if tt <= ts[0]:
+        return Vector(claves[0]["pos"]), Vector(claves[0]["mira"])
+    if tt >= ts[-1]:
+        return Vector(claves[-1]["pos"]), Vector(claves[-1]["mira"])
+    i = max(k for k in range(len(ts) - 1) if ts[k] <= tt)
+    u = (tt - ts[i]) / max(1e-6, ts[i + 1] - ts[i])
+    u = 0.35 * u + 0.65 * (u * u * (3 - 2 * u))
+    res = []
+    for campo in ("pos", "mira"):
+        q = [Vector(claves[max(0, min(len(claves) - 1, j))][campo]) for j in (i - 1, i, i + 1, i + 2)]
+        res.append(_catmull(*q, u))
+    return res[0], res[1]
+
+
 def camara(toma, objetivo, n, ancho_grupo=0.0):
     tipo = toma.get("camara", "medio")
+    if toma.get("vuelo"):
+        return camara_vuelo(toma, n)
     partes = tipo.split("+")              # p. ej. «medio+empuje», «cerca+temblor», «lejos+orbita»
     tiro = next((TIROS[p] for p in partes if p in TIROS), 6.5)
     # que quepan todos: en vertical el ángulo horizontal es estrecho (~35° con lente 32)
@@ -831,6 +878,36 @@ def camara(toma, objetivo, n, ancho_grupo=0.0):
         cam.keyframe_insert("location", frame=f)
         cam.keyframe_insert("rotation_euler", frame=f)
         obj.keyframe_insert("location", frame=f)
+    return cam
+
+
+def camara_vuelo(toma, n):
+    """Toma única: la cámara vuela por las claves de toma["vuelo"] = [{"t", "pos":[x,y,z], "mira":[x,y,z]}, …].
+    Respeta sacudidas y golpe_en (punch-in) igual que las demás cámaras."""
+    claves = sorted(toma["vuelo"], key=lambda c: c["t"])
+    bpy.ops.object.camera_add()
+    cam = bpy.context.active_object
+    cam.data.lens = toma.get("lente", 30)
+    bpy.context.scene.camera = cam
+    for f in range(1, n + 1):
+        tt = f / FPS
+        pos, mira = _vuelo_en(claves, tt)
+        g = toma.get("golpe_en")
+        if g is not None and tt >= g:
+            dg = tt - g
+            pos = mira + (pos - mira) * (1 - 0.13 * min(1, dg / 0.06) * math.exp(-max(0, dg - 0.06) * 3.5))
+        fuerza = 0.0
+        for te, k in toma.get("sacudidas", []):
+            dt = tt - te
+            if dt >= 0:
+                fuerza += 0.09 * k * min(1, dt / 0.04) * math.exp(-dt * 5)
+        if fuerza:
+            pos = pos + Vector((fuerza * (math.sin(tt * 47) + 0.6 * math.sin(tt * 83 + 1)), 0,
+                                fuerza * (math.sin(tt * 53 + 2) + 0.5 * math.sin(tt * 71))))
+        cam.location = pos
+        cam.rotation_euler = (mira - pos).to_track_quat("-Z", "Y").to_euler()
+        cam.keyframe_insert("location", frame=f)
+        cam.keyframe_insert("rotation_euler", frame=f)
     return cam
 
 
@@ -1148,7 +1225,102 @@ def ef_lineas(ef, bases, cam, n, caminos=None):
             o.keyframe_insert("scale", frame=f)
 
 
-EFECTOS = {"signo": ef_signo, "etiqueta": ef_etiqueta, "particulas": ef_particulas, "estallido": ef_estallido,
+CURSOR = [(0, 0), (0, -1.0), (0.26, -0.76), (0.45, -1.16), (0.62, -1.08), (0.44, -0.69), (0.78, -0.69)]
+
+
+def _poligono(puntos, color, nombre, z=0.0):
+    import bmesh
+    me = bpy.data.meshes.new(nombre)
+    bm = bmesh.new()
+    vs = [bm.verts.new((x, y, z)) for x, y in puntos]
+    cara = bm.faces.new(vs)
+    bm.normal_update()
+    if cara.normal.z < 0:                       # que la cara mire a +Z (a la cámara): backface culling
+        bmesh.ops.reverse_faces(bm, faces=list(bm.faces))
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(nombre, me)
+    bpy.context.collection.objects.link(o)
+    o.data.materials.append(mat(color))
+    return o
+
+
+def _anillo(color):
+    bpy.ops.mesh.primitive_torus_add(major_radius=0.5, minor_radius=0.06, major_segments=40, minor_segments=8,
+                                     rotation=(0, 0, 0))
+    o = bpy.context.active_object
+    o.data.materials.append(mat(color))
+    return o
+
+
+def _dist_cam(cam, punto, n):
+    sc = bpy.context.scene
+    out = []
+    for f in range(1, n + 1):
+        sc.frame_set(f)
+        out.append((cam.matrix_world.translation - punto(f)).length)
+    return out
+
+
+def ef_cursor(ef, bases, cam, n):
+    """La «mano del jugador»: cursor de computadora que viaja entre clics y en cada clic se hunde y suelta un anillo
+    verde que se expande. ef = {"tipo": "cursor", "clics": [{"en": s, "pos": [x,y,z] | "sobre": id}, …],
+    "tam": 0.55, "color": "#ffffff", "anillo": "#38d94a", "desde": s, "hasta": s}. Tamaño constante en pantalla."""
+    clics = []
+    for c in sorted(ef.get("clics", []), key=lambda c: c["en"]):
+        p = Vector(c["pos"]) if c.get("pos") else _sobre({"sobre": c.get("sobre")}, bases, 1.4)
+        clics.append((c["en"], p))
+    if not clics:
+        return
+    tam = ef.get("tam", 0.75)
+    raiz = vacio((0, 0, 0))                     # en el origen al colgar: la punta del cursor queda en raiz
+    sombra = _poligono([(x * 1.16 - 0.05, y * 1.12 + 0.07) for x, y in CURSOR], "#111111", "cursor_borde", -0.02)
+    flecha = _poligono(CURSOR, ef.get("color", "#ffffff"), "cursor", 0.0)
+    colgar(sombra, raiz)
+    colgar(flecha, raiz)
+    _mirar_camara(raiz, cam)
+    desde, hasta = ef.get("desde", max(0.0, clics[0][0] - 0.8)), ef.get("hasta", n / FPS)
+
+    def punto(f):
+        tt = f / FPS
+        if tt <= clics[0][0]:
+            a, p0 = clics[0]
+            k = _suave(min(1.0, max(0.0, (tt - desde) / max(0.01, a - 0.08 - desde))))
+            return (p0 + Vector((1.6, -0.6, 0.9))).lerp(p0, k)
+        for (a, pa), (b, pb) in zip(clics, clics[1:]):
+            if a <= tt < b:
+                k = _suave(min(1.0, max(0.0, (tt - a - 0.22) / max(0.05, b - a - 0.32))))
+                arco = Vector((0, 0, 0.6 * math.sin(math.pi * k)))       # viaja en arco, no en línea recta
+                return pa.lerp(pb, k) + arco
+        return clics[-1][1]
+
+    dist = _dist_cam(cam, punto, n)
+    for f in range(1, n + 1):
+        tt = f / FPS
+        raiz.location = punto(f)
+        vis = desde <= tt <= hasta
+        k = tam * dist[f - 1] / 9.0                                       # igual de grande aunque la cámara se aleje
+        for a, _ in clics:
+            d = tt - a
+            if -0.05 <= d <= 0.12:
+                k *= 0.82                                                # se hunde al hacer clic
+        raiz.scale = (k, k, k) if vis else (0, 0, 0)
+        raiz.keyframe_insert("location", frame=f)
+        raiz.keyframe_insert("scale", frame=f)
+    for a, p in clics:                                                    # anillo verde por clic
+        an = _anillo(ef.get("anillo", "#38d94a"))
+        an.location = p
+        _mirar_camara(an, cam)
+        f0 = round(a * FPS) + 1
+        for f in range(max(1, f0 - 1), min(n, f0 + round(0.45 * FPS)) + 1):
+            d = (f - f0) / FPS
+            r = 0.0 if d < 0 or d > 0.42 else (0.3 + 1.5 * (d / 0.42) ** 0.6) * (1 if d < 0.3 else (0.42 - d) / 0.12)
+            r *= dist[f - 1] / 9.0
+            an.scale = (r, r, max(r, 0.001))
+            an.keyframe_insert("scale", frame=f)
+
+
+EFECTOS = {"cursor": ef_cursor, "signo": ef_signo, "etiqueta": ef_etiqueta, "particulas": ef_particulas, "estallido": ef_estallido,
            "grieta": ef_grieta, "indicador": ef_indicador, "flecha": ef_flecha, "lineas": ef_lineas}
 
 

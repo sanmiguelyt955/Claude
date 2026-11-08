@@ -1,0 +1,206 @@
+{
+ "formato": "9:16",
+ "idioma": "en",
+ "musica": "caricatura",
+ "personajes": {
+  "kubo": {
+   "piel": "#3dd6c6",
+   "ropa": "#ff8c1a",
+   "pantalon": "#24304a",
+   "antena": true,
+   "altura": 0.45
+  }
+ },
+ "tomas": [
+  {
+   "dur": 10.0,
+   "escenario": "maqueta",
+   "cielo": "#2b2d42",
+   "sin_subtitulos": true,
+   "control_en": 3.8,
+   "vuelo": [
+    {
+     "t": 0.0,
+     "pos": [
+      0,
+      -17,
+      15
+     ],
+     "mira": [
+      0,
+      0.5,
+      0
+     ]
+    },
+    {
+     "t": 1.3,
+     "pos": [
+      -4.5,
+      -10,
+      8
+     ],
+     "mira": [
+      -3.2,
+      -2.9,
+      1.0
+     ]
+    },
+    {
+     "t": 3.7,
+     "pos": [
+      1.5,
+      -8,
+      5
+     ],
+     "mira": [
+      0,
+      -2.9,
+      1.0
+     ]
+    },
+    {
+     "t": 6.7,
+     "pos": [
+      7,
+      -10,
+      5
+     ],
+     "mira": [
+      4.2,
+      -5.4,
+      0.9
+     ]
+    },
+    {
+     "t": 8.7,
+     "pos": [
+      5,
+      -5,
+      9
+     ],
+     "mira": [
+      3.2,
+      2.0,
+      1.0
+     ]
+    },
+    {
+     "t": 10.0,
+     "pos": [
+      0,
+      -18,
+      14
+     ],
+     "mira": [
+      0,
+      0.5,
+      0
+     ]
+    }
+   ],
+   "actores": [
+    {
+     "id": "kubo",
+     "pos": [
+      0,
+      -6.0
+     ],
+     "hasta": [
+      0,
+      -4.2
+     ],
+     "mira": 0,
+     "caras": [
+      [
+       0,
+       "feliz"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "cursor",
+     "desde": 0.3,
+     "clics": [
+      {
+       "en": 1.2,
+       "pos": [
+        -3.2,
+        -2.9,
+        1.1
+       ]
+      },
+      {
+       "en": 3.6,
+       "pos": [
+        0,
+        -2.9,
+        1.1
+       ]
+      },
+      {
+       "en": 6.6,
+       "pos": [
+        4.2,
+        -5.6,
+        1.0
+       ]
+      },
+      {
+       "en": 8.6,
+       "pos": [
+        3.2,
+        3.1,
+        1.1
+       ]
+      }
+     ]
+    },
+    {
+     "tipo": "particulas",
+     "clase": "estrellas",
+     "pos": [
+      -3.2,
+      -2.9,
+      1.3
+     ],
+     "en": 1.25,
+     "dur": 1.0,
+     "n": 12
+    },
+    {
+     "tipo": "particulas",
+     "clase": "estrellas",
+     "pos": [
+      4.2,
+      -5.6,
+      1.2
+     ],
+     "en": 6.65,
+     "dur": 1.0,
+     "n": 12
+    }
+   ],
+   "concepto": [
+    {
+     "texto": "ROUTE",
+     "en": 1.2
+    },
+    {
+     "texto": "EYE LEVEL",
+     "en": 3.6
+    },
+    {
+     "texto": "CHECKOUT TRAP",
+     "en": 6.6,
+     "color": "#e07a5f"
+    },
+    {
+     "texto": "FORCED PATH",
+     "en": 8.6
+    }
+   ]
+  }
+ ]
+}

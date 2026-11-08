@@ -401,6 +401,9 @@ def sfx_de_efectos(toma):
             son = "grieta"
         elif tipo == "flecha":
             son = "swoosh"
+        elif tipo == "cursor":                       # un clic por cada clic del cursor
+            for c in ef.get("clics", []):
+                out.append({"tipo": "clic", "en": c["en"]})
         elif tipo == "indicador":
             for tt, col in sorted(ef.get("colores", []))[1:]:
                 verde = col.lower() in ("#2ecc71", "#27ae60", "#00c853", "#4caf50", "#7dff6b")
@@ -432,6 +435,7 @@ def subtitulos_ass(plan, destino, ancho, alto, con_subs=True):
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, "
         "MarginV, Encoding",
         f"Style: Sub,{FUENTE},{tam},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,{tam // 11},{tam // 22},5,40,40,0,1",
+        f"Style: Tag,{FUENTE},{int(tam * 0.42)},&H00FFFFFF,&H00FFFFFF,&H001E1E1E,&H001E1E1E,1,0,0,0,100,100,2,0,3,{max(6, tam // 7)},0,1,{int(ancho * 0.07)},40,{int(alto * 0.17)},1",
         f"Style: Cab,{FUENTE},{int(tam * 0.95)},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,{tam // 10},0,8,40,40,{int(alto * 0.07)},1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     ev = []
@@ -440,6 +444,18 @@ def subtitulos_ass(plan, destino, ancho, alto, con_subs=True):
         t0, t1 = toma["cuadro0"] / FPS, (toma["cuadro0"] + toma["cuadros"]) / FPS
         if toma.get("cabecera"):
             ev.append(f"Dialogue: 1,{_ts(t0)},{_ts(t1)},Cab,,0,0,0,,{{\\fad(60,0)}}{_limpia(toma['cabecera']).upper()}")
+        conceptos = toma.get("concepto") or []          # etiqueta(s) de concepto estilo juego, abajo a la izquierda
+        conceptos = conceptos if isinstance(conceptos, list) else [conceptos]
+        for j, c in enumerate(conceptos):
+            c = c if isinstance(c, dict) else {"texto": c}
+            col = c.get("color", "#38d94a").lstrip("#")
+            bgr = col[4:6] + col[2:4] + col[0:2]
+            q = int(tam * 0.3)
+            a_ = t0 + c.get("en", 0.0)
+            sig = conceptos[j + 1] if j + 1 < len(conceptos) else None
+            b_ = t0 + c["hasta"] if "hasta" in c else (t0 + sig["en"] if isinstance(sig, dict) and "en" in sig else t1)
+            ev.append(f"Dialogue: 2,{_ts(a_)},{_ts(b_)},Tag,,0,0,0,,{{\\fad(120,120)\\fscx60\\fscy60\\t(0,140,\\fscx100\\fscy100)}}"
+                      f"{{\\c&H{bgr}&\\p1}}m 0 0 l {q} 0 {q} {q} 0 {q}{{\\p0\\c&HFFFFFF&}} {_limpia(c['texto']).upper()}")
         if toma.get("barra"):
             b = toma["barra"]
             partes = [("{\\c&H38D94A&}" if k == b.get("activa", 0) else "{\\c&HFFFFFF&}") + _limpia(o)
@@ -683,6 +699,10 @@ def cmd_idiomas(a):
             t["palabras"] = ps
             if cfg.get("cabeceras") and k < len(cfg["cabeceras"]):
                 t["cabecera"] = cfg["cabeceras"][k]
+            if cfg.get("conceptos") and k < len(cfg["conceptos"]) and cfg["conceptos"][k] and t.get("concepto"):
+                orig = t["concepto"] if isinstance(t["concepto"], list) else [t["concepto"]]
+                trad = cfg["conceptos"][k] if isinstance(cfg["conceptos"][k], list) else [cfg["conceptos"][k]]
+                t["concepto"] = [{**(c if isinstance(c, dict) else {"texto": c}), "texto": tx} for c, tx in zip(orig, trad)]
         banda_l = w / f"banda_{idioma}.wav"
         sonido.banda(_escenas_banda(plan_l), str(voz), banda_l, estilo=estilo if estilo != "ninguna" else "caricatura",
                      con_musica=estilo != "ninguna", densidad=a.densidad)

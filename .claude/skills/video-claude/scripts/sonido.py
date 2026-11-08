@@ -454,12 +454,22 @@ def firma(d=1.3):
     return _norm(y, 0.8)
 
 
-EFECTOS = {f.__name__: f for f in (whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina,
+def clic(d=0.09):
+    """Clic de ratón: dos golpecitos secos (bajar y soltar el botón), como en los juegos de construir."""
+    y = np.zeros(int(d * SR))
+    for s_, f, v in ((0.0, 3200, 1.0), (0.045, 2400, 0.55)):
+        t = _t(0.025)
+        x = _bp(_ruido(0.025), f * 0.6, f * 1.4) * np.exp(-t * 260) * v
+        i = int(s_ * SR); y[i:i + len(x)] += x[: len(y) - i]
+    return _norm(y, 0.7)
+
+
+EFECTOS = {f.__name__: f for f in (clic, whoosh, impacto, sello, camara, pasos, puerta, llave, silbato, multitud, maquina,
                                     papel, tren, riser, latido, reloj, campana, revelacion, caja,
                                     vine_boom, zumbido, pasos_alfombra, remate, pop,
                                     boing, grito, ronquido, fuego, soplido, masticar, deslizar, caida, burbuja, tada, firma,
                                     monedas, destello, grieta, correcto, error, swoosh)}
-VOLUMEN = {"whoosh": 0.35, "impacto": 0.7, "sello": 0.7, "camara": 0.6, "pasos": 0.45, "puerta": 0.5, "llave": 0.5,
+VOLUMEN = {"clic": 0.45, "whoosh": 0.35, "impacto": 0.7, "sello": 0.7, "camara": 0.6, "pasos": 0.45, "puerta": 0.5, "llave": 0.5,
            "silbato": 0.45, "multitud": 0.35, "maquina": 0.45, "papel": 0.4, "tren": 0.5, "riser": 0.45, "latido": 0.6,
            "reloj": 0.35, "campana": 0.45, "revelacion": 0.6, "caja": 0.5,
            "vine_boom": 0.75, "zumbido": 0.25, "pasos_alfombra": 0.45, "remate": 0.55, "pop": 0.35,

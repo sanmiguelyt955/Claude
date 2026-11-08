@@ -110,3 +110,16 @@ que cuenta la emoción sin idioma y un gag repetible que la audiencia espera.
 3b. Guion con la plantilla de `references/guiones.md` (≥ 61 s, gancho → explicación visual → giro → CTA → reto).
 4. Revisar con `revisar` antes de renderizar; render `normal` para probar y `final` para publicar.
 5. Textos en pantalla (`cabecera`, `barra`) solo cuando el formato los necesita.
+
+## Formato «maqueta» (toma única con cámara que vuela) — 2026-11-08
+- `"escenario": "maqueta"`: tablero tipo juego de construir (pasillos de estantes en x ∈ {-3.2,0,3.2}, y ∈ {-2.5,0.5,3.5};
+  caja de cobro en (4.2,-5.2); puerta al frente). Personaje chico: `"altura": 0.45` en el personaje.
+- `"vuelo": [{"t", "pos":[x,y,z], "mira":[x,y,z]}, …]` en la toma: la cámara pasa por cada clave (curva suave que frena
+  al llegar). Pon una clave en el segundo de cada clic, mirando al punto del clic. Respeta sacudidas y golpe_en.
+- Efecto `"cursor"`: `{"tipo":"cursor","desde":0.3,"clics":[{"en":1.2,"pos":[x,y,z]} | {"en":…,"sobre":"kubo"}],
+  "tam":0.75,"color":"#ffffff","anillo":"#38d94a"}`. Viaja en arco entre clics, se hunde al hacer clic, anillo verde
+  que se expande, tamaño constante en pantalla, sonido «clic» automático.
+- Etiqueta de concepto estilo juego (abajo a la izquierda, se traduce por idioma): `"concepto": "PLANOGRAM"` o lista
+  `[{"texto":"ROUTE","en":1.2,"color":"#38d94a"}, …]` (cada una dura hasta la siguiente). En `idiomas.<l>.conceptos`
+  va la traducción por toma (texto o lista).
+- Prueba: proyectos/kubo/prueba_maqueta (10 s, 1.1 min de render normal).
