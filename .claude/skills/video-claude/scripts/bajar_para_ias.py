@@ -32,7 +32,8 @@ def bajar():
     if not os.path.exists(LINK):
         sys.exit("No encontré link.txt: primero copia el link y corre  pbpaste > link.txt")
     contenido = open(LINK, encoding="utf-8").read().strip()
-    url = contenido.split()[0] if contenido else ""
+    # TikTok/Instagram a veces mandan «texto … https://…»: tomar el primer link que aparezca
+    url = next((p for p in contenido.split() if p.startswith("http")), contenido[:60])
     if not url.startswith("http"):
         sys.exit(f"El portapapeles no tiene un link (tiene: {url[:60]!r}). Copia el link del video y vuelve a intentar.")
     shutil.rmtree(CARPETA, ignore_errors=True)
