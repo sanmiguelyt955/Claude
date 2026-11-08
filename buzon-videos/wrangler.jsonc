@@ -1,0 +1,10 @@
+{
+  // Buzón de videos para IAs: el iPhone (a-Shell, atajo «Bajar para IAs») sube el video aquí y las IAs lo bajan.
+  // Secreto (NO va aquí, está en Cloudflare): CLAVE.  Los videos se borran solos a los 7 días (cron diario).
+  "name": "buzon-videos",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "keep_vars": true,
+  "r2_buckets": [{ "binding": "VIDEOS", "bucket_name": "videos-para-ias" }],
+  "triggers": { "crons": ["17 9 * * *"] }
+}

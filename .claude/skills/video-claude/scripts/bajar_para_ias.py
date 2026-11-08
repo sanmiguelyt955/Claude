@@ -3,12 +3,16 @@
 En a-Shell, una sola vez:
     curl -L -o bajar.py https://raw.githubusercontent.com/sanmiguelyt955/claude/claude/video-editing-skill-6wybxb/.claude/skills/video-claude/scripts/bajar_para_ias.py
 
-El atajo hace («Ejecutar comando» de a-Shell con «Abrir la app: no», para que Atajos espere):
+Y una sola vez la clave del buzón (Claude te la da):  copiarla y  pbpaste > .clave_buzon
+
+El atajo (Recibir de Hoja de compartir → Ejecutar comando de a-Shell con «Abrir la app: sí» → Esperar a regresar →
+Mostrar notificación):
     cd ~/Documents
-    python3 bajar.py "[Entrada de atajo]"   ← baja el video en 1080p a ia/video.mp4 (el link va en la orden:
-                                              la extensión de a-Shell NO puede leer el portapapeles)
-    (Get File ia/video.mp4 → Guardar archivo en Google Drive / Videos para IAs)
-    python3 bajar.py --limpiar  ← borra el video del iPhone
+    python3 bajar.py [Entrada de atajo]   ← baja el video en 1080p y, si existe .clave_buzon, lo SUBE al buzón de
+                                            las IAs (Cloudflare) y lo borra del iPhone
+    open shortcuts://                     ← regresa a Atajos
+Las IAs lo bajan con  buzon.py --ultimo  (y se borra solo del buzón a los 7 días).
+Sin .clave_buzon hace lo de antes: deja ia/video.mp4 (y  python3 bajar.py --limpiar  lo borra).
 
 Prueba a mano: copia un link, y en a-Shell escribe  pbpaste > link.txt  y luego  python3 bajar.py
 """
@@ -19,6 +23,30 @@ import sys
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CARPETA = os.path.join(AQUI, "ia")
 LINK = os.path.join(AQUI, "link.txt")
+CLAVE = os.path.join(AQUI, ".clave_buzon")          # clave del buzón (se pega UNA vez:  pbpaste > .clave_buzon)
+BUZON = "https://buzon-videos.sanmiguelyt955.workers.dev"
+
+
+def subir(final, url):
+    """Manda el video al buzón de las IAs (Cloudflare) y lo borra del iPhone. Sin Drive, sin toques."""
+    import urllib.parse
+    import urllib.request
+    clave = open(CLAVE, encoding="utf-8").read().strip()
+    tam = os.path.getsize(final)
+    destino = f"{BUZON}/subir?" + urllib.parse.urlencode({"nombre": "video.mp4", "origen": url})
+    print(f"Subiendo al buzón de las IAs ({tam / 1e6:.1f} MB)…")
+    with open(final, "rb") as f:
+        req = urllib.request.Request(destino, data=f, method="PUT", headers={
+            "Authorization": f"Bearer {clave}", "Content-Type": "video/mp4", "Content-Length": str(tam),
+            "User-Agent": "bajar-para-ias/1.0"})   # sin esto Cloudflare responde 403
+        try:
+            r = urllib.request.urlopen(req, timeout=600).read().decode()
+        except Exception as e:  # noqa: BLE001
+            sys.exit(f"No se pudo subir al buzón ({e}). El video sigue en ia/video.mp4.")
+    if '"ok": true' not in r:
+        sys.exit(f"El buzón no aceptó el video: {r[:200]}")
+    shutil.rmtree(CARPETA, ignore_errors=True)
+    print("Listo: el video ya está en el buzón de las IAs (y se borró del iPhone).")
 
 
 def limpiar():
@@ -59,6 +87,8 @@ def bajar(texto=None):
     if not os.path.exists(final):
         sys.exit("No se pudo bajar el video (revisa que el link sea público).")
     print(f"Listo: ia/video.mp4 ({os.path.getsize(final) / 1e6:.1f} MB)")
+    if os.path.exists(CLAVE):
+        subir(final, url)
 
 
 if __name__ == "__main__":
