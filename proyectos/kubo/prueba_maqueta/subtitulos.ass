@@ -1,0 +1,18 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Sub,Inter ExtraBold,91,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,8,4,5,40,40,0,1
+Style: Tag,Inter ExtraBold,38,&H00FFFFFF,&H00FFFFFF,&H001E1E1E,&H001E1E1E,1,0,0,0,100,100,2,0,3,13,0,1,75,40,326,1
+Style: Cab,Inter ExtraBold,86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,0,0,1,9,0,8,40,40,134,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 2,0:00:01.20,0:00:03.60,Tag,,0,0,0,,{\fad(120,120)\fscx60\fscy60\t(0,140,\fscx100\fscy100)}{\c&H4ad938&\p1}m 0 0 l 27 0 27 27 0 27{\p0\c&HFFFFFF&} ROUTE
+Dialogue: 2,0:00:03.60,0:00:06.60,Tag,,0,0,0,,{\fad(120,120)\fscx60\fscy60\t(0,140,\fscx100\fscy100)}{\c&H4ad938&\p1}m 0 0 l 27 0 27 27 0 27{\p0\c&HFFFFFF&} EYE LEVEL
+Dialogue: 2,0:00:06.60,0:00:08.60,Tag,,0,0,0,,{\fad(120,120)\fscx60\fscy60\t(0,140,\fscx100\fscy100)}{\c&H5f7ae0&\p1}m 0 0 l 27 0 27 27 0 27{\p0\c&HFFFFFF&} CHECKOUT TRAP
+Dialogue: 2,0:00:08.60,0:00:10.00,Tag,,0,0,0,,{\fad(120,120)\fscx60\fscy60\t(0,140,\fscx100\fscy100)}{\c&H4ad938&\p1}m 0 0 l 27 0 27 27 0 27{\p0\c&HFFFFFF&} FORCED PATH
