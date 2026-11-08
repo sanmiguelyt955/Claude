@@ -1,0 +1,2 @@
+NOMBRE = "REA Studio"
+CARPETA_GRABACIONES = "~/Videos/REA"
