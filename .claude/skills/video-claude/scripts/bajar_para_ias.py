@@ -27,24 +27,52 @@ CLAVE = os.path.join(AQUI, ".clave_buzon")          # clave del buzón (se pega 
 BUZON = "https://buzon-videos.sanmiguelyt955.workers.dev"
 
 
+PEDAZO = 50 * 1024 * 1024        # videos de más de ~90 MB se suben en pedazos de 50 MB (el buzón los junta)
+
+
+def _pedir(ruta, clave, metodo="POST", datos=None, tipo="application/octet-stream"):
+    import json
+    import urllib.request
+    h = {"Authorization": f"Bearer {clave}", "User-Agent": "bajar-para-ias/1.0",   # sin User-Agent: 403
+         "Content-Type": tipo}
+    if datos is not None:
+        h["Content-Length"] = str(len(datos))
+    for intento in range(4):                      # el wifi del iPhone a veces se corta: reintentar
+        try:
+            r = urllib.request.urlopen(urllib.request.Request(BUZON + ruta, data=datos, method=metodo, headers=h),
+                                       timeout=900).read().decode()
+            return json.loads(r)
+        except Exception as e:  # noqa: BLE001
+            if intento == 3:
+                raise
+            print(f"  (falló: {e}; reintento {intento + 2}/4)")
+
+
 def subir(final, url):
     """Manda el video al buzón de las IAs (Cloudflare) y lo borra del iPhone. Sin Drive, sin toques."""
+    import json
     import urllib.parse
-    import urllib.request
     clave = open(CLAVE, encoding="utf-8").read().strip()
     tam = os.path.getsize(final)
-    destino = f"{BUZON}/subir?" + urllib.parse.urlencode({"nombre": "video.mp4", "origen": url})
+    q = urllib.parse.urlencode({"nombre": "video.mp4", "origen": url})
     print(f"Subiendo al buzón de las IAs ({tam / 1e6:.1f} MB)…")
-    with open(final, "rb") as f:
-        req = urllib.request.Request(destino, data=f, method="PUT", headers={
-            "Authorization": f"Bearer {clave}", "Content-Type": "video/mp4", "Content-Length": str(tam),
-            "User-Agent": "bajar-para-ias/1.0"})   # sin esto Cloudflare responde 403
-        try:
-            r = urllib.request.urlopen(req, timeout=600).read().decode()
-        except Exception as e:  # noqa: BLE001
-            sys.exit(f"No se pudo subir al buzón ({e}). El video sigue en ia/video.mp4.")
-    if '"ok": true' not in r:
-        sys.exit(f"El buzón no aceptó el video: {r[:200]}")
+    try:
+        if tam <= 90 * 1024 * 1024:
+            with open(final, "rb") as f:
+                r = _pedir(f"/subir?{q}", clave, "PUT", f.read(), "video/mp4")
+        else:
+            m = _pedir(f"/partes/crear?{q}", clave)
+            base = "clave=" + urllib.parse.quote(m["clave"]) + "&id=" + urllib.parse.quote(m["id"])
+            partes, total = [], (tam + PEDAZO - 1) // PEDAZO
+            with open(final, "rb") as f:
+                for n in range(1, total + 1):
+                    print(f"  pedazo {n}/{total}…")
+                    partes.append(_pedir(f"/partes/subir?{base}&n={n}", clave, "PUT", f.read(PEDAZO)))
+            r = _pedir(f"/partes/terminar?{base}", clave, "POST", json.dumps(partes).encode(), "application/json")
+    except Exception as e:  # noqa: BLE001
+        sys.exit(f"No se pudo subir al buzón ({e}). El video sigue en ia/video.mp4.")
+    if not r.get("ok"):
+        sys.exit(f"El buzón no aceptó el video: {str(r)[:200]}")
     shutil.rmtree(CARPETA, ignore_errors=True)
     print("Listo: el video ya está en el buzón de las IAs (y se borró del iPhone).")
 
@@ -70,8 +98,14 @@ def bajar(texto=None):
     shutil.rmtree(CARPETA, ignore_errors=True)
     os.makedirs(CARPETA)
     import yt_dlp
+    with yt_dlp.YoutubeDL({"quiet": True, "noplaylist": True}) as y:
+        dur = (y.extract_info(url, download=False) or {}).get("duration") or 0
+    # Siempre 1080p. Cortos: H.264 (abre en todo). Largos (>10 min): AV1/VP9, misma resolución pero ~40% menos peso.
+    codecs = ["vcodec:h264"] if dur <= 600 else ["vcodec:av01", "vcodec:vp9.2", "vcodec:vp9"]
+    if dur > 600:
+        print(f"Video largo ({dur / 60:.0f} min): se baja en 1080p con el formato más ligero. No bloquees el iPhone.")
     opciones = {
-        "format_sort": ["res:1080", "vcodec:h264", "ext:mp4:m4a"],   # 1080p, H.264 (abre en cualquier lado)
+        "format_sort": ["res:1080", *codecs, "ext:mp4:m4a"],
         "merge_output_format": "mp4",
         "outtmpl": os.path.join(CARPETA, "video.%(ext)s"),
         "noplaylist": True,

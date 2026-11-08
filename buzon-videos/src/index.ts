@@ -2,11 +2,17 @@
 //   PUT    /subir?nombre=…&origen=<link>   cuerpo = el video   → {ok, clave, bytes}
 //   GET    /lista                          → [{clave, bytes, subido, origen}] (más nuevo primero)
 //   GET    /video/<clave>                  → el video
-//   DELETE /video/<clave>                  → lo borra
-// Todo pide  Authorization: Bearer <CLAVE>.  Un cron borra lo que tenga más de 7 días.
+//   DELETE /video/<clave>                  → lo borra (las IAs lo hacen EN CUANTO terminan de analizarlo)
+//   Videos grandes (>100 MB) en pedazos de 50 MB (multipart de R2, hasta ~5 TB):
+//   POST /partes/crear?nombre=…&origen=…            → {clave, id}
+//   PUT  /partes/subir?clave=…&id=…&n=1..10000      cuerpo = el pedazo → {n, etag}
+//   POST /partes/terminar?clave=…&id=…  [{n, etag}] → {ok, clave, bytes}
+//   POST /partes/cancelar?clave=…&id=…
+// Todo pide  Authorization: Bearer <CLAVE>.  NO se borra por tiempo: solo red de seguridad diaria si el buzón pasa de
+// 9 GB (se borran los más viejos para no salir del plan gratis de 10 GB).
 interface Env { VIDEOS: R2Bucket; CLAVE: string }
 
-const DIAS = 7;
+const TOPE_BYTES = 9e9;
 const json = (d: unknown, status = 200) =>
   new Response(JSON.stringify(d, null, 1), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 
@@ -46,6 +52,36 @@ export default {
       });
       return json({ ok: true, clave, bytes: obj?.size ?? 0 });
     }
+    if (url.pathname.startsWith("/partes/")) {
+      const accion = url.pathname.slice("/partes/".length);
+      if (req.method === "POST" && accion === "crear") {
+        const nombre = (url.searchParams.get("nombre") || "video").replace(/[^\w.-]/g, "_").slice(0, 60);
+        const clave = `videos/${new Date().toISOString().replace(/[:.]/g, "-")}_${nombre}`;
+        const mp = await env.VIDEOS.createMultipartUpload(clave, {
+          httpMetadata: { contentType: "video/mp4" },
+          customMetadata: { origen: (url.searchParams.get("origen") || "").slice(0, 500) },
+        });
+        return json({ clave: mp.key, id: mp.uploadId });
+      }
+      const clave = url.searchParams.get("clave") || "", id = url.searchParams.get("id") || "";
+      if (!clave.startsWith("videos/") || !id) return json({ error: "falta clave o id" }, 400);
+      const mp = env.VIDEOS.resumeMultipartUpload(clave, id);
+      if (req.method === "PUT" && accion === "subir") {
+        const n = Number(url.searchParams.get("n"));
+        if (!req.body || !(n >= 1 && n <= 10000)) return json({ error: "pedazo inválido" }, 400);
+        const parte = await mp.uploadPart(n, req.body);
+        return json({ n: parte.partNumber, etag: parte.etag });
+      }
+      if (req.method === "POST" && accion === "terminar") {
+        const partes = (await req.json()) as { n: number; etag: string }[];
+        const obj = await mp.complete(partes.map((p) => ({ partNumber: p.n, etag: p.etag })));
+        return json({ ok: true, clave: obj.key, bytes: obj.size });
+      }
+      if (req.method === "POST" && accion === "cancelar") {
+        await mp.abort();
+        return json({ ok: true });
+      }
+    }
     if (req.method === "GET" && url.pathname === "/lista") {
       const lista = (await todos(env))
         .sort((a, b) => b.uploaded.getTime() - a.uploaded.getTime())
@@ -71,8 +107,15 @@ export default {
   },
 
   async scheduled(_c: ScheduledController, env: Env) {
-    const limite = Date.now() - DIAS * 86400_000;
-    const viejos = (await todos(env)).filter((o) => o.uploaded.getTime() < limite).map((o) => o.key);
-    for (let i = 0; i < viejos.length; i += 1000) await env.VIDEOS.delete(viejos.slice(i, i + 1000));
+    // Red de seguridad: los videos se borran al analizarse. Solo si el buzón pasa de 9 GB se borran los más viejos.
+    const objs = (await todos(env)).sort((a, b) => a.uploaded.getTime() - b.uploaded.getTime());
+    let total = objs.reduce((t, o) => t + o.size, 0);
+    const borrar: string[] = [];
+    for (const o of objs) {
+      if (total <= TOPE_BYTES) break;
+      borrar.push(o.key);
+      total -= o.size;
+    }
+    for (let i = 0; i < borrar.length; i += 1000) await env.VIDEOS.delete(borrar.slice(i, i + 1000));
   },
 };

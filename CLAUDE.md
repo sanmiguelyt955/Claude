@@ -25,8 +25,10 @@
 - Si YouTube no deja (bloqueo o sin cuota de Gemini): pedir a Sanmi que use su atajo de iPhone **«Bajar para IAs»**
   (Compartir → Bajar para IAs: a-Shell lo baja en 1080p y lo sube al **buzón de videos** en Cloudflare, sin Drive).
   Bajarlo con `scripts/buzon.py --ultimo` (la clave la pone el proxy; `--listar` muestra el link de origen),
-  analizarlo y **borrarlo al terminar** (local y `buzon.py --borrar <clave>`; si no, se borra solo a los 7 días).
-  Límite: 100 MB por video. Respaldo viejo: carpeta de Drive «Videos para IAs» + `drive_publico.py --ultimo`.
+  analizarlo COMPLETO sin perder datos (extraer_video.py + todas las herramientas) y en cuanto termine
+  `buzon.py --terminar <archivo>` (borra local y del buzón). El buzón NO borra por tiempo (solo si pasa de 9 GB).
+  Sin límite práctico de tamaño: >90 MB se sube en pedazos de 50 MB; largos (>10 min) en 1080p AV1/VP9.
+  Respaldo viejo: carpeta de Drive «Videos para IAs» + `drive_publico.py --ultimo`.
 
 ## Cuando no puedas hacer algo
 

@@ -3,11 +3,13 @@
     python3 buzon.py --listar              los videos que hay (más nuevo primero), con el link de origen
     python3 buzon.py --ultimo [carpeta]    baja el más nuevo  → imprime la ruta
     python3 buzon.py --bajar <clave> [carpeta]
-    python3 buzon.py --borrar <clave>      bórralo del buzón cuando ya esté analizado
+    python3 buzon.py --borrar <clave>      bórralo del buzón
+    python3 buzon.py --terminar <archivo>  YA ANALIZADO: borra el archivo local Y el del buzón (lo normal)
 
 La clave se lee de $BUZON_CLAVE o ~/.config/buzon/clave (NUNCA en el repo). Si en este entorno la clave está guardada
 como credencial del proxy para buzon-videos.sanmiguelyt955.workers.dev, sirve cualquier valor (el proxy la pone).
-Después de analizar: borrar el video local Y del buzón (si no, se borra solo a los 7 días).
+REGLA: en cuanto el análisis esté completo (sin perder datos), --terminar. El buzón NO borra por tiempo
+(solo si pasa de 9 GB borra los más viejos). Videos >90 MB llegan subidos en pedazos; aquí se bajan igual.
 """
 import json
 import os
@@ -61,6 +63,11 @@ if __name__ == "__main__":
         print(bajar(vs[0]["clave"], a[1] if len(a) > 1 else None))
     elif a[0] == "--bajar" and len(a) > 1:
         print(bajar(a[1], a[2] if len(a) > 2 else None))
+    elif a[0] == "--terminar" and len(a) > 1:
+        arch = Path(a[1])
+        print(pedir("/video/" + urllib.parse.quote("videos/" + arch.name, safe="/"), "DELETE").read().decode())
+        arch.unlink(missing_ok=True)
+        print("borrado local:", arch)
     elif a[0] == "--borrar" and len(a) > 1:
         print(pedir("/video/" + urllib.parse.quote(a[1], safe="/"), "DELETE").read().decode())
     else:
