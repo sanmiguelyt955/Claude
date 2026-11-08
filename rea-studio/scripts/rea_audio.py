@@ -15,6 +15,17 @@ PRESETS = {
         ("compressor_filter", "REA Compresor", {"ratio": 6.0, "threshold": -22.0, "output_gain": 6.0}),
         ("limiter_filter", "REA Limitador", {"threshold": -1.0}),
     ],
+    "Voz + REA Audio Lab (EQ y de-esser)": [
+        ("noise_suppress_filter_v2", "REA Supresion de ruido", {"method": "rnnoise"}),
+        ("rea_audio_lab", "REA Audio Lab", {"hp_hz": 90.0, "eq1_db": -2.0, "eq2_db": 2.5, "deess_db": 8.0,
+                                            "comp_thr": -18.0, "comp_ratio": 3.0, "makeup_db": 3.0, "lim_db": -1.5}),
+    ],
+    "Musica con ducking (baja cuando hablas)": [
+        # En 'sidechain_source' escribe el nombre de tu fuente de microfono antes de aplicar
+        ("compressor_filter", "REA Ducking", {"ratio": 8.0, "threshold": -35.0, "attack_time": 10, "release_time": 400,
+                                              "sidechain_source": "Microfono"}),
+        ("limiter_filter", "REA Limitador", {"threshold": -3.0}),
+    ],
     "Musica de fondo": [
         ("compressor_filter", "REA Compresor", {"ratio": 3.0, "threshold": -20.0}),
         ("gain_filter", "REA Ganancia", {"db": -12.0}),

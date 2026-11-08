@@ -10,7 +10,7 @@ Nombre de trabajo: **REA Studio** — se cambia en un solo sitio (`NOMBRE` en `s
   - `rea_grabacion.py` — nombre de archivo automático, división por tiempo, registro de grabaciones, atajos.
   - `rea_audio.py` — cadenas de filtros de audio (voz limpia, anti-eco, ducking de música, limitador) con parámetros editables.
   - `rea_subtitulos.py` + `subtitulos_whisper.py` — subtítulos en vivo: Whisper local escribe a un archivo y OBS lo muestra.
-- `plugins/rea-audio-lab/` — plugin C (filtro de audio propio: pasa‑altos + ganancia + limitador suave) para tener control total del audio.
+- `plugins/rea-audio-lab/` — plugin C con filtro de audio propio: pasa‑altos, EQ de 4 bandas, de‑esser, compresor y limitador. El procesado (`rea_dsp.h`) tiene pruebas con señales sintéticas (`test_dsp.c`, 5/5 correctas); el cableado a OBS aún no está probado.
 - `docs/REA.md` — cómo usar REA (morluto/rea) para entender OBS y planear cambios.
 
 ## Legalidad (resumen)
@@ -25,4 +25,6 @@ Ver `base/INSTALL` y `base/CMakePresets.json` (Linux: `cmake --preset ubuntu-x86
 Los scripts de `scripts/` funcionan también con OBS oficial instalado, sin compilar nada.
 
 ## Estado
-Sin probar contra una instancia real de OBS (el contenedor no tiene GUI). Los scripts compilan en Python; falta probarlos en tu equipo.
+Sin probar contra una instancia real de OBS (el contenedor no tiene GUI). Los scripts compilan en Python y el DSP está probado aparte; falta probar todo dentro de OBS en tu equipo.
+
+Pendiente (audio): mezclador por escena, medidores/alertas, subtítulos nativos. Pendiente: cambio de nombre completo de la interfaz.
