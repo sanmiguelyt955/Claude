@@ -39,7 +39,13 @@ AQUI = Path(__file__).resolve().parent
 SKILL = AQUI.parent
 REPO = SKILL.parent.parent.parent
 sys.path.insert(0, str(SKILL / "scripts"))
-BLENDER = next((str(p) for p in [Path("/opt/blender-dl/blender-4.2.3-linux-x64/blender")] if p.exists()), shutil.which("blender"))
+import os
+# Blender: variable KUBO_BLENDER (ruta al ejecutable, p. ej. ~/blender-4.2.3-linux-x64/blender), la instalación de la
+# skill o el que esté en el PATH. Así funciona en cualquier computadora con la versión portátil de Linux.
+BLENDER = os.environ.get("KUBO_BLENDER") or next((str(p) for p in [
+    Path("/opt/blender-dl/blender-4.2.3-linux-x64/blender"),
+    Path.home() / "blender-4.2.3-linux-x64" / "blender"] if p.exists()), shutil.which("blender"))
+FUENTES = next((d for d in ("/usr/share/fonts/opentype/inter", str(Path.home() / "fuentes")) if Path(d).is_dir()), None)
 FPS = 24
 PASO = {"borrador": 2, "normal": 2, "final": 1}
 FUENTE = "Inter ExtraBold"
@@ -490,7 +496,7 @@ def _mezclar(voz, banda, total, salida, lufs):
 
 
 def _codificar(cuadros, paso, ass, audio, total, ancho, alto, salida):
-    sub = f"ass={ass}:fontsdir=/usr/share/fonts/opentype/inter," if ass else ""
+    sub = (f"ass={ass}:fontsdir={FUENTES}," if FUENTES else f"ass={ass},") if ass else ""
     filtro = f"[0:v]fps={FPS},scale={ancho}:{alto}:flags=lanczos,{sub}format=yuv420p[v]"
     cmd = ["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS / paso), "-pattern_type", "glob",
            "-i", str(cuadros / "t*_*.png"), "-i", str(audio), "-filter_complex", filtro, "-map", "[v]", "-map", "1:a",
@@ -531,11 +537,32 @@ def cmd_exportar(a):
     idioma = plan.get("idioma", "en")
     audio = _mezclar(voz, banda, total, w / f"audio_{idioma}.wav", a.lufs)
     salida = _codificar(cuadros, paso, ass, audio, total, ancho, alto, w / f"{a.nombre}.mp4")
-    import motion
-    motion.escribir_srt([{"dur": t["dur"], "palabras": t.get("palabras", [])} for t in plan["tomas"]], w / f"subtitulos_{idioma}.srt")
+    escribir_srt([{"dur": t["dur"], "palabras": t.get("palabras", [])} for t in plan["tomas"]], w / f"subtitulos_{idioma}.srt")
     shutil.copy(ass, p / "subtitulos.ass")
     print(f"Video listo ({total:.1f} s, {salida.stat().st_size / 1e6:.1f} MB): {salida}\n"
           f"Pistas separadas (música, efectos) en {w / 'stems'}")
+
+
+def escribir_srt(escenas, destino, max_palabras=6):
+    """Subtítulos .srt desde las palabras con tiempo de cada toma (grupos de hasta 6 palabras o hasta una pausa)."""
+    def ts(x):
+        h, r = divmod(max(0, x), 3600)
+        m, s_ = divmod(r, 60)
+        return f"{int(h):02d}:{int(m):02d}:{int(s_):02d},{int(round((s_ - int(s_)) * 1000)):03d}"
+    filas, t0 = [], 0.0
+    for e in escenas:
+        ps = [(t0 + w["t"], w["p"].replace("*", "")) for w in e.get("palabras", [])]
+        grupo = []
+        for i, (t, pal) in enumerate(ps):
+            grupo.append((t, pal))
+            if len(grupo) >= max_palabras or pal.endswith((".", "?", "!", "…")) or i == len(ps) - 1:
+                fin = ps[i + 1][0] if i + 1 < len(ps) else t0 + e["dur"]
+                filas.append((grupo[0][0], min(fin, grupo[0][0] + 4), " ".join(x[1] for x in grupo)))
+                grupo = []
+        t0 += e["dur"]
+    Path(destino).write_text("\n".join(f"{k}\n{ts(a)} --> {ts(b)}\n{txt}\n" for k, (a, b, txt) in enumerate(filas, 1)),
+                             encoding="utf-8")
+    return destino
 
 
 # ------------------------------------------------------------------ 6. idiomas: una pista de audio por idioma
@@ -628,7 +655,6 @@ def cmd_idiomas(a):
     «pista de audio» del mismo video, subtítulos .srt y un MP4 con subtítulos quemados (TikTok/Reels/Facebook).
     Además: versión global sin subtítulos quemados (la que se sube a YouTube con todas las pistas)."""
     import sonido
-    import motion
     paso, plan, cuadros, ancho, alto, total = _preparar_export(a.nombre)
     w = pesado(a.nombre)
     idiomas = plan.get("idiomas") or {}
@@ -660,7 +686,7 @@ def cmd_idiomas(a):
         audio = _mezclar(voz, banda_l, total, w / f"audio_{idioma}.wav", a.lufs)
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-c:a", "aac", "-b:a", "192k",
                         str(w / f"audio_{idioma}.m4a")], check=True)
-        motion.escribir_srt([{"dur": t["dur"], "palabras": t["palabras"]} for t in plan_l["tomas"]], w / f"subtitulos_{idioma}.srt")
+        escribir_srt([{"dur": t["dur"], "palabras": t["palabras"]} for t in plan_l["tomas"]], w / f"subtitulos_{idioma}.srt")
         ass = subtitulos_ass(plan_l, w / f"subtitulos_{idioma}.ass", ancho, alto, True)
         _codificar(cuadros, paso, ass, audio, total, ancho, alto, w / f"{a.nombre}_{idioma}.mp4")
         salidas[idioma] = str(w / f"{a.nombre}_{idioma}.mp4")

@@ -1,0 +1,176 @@
+{
+ "formato": "9:16",
+ "idioma": "en",
+ "musica": "caricatura",
+ "personajes": {
+  "kubo": {
+   "piel": "#3dd6c6",
+   "ropa": "#ff8c1a",
+   "pantalon": "#24304a",
+   "antena": true
+  }
+ },
+ "tomas": [
+  {
+   "dur": 2.0,
+   "escenario": "estudio",
+   "cielo": "#ffd166",
+   "camara": "medio+empuje",
+   "cabecera": "THIS IS KUBO",
+   "animo": "alegre",
+   "actores": [
+    {
+     "id": "kubo",
+     "caras": [
+      [
+       0,
+       "normal"
+      ],
+      [
+       0.5,
+       "feliz"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "agitar"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "signo",
+     "texto": "!",
+     "sobre": "kubo",
+     "en": 0.4
+    }
+   ]
+  },
+  {
+   "dur": 2.0,
+   "escenario": "estudio",
+   "cielo": "#ff8fa3",
+   "camara": "cerca",
+   "cabecera": "WHEN HE'S ANGRY…",
+   "actores": [
+    {
+     "id": "kubo",
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       0.4,
+       "enojado"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       0.4,
+       "zapatear"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "grieta",
+     "pos": [
+      0,
+      -0.6
+     ],
+     "en": 0.6
+    }
+   ]
+  },
+  {
+   "dur": 2.0,
+   "escenario": "estudio",
+   "cielo": "#2b2d42",
+   "camara": "medio+golpe",
+   "cabecera": "WHEN HE GETS SCARED…",
+   "animo": "caos",
+   "actores": [
+    {
+     "id": "kubo",
+     "caras": [
+      [
+       0,
+       "sospecha"
+      ],
+      [
+       0.4,
+       "grito"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "quieto"
+      ],
+      [
+       0.4,
+       "susto"
+      ]
+     ],
+     "salto_en": 0.4
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "estallido",
+     "sobre": "kubo",
+     "en": 0.5
+    }
+   ]
+  },
+  {
+   "dur": 2.5,
+   "escenario": "parque",
+   "camara": "medio+orbita",
+   "cabecera": "FOLLOW HIM!",
+   "animo": "alegre",
+   "actores": [
+    {
+     "id": "kubo",
+     "caras": [
+      [
+       0,
+       "feliz"
+      ],
+      [
+       0.8,
+       "extasis"
+      ]
+     ],
+     "gestos": [
+      [
+       0,
+       "saltar"
+      ]
+     ]
+    }
+   ],
+   "efectos": [
+    {
+     "tipo": "particulas",
+     "clase": "confeti",
+     "pos": [
+      0,
+      0,
+      3
+     ],
+     "en": 0.6,
+     "n": 20
+    }
+   ]
+  }
+ ]
+}

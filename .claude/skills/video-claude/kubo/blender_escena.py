@@ -835,7 +835,9 @@ def camara(toma, objetivo, n, ancho_grupo=0.0):
 
 
 # ------------------------------------------------------------------ efectos visuales (cada uno con su momento «en»)
-FUENTE_3D = "/usr/share/fonts/opentype/inter/Inter-ExtraBold.otf"
+import os
+FUENTE_3D = next((f for f in ("/usr/share/fonts/opentype/inter/Inter-ExtraBold.otf",
+                              os.path.expanduser("~/fuentes/Inter-ExtraBold.otf")) if os.path.exists(f)), "")
 _FUENTE = None
 POPS = []          # objetos con «pop» de entrada/salida (se animan al final)
 
