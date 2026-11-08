@@ -30,7 +30,9 @@ fi
 echo "3/5 Python: numpy, soundfile, Pillow…"
 for m in numpy soundfile PIL; do
   python3 -c "import $m" 2>/dev/null || { p=$m; [ "$m" = PIL ] && p=Pillow; pip install --user -q "$p" 2>/dev/null \
-    || python3 -m pip install --user -q "$p" 2>/dev/null || falta+=("falta el módulo de Python $p (pip install --user $p)"); }
+    || python3 -m pip install --user -q "$p" 2>/dev/null \
+    || python3 -m pip install --user -q --break-system-packages "$p" 2>/dev/null \
+    || falta+=("falta el módulo de Python $p (pip install --user --break-system-packages $p)"); }
 done
 
 echo "4/5 ffmpeg con subtítulos (libass)…"
@@ -44,7 +46,7 @@ import bpy
 sc=bpy.context.scene; sc.render.engine='BLENDER_WORKBENCH'; sc.render.resolution_x=64; sc.render.resolution_y=64
 bpy.ops.mesh.primitive_cube_add(); bpy.ops.object.camera_add(location=(0,-6,0),rotation=(1.5708,0,0)); sc.camera=bpy.context.active_object
 sc.render.filepath='/tmp/kubo_prueba.png'; bpy.ops.render.render(write_still=True); print('KUBO_GL_OK')" 2>&1)
-  echo "$out" | grep -q KUBO_GL_OK || falta+=("Blender no puede dibujar sin pantalla: falta OpenGL por software (libEGL/Mesa). Último error: $(echo "$out" | grep -iE 'error|abort|egl' | tail -1)")
+  echo "$out" | grep -q KUBO_GL_OK || falta+=("Blender no puede dibujar sin pantalla: falta OpenGL por software. Si tienes sudo: sudo apt-get install -y libegl1 libgl1-mesa-dri libegl-mesa0 libgles2. Último error: $(echo "$out" | grep -iE 'error|abort|egl' | tail -1)")
 fi
 
 echo

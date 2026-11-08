@@ -314,7 +314,10 @@ def cmd_revisar(a):
     filas = (len(ims) + col - 1) // col
     hoja = Image.new("RGB", (col * (w + 6), filas * (h + 70)), "white")
     d = ImageDraw.Draw(hoja)
-    f = ImageFont.truetype("/usr/share/fonts/opentype/inter/Inter-Bold.otf", 15)
+    try:
+        f = ImageFont.truetype(f"{FUENTES}/Inter-Bold.otf", 15) if FUENTES else ImageFont.load_default()
+    except OSError:
+        f = ImageFont.load_default()
     for k, ruta in enumerate(ims):
         x, y = (k % col) * (w + 6), (k // col) * (h + 70)
         hoja.paste(Image.open(ruta).resize((w, h)), (x, y))
