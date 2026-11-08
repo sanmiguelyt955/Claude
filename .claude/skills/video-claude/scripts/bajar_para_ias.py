@@ -3,9 +3,10 @@
 En a-Shell, una sola vez:
     curl -L -o bajar.py https://raw.githubusercontent.com/sanmiguelyt955/claude/claude/video-editing-skill-6wybxb/.claude/skills/video-claude/scripts/bajar_para_ias.py
 
-El atajo hace (cada línea es una acción «Execute Command» de a-Shell, un comando por acción):
-    pbpaste > link.txt          ← guarda el link que el atajo copió
-    python3 bajar.py            ← baja el video en 1080p a ia/video.mp4
+El atajo hace («Ejecutar comando» de a-Shell con «Abrir la app: no», para que Atajos espere):
+    cd ~/Documents
+    python3 bajar.py "[Entrada de atajo]"   ← baja el video en 1080p a ia/video.mp4 (el link va en la orden:
+                                              la extensión de a-Shell NO puede leer el portapapeles)
     (Get File ia/video.mp4 → Guardar archivo en Google Drive / Videos para IAs)
     python3 bajar.py --limpiar  ← borra el video del iPhone
 
@@ -28,14 +29,16 @@ def limpiar():
     print("Listo: se borró el video del iPhone.")
 
 
-def bajar():
-    if not os.path.exists(LINK):
-        sys.exit("No encontré link.txt: primero copia el link y corre  pbpaste > link.txt")
-    contenido = open(LINK, encoding="utf-8").read().strip()
+def bajar(texto=None):
+    if texto is None:                                    # sin link en la orden: usar link.txt (pbpaste > link.txt)
+        if not os.path.exists(LINK):
+            sys.exit("No encontré el link: usa  python3 bajar.py \"LINK\"  o  pbpaste > link.txt")
+        texto = open(LINK, encoding="utf-8").read()
+    contenido = texto.strip()
     # TikTok/Instagram a veces mandan «texto … https://…»: tomar el primer link que aparezca
     url = next((p for p in contenido.split() if p.startswith("http")), contenido[:60])
     if not url.startswith("http"):
-        sys.exit(f"El portapapeles no tiene un link (tiene: {url[:60]!r}). Copia el link del video y vuelve a intentar.")
+        sys.exit(f"No llegó un link (llegó: {url[:60]!r}). Copia el link del video y vuelve a intentar.")
     shutil.rmtree(CARPETA, ignore_errors=True)
     os.makedirs(CARPETA)
     import yt_dlp
@@ -59,4 +62,7 @@ def bajar():
 
 
 if __name__ == "__main__":
-    limpiar() if "--limpiar" in sys.argv else bajar()
+    if "--limpiar" in sys.argv:
+        limpiar()
+    else:   # el atajo pasa el link directo:  python3 bajar.py "[Entrada de atajo]"  (la extensión no lee el portapapeles)
+        bajar(" ".join(sys.argv[1:]) or None)
