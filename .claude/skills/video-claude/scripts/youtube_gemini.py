@@ -22,6 +22,13 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# La clave también puede estar en ~/.config/watch/.env (la usa la skill /watch). Se lee de ahí si no hay variable.
+_ENV_WATCH = Path.home() / ".config/watch/.env"
+if not os.environ.get("GEMINI_API_KEY") and _ENV_WATCH.exists():
+    for _l in _ENV_WATCH.read_text(encoding="utf-8").splitlines():
+        if _l.startswith("GEMINI_API_KEY=") and _l.split("=", 1)[1].strip().strip('"'):
+            os.environ["GEMINI_API_KEY"] = _l.split("=", 1)[1].strip().strip('"')
+
 UA = {"User-Agent": "video-claude/1.0"}
 _ID = re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})")
 GEMINI_MODELOS = [m.strip() for m in os.environ.get(

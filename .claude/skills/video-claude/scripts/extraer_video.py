@@ -126,16 +126,35 @@ def audio(video, salida, dur):
     (salida / "audio.txt").write_text("\n".join(texto) + "\n", encoding="utf-8")
 
 
+def _limpiar_ocr(txt):
+    """Quita la basura típica del OCR (fondos con texturas): deja palabras con letras de verdad."""
+    buenas = [w for w in re.findall(r"[\wÁÉÍÓÚÑáéíóúñ$%¿?¡!.,:'-]+", txt)
+              if (sum(c.isalpha() for c in w) >= 3 and sum(c.isalpha() for c in w) / len(w) >= .6)
+              or re.fullmatch(r"\$?\d+([.,]\d+)?%?", w)]
+    return " ".join(buenas)
+
+
 def ocr(cuadros, salida):
+    """Lee el texto en pantalla. Por cuadro prueba la imagen tal cual y una versión en blanco y negro agrandada
+    (los subtítulos con borde de los Shorts se leen mucho mejor así) y se queda con la lectura más limpia."""
     if not shutil.which("tesseract"):
         (salida / "texto_pantalla.txt").write_text("SIN TESSERACT: lee el texto en pantalla mirando los cuadros.\n")
         return
+    from PIL import Image, ImageOps
+    tmp = salida / "_ocr.png"
     lineas, ultimo = [], ""
     for t, p in cuadros:
-        txt = " ".join(sh(["tesseract", str(p), "-", "-l", "spa+eng", "--psm", "11"]).stdout.split())
-        if len(txt) > 2 and txt != ultimo:
+        im = ImageOps.grayscale(Image.open(p))
+        im = im.resize((im.width * 2, im.height * 2))
+        bn = im.point(lambda v: 255 if v > 200 else 0)          # letras blancas → negro sobre blanco
+        ImageOps.invert(bn).save(tmp)
+        lecturas = [_limpiar_ocr(sh(["tesseract", str(x), "-", "-l", "spa+eng", "--psm", "11"]).stdout)
+                    for x in (p, tmp)]
+        txt = max(lecturas, key=len)
+        if txt and txt != ultimo:
             lineas.append(f"[{tiempo(t)}] {txt}")
             ultimo = txt
+    tmp.unlink(missing_ok=True)
     (salida / "texto_pantalla.txt").write_text("\n".join(lineas) + "\n", encoding="utf-8")
 
 
