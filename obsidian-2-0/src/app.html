@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Obsidian 2.0</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<style>
+  :root { --bg:#1e1e24; --panel:#26262e; --line:#34343e; --text:#dcddde; --mute:#8b8d98; --acc:#a882ff; --ok:#4ade80; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 12px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 8px 0 0; color:var(--acc); white-space:nowrap; }
+  input, textarea, button, select { font:inherit; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+  input { padding:6px 10px; }
+  button { padding:6px 12px; cursor:pointer; background:var(--panel); white-space:nowrap; }
+  button:hover { border-color:var(--acc); }
+  button.pri { background:var(--acc); color:#111; border-color:var(--acc); font-weight:600; }
+  button.peligro:hover { border-color:var(--bad); color:var(--bad); }
+  #buscar { flex:1; min-width:80px; }
+  main { flex:1; display:flex; min-height:0; }
+  nav { width:300px; min-width:220px; overflow:auto; border-right:1px solid var(--line); padding:8px 4px; font-size:14px; }
+  .carpeta > summary { cursor:pointer; padding:3px 6px; color:var(--mute); list-style:none; }
+  .carpeta > summary::before { content:"▸ "; }
+  .carpeta[open] > summary::before { content:"▾ "; }
+  .carpeta > div { padding-left:12px; }
+  .item { display:block; padding:3px 8px; border-radius:4px; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item:hover, .item.activo { background:var(--line); }
+  .item.archivo::before { content:"📎 "; }
+  section { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .barra { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); }
+  .barra .ruta { flex:1; color:var(--mute); font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:100px; }
+  #vista { flex:1; overflow:auto; padding:16px 28px; line-height:1.6; }
+  #vista img, #vista video { max-width:100%; }
+  #vista pre { background:var(--panel); padding:10px; border-radius:6px; overflow:auto; }
+  #vista code { background:var(--panel); padding:1px 4px; border-radius:4px; }
+  #vista a { color:var(--acc); }
+  #vista table { border-collapse:collapse; } #vista td, #vista th { border:1px solid var(--line); padding:4px 8px; }
+  #editor { flex:1; width:100%; padding:16px; border:0; border-radius:0; resize:none; font-family:ui-monospace,Consolas,monospace; font-size:14px; line-height:1.5; display:none; }
+  .lista-v div { padding:6px 0; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; }
+  .lista-v span { flex:1; font-size:13px; }
+  .frase { color:var(--mute); font-size:13px; margin:2px 0 10px; }
+  #aviso { position:fixed; bottom:16px; right:16px; background:var(--panel); border:1px solid var(--line); padding:10px 14px; border-radius:8px; display:none; max-width:90vw; }
+  .vacio { color:var(--mute); text-align:center; margin-top:20vh; }
+  #menu { display:none; }
+  @media (max-width: 760px) {
+    nav { position:fixed; top:49px; bottom:0; left:0; z-index:5; background:var(--bg); width:85vw; display:none; }
+    nav.abierto { display:block; }
+    #menu { display:inline-block; }
+    header h1 { display:none; }
+    #vista { padding:12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <button id="menu" title="Notas">☰</button>
+  <h1>Obsidian 2.0</h1>
+  <input id="buscar" placeholder="Buscar en todas las notas…">
+  <button id="nueva" class="pri">+ Nota</button>
+  <button id="subir">⬆ Subir archivo</button>
+  <button id="verPapelera" title="Papelera">🗑</button>
+  <input type="file" id="archivoInput" multiple hidden>
+</header>
+<main>
+  <nav id="arbol"></nav>
+  <section>
+    <div class="barra" id="barra" style="display:none">
+      <span class="ruta" id="rutaActual"></span>
+      <button id="editar">✏️ Editar</button>
+      <button id="guardar" class="pri" style="display:none">💾 Guardar</button>
+      <button id="cancelar" style="display:none">Cancelar</button>
+      <button id="historial">🕘 Versiones</button>
+      <button id="descargar">⬇</button>
+      <button id="borrar" class="peligro">🗑 Borrar</button>
+    </div>
+    <div id="vista"><p class="vacio">Elige una nota de la izquierda.</p></div>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </section>
+</main>
+<div id="aviso"></div>
+<script>
+(function () {
+  var CLAVE = location.pathname.split("/")[2];
+  var API = "/api/" + CLAVE + "/";
+  var actual = null, lista = [];
+  var $ = function (id) { return document.getElementById(id); };
+
+  function aviso(t, malo) {
+    var a = $("aviso"); a.textContent = t; a.style.borderColor = malo ? "var(--bad)" : "var(--ok)";
+    a.style.display = "block"; clearTimeout(a._t); a._t = setTimeout(function () { a.style.display = "none"; }, 3500);
+  }
+  function q(ruta) { return encodeURIComponent(ruta); }
+  function esNota(r) { return /\.md$/i.test(r); }
+  function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+  function pedir(accion, opciones) {
+    return fetch(API + accion, opciones).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || r.status); }, function () { throw new Error(r.status); });
+      return r;
+    });
+  }
+
+  function cargarLista() {
+    return pedir("lista").then(function (r) { return r.json(); }).then(function (l) { lista = l; dibujarArbol(); });
+  }
+
+  function dibujarArbol() {
+    var raiz = {};
+    lista.forEach(function (o) {
+      var partes = o.ruta.split("/"), nodo = raiz;
+      for (var i = 0; i < partes.length - 1; i++) { nodo[partes[i] + "/"] = nodo[partes[i] + "/"] || {}; nodo = nodo[partes[i] + "/"]; }
+      nodo[partes[partes.length - 1]] = o.ruta;
+    });
+    function pintar(nodo, cont) {
+      Object.keys(nodo).sort(function (a, b) {
+        var ca = a.slice(-1) === "/", cb = b.slice(-1) === "/";
+        if (ca !== cb) return ca ? -1 : 1; return a.localeCompare(b, "es");
+      }).forEach(function (k) {
+        if (k.slice(-1) === "/") {
+          var d = document.createElement("details"); d.className = "carpeta";
+          var s = document.createElement("summary"); s.textContent = k.slice(0, -1); d.appendChild(s);
+          var dentro = document.createElement("div"); d.appendChild(dentro); pintar(nodo[k], dentro); cont.appendChild(d);
+        } else {
+          var it = document.createElement("span"); it.className = "item" + (esNota(k) ? "" : " archivo");
+          it.textContent = k.replace(/\.md$/i, ""); it.title = nodo[k]; it.dataset.ruta = nodo[k];
+          it.onclick = function () { abrir(this.dataset.ruta); $("arbol").classList.remove("abierto"); };
+          cont.appendChild(it);
+        }
+      });
+    }
+    var arbol = $("arbol"); arbol.innerHTML = ""; pintar(raiz, arbol);
+    marcarActivo();
+  }
+  function marcarActivo() {
+    document.querySelectorAll(".item").forEach(function (e) { e.classList.toggle("activo", e.dataset.ruta === actual); });
+  }
+
+  function modoEditar(si) {
+    $("editor").style.display = si ? "block" : "none"; $("vista").style.display = si ? "none" : "block";
+    $("guardar").style.display = si ? "" : "none"; $("cancelar").style.display = si ? "" : "none";
+    $("editar").style.display = si ? "none" : "";
+  }
+
+  function abrir(ruta) {
+    actual = ruta; marcarActivo(); modoEditar(false);
+    $("barra").style.display = "flex"; $("rutaActual").textContent = ruta;
+    $("editar").style.display = esNota(ruta) ? "" : "none";
+    var url = API + "nota?ruta=" + q(ruta);
+    if (!esNota(ruta)) {
+      var ext = (ruta.split(".").pop() || "").toLowerCase(), v = $("vista");
+      if (/^(png|jpe?g|gif|webp|svg)$/.test(ext)) v.innerHTML = '<img src="' + url + '">';
+      else if (ext === "pdf") v.innerHTML = '<iframe src="' + url + '" style="width:100%;height:80vh;border:0"></iframe>';
+      else if (/^(mp3|wav|m4a|ogg)$/.test(ext)) v.innerHTML = '<audio controls src="' + url + '"></audio>';
+      else if (/^(mp4|webm|mov)$/.test(ext)) v.innerHTML = '<video controls src="' + url + '"></video>';
+      else v.innerHTML = '<p>Archivo: ' + esc(ruta) + '</p><p><a href="' + url + '&descargar=1">Descargar</a></p>';
+      return;
+    }
+    pedir("nota?ruta=" + q(ruta)).then(function (r) { return r.text(); }).then(function (t) {
+      $("editor").value = t; mostrar(t);
+    }).catch(function (e) { aviso("No se pudo abrir: " + e.message, true); });
+  }
+
+  function mostrar(t) {
+    var html = DOMPurify.sanitize(marked.parse(t));
+    html = html.replace(/\[\[([^\]|]+)(\|([^\]]+))?\]\]/g, function (_, dest, __, alias) {
+      return '<a href="#" data-enlace="' + esc(dest) + '">' + esc(alias || dest) + '</a>';
+    });
+    $("vista").innerHTML = html;
+  }
+
+  $("vista").addEventListener("click", function (ev) {
+    var a = ev.target.closest("a[data-enlace]"); if (!a) return; ev.preventDefault();
+    var nombre = a.dataset.enlace.toLowerCase().replace(/\.md$/, "");
+    var hallada = lista.find(function (o) {
+      var r = o.ruta.toLowerCase().replace(/\.md$/, ""); return r === nombre || r.endsWith("/" + nombre);
+    });
+    if (hallada) abrir(hallada.ruta); else aviso("No encontré la nota " + a.dataset.enlace, true);
+  });
+
+  $("editar").onclick = function () { modoEditar(true); $("editor").focus(); };
+  $("cancelar").onclick = function () { modoEditar(false); };
+  $("guardar").onclick = function () {
+    var t = $("editor").value;
+    pedir("nota?ruta=" + q(actual), { method: "PUT", headers: { "Content-Type": "text/markdown; charset=utf-8" }, body: t })
+      .then(function () { mostrar(t); modoEditar(false); aviso("Guardado ✔ (la versión anterior quedó en el historial)"); cargarLista(); })
+      .catch(function (e) { aviso("No se guardó: " + e.message, true); });
+  };
+  $("descargar").onclick = function () { window.open(API + "nota?ruta=" + q(actual) + "&descargar=1"); };
+  $("borrar").onclick = function () {
+    if (!confirm("¿Mandar a la papelera?\n" + actual + "\n\n(Se puede recuperar desde 🗑)")) return;
+    pedir("nota?ruta=" + q(actual), { method: "DELETE" }).then(function () {
+      aviso("Movida a la papelera"); actual = null; $("barra").style.display = "none";
+      $("vista").innerHTML = '<p class="vacio">Elige una nota de la izquierda.</p>'; cargarLista();
+    }).catch(function (e) { aviso(e.message, true); });
+  };
+
+  $("historial").onclick = function () {
+    var ruta = actual;
+    pedir("versiones?ruta=" + q(ruta)).then(function (r) { return r.json(); }).then(function (vs) {
+      modoEditar(false);
+      var h = "<h2>Versiones de " + esc(ruta) + "</h2>";
+      if (!vs.length) h += "<p>Todavía no hay versiones anteriores. Se crean cada vez que la nota cambia.</p>";
+      else h += '<div class="lista-v">' + vs.map(function (v) {
+        return '<div><span>' + esc(v.version.replace(/T(\d\d)-(\d\d)-(\d\d)-\d+Z$/, " $1:$2:$3 UTC")) + " · " + v.tamano + ' bytes</span>' +
+          '<button data-ver="' + esc(v.version) + '">Ver</button><button class="pri" data-res="' + esc(v.version) + '">Restaurar</button></div>';
+      }).join("") + "</div>";
+      h += '<p><button id="volver">← Volver a la nota</button></p>';
+      $("vista").innerHTML = h;
+      $("volver").onclick = function () { abrir(ruta); };
+      $("vista").querySelectorAll("[data-ver]").forEach(function (b) {
+        b.onclick = function () {
+          pedir("version?ruta=" + q(ruta) + "&version=" + q(b.dataset.ver)).then(function (r) { return r.text(); }).then(function (t) {
+            $("vista").innerHTML = '<p><button id="volver2">← Volver a versiones</button></p><pre style="white-space:pre-wrap">' + esc(t) + "</pre>";
+            $("volver2").onclick = $("historial").onclick;
+          });
+        };
+      });
+      $("vista").querySelectorAll("[data-res]").forEach(function (b) {
+        b.onclick = function () {
+          if (!confirm("¿Regresar la nota a esta versión? La actual también se guarda en el historial.")) return;
+          pedir("restaurar?ruta=" + q(ruta) + "&version=" + q(b.dataset.res), { method: "POST" })
+            .then(function () { aviso("Restaurada ✔"); abrir(ruta); }).catch(function (e) { aviso(e.message, true); });
+        };
+      });
+    }).catch(function (e) { aviso(e.message, true); });
+  };
+
+  $("nueva").onclick = function () {
+    var carpeta = actual && actual.indexOf("/") > 0 ? actual.slice(0, actual.lastIndexOf("/") + 1) : "";
+    var nombre = prompt("Nombre de la nota (puedes poner carpeta/nombre):", carpeta);
+    if (!nombre) return; nombre = nombre.trim(); if (!/\.md$/i.test(nombre)) nombre += ".md";
+    if (lista.some(function (o) { return o.ruta === nombre; })) { abrir(nombre); return; }
+    var titulo = nombre.split("/").pop().replace(/\.md$/i, "");
+    pedir("nota?ruta=" + q(nombre), { method: "PUT", headers: { "Content-Type": "text/markdown; charset=utf-8" }, body: "# " + titulo + "\n\n" })
+      .then(function () { return cargarLista(); }).then(function () { abrir(nombre); modoEditar(true); })
+      .catch(function (e) { aviso(e.message, true); });
+  };
+
+  $("subir").onclick = function () { $("archivoInput").click(); };
+  $("archivoInput").onchange = function () {
+    var archivos = Array.prototype.slice.call(this.files); this.value = "";
+    if (!archivos.length) return;
+    aviso("Subiendo " + archivos.length + " archivo(s)…");
+    var hechos = 0, fallos = [];
+    Promise.all(archivos.map(function (f) {
+      var ruta = /\.md$/i.test(f.name) ? f.name : "archivos/" + f.name;
+      return pedir("nota?ruta=" + q(ruta), { method: "PUT", headers: { "Content-Type": f.type || "application/octet-stream" }, body: f })
+        .then(function () { hechos++; }, function (e) { fallos.push(f.name + ": " + e.message); });
+    })).then(function () {
+      cargarLista();
+      if (fallos.length) aviso("Subidos " + hechos + ", fallaron " + fallos.length + ": " + fallos.join("; "), true);
+      else aviso("Subidos " + hechos + " archivo(s) ✔ en archivos/");
+    });
+  };
+
+  var tBuscar;
+  $("buscar").oninput = function () {
+    var t = this.value.trim(); clearTimeout(tBuscar);
+    if (t.length < 2) return;
+    tBuscar = setTimeout(function () {
+      $("vista").innerHTML = '<p class="vacio">Buscando…</p>'; $("barra").style.display = "none"; modoEditar(false);
+      pedir("buscar?q=" + q(t)).then(function (r) { return r.json(); }).then(function (res) {
+        var h = "<h2>" + res.length + " resultado(s) para “" + esc(t) + "”</h2>";
+        h += res.map(function (x) {
+          return '<div><a href="#" data-abrir="' + esc(x.ruta) + '">' + esc(x.ruta) + '</a><div class="frase">' + esc(x.frase) + "</div></div>";
+        }).join("");
+        $("vista").innerHTML = h;
+        $("vista").querySelectorAll("[data-abrir]").forEach(function (a) {
+          a.onclick = function (ev) { ev.preventDefault(); abrir(a.dataset.abrir); };
+        });
+      }).catch(function (e) { aviso(e.message, true); });
+    }, 400);
+  };
+
+  $("verPapelera").onclick = function () {
+    pedir("papelera").then(function (r) { return r.json(); }).then(function (l) {
+      actual = null; $("barra").style.display = "none"; modoEditar(false); marcarActivo();
+      var h = "<h2>🗑 Papelera</h2>";
+      if (!l.length) h += "<p>Vacía.</p>";
+      else h += '<div class="lista-v">' + l.map(function (o) {
+        return '<div><span>' + esc(o.ruta.replace(/^_papelera\/[^/]+\//, "")) + '</span><button class="pri" data-rec="' + esc(o.ruta) + '">Recuperar</button></div>';
+      }).join("") + "</div>";
+      $("vista").innerHTML = h;
+      $("vista").querySelectorAll("[data-rec]").forEach(function (b) {
+        b.onclick = function () {
+          pedir("recuperar?ruta=" + q(b.dataset.rec), { method: "POST" }).then(function (r) { return r.json(); })
+            .then(function (j) { aviso("Recuperada ✔"); cargarLista().then(function () { abrir(j.ruta); }); })
+            .catch(function (e) { aviso(e.message, true); });
+        };
+      });
+    });
+  };
+
+  $("menu").onclick = function () { $("arbol").classList.toggle("abierto"); };
+
+  document.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s" && $("editor").style.display === "block") { e.preventDefault(); $("guardar").click(); }
+  });
+
+  cargarLista().then(function () {
+    if (lista.some(function (o) { return o.ruta === "indice.md"; })) abrir("indice.md");
+  }).catch(function (e) { aviso("No se pudo cargar: " + e.message, true); });
+})();
+</script>
+</body>
+</html>

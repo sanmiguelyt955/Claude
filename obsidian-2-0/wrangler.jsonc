@@ -1,0 +1,11 @@
+{
+  // Obsidian 2.0: cuaderno de notas en R2 + servidor MCP para las IAs (Claude, Astro, Cosmo, Sanmisito, Orión, SanmIA).
+  // Secretos (NO van aquí, ya están en Cloudflare): CLAVE, CLAVE_MUSE, LLAVES_EXTRA, NTFY_TOPIC.
+  "name": "obsidian-2-0",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "keep_vars": true,
+  "r2_buckets": [{ "binding": "NOTAS", "bucket_name": "cuaderno-notas" }],
+  "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": true }]
+}
