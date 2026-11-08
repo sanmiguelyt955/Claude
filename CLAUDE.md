@@ -23,8 +23,10 @@
 - Intenta verlos completos (descarga). Si YouTube bloquea la descarga desde la nube (lo normal), usa el modo por link: transcripción (Firecrawl) + cuadros públicos + conector Gemini Video para lo visual. Nunca intentes saltarte el bloqueo; ofrece las opciones (adjuntar el archivo, Drive, computadora conectada).
 
 - Si YouTube no deja (bloqueo o sin cuota de Gemini): pedir a Sanmi que use su atajo de iPhone **«Bajar para IAs»**
-  (baja el video con su internet y lo deja en la carpeta de Drive «Videos para IAs», id 1durviUs0zFmhovA3D85kP1LKw-KdWI7h, compartida por link; `drive_publico.py --ultimo` baja el más nuevo). Bajarlo con
-  `scripts/drive_publico.py`, analizarlo y **borrarlo del almacenamiento al terminar** (siempre).
+  (Compartir → Bajar para IAs: a-Shell lo baja en 1080p y lo sube al **buzón de videos** en Cloudflare, sin Drive).
+  Bajarlo con `scripts/buzon.py --ultimo` (la clave la pone el proxy; `--listar` muestra el link de origen),
+  analizarlo y **borrarlo al terminar** (local y `buzon.py --borrar <clave>`; si no, se borra solo a los 7 días).
+  Límite: 100 MB por video. Respaldo viejo: carpeta de Drive «Videos para IAs» + `drive_publico.py --ultimo`.
 
 ## Cuando no puedas hacer algo
 
