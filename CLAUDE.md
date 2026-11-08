@@ -22,6 +22,10 @@
 
 - Intenta verlos completos (descarga). Si YouTube bloquea la descarga desde la nube (lo normal), usa el modo por link: transcripción (Firecrawl) + cuadros públicos + conector Gemini Video para lo visual. Nunca intentes saltarte el bloqueo; ofrece las opciones (adjuntar el archivo, Drive, computadora conectada).
 
+- Si YouTube no deja (bloqueo o sin cuota de Gemini): pedir a Sanmi que use su atajo de iPhone **«Bajar para IAs»**
+  (baja el video con su internet y lo deja en la carpeta de Drive «Videos para IAs», compartida por link). Bajarlo con
+  `scripts/drive_publico.py`, analizarlo y **borrarlo del almacenamiento al terminar** (siempre).
+
 ## Cuando no puedas hacer algo
 
 - Di siempre POR QUÉ no se puede y da las diferentes maneras de solucionarlo (con sus pros y contras).

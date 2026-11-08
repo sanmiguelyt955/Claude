@@ -11,6 +11,7 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 |---|---|---|
 | **Ver / oír / analizar** un video o audio (adjunto, enlace, Drive) | `ver_video`, `escuchar_audio`, `oir`, `preguntar_audio`, `cargar_segmento` | `references/ver-y-oir.md` |
 | **YouTube** solo con el link (Shorts o videos completos) | `python3 scripts/youtube_gemini.py <link> [--pregunta …] [--inicio s --fin s]` (funciona aunque no haya servidor) o `ver_youtube` del conector: **análisis completo de Gemini por el link** (Google lo lee; clave de AI Studio en el entorno) + portada y 3 cuadros (Read de la `hoja`). Si Gemini da 503 o cualquier error, se descarta y quedan solo las 4 imágenes. Completa siempre con la transcripción de Firecrawl | `references/ver-y-oir.md` §1b |
+| **Videos de la carpeta de Drive «Videos para IAs»** (atajo de iPhone «Bajar para IAs» de Sanmi) | Buscar el más nuevo con el conector de Google Drive → `python3 scripts/drive_publico.py <id>` → analizar → **borrarlo al terminar** (`--borrar <ruta>`) | `scripts/drive_publico.py` |
 | **Videos largos** (10 min a horas) | `processing="agentic"` y luego `detalle="equilibrado"`, tramos o `momentos` | `references/ver-y-oir.md` §1c |
 | **Qué canción le queda**, ponerle música, aprender su gusto | `recomendar_musica`, `montar_musica`, `agregar_musica`, `calificar_musica`, `aprender_de_video` | `references/musica.md` |
 | **Editar** (cortes, subtítulos, motion graphics, 9:16, marca) | scripts de `scripts/` + Remotion | `references/editar.md`, `references/remotion.md` |
