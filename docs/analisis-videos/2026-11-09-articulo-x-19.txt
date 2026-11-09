@@ -1,0 +1,145 @@
+Opus 5.5 Loop Lab: 3D motion loops made from code. (prompt is below)
+I made three 3D loops with Opus 5.5 where every frame is code, and I'm printing every prompt I used. The first one puts a vague prompt next to a detailed one for the same perfume bottle. The other two are a pebble that changes material and a small city that builds itself.
+Below the clips you'll find the setup for Windows and Mac, a render script, a cheat sheet of motion and material numbers you can screenshot, and the follow-up messages each render needed.
+You don't need After Effects. A browser and Claude are enough to start, and Claude Code makes it faster.
+You need access to Opus 5.5 in the Claude app for the quick path, or Claude Code on a paid plan for the full one. There's nothing else to buy.
+What's inside:
+Experiment 1: the same 3D perfume bottle from a vague prompt and from a directed one, side by side
+How it works: why Claude writes a program, not a video
+Setup from zero: no install, or Claude Code on Windows and Mac
+Prompt anatomy: the lines a directed motion prompt needs
+The numbers: easing, springs, durations, stagger, beat grid
+The material and light cookbook: real values for chrome, gold, glass and water
+Experiment 2: one object, four materials: chrome, gold, glass and clay
+Experiment 3: a floating voxel city that builds itself and takes itself apart
+The loop: render, look, fix
+Engines: Three.js, Remotion, HyperFrames, GSAP
+The last mile: sound, clean loops, export for X
+The feed is full of clips captioned "one prompt". Some of them were one line and many weren't, so I'm printing the actual prompts here, along with the fixes each render needed. Your first render will be a draft, and that's normal.
+Experiment 1: the same bottle, two prompts
+I asked the same model for the same product in the same format twice, once vaguely and once with every detail spelled out.
+The product is a glass perfume bottle with a brass cap, as a 6-second loop in real 3D. Watch a full loop of each side before you read the prompts.
+Both sides were generated in a fresh Claude Code session with Opus 5.5 at high effort, one prompt each and no follow-ups. Each side is the HTML file exactly as Claude wrote it, rendered frame by frame. The two prompts share one technical line (Three.js r170 and window.seek(t)). The rest of Prompt B is direction. It's one run per prompt, so read it as one example, not a benchmark.
+Prompt A, vague (left side):
+Prompt B, directed (right side):
+What Prompt A produced: a flat green stage, a barrel-shaped cap and a liquid that reads as one solid orange block. The glass barely looks like glass, the plinth shows no reflection and nothing makes the eye stop. It's a correct product render, but it doesn't look like an ad.
+What Prompt B produced: a warm golden stage with soft bokeh, a clear glass body with a visible liquid line, a brass cap with a crisp edge, a mirror-polished plinth that reflects the bottle, and a brand line under it. The light does most of the work: one key, a warm backdrop and panels that exist only to be reflected.
+What changed between A and B:
+Two lines in Prompt B exist because the first test render of this scene failed in exactly these ways. The liquid is opaque because Three.js doesn't draw a transmissive object through another transmissive one: a see-through liquid inside see-through glass vanishes. The floor is a ShadowMaterial because a lit floor never quite matches the background, and you get a visible horizon line behind the product.
+Follow-ups for Prompt B, ready to paste. Each points at frames, not feelings:
+Why it's here: 100 HTML pages from one model with rules like "zero repeated designs", prompts published. It shows how fast a model's defaults converge when you don't constrain it, and how much a rules list changes the output.
+How it works: Claude writes a program, not a video
+Claude can't output an MP4, only text, so every clip in this article is a small program that Claude wrote and something else turned into frames.
+The program is usually one HTML file. Open it in a browser and it plays. Point a headless browser at it, freeze it at one exact moment per frame, save the images, and ffmpeg stitches them into a video.
+Anthropic describes its own Claude Motion the same way: Claude writes each animation as code, with no video model involved, so you can change any word, number or timing and export an MP4. It's in beta for Team and Enterprise plans.
+Why it's here: this is the official version of the idea in this article. Everything below is how to do the same thing yourself, with the prompt in your hands.
+Because every frame is code, you can render frame 84 twice and get the same image twice. Fixing something means changing one number and rendering again, with no re-rolling a video model and hoping. And Claude can look at its own work: give it a contact sheet of the render and it will tell you what's wrong with frame 84.
+Setup from zero
+There are two ways in, depending on how much you want to install.
+Path 1: no install, in the Claude app
+Open Claude and pick Opus 5.5 in the model menu.
+Paste a prompt from this article.
+Ask for one self-contained HTML file. Claude writes it and plays it in the preview.
+Ask for fixes with frame or second numbers: "the pop at 2.0 s lands late, move it 4 frames earlier".
+Record the preview. On Windows, press Win+Shift+R to use the Snipping Tool's video mode. On a Mac, press Cmd+Shift+5.
+A screen recording is fine for a first post, but it isn't frame-exact and can drop frames. For anything you want to look sharp, use Path 2.
+Path 2: Claude Code, on Windows or Mac
+Claude Code can render the frames, open them, and fix the code without you copying anything around.
+One requirement first: Claude Code needs a paid Claude plan (Pro, Max, Team or Enterprise) or a Console account. The free claude.ai plan doesn't include it.
+Install it in PowerShell, from Anthropic's setup docs:
+You can also use winget install Anthropic.ClaudeCode. Open a new terminal afterwards and check it:
+On a Mac or Linux, the installer is curl -fsSL https://claude.ai/install.sh | bash.
+Then the lab tools. Node and ffmpeg first, then a browser Claude can drive:
+Two Windows notes. Windows PowerShell 5.1 has no &&, so the commands above use a semicolon. If PowerShell refuses to run npx, type npx.cmd instead.
+Pick the model and effort inside Claude Code. These commands are from the official docs:
+Opus 5.5 defaults to medium effort. The levels are low, medium, high, xhigh and max, and max applies to the current session only. A sensible habit: medium for fixes and re-renders, higher only when a from-scratch piece misses twice.
+Why it's here: a one-line motion prompt run at max effort, with 2.2M views. It's a model demo, not a brief: the subject is the model itself, so nothing can come out wrong.
+The renderer
+Save this as render.mjs. It opens your HTML in a headless browser, asks the page to draw one exact moment, saves the frame, and pipes everything into ffmpeg. Four subframes per frame are averaged, which gives real motion blur.
+3D scenes render much faster on a real graphics card. If a frame takes more than a second, ask Claude to check which GPU the headless browser is using (WEBGL_debug_renderer_info shows it) before you wait for the whole render.
+The render contract
+Paste this under any motion prompt. Each line closes one way a render goes wrong.
+A clock or a timer makes frame 84 come out different on every run. Unseeded randomness makes shapes jitter between frames. Rendering the last frame of a loop shows the first frame twice, which is the hiccup at the seam.
+Prompt anatomy: the lines a directed motion prompt needs
+A directed prompt isn't long for the sake of being long. Each line takes one decision away from the model, and the model's own decisions are the default look.
+The template. Fill every line before you press enter:
+Write GOAL first. If you can't say in one sentence what the viewer should feel, no easing curve will rescue the piece. Then FORMAT, because every other number hangs off the frame count.
+SHOTS is where the story lives. Give each shot a range, one hero move and a handoff. Treat every transition as a decision.
+The ban list is a living list. After every first render, name what the model used anyway and add it. The usual suspects:
+purple or blue gradients, glow, lens flares
+floating particles as decoration
+everything fading in at once
+fade-and-slide-up on every element
+centered-everything layouts
+text that moves while you read it
+One hero per shot. Secondary moves travel 50 to 70% as far as the hero and start 100 to 200 ms after it. Ambient motion stays under 5% of the hero's travel, runs on a slow sine and never stops.
+Why it's here: a UI morph loop with its prompt template open-sourced in the thread. It passed 1 million views and is the cleanest public example of a prompt that lists states instead of vibes.
+The numbers
+Motion designers talk in curves and frames, so give Claude curves and frames. Screenshot this section.
+Easing
+These are the standard values from easings.net, as CSS cubic-bezier.
+Rules that cost nothing: enter with ease-out, exit with ease-in and make exits shorter, move across the screen with ease-in-out. Use linear only for rotation, progress bars and the phase of a loop. Linear easing on a move is the fastest way to make a render look like a render.
+Springs
+Every library names its knobs differently. One number translates between all of them: the damping ratio.
+Position and size can bounce, but opacity and color shouldn't.
+Motion tokens as code
+Put the numbers in one file and tell Claude to use only this file.
+Durations, stagger, holds
+Say it in frames when you render video. At 60 fps one frame is about 16.7 ms: a 400 ms move is 24 frames and a 750 ms reveal is 45.
+The beat grid
+When the result isn't a whole number, compute every beat from time and round each one. Adding a rounded value again and again drifts away from the music. Cut on the beat and change the layout on the bar. Changing everything on every beat wears the viewer out.
+Contrast and flashes
+Keep text at 4.5:1 contrast on every frame, including over moving backgrounds, and never flash more than three times per second. Both numbers come from WCAG, the web's accessibility standard.
+The material and light cookbook
+Most prompts just say "metallic" or "glass" and let the model guess. The values below are real ones, and if you give Claude numbers it paints physically plausible surfaces.
+Metals
+Base color for a physically based material, in sRGB, from Google's Filament documentation:
+Set metalness to 1 for all of them. Roughness is the lever: 0.05 is a mirror, 0.3 to 0.4 is brushed, 0.5 to 0.6 is satin. These roughness values are starting points, not measurements.
+Non-metals
+A non-metal reflects a small, fixed amount of light straight on. That amount follows from the index of refraction (IOR):
+The default for a non-metal is 4%, which is IOR 1.5. For glass, name the IOR and ask for a transmissive material, then ask for a caustic on the floor: a bright shape on the surface the glass focuses light onto.
+Light
+A clean starting rig. Name it like this in a prompt:
+The ratio between key and fill decides the mood: about 2:1 is soft, 4:1 is dramatic. Reflections need something to reflect, so give chrome a studio: softboxes overhead, a dark panel on the camera side and one bright strip. A mirror in a black void reflects black.
+Why it's here: a CD jewel case with an opening lid, no 3D models, only Three.js and shaders. A good example of one material doing the work: clear plastic with proper edge highlights and a lid that opens like a real hinge.
+Why it's here: a whole apartment modeled from a few photos, a 2D plan and some Pinterest references. When the subject is a real place, give the model references and a plan, not adjectives.
+Experiment 2: one object, four materials
+One pebble, four materials: chrome, gold, glass and clay. The material changes with a sweeping wipe every three beats, and each time the material is the only star. At the end the pebble flows into the Claude spark with OPUS 5.5 under it, then flows back so the loop closes. This is the cookbook from the section above, running in a real scene.
+Here's the first prompt. It's long because the scene has four materials, a studio and a wipe, and every number is a decision you don't want the model to make for you:
+Four rounds of review stills went into the first version. Then one more message made version 2: the glass was a milky white blob and a hard black streak sat on the floor, so the message tints the glass, moves the flag and strips into the environment scene, and adds a quiet floor grid and the logo ending. It's printed here as sent, with the logo line from the cover note added:
+Typical follow-ups for this one:
+Experiment 3: a floating city that builds itself
+A small slab hangs in a studio. A voxel city grows on it from the center outward, floor by floor, and the spire goes up last. Then the city takes itself apart in reverse so the loop closes. The key light slowly swings around, so the long soft shadows glide across the roofs.
+The prompt:
+Two rounds of review stills, then the full render. Between the rounds the colors of the tallest buildings and the spire changed, and the rest held. No follow-up message was needed.
+Typical follow-ups for this one:
+Why it's here: a whole game built with Claude. The claim is the author's, I haven't verified it, but it shows how far the same "describe the world, then build it in pieces" approach goes beyond a loop.
+The loop: render, look, fix
+The first render is a draft. The loop that finishes it: render stills, look at them, write notes with frame numbers, fix, and re-render only what changed. Two to four rounds is normal.
+Freeze any frame by its URL. Paste this right before the closing body tag, open loop.html?t=2.5, and you are looking at the exact frame at 2.5 seconds. Claude can screenshot it and read it.
+To see the whole clip at once, make a contact sheet. Claude reads it like a storyboard:
+The follow-ups that work best, ready to paste. Each points at frames, not feelings:
+Pick one or two per round. Pasting all six at once makes Claude fix everything a little and nothing well.
+Engines: pick one, or let Claude choose
+Claude can write for every engine below. Name the one you want in the prompt, or it will choose for you.
+For 3D, drive time from the frame number, never the clock, and give the camera numbers: a field of view of 35 to 50 degrees is a good starting point.
+Why it's here: not every piece is a video. An electromagnetic field visualization built with Opus 5.5, made to be understood, not just watched. When the point is to explain, a visualization beats a logo animation.
+Why it's here: a whole website as one shot. A reminder that the same code that makes a loop makes a place.
+The last mile: sound, clean loops, export for X
+Tutorials skip this part, and it's the part viewers notice first.
+Sound
+The feed plays video muted until someone taps. The picture has to work in silence first. When you add sound, two rules carry most of the weight:
+put each hit on the frame it happens, or one frame after, never before
+pick one loudness target and keep it. Many web platforms normalize around -14 LUFS. A softer mix around -17 LUFS leaves room for a loud ear. Peak no higher than -1 dBTP
+Ask for sound in the same prompt that asks for the picture, with the same beat grid, and tell Claude to synthesize everything in code so there's no license to worry about.
+Check the audio after encoding, not before. AAC adds a small delay, and a loop that clicks at the seam is a loop viewers scroll past.
+Why it's here: a single prompt for sound design in motion pieces: effects, music and timing in one place. Compare its structure with the SOUND blocks in the prompts above.
+Why it's here: a piano piece composed by Claude, with the animation drawn in JavaScript. Music written as code can carry a piece by itself.
+Clean loops
+the last frame flows into the first. Render frames 0 to N-1, never N
+a value that moves through the seam keeps its velocity, not just its position
+sound that ends on a tail needs a gap or a fade at the seam, or the loop clicks
+Export for X
+Encode with H.264 and yuv420p, plus -movflags +faststart (the renderer above already does). Keep the first frame meaningful: it becomes the preview. If the clip should loop forever, post the loop itself and let the player repeat it.
+Save this for the next time you open a blank prompt, and start from the template instead of adjectives.
+Save it so you don't lose it, and follow @anstapnever to get more alpha.

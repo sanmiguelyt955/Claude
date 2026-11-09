@@ -1,0 +1,812 @@
+=== 1. @Y0urDumble · 4476 likes · Sat Nov 07 11:05
+Video editors are cooked. Claude Opus 5.5 just learned to steal any video you show it...
+
+hyperframes just dropped /reverse-any-video. plus 10,000+ music tracks, sfx, 75,000+ stock images and tts. free
+
+this is the 3D + video skill stack i pair it with:
+
+VIDEO
+┣ hyperframes · write HTML, get a video. UPDATED nov 4
+┃ ┗ http://github.com/heygen-com/hyperframes
+┣ remotion skills · claude cuts real videos in react
+┃ ┗ http://github.com/remotion-dev/skills
+┗ openmontage · a full agentic video studio, 12 pipelines
+  ┗ http://github.com/calesthio/OpenMontage
+
+MOTION
+┣ gsap skills · official easing, timelines, scroll motion
+┃ ┗ http://github.com/greensock/gsap-skills
+┣ video-shotcraft · cinematic product promos, 124 shot recipes
+┃ ┗ http://github.com/Vincentwei1021/video-shotcraft
+┗ motionmaxxing · turns AI slop into motion-designer films
+  ┗ http://github.com/Tejashmakwana/motionmaxxing
+
+BLENDER
+┣ blender mcp · claude drives blender. whole scenes
+┃ ┗ http://github.com/ahujasid/mcp-for-blender
+┣ blender-skills · 94 skills, blockout → engine export
+┃ ┗ http://github.com/arjun988/blender-skills
+┗ dream-loop · blender + image gen + a critic that scores every render
+  ┗ http://github.com/achimala/dream-loop
+
+3D WEB
+┣ threejs-game-skills · playable three.js games, AAA look
+┃ ┗ http://github.com/majidmanzarpour/threejs-game-skills
+┣ anatomy · isometric exploded machines, SVG + WebGL
+┃ ┗ http://github.com/wheresryan22/anatomy
+┗ 3dviz-pro-max · idea in, three.js or blender scene out
+  ┗ http://github.com/viettranx/3dviz-pro-max
+
+update hyperframes first:
+npx hyperframes skills update
+
+every card in the video is a real 3D scene I rendered for that skill. same little claude, one blender file
+VIDEOS: 1 dur=[15]
+CITA @Y0urDumble: this is the most underrated format on youtube right now
+
+a 65-second cartoon about a bronze jar got 27M views in 8 days
+
+2D characters. lit 3D sets. one voice. a true story.
+
+here's the full course: prompts, skills and the review loop ↓ https://x.com/i/article/2115149367057256448
+
+=== 2. @ErnestoSOFTWARE · 430 likes · Sat Nov 07 16:49
+I made a Claude skill that can clone the 10 most viral Opus 5.5 editing styles.
+
+these 10 editing styles have 
+generated 5B+ views on instagram
+
+I tested it myself and made a video 
+
+the video is already at 1.1M views 
+if you add a CTA to an app or SAAS.
+
+it converts into good money
+
+the skill also includes a copy writer
+To help you write good stories.
+
+making a video using this skill
+= instant retention and views.
+
+I left it in the comments, 
+and as always it's completely free.
+VIDEOS: 1 dur=[21.896]
+
+=== 3. @enricrobert_ · 3077 likes · Wed Nov 04 14:29
+Visto el interes, voy a explicar como yo edito los video con Claude
+
+Y es que no tiene mucho misterio xD
+
+1. Descarga la app de escritorio de Claude
+2. Pídele que instale: HyperFrames, FFmpeg, Node.js, Whisper y yt-dlp
+3. Pásale 3-4 vídeos de creadores que te gusten para que entienda el estilo que te gusta
+4. Crea estas 2 carpetas: Entradas (donde van los videos raw) y Salidas (el video editado por Claude)
+5. Corrigele y ves iterando hasta dar con el estilo que te guste. Lo bueno es que si lo le vas corrigiendo se acordara de tu estilo y para futuros videos ya editara como a ti te gusta.
+
+Fin
+
+Que tengais buena tarde guapetones
+CITA @enricrobert_: Acabo de probar lo de editar con Claude
+
+Que locura chicos
+
+Es que no es normal lo rápido que avanza todo esto…
+
+Solo digo que son las 2 AM y aquí estoy trasteando cuál niño que le han comprado la play en navidad
+
+=== 4. @Y0urDumble · 995 likes · Sun Nov 08 15:47
+Still paying for a whole video team? These 12 claude skills do it for free
+
+storyboard, vfx, sfx and the edit, all inside claude code. here's the stack i run with opus 5.5:
+
+VIDEO
+┣ hyperframes · write HTML, get a video. now ships free music, sfx, stock + tts
+┃ ┗ http://github.com/heygen-com/hyperframes
+┣ remotion skills · claude cuts real videos in react
+┃ ┗ http://github.com/remotion-dev/skills
+┗ claude-animated-shorts · viral animated shorts, 2D characters in a 3D world
+  ┗ http://github.com/mromidev/claude-animated-shorts
+
+STORYBOARD
+┣ cinematic director · script in, shot list + keyframe prompts out
+┃ ┗ http://github.com/wuwangzhang1216/DirectorSKILL
+┣ drama-skills · idea → episodes, character sheets, storyboards
+┃ ┗ http://github.com/zenstory-ai/drama-skills
+┗ seedance storyboard · story → storyboards → seedance 2.0 shots
+  ┗ http://github.com/liangdabiao/Seedance2-Storyboard-Generator
+
+VFX
+┣ pixelfx · 244 pixel effects in code + a skill that makes more
+┃ ┗ http://github.com/patch-gg/pixelfx
+┣ shader-skills · GLSL + shadertoy, SDF raymarching, water, clouds
+┃ ┗ http://github.com/gokayfem/shader-skills
+┣ webgpu skill · three.js WebGPU, TSL, compute particles
+┃ ┗ http://github.com/dgreenheck/webgpu-claude-skill
+┗ comfyui-mcp · claude builds and runs your comfy graph
+  ┗ http://github.com/artokun/comfyui-mcp
+
+SFX
+┣ elevenlabs skills · official. sound effects, music, voices
+┃ ┗ http://github.com/elevenlabs/skills
+┗ ai music skills · a full album pipeline on suno
+  ┗ http://github.com/bitwize-music-studio/claude-ai-music-skills
+
+every card in the video is a real 3D scene I rendered using Claude. same little orange guy, one blender file
+VIDEOS: 1 dur=[15]
+CITA @Y0urDumble: this is the most underrated format on youtube right now
+
+a 65-second cartoon about a bronze jar got 27M views in 8 days
+
+2D characters. lit 3D sets. one voice. a true story.
+
+here's the full course: prompts, skills and the review loop ↓ https://x.com/i/article/2115149367057256448
+
+=== 5. @thegreatest_sv · 147 likes · Mon Nov 09 15:14
+holy f*ck, you WILL lose your job in 2027 if you don't learn this.
+
+not to AI. to the person next to you who runs 5 agents while you're still clicking through 1 app.
+
+one person with the right agent stack now does modeling, materials, design, video and research before your first meeting ends.
+
+10 repos to learn before it's too late:
+
+1. dream-loop - YOUR AI 3D ART DIRECTOR
+
+the agent imagines the final scene, builds it in Blender, and a critic agent checks it until it matches.
+
+https://github.com/achimala/dream-loop
+
+2. Blender Skills - PRO BLENDER WORKFLOWS FOR YOUR AGENT
+
+modeling, UVs and more as ready skills for Claude Code, Codex and Cursor.
+
+https://github.com/EL4CTEO/blender-skills
+
+3. TRELLIS.2 - ONE IMAGE IN, ONE 3D ASSET OUT
+
+detailed shapes with realistic PBR materials, by Microsoft.
+
+https://github.com/microsoft/TRELLIS.2
+
+4. Open Design - AN AI DESIGN STUDIO ON YOUR LAPTOP
+
+motion, prototypes, websites and apps with an agent. local-first and open source.
+
+https://github.com/nexu-io/open-design
+
+5. Impeccable - GIVE YOUR AGENT DESIGN TASTE
+
+critique, audit, polish and catch the AI slop before your client does.
+
+https://github.com/pbakaus/impeccable
+
+6. HyperFrames - WRITE HTML, GET A VIDEO
+
+built for agents. your promo is now a file, not a week of editing.
+
+https://github.com/heygen-com/hyperframes
+
+7. Superpowers - MAKE YOUR AGENT WORK LIKE A SENIOR
+
+it plans before it builds, tests its own work and debugs instead of guessing.
+
+https://github.com/obra/superpowers
+
+8. Graphify - YOUR COMPANY'S MEMORY
+
+turns code, docs, SQL and PDFs into a knowledge graph your agent can actually query.
+
+https://github.com/Graphify-Labs/graphify
+
+9. Browser Use - AN AGENT THAT USES THE WEB FOR YOU
+
+research, forms, dashboards. it clicks so you don't have to.
+
+https://github.com/browser-use/browser-use
+
+10. Google Workspace CLI - PUT YOUR AGENT INSIDE GMAIL, DRIVE AND SHEETS
+
+one tool for Drive, Gmail, Calendar, Sheets and Docs.
+
+https://github.com/googleworkspace/cli
+
+the scary part?
+
+every repo here is public. your competitor just has to find this post before you do.
+
+and the toy head you're looking at?
+
+a giant see-through head packed with tiny smiling heads. 201 objects, 412,876 vertices, rendered in Blender Cycles.
+
+built with an AI agent. one of my latest 3D experiments.
+
+want to make one like it?
+
+LIKE + BOOKMARK + REPOST.
+
+comment "LEGO" and I'll send you the prompt.
+VIDEOS: 1 dur=[24.017]
+CITA @thegreatest_sv: 
+
+=== 6. @renproton · 152 likes · Sun Nov 08 16:51
+THIS IS AN ACTUAL F*CKING GOLDMINE
+
+Opus 5.5 + Blender + Remotion = your own character animation studio that you can use to earn $$$
+
+tiny worlds. expressive characters. cinematic camera moves.
+
+character idea → editable 3D scene → animated film
+
+steal the full stack ↓
+
+01 / give Claude a director’s brief
+
+one character. one setting. one visual joke
+
+specify the shots, expressions, camera moves and final pose before building the scene
+
+02 / connect Claude Code to Blender
+
+MCP for Blender lets Claude inspect the scene and write Blender Python
+
+with Blender + uv installed:
+
+- `claude mcp add blender uvx mcp-for-blender`
+- `uvx mcp-for-blender install-addon`
+
+enable the addon in Blender and start its server
+
+▸MCP for Blender
+https://github.com/ahujasid/mcp-for-blender
+
+03 / build + animate
+
+Blender handles the scene, rigging, keyframes and character animation
+
+block the keyboard and character first. then add the walk, eye movements, glass and close-ups
+
+▸Blender animation tools
+https://blender.org/features/animation/
+
+04 / light the world
+
+Poly Haven supplies CC0 HDRIs, textures and models
+
+give the glass something to reflect. keep the character readable against the background
+
+▸Poly Haven
+https://polyhaven.com/license
+
+05 / finish the film
+
+Remotion assembles the rendered footage, titles and audio into a reusable composition
+
+add the official agent guidance inside your video project:
+
+`npx skills add remotion-dev/skills`
+
+▸Remotion Skills
+https://remotion.dev/docs/ai/skills
+
+06 / export + check
+
+FFmpeg for the delivery file
+
+watch the actual MP4, check the sound and keep the editable scene + project
+
+▸FFmpeg
+https://ffmpeg.org/ffmpeg.html
+
+the loop:
+
+brief → scene → character → materials → light → camera → preview → render → edit → export
+
+the clip is the visual reference. the animated console breaks down a workflow for building this kind of scene
+
+save this, then read the full guide for Opus 5.5 Motion Engineering ↓
+VIDEOS: 1 dur=[15.616]
+CITA @beamnxw: Opus 5.5 can run a whole motion design studio
+
+Sell a 20-second launch clip built from real product screens
+
+Copy the motion engineering prompts and delivery process
+
+Build your offer before the next product launch ↓ https://x.com/i/article/2108585693232455681
+
+=== 7. @deanwperkins · 253 likes · Mon Nov 09 10:40
+Claude Code is a mess. Until you install this.
+
+There's an official Anthropic plugin called claude-code-setup.
+
+It tells you what automations you can set up (hooks, skills, MCP servers, subagents…) and how to configure them step by step.
+
+Basically, it analyzes your project and recommends what to activate.
+
+To install it:
+
+/plugin install claude-code-setup@claude-plugins-official
+
+Save this post so you don't lose it 🔖
+VIDEOS: 1 dur=[11.006]
+
+=== 8. @dyfwsammy · 24 likes · Mon Nov 09 13:19
+HOLY F*CK, OPUS 5.5 JUST REPLACED PREMIERE PRO.
+
+11 FREE open-source GitHub repos that can handle almost every job in a video editor.
+
+Cut. Stabilize. Color grade. Slow-mo. Upscale. Audio stems. Titles. Export.
+
+And every single workflow in this video is real. Each repo was tested on 4:23 of my own footage.
+
+Here’s the entire free toolkit:
+
+01. PySceneDetect → Automatically detects every shot in your footage.
+http://github.com/Breakthrough/P…
+
+02. Auto-Editor → Automatically cuts out dead air.
+http://github.com/WyattBlue/auto…
+
+03. vid.stab → Stabilizes shaky footage.
+http://github.com/georgmartius/v…
+
+04. color-matcher → Matches the color grading of every shot to one reference.
+http://github.com/hahnec/color-m…
+
+05. rembg → Removes backgrounds without needing a green screen.
+http://github.com/danielgatis/re…
+
+06. RIFE → Turns normal footage into smooth slow motion.
+http://github.com/hzwer/ECCV2022…
+
+07. Real-ESRGAN → Upscales low-resolution video by 4x.
+http://github.com/xinntao/Real-E…
+
+08. Demucs → Splits audio tracks into individual stems.
+http://github.com/facebookresear…
+
+09. librosa → Detects the beat so every cut can sync with the music.
+http://github.com/librosa/librosa
+
+10. HyperFrames → Creates animated titles using plain HTML.
+http://github.com/heygen-com/hyp…
+
+11. FFmpeg → Exports the final video.
+http://github.com/FFmpeg/FFmpeg
+
+That’s an entire video editing toolkit built with free open-source software.
+
+BOOKMARK THIS BEFORE YOUR NEXT EDIT.
+
+Drop the PDF below into Opus 5.5 and see what it creates.
+
+Then read the full motion design guide in the article below.
+VIDEOS: 1 dur=[19.541]
+CITA @dyfwsammy: https://x.com/i/article/2117626780584431616
+
+=== 9. @0xMovez · 227 likes · Sun Nov 08 18:29
+this is wild...
+
+Meta just open-sourced the design system behind 13,000+ of its apps, adapted for AI agents.
+
+your AI agent can finally build UI that doesn’t look like AI built it
+
+here’s how to plug Astryx into Claude and GrokBot agents:
+
+first understand what you get:
+
+• 150+ accessible React components: buttons, forms, dialogs, tables, dark mode included
+• 7 ready-made themes: neutral, butter, chocolate, matcha, stone, gothic, y2k
+• a CLI + MCP server built for AI, so your agent reads the real docs instead of inventing props
+
+here’s how to set it up for Claude & Grok:
+
+1 → open Claude Code in the folder of your project (React 19+)
+
+2 → say: “Install @astryxdesign/cli and run astryx init --features agents to set up your Astryx context. Read the generated file.”
+
+3 → it writes the rules straight into your CLAUDE.md: component index, CLI reference, and what never to do (no raw divs, no inline styles, no magic values)
+
+4 → now every page starts the same way: astryx build “<your idea>“ picks a template → astryx template scaffolds it → astryx component reads the props
+
+5 → want Claude to query the docs live? add the MCP server to .mcp.json: https://astryx.atmeta.com/mcp
+
+6 → for Grok or any other agent: plug the same MCP link into any client that supports remote MCP, or run init with --agent codex and it writes a universal AGENTS.md
+
+7 → quick test: ask your AI “what’s the import path for Button and how do you make a Dialog non-dismissible?” If it can’t answer, the setup didn’t load
+
+paste link on repo below ↓
+CITA @0xMovez: https://x.com/i/article/2104196832637210624
+
+=== 10. @maixbt · 41 likes · Sun Nov 08 20:47
+this is actual f*cking gold
+YOU'RE PAYING 40X MORE FOR THE SAME CLAUDE ANSWER.
+
+half of x says opus 5.5 got nerfed this week.
+one guy ran 1,400 claude code sessions through gemini and says something changed on nov 3.
+
+maybe. but here's what eats most limits:
+one model doing every job.
+
+opus 5.5: $20 per 1M output tokens
+haiku 5.5: $0.50
+same rename. same file search. 40x the price.
+
+the split that fixes it:
+→ haiku 5.5 - search, rename, logs, 1-line fixes
+→ sonnet 5.5 - writes the code
+→ opus 5.5 - plans and reviews. nothing else
+
+it won't fix a real bug on anthropic's side if there is one.
+but most people pick the smartest model for everything.
+the smart ones pick the cheapest model that can do the job.
+
+the setup that stops opus looping on long tasks is in the article below.
+
+which model do you run all day?
+VIDEOS: 1 dur=[19.2]
+CITA @beamnxw: Stop letting unfinished Opus 5.5 runs eat your budget
+
+Set up the harness before your next long task
+
+Save progress, verify results, reuse the workflow
+
+The full 7-layer setup below ↓ https://x.com/i/article/2107503162273792000
+
+=== 11. @ronixtec · 24 likes · Mon Nov 09 15:27
+🚨CLAUDE CODE YA NO SE PONE A PROGRAMAR SIN ENTENDER QUÉ QUIERES
+
+un sistema de skills abierto que cambia cómo trabaja tu agente de código.
+
+Se llama Superpowers y ya tiene más de 314.000 estrellas en GitHub.
+
+Así funciona:
+> Antes de escribir código, te hace preguntas y te enseña el diseño por partes
+> Con tu OK, crea un plan de tareas cortas con archivos exactos y pasos de verificación
+> Lanza un subagente por tarea y revisa cada resultado antes de seguir
+> Escribe primero los tests y comprueba que todo funciona antes de decir "hecho"
+
+Se instala desde el marketplace oficial de plugins de Claude Code y también funciona con Codex, Cursor o Gemini CLI. Licencia MIT.
+
+=== 12. @0xKense1 · 122 likes · Mon Nov 09 14:48
+i made the same game 3d mushroom BOTH ways: tripo paid vs pure code free
+
+tripo: 60 credits (60 cents), 38,730 tris in 73 loose pieces, then cleaned up to 9,140 tris and 4 parts
+
+claude opus 5.5 in blender: 600 lines of python, 29 separate pieces, builds in 0.11 s, 4 mm off the game one in height
+
+for simple cartoon shapes try code first, save tripo for the hard ones
+
+full workflow in the article below
+VIDEOS: 1 dur=[27]
+CITA @0xKense1: https://x.com/i/article/2118709069733105664
+
+=== 13. @TechScopeAR · 34 likes · Mon Nov 09 07:24
+إذا كانت فيديوهات الذكاء الاصطناعي تبدو بدائية، فالمشكلة قد لا تكون في النموذج، بل في الأدوات التي يستخدمها.
+
+هذي 14 أداة مفتوحة المصدر يمكن دمجها مع Claude Opus 5.5 لبناء خط إنتاج متكامل للفيديو، من الصوت والترجمة إلى الرسوم المتحركة والمشاهد ثلاثية الأبعاد:
+
+1 | بناء الفيديو والإخراج
+
+Remotion Skills — تعليمات تساعد وكيل الذكاء الاصطناعي على بناء الفيديوهات بطريقة منظمة.
+https://github.com/remotion-dev/skills
+
+Remotion — إنشاء الفيديوهات وتركيب المشاهد باستخدام React والكود.
+https://github.com/remotion-dev/remotion
+
+HyperFrames — تحويل صفحات HTML إلى فيديوهات، ومصمم للعمل مع وكلاء الذكاء الاصطناعي.
+https://github.com/heygen-com/hyperframes
+
+FFmpeg — معالجة الفيديو والصوت وتحويل الملفات وإخراج الفيديو النهائي.
+https://github.com/FFmpeg/FFmpeg
+
+2 | الصوت والترجمة
+
+Chatterbox — تحويل النصوص إلى تعليق صوتي باستخدام الذكاء الاصطناعي.
+https://github.com/resemble-ai/chatterbox
+
+faster-whisper — تحويل الكلام إلى نص وإنشاء ترجمات متزامنة مع الصوت.
+https://github.com/SYSTRAN/faster-whisper
+
+3 | الحركة والرسوم ثلاثية الأبعاد
+
+Blender — تصميم المجسمات والشخصيات وتحريكها وإنتاج مشاهد ثلاثية الأبعاد.
+https://github.com/blender/blender
+
+Blender MCP — ربط Blender بوكيل الذكاء الاصطناعي ليتمكن من التحكم بالمشاهد وتنفيذ الأوامر.
+https://github.com/ahujasid/mcp-for-blender
+
+GSAP — تحريك النصوص والعناصر البصرية والتحكم في توقيت الحركة وتأثيراتها.
+https://github.com/greensock/GSAP
+
+Three.js — إنشاء مشاهد ورسوم ثلاثية الأبعاد داخل المتصفح بالاعتماد على معالج الرسوميات.
+https://github.com/mrdoob/three.js
+
+4 | التوليد والتصميم والمراجعة
+
+ComfyUI — بناء مسارات عمل لتوليد الصور والفيديو باستخدام نماذج الذكاء الاصطناعي.
+https://github.com/Comfy-Org/ComfyUI
+
+Impeccable — مراجعة التصاميم وتحسين جودتها واكتشاف مشاكلها البصرية.
+https://github.com/pbakaus/impeccable
+
+Chrome DevTools MCP — تمكين الوكيل من فحص ما أنتجه داخل المتصفح واكتشاف الأخطاء وتصحيحها.
+https://github.com/ChromeDevTools/chrome-devtools-mcp
+
+yt-dlp — جلب مقاطع الفيديو والصوت من الإنترنت لاستخدامها كمراجع.
+https://github.com/yt-dlp/yt-dlp
+
+الفكرة هنا انك لا تحتاج إلى الاعتماد على أداة واحدة لإنجاز كل شيء؛ يمكن للوكيل تنسيق هذه الأدوات معا، فيتولى بناء المشاهد وتحريكها وإضافة الصوت والترجمة، ثم مراجعة النتيجة وإخراج الفيديو.
+
+14 مستودع مجاني ومفتوح المصدر، يمكن ان تحول وكيل الذكاء الاصطناعي إلى فريق إنتاج متكامل.
+
+ملاحظة: مجانية الأدوات لا تعني ان الإنتاج بلا تكلفة؛ فبعضها يحتاج إلى موارد حاسوبية قوية أو إعدادات تقنية.
+
+إذا كنت تستخدم Opus 5.5، جرب تزويده هذي القائمة، واطلع على الدليل الكامل لبناء استوديو موشن ديزاين باستخدامه في المقال المرفق ↓
+VIDEOS: 1 dur=[30.058]
+CITA @flxrnc: https://x.com/i/article/2105052379590578176
+
+=== 14. @cfenghub · 33 likes · Mon Nov 09 07:32
+绝对硬核！
+Opus 5.5 + Python + Blender
+在 2GB 核显上搓出 37 秒超跑大片！
+
+X上这段超跑视效彻底刷屏，零 3D 资产、全程代码直出，连 Blender 界面都没开过，纯靠几段 Python 脚本！
+
+- 纯代码驱动 Blender
+人类一个模型没建、一个材质没调，全由 Opus 5.5 直出 Python 脚本，调 Blender 原生 API 接管所有网格拓扑、车漆节点、灯光排布和运镜轨迹；
+
+- 静默无头渲染
+终端敲命令后台静默跑（blender -b），把所有图形界面开销砍到零，指令直接硬喂给底层 EEVEE 引擎
+
+- 2GB 核显硬核落地
+没有导入任何现成汽车模型包，整部 37 秒片子在集成显卡上硬跑 3 小时出片，人类只在旁边微调介入了 5 次! 2G核显什么概念！
+
+真是太特么疯狂了，英雄必所见略同，这个架构跟昨天Deepseek+Blender的渲染一个路子！
+
+视频模型还在拼抽卡，高级工程师已经可以用代码流指挥模型做大脑、让成熟工业软件直接下地干脏活累活!  悄然发现了新大陆，各位！！
+
+https://x.com/cfenghub/status/2119278235531780457?a=PU5q_iAoW80srzvIb8I&s=20 https://x.com/LexnLin/status/2119558994352304202/video/1
+VIDEOS: 1 dur=[36.541]
+CITA @cfenghub: 这绝对是 DeepSeek 前端表现最惊艳的一次打样！
+
+DeepSeek v4.1 + Blender MCP + DeepSeek Harness的纯本地技术栈
+
+非常随意的一段Prompt：
+只让它在 Blender 里建一座极高细节的宝塔并让它动起来，结果 40 分钟直接端出一个带樱花飞舞、月夜灯火的动态3D场景：
+
+- 零云端 API 账单：
+大模型直接跑在本地（4xDGX Spark），Blender 在 M5 Max 上跑渲染，用网友的话说，“唯一的支出变成了家里的电费”
+- 空间几何理解力硬核：
+哪怕提示词非常粗糙，模型通过 MCP 协议控制3D软件依然把多层飞檐、斗拱结构和粒子动画逐帧做得非常细腻
+
+通过MCP直接把开源大模型插进工业级专业3D软件（Blender），这又是一个新的尝试，Deepseek这套开源+生态共建的路子对比封源模型只靠模型本身的能力，可塑性强了太多，也给普通开发者带来了更多可能性！ https://x.com/ivanfioravanti/status/2119187271932940656/video/1
+
+=== 15. @woodxbt · 15 likes · Mon Nov 09 12:40
+Want a full video studio for $0? Send Opus 5.5 these 15 repos
+
+OpenMontage. VoiceStudio. Blender. Three.js. HyperFrames.
+
+Voice, 3D and every cut, done before your coffee gets cold
+
+The whole stack is free, grab it:
+
+OpenMontage → one agent, a full video crew
+http://github.com/calesthio/OpenMontage
+
+VoiceStudio → clone your voice on your own computer
+http://github.com/debpalash/VoiceStudio
+
+ArtCraft → one workspace for AI images and video
+http://github.com/storytold/artcraft
+
+HyperFrames → your agent's favorite way to make video
+http://github.com/heygen-com/hyperframes
+
+Remotion → every scene is code you can tweak
+http://github.com/remotion-dev/remotion
+
+Remotion Skills → teaches your agent what pros already know
+http://github.com/remotion-dev/skills
+
+Anthropic Skills → new tricks for Claude, straight from Anthropic
+http://github.com/anthropics/skills
+
+Three.js → 3D that runs on any laptop
+http://github.com/mrdoob/three.js
+
+GSAP → text that moves with rhythm
+http://github.com/greensock/GSAP
+
+Blender → characters, scenes and real lighting in 3D
+http://github.com/blender/blender
+
+Blender MCP → your agent opens Blender and gets to work
+http://github.com/ahujasid/mcp-for-blender
+
+ComfyUI → generate any shot you're missing
+http://github.com/Comfy-Org/ComfyUI
+
+PySceneDetect → spots every cut in any video
+http://github.com/Breakthrough/PySceneDetect
+
+Hallmark → your designs stop looking machine-made
+http://github.com/Nutlope/hallmark
+
+Impeccable → a picky design critic
+http://github.com/pbakaus/impeccable
+
+$7,000 production → a free weekend project
+
+Save this, then hand all 15 to Opus 5.5 tonight
+
+The article below is how to turn Opus 5.5 into a motion designer ↓
+VIDEOS: 1 dur=[40.883]
+CITA @flxrnc: https://x.com/i/article/2105052379590578176
+
+=== 16. @Vynqorxe · 307 likes · Sun Nov 08 17:41
+Holy F\*CK... 3 days ago this account had zero videos, and it already has 3.5M views. The idea is just great 🤯
+
+Right now:
+→ 3.5M views
+→ 11.7K followers
+→ just 6 videos
+
+One idea for the whole channel: a scary urban legend, but by the end the monster is the one who should be afraid
+
+The new video, 57 seconds:
+a woman with a slit mouth (Kuchisake-onna) catches kids after school and asks "Am I pretty?" Any answer ends with scissors. But this time she picked the wrong kid. He pulls a Brazilian jiu-jitsu hold on her, and she taps out. The ending: "Walk home in pairs. Be like Timmy."
+
+You expect a horror story and get a comedy. That's why people send it to friends
+
+But there's a global mistake. He doesn't monetize this content. Three million views in three days, and he has no product. The audience shows up every day, and there's nothing for them to buy 😤
+
+Here's what he could sell on a channel like this:
+1. Early access to new stories. A subscription for a couple of dollars, and each new episode drops a week earlier for you
+2. Custom stories. A viewer sends their own scary story or legend, and you turn it into a video, from $20
+3. Merch with the hero. Timmy, who beats monsters, is a ready-made character for shirts and stickers
+4. A legends collection. A small PDF book or audio version of the stories that already blew up
+5. A guide on how to make cartoons like these, with prompts and templates. It's what people are already asking for in the comments
+6. Ads. Games, horror titles, and apps happily pay channels with this audience
+
+The fastest way to start: custom stories and early access. One link in the bio is enough 💸
+
+The idea for millions of views is there. The only thing missing is something people can buy
+Дж
+Save this post so you don't lose it, and tell me in the comments what you'd sell in his place 👇
+
+Follow me, I find accounts like this every day 🔥
+VIDEOS: 1 dur=[56.842]
+CITA @theoxmotion: https://x.com/i/article/2116274167049863168
+
+=== 17. @plusxbt · 51 likes · Mon Nov 09 14:16
+This is getting out of hand: everyone is making showreels with Opus 5.5 and sleeping on the ~450 ready-made motion blocks that make them look pro.
+
+HeyGen dropped HyperFrames on GitHub, a set of skills that plug straight into Claude: 
+
+-> http://github.com/heygen-com/hyperframes
+
+Why are you still asking AI to draw every frame from scratch? Stop treating Claude as a script writer. Start turning it into a full motion studio.
+
+Here is the workflow: install the core set once, describe the video in one sentence, and Claude assembles it from ready blocks (kinetic type, captions, 3D camera moves). It works like a LEGO box for video: you never build a brick yourself, you just snap them together.
+
+Step-by-step setup:
+
+1. Run npx skills add heygen-com/hyperframes and pick "Core Skills"
+2. Type /hyperframes plus your idea, like a 10-second product intro with a fade-in title
+3. Add /media-use for music, voiceover and color grading, or paste a Figma link into /figma
+4. Move old Remotion, Lottie or Three.js projects over with /remotion-to-hyperframes
+5. Run /reverse-any-video on any clip and instantly get it back as an editable project, frame by frame
+
+The whole install is one command, and you will never animate a title by hand again.
+
+Full step-by-step guide in the article below
+
+Make sure to save this post for later
+VIDEOS: 1 dur=[25.4]
+CITA @plusxbt: https://x.com/i/article/2119244792903225344
+
+=== 18. @imryven · 1400 likes · Sun Nov 08 14:14
+This is f*cking insane, the CEO of Y Combinator open-sourced his own second brain and most people still don’t know it exists
+
+8 second brain repos you haven’t seen yet:
+
+-> gbrain (by garrytan)
+http://github.com/garrytan/gbrain
+the second brain of the YC CEO, every fact keeps its source and every agent shares one memory
+
+-> llm wiki (by karpathy)
+http://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
+the original idea file behind all of this
+
+-> ai-memory (by akitaonrails)
+http://github.com/akitaonrails/ai-memory
+hand the work from Claude Code to Codex without losing context, memory lives in plain markdown
+
+-> agent second brain (by smixs)
+http://github.com/smixs/agent-second-brain
+send a voice note in Telegram and it lands as a linked note in your Obsidian vault
+
+-> cog second brain (by huytieu)
+http://github.com/huytieu/COG-second-brain
+33 skills and 10 agents running on plain markdown, no database
+
+-> open second brain (by itechmeat)
+http://github.com/itechmeat/open-second-brain
+a nightly pass turns the corrections you keep repeating into rules your agent follows
+
+-> claude second brain (by jessepinkman9900)
+http://github.com/jessepinkman9900/claude-second-brain
+one npx command scaffolds Obsidian, Claude Code and local search
+
+-> baalda (by naveedharri)
+http://github.com/naveedharri/baalda
+a team second brain where people and agents edit the same markdown files
+
+the CEO of Y Combinator runs his agents on this
+you are still digging through bookmarks
+VIDEOS: 1 dur=[27]
+CITA @imryven: https://x.com/i/article/2115042274614599680
+
+=== 19. @zayn0x28 · 14 likes · Mon Nov 09 13:11
+Holy f*ck, 6 free repos that stop Opus 5.5 videos from looking AI-made
+
+the 1st one is f*cking insane
+
+1. Design Motion Principles > kills the AI motion tells: pulsing dots, blur on every entrance, bouncy springs on everything
+http://github.com/kylezantos/design-motion-principles
+
+2. Impeccable > 24 commands for your agent. /animate adds motion with a reason, /polish cleans the rest
+http://github.com/pbakaus/impeccable
+
+3. Hallmark > a design skill that refuses to look AI-made, with a linter that checks the page at 8 widths
+http://github.com/Nutlope/hallmark
+
+4. Anthropic frontend-design > the official skill that bans one colored word in a headline and fake 01 02 03 markers
+http://github.com/anthropics/skills
+
+5. UI UX Pro Max > 192 palettes and 74 font pairs, so Claude stops mixing 3 fonts on one screen
+http://github.com/nextlevelbuilder/ui-ux-pro-max-skill
+
+6. Humanizer > strips "let's dive in" and "game-changing" out of your captions and voiceover
+http://github.com/blader/humanizer
+
+if i had to pick 2, i'd start with Design Motion Principles and Humanizer
+
+then save the article below, it's full Motion Design guide for Opus 5.5
+VIDEOS: 1 dur=[15.4]
+CITA @anstapnever: https://x.com/i/article/2110374956806909952
+
+=== 20. @anxuanng · 1299 likes · Sun Nov 08 17:23
+Introducing 67js
+
+A 3D engine that any AI agent can drive, through 23 MCP tools (and counting)
+
+It's open source, so you can use it right away
+VIDEOS: 1 dur=[31.146]
+
+=== 21. @Marlenuii · 71 likes · Sun Nov 08 18:07
+Claude Code really spent $102 and 28 minutes building a cable car that looks like a red Minecraft block hanging from a wire 😭
+
+Meanwhile Blender MCP made an entire cinematic Alpine resort for $67 in 20 minutes
+
+Same prompt, 4 AI workflows
+
+The mountain rescue report 💀
+
+🥇 Blender MCP → $67 / 20 min
+🥈 GPT-6 Astra → $40 / 11 min
+🥉 Kimi K3.1 → $12 / 3 min
+💀 Claude Code → $102 / 28 min
+
+Claude was 8.5x more expensive and 9.3x slower than Kimi in this comparison
+
+But here's the funniest part
+
+Blender MCP actually delivered the full mountain atmosphere with golden sunlight, detailed cable car windows and snowy forests
+
+Meanwhile Claude Code apparently decided that putting a red cube on a cable was enough to build a ski resort 😭
+
+imagine paying $102 for a luxury mountain experience and getting a Minecraft ski lift DLC 💀
+VIDEOS: 1 dur=[15.041]
+CITA @Marlenuii: https://x.com/i/article/2117316702291865600

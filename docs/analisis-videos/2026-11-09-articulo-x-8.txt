@@ -1,0 +1,36 @@
+Design Engineering: Build a Motion Studio Around Opus 5.5
+Motion design lives in an awkward gap. Designers think in feel: weight, rhythm, overshoot. Engineers think in state, performance, and edge cases. A design engineer works in the middle, and with a strong model like Claude Opus 5.5, one person can now run something that behaves like a small motion studio.
+The model doesn't replace your taste. It becomes the production layer: it writes the tokens, builds the prototypes, and audits the work, while you decide what feels right. Here is how to set that up, with code.
+1. Start with a motion language
+Most products feel inconsistent because every animation was invented in isolation. Before generating anything, define the vocabulary once.
+Write a short MOTION.md in your repo covering durations, named easings, what never animates, and the reduced-motion behavior. Then encode it as tokens.
+CSS tokens
+The same tokens for JavaScript animation libraries
+
+Give MOTION.md to Opus 5.5 at the start of every session (a project instruction works well). Every component it writes now inherits your studio's voice.
+2. Prototype by describing physical behavior
+The fastest loop in the studio is a conversation. Describe the feel, not the implementation:
+"A bottom sheet that feels heavy. It resists upward drag, settles with a slight overshoot, and dismisses on a fast downward flick even if the drag distance is short."
+That maps cleanly to springs, elasticity, and velocity thresholds. A typical result, using the motion library for React:
+Notice what you'd ask the model to do next: expose stiffness, damping, and the flick threshold in a debug panel so you can tune by feel on a real phone instead of guessing in text.
+3. Enforce the spec with a cheap linter
+Not everything needs a model. A plain script catches the obvious drift for free and runs in CI:
+4. Add a model-powered review pass
+The linter catches syntax. The model catches judgment calls: interruptibility, layout-triggering properties, missing reduced-motion handling. Wire Opus 5.5 into a review script:
+Run it on every new component: npx tsx scripts/motion-review.ts src/Sheet.tsx. Treat the output as a first pass from a tireless reviewer, not a verdict.
+5. Keep decision records
+Every good motion choice becomes a future argument: why 280ms and not 240ms, why the modal doesn't bounce. Have the model draft a short record after each component:
+Taste. Whether it actually feels right in the hand.
+Restraint. Deciding what shouldn't animate at all.
+Real-device testing. Frame drops and gesture feel don't show up in code review.
+Brand fit. Playful versus annoying is contextual.
+A one-week starter plan
+Write a one-page MOTION.md and the token files above.
+Add the linter to CI.
+Build one component end to end (a toast, a sheet, or a tab transition) with tunable parameters.
+Run the review script, fix what it finds, then test on a physical device.
+Write the decision record, then repeat.
+After a handful of components you'll have a battle-tested spec, a token system, an automated quality bar, and a rhythm for working with the model.
+The takeaway
+Design engineering with a model like Opus 5.5 isn't about automating taste away. It's about collapsing the distance between "I can feel what this should be" and "it's running in the app." Bring a clear point of view, encode it as a spec, and let the model handle the volume.
+follow @dyfwsammy if this article was helpful 

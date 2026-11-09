@@ -1,0 +1,103 @@
+how to make viral videos with Claude Code for $0 (full guide)
+a cut-open backyard got 13.1M views. it was a new page's FIRST video on TikTok, so i rebuilt the format as one free Claude prompt, then did the same for stickman stories and lecture explainers.
+this is the original, posted by You Built It on oct 11:
+then i looked for everyone else giving this kind of thing away and 7 made the cut. each one is free in a post or an open repo, with nothing to comment for.
+inside: the 3D backyard, the stickman story, the lecture reel, a UI motion reel, a space explainer, 2D "what if" cartoons, a canvas animation skill, 66 film styles, a motion library and free b-roll.
+all 10 run in Claude Code. a Claude plan is the only thing you pay for (one uses the free ElevenLabs plan for its voice).
+i ran my 3 end to end with a blind Claude rater. i didn't run the other 7, so read any "best" here as the most saved.
+1. the 3D "what if" backyard
+a 60 to 75 second 3D Short. a house sits over a soil block cut open like a cake while a calm narrator builds an everyday thing, one problem at a time.
+You Built It's 48 TikToks have 58.6M views since oct 11. its YouTube Shorts, sorted by views on oct 30:
+its second-biggest Short, a strip of dirt that becomes a road, has 5,257,944 views:
+how it's made: the page doesn't say. on screen it's semi-real 3D, a soil block cut open like a cake and one caption word at a time over a calm, fast narrator.
+our guide rebuilds it as one paste. Claude Code writes the script, voices it on your PC, builds the yard in Blender (free) and adds the captions.
+its worked example is this pond, so running it gives you this exact video (yes, the fish too):
+a blind rater gave it 59/70, while You Built It's own videos scored 55 and 61 on it (it's ACTUALLY harsh). the weak row is the look, since our fish are simpler than their yard.
+to start:
+-> save whatif_guide.md as CLAUDE.md in an empty folder
+-> open Claude Code there and say "make one video, you pick the topic"
+it takes about 2.5 to 3 hours on a gaming PC, mostly unattended. the format is You Built It's, this is an independent rebuild.
+the guide: https://github.com/Theoxmotion/whatif-3d-studio
+2. the stickman survival story
+second-person survival stories in parts, each ending on a vote in the comments. itsquarkboi's first reel, GRIDLOCK Day 1, has 1.7M views, while 12 of its 13 reels passed 100K:
+how it's made, in its bio: "animated stickman survival stories, in parts". on screen: flat stick figures, short captions and a HUD with the day, the time and a phone battery.
+drawn.tosurvive's 10th Floor Part 1 has 1.7M on Instagram too:
+its caption calls them "animated apocalypse stories based on real survival facts". every part shows a rule card and a fact card.
+i asked if u wanted a guide for these on oct 28:
+u asked for it, here it is. i rebuilt the format in 3D, where flat 2D stickmen act inside low-poly rooms with real light and shadow under a HUD with the day and a clock.
+every frame is code. there are no AI images or AI video in it.
+UNDER THE RIVER, made with the prompt:
+a Claude rater gave it 104/120. the 10th Floor series by drawn.tosurvive, one of the pages behind this format, scored 96 to 99 on the same rater.
+it came from a fresh session in an empty folder, told only "you pick" at every step.
+to start:
+-> paste story_video_prompt.md into Claude Code in an empty folder
+-> answer "you pick" at each step, or give your own notes
+Claude works alone for about 1 to 2 hours. listen once before you post (Claude can't hear the mix).
+the guide: https://github.com/Theoxmotion/story-video-studio
+3. the lecture explainer reel
+the format is based on @finnardley's public prompt. he posted it on oct 30 and it had 926 bookmarks the same evening:
+a 45 to 60 second reel that plays like a short lecture. a cartoon teacher talks bottom right while titles and cards land on the exact word being said.
+i kept his lecture feel with our own teacher, colours and fonts. this one explains Claude skills:
+a second one teaches the 70 extra App Store pages Apple gives every app:
+a blind rater gave them 65/80 and 71/80, with every row at 7 or more. the voice runs on your computer, so it needs only Claude.
+the talking-teacher reel works for big channels too. ByteByteGo's "How Big Tech Ships Code to Production" has 1,990,658 views on YouTube:
+how it's made: the presenter talks to camera for all 58 seconds while a diagram builds above him, one step per sentence. our guide does that with a cartoon teacher drawn in code.
+Jeff Su's "AI Agents explained in 3 steps" has 877,283 views, about 36x his channel's median Short:
+he's on camera for 2 seconds, then dark cards build Level 1 to 3 with a tick or a cross on each (our stamps do the same job).
+to start:
+-> save explainer_prompt.md as CLAUDE.md in an empty folder
+-> open Claude Code there and say "make a reel" plus your topic
+the guide: https://github.com/Theoxmotion/explainer-reel-studio
+those are mine. the next 7 come from other creators, with every number read on oct 30.
+4. @twoclipping's UI motion reel
+one shape morphs through 8 to 12 UI states while a cursor clicks through every change, all cut to a 120 BPM track.
+1,179,689 views and 21,077 bookmarks, the most saved free video prompt i found:
+the full template is in the post (nothing to unlock). it needs only Claude plus a free Mixkit song.
+to start, copy the template, fill in the inputs and paste it into Claude Code.
+5. @finnardley's space explainer
+a 30 second Kurzgesagt-style "what if the Sun vanished?" explainer drawn in code, with a WebGL Earth, an astronaut mascot and narration timed to the word.
+249,422 views and 5,219 bookmarks since oct 25:
+the full prompt is in the post. ElevenLabs is optional, since without a key it switches to a free voice that runs on your computer.
+to start, paste the prompt into Claude Code with your own "what if".
+6. @kelanoo's 2D "what if" cartoons
+15 to 25 second "What If" cartoons in a dusk-lit stick-figure style. the character is drawn in code, so the hero never changes between shots.
+his post about it has 1,689 bookmarks. the free link sits in this reply:
+@Deroidz posted one he made with it the next day:
+you get the skill, his story patterns and the tool list, plus a free YouTube walkthrough (16,392 views):
+https://www.youtube.com/watch?v=XeZTgiEFxY0
+this one needs ElevenLabs for the voice and sound. its free plan covers about 40 episodes a month, for non-commercial use with credit.
+Remotion renders it, free for individuals and teams of up to 3. to start, install the skill from the repo and follow the walkthrough.
+the skill: https://github.com/kelano86/what-if-animation
+7. Chase AI's animate skill
+short animated videos drawn on one canvas in code, in 7 built-in styles from cut paper to pixel art, or any look from your own references.
+you approve the story, the look and the storyboard before it animates. his free 14 minute tutorial (Chase-H-AI on YouTube) has 202,795 views:
+https://www.youtube.com/watch?v=rscb1DgJtNg
+it needs nothing past Claude (the voice is optional). to start, add the repo to Claude Code as a skill and follow the tutorial.
+the skill (1,149 stars): https://github.com/cth9191/animate
+8. lemo-opuscar's 66 film styles
+short films with narration and music in 66 ready styles, each with a demo film, made by lemomo-ai on GitHub.
+9,749 stars, the most of any free Claude Code video library i found. @Voxyz_ai posted the install tip (it says 43 styles, the repo has grown since):
+it needs only Claude, with free voice models and free sample libraries for the score.
+the catch is time. a film takes 30 to 60 minutes and a fair amount of tokens, plus a first download over 1 GB.
+to start, install it as a Claude Code plugin with the two commands in the README.
+the repo: https://github.com/lemomo-ai/lemo-opuscar
+9. motion-prompt's 120 moving samples
+a clickable library of 120 moving samples by showheyohtaki, from camera moves to UI pieces and web effects. tick the ones you like and Claude Code builds them into your video.
+63,063 views and 1,636 bookmarks on @Voxyz_ai's post:
+it upgrades any format above (mine included), since it only changes how things move. commercial use is fine if you keep the credit line.
+to start, paste the one-line install prompt from the repo into Claude Code.
+the repo: https://github.com/showheyohtaki/motion-prompt
+10. @ElliotPadfield's free b-roll line
+one instruction that points Claude at archive.org's free API to pull public-domain films, 78 rpm records and concert recordings into your edit. it needs no key.
+240,722 views and 8,285 bookmarks, about 2.3 for every like:
+give Claude his line before the edit step (it's ONE line). it covers the clips and music for every format above.
+what i didn't test
+i ran my 3 end to end, with blind Claude ratings. the other 7 i read, checked for gates and counted, but didn't run. this is what the counting says:
+bookmarks say people wanted it. they don't say the output is good. every number was read on oct 30.
+which one to start with
+-> a page people come back to: the stickman survival story
+-> the biggest proven format: the 3D backyard (58.6M on TikTok since oct 11)
+-> one lesson in under a minute: the lecture reel or Finn's space explainer
+-> a fast first win: @twoclipping's UI prompt
+-> better motion or free clips for any of them: motion-prompt and Elliot's line
+save this before your next video, every link is in here.
