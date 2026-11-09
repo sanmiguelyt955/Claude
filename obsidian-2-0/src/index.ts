@@ -20,6 +20,14 @@ function directorio(env: Env): Record<string, string> {
     const extra = JSON.parse(env.LLAVES_EXTRA ?? "{}") as Record<string, string>;
     for (const [nombre, llave] of Object.entries(extra)) if (llave && llave.length >= 32) d[llave] = nombre;
   } catch { /* JSON malo: se ignora */ }
+  // Una llave por IA nueva: secreto LLAVE_<Nombre> (p. ej. LLAVE_Luna). Así se agregan desde el panel de Cloudflare
+  // sin reescribir LLAVES_EXTRA (que no se puede ver).
+  for (const [k, v] of Object.entries(env as unknown as Record<string, unknown>)) {
+    if (k.startsWith("LLAVE_") && typeof v === "string" && v.trim().length >= 32) {
+      const nombre = k.slice(6).replace(/_/g, " ").trim();
+      if (nombre) d[v.trim()] = nombre;
+    }
+  }
   return d;
 }
 
