@@ -1,2 +1,5 @@
 node_modules/
 www/
+build/
+spm/
+dist/

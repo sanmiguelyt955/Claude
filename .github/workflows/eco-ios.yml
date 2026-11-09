@@ -44,9 +44,27 @@ jobs:
           ECO_SERVER_URL: ${{ vars.ECO_SERVER_URL }}
         run: npm run copy
 
-      - name: Compilar (sin firmar)
+      # SwiftPM falla con "already exists in file system" si en la caché del runner quedan
+      # artefactos binarios a medias (Capacitor publica Capacitor/Cordova como xcframeworks).
+      # Se resuelven aparte, con la caché limpia y reintentos, y la compilación ya no resuelve.
+      - name: Resolver paquetes Swift
         run: |
           xcodebuild -version
+          for i in 1 2 3; do
+            rm -rf ~/Library/Caches/org.swift.swiftpm ~/Library/org.swift.swiftpm spm
+            if xcodebuild -resolvePackageDependencies \
+                 -project ios/App/App.xcodeproj -scheme App \
+                 -clonedSourcePackagesDirPath spm; then
+              exit 0
+            fi
+            echo "Intento $i fallido; reintentando"
+            sleep 10
+          done
+          exit 1
+
+      - name: Compilar (sin firmar)
+        run: |
+          set -o pipefail
           xcodebuild \
             -project ios/App/App.xcodeproj \
             -scheme App \
@@ -54,6 +72,8 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
+            -clonedSourcePackagesDirPath spm \
+            -disableAutomaticPackageResolution \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build | tail -40
           test -d build/Build/Products/Release-iphoneos/App.app
