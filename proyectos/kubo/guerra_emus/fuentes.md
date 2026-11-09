@@ -15,3 +15,7 @@ Fuente principal: Wikipedia, «Emu War» (https://en.wikipedia.org/wiki/Emu_War)
 | 986 emús con 9,860 balas = 10 por emú | Reporte oficial de Meredith: 986 muertes confirmadas; 9,860 balas en total |
 | Cita de los tanques | Meredith: «They can face machine guns with the invulnerability of tanks.» |
 | Ganaron los emús | Impacto mínimo en la población; el operativo se abandonó; después se usaron recompensas y cercas |
+
+## Prueba de clips con Muse Video (2026-11-09)
+- Clip B (Sanmisito): `clips_prueba/emu_B_sanmisito.mp4` (10 s, 720x1280, 24 fps). Mismo estilo se ve bien; fallan los prismáticos (3:30–4:30) y el giro del cuerpo (1:30–3:30). Cuota Muse: 19% → 28%.
+- Clips A (Cosmo) y C (Orión): pendientes.
