@@ -6,6 +6,6 @@
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat"],
   "keep_vars": true,
-  "r2_buckets": [{ "binding": "NOTAS", "bucket_name": "cuaderno-notas" }],
+  "r2_buckets": [{ "binding": "NOTAS", "bucket_name": "obsidian-2-0" }],
   "rules": [{ "type": "Text", "globs": ["**/*.html"], "fallthrough": true }]
 }
