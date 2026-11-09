@@ -1,0 +1,74 @@
+# Compila REA Studio (fork de OBS Studio) en Windows, crea el instalador .exe y lo publica en Releases.
+# Release "rea-studio-latest": marcada pre-release y nunca "latest", para no interferir con el actualizador
+# del Editor de video, que sigue la release "latest" del repo.
+name: REA Studio - Windows
+on:
+  push:
+    branches: [main]
+    paths: ["rea-studio/**", ".github/workflows/rea-studio-windows.yml"]
+  workflow_dispatch:
+  pull_request:
+    paths: ["rea-studio/**", ".github/workflows/rea-studio-windows.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: rea-studio-windows-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    name: Compilar instalador
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: rea-studio/base
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configurar (descarga dependencias de OBS)
+        run: cmake --preset windows-x64 "-DOBS_VERSION_OVERRIDE=33.0.1" "-DENABLE_BROWSER=ON"
+      - name: Compilar
+        run: cmake --build --preset windows-x64 --config Release --parallel
+      - name: Instalar a carpeta
+        run: cmake --install build_x64 --prefix "$PWD/../installer/stage" --config Release
+      - name: Añadir scripts y documentación de REA Studio
+        working-directory: rea-studio
+        run: |
+          New-Item -ItemType Directory -Force installer/stage/rea | Out-Null
+          Copy-Item scripts/* installer/stage/rea/ -Recurse
+          Copy-Item docs installer/stage/rea/docs -Recurse
+          Copy-Item README.md installer/stage/rea/
+          Copy-Item base/COPYING installer/stage/rea/COPYING-GPL2.txt
+      - name: Crear instalador
+        working-directory: rea-studio/installer
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          $ver = "33.0.1." + $env:GITHUB_RUN_NUMBER
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" rea-studio.iss
+          Get-ChildItem out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: REA-Studio-Setup
+          path: rea-studio/installer/out/REA-Studio-Setup.exe
+          retention-days: 14
+
+  publicar:
+    name: Publicar en Releases
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: REA-Studio-Setup
+      - name: Publicar release rea-studio-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete rea-studio-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create rea-studio-latest REA-Studio-Setup.exe --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "REA Studio (última versión)" \
+            --notes "Instalador de Windows de REA Studio, basado en OBS Studio 33.0.1 (GPL-2.0). Compilación #$GITHUB_RUN_NUMBER del commit $GITHUB_SHA. Instalar encima actualiza la versión anterior."
