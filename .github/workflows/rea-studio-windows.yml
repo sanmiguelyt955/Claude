@@ -4,7 +4,7 @@
 name: REA Studio - Windows
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/zealous-brahmagupta-jxzwb0"]
     paths: ["rea-studio/**", ".github/workflows/rea-studio-windows.yml"]
   workflow_dispatch:
   pull_request:
