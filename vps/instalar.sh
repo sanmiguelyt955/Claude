@@ -176,6 +176,10 @@ sed -i "/^$v=/d" /etc/taller/claves.env; echo "$v=$c" >> /etc/taller/claves.env;
 EOF
 chmod +x /usr/local/bin/taller-llave /usr/local/bin/taller-clave
 systemctl daemon-reload && systemctl enable --now taller >/dev/null && systemctl restart taller
+# Vigilante de RunPod: cada 10 min borra cualquier máquina de tarjeta de video olvidada (solo si hay llave guardada)
+cat > /etc/cron.d/runpod-vigilante <<'CRON'
+*/10 * * * * taller bash -lc 'set -a; . /etc/taller/claves.env; [ -n "$RUNPOD_API_KEY" ] && /opt/taller/venv/bin/python /home/taller/claude/vps/gpu/runpod_gpu.py vigilante >> /var/log/taller/runpod.log 2>&1'
+CRON
 
 paso "7/7 Direcciones https públicas (Tailscale Funnel)"
 echo ">>> Si sale un link para «habilitar Funnel», ábrelo, acéptalo y vuelve a correr este instalador."
