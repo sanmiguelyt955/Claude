@@ -1,0 +1,15 @@
+# Prueba mínima: confirma que GitHub Actions ejecuta workflows en esta cuenta/repo.
+name: Probar Actions
+on:
+  push:
+    branches: ["claude/zealous-brahmagupta-jxzwb0"]
+    paths: [".github/workflows/probar-actions.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  hola:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "Actions funciona en ${{ github.repository }} - $(date -u)"
