@@ -13,6 +13,8 @@ Herramientas:
   ver_trabajo       estado y final del registro de un trabajo largo
   listar / leer_archivo / ver_imagen / borrar      dentro de la carpeta de trabajo
   ejecutar          (solo admins) comando de bash como el usuario «taller», con límite de tiempo
+  blender_escena / blender_mirar / blender_codigo (admins)   Blender en vivo (MCP for Blender en pantalla virtual)
+  polyhaven         buscar/bajar cielos, texturas y modelos gratis (CC0)
 """
 import contextvars
 import datetime as dt
@@ -188,6 +190,67 @@ def ejecutar(comando: str, segundos: int = 300) -> str:
         return f"código {r.returncode}\n{salida}"
     except subprocess.TimeoutExpired:
         return "Se pasó del tiempo. Para cosas largas usa nohup o un trabajo largo."
+
+
+# ------------------------------------------------------------------ Blender en vivo (MCP for Blender, addon en Xvfb)
+def _blender(tipo, params=None, espera=180):
+    import socket
+    s = socket.create_connection(("127.0.0.1", int(os.environ.get("BLENDER_PORT", "9876"))), timeout=espera)
+    try:
+        s.sendall(json.dumps({"type": tipo, "params": params or {}}).encode())
+        buf = b""
+        while True:
+            parte = s.recv(1 << 16)
+            if not parte:
+                break
+            buf += parte
+            try:
+                return json.loads(buf)
+            except ValueError:
+                continue
+        return json.loads(buf or b"{}")
+    finally:
+        s.close()
+
+
+@mcp.tool
+def blender_escena() -> str:
+    """Qué hay en la escena de Blender abierta (objetos, materiales, cámara)."""
+    try:
+        return json.dumps(_blender("get_scene_info"), ensure_ascii=False)[:20000]
+    except OSError as e:
+        return f"Blender en vivo no está prendido ({e}). En el VPS: systemctl start blender-vivo"
+
+
+@mcp.tool
+def blender_mirar(tamano: int = 900) -> Image:
+    """Foto de la vista de Blender, para revisar con tus propios ojos lo que se está construyendo."""
+    ruta = TRABAJO / "_vista_blender.png"
+    _blender("get_viewport_screenshot", {"max_size": tamano, "filepath": str(ruta), "format": "png"})
+    return Image(path=str(ruta))
+
+
+@mcp.tool
+def blender_codigo(codigo: str) -> str:
+    """(Solo admins) Ejecuta Python de Blender (bpy) en la escena abierta: crear objetos, materiales, luces, cámara,
+    animar, renderizar. Después usa blender_mirar para ver el resultado."""
+    if quien.get() not in ADMINS:
+        return f"{quien.get()} no puede usar blender_codigo. Pídeselo a Claude en un recado."
+    anotar(f"blender_codigo: {codigo[:300]}")
+    return json.dumps(_blender("execute_code", {"code": codigo}, espera=600), ensure_ascii=False)[:20000]
+
+
+@mcp.tool
+def polyhaven(accion: str, tipo: str, texto: str, res: str = "1k") -> str:
+    """Biblioteca gratis CC0 (se puede monetizar sin dar crédito). accion: buscar | bajar. tipo: hdris | textures |
+    models. texto: palabras a buscar, o el id a bajar. Lo bajado queda en la biblioteca para reutilizar."""
+    import sys
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import polyhaven as ph
+    if accion == "buscar":
+        return "\n".join(f"{i} · {n} · {c} ({d} descargas)" for d, i, n, c in ph.buscar(tipo, texto)) or "Nada."
+    carpeta, hechos = ph.bajar(tipo, texto, res)
+    return f"Listo en {carpeta}: " + ", ".join(h.name for h in hechos)
 
 
 class Llaves:

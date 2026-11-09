@@ -84,7 +84,21 @@ id taller >/dev/null 2>&1 || useradd -m -s /bin/bash taller
 mkdir -p /opt/taller /etc/taller /var/log/taller /home/taller/trabajo
 python3 -m venv "$VENV"
 "$VENV/bin/pip" install -q --upgrade pip
-"$VENV/bin/pip" install -q "fastmcp==4.1.6" uvicorn "yt-dlp[default]" faster-whisper numpy soundfile pillow
+"$VENV/bin/pip" install -q "fastmcp==4.1.6" uvicorn "yt-dlp[default]" faster-whisper numpy soundfile pillow \
+  "scenedetect[opencv-headless]" auto-editor
+# earshot (la IA «escucha» el audio): torch para procesador + earshot fijado en su versión 0.4.1
+"$VENV/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu
+"$VENV/bin/pip" install -q "git+https://github.com/Leonxlnx/earshot@v0.4.1" || echo "AVISO: earshot no se instaló"
+# HyperFrames (videos con HTML) — necesita Node 22
+if ! command -v node >/dev/null || [ "$(node -v | cut -c2- | cut -d. -f1)" -lt 22 ]; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y -q nodejs
+fi
+npm install -g -s hyperframes@0.9.26 || echo "AVISO: HyperFrames no se instaló"
+# MCP for Blender: su addon corre dentro de Blender (pantalla virtual) y el taller le habla por el puerto 9876
+apt-get install -y -q xvfb
+"$VENV/bin/pip" install -q "mcp-for-blender==2.2.7"
+ADDON=$("$VENV/bin/python" -c "import blender_mcp,os;print(os.path.join(os.path.dirname(blender_mcp.__file__),'bundled','addon.py'))")
+cp "$ADDON" /opt/taller/blender_mcp_addon.py
 if ! command -v deno >/dev/null; then   # yt-dlp necesita un motor de JavaScript para YouTube
   curl -fsSL -o /tmp/deno.zip https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip
   unzip -o -q /tmp/deno.zip -d /usr/local/bin && rm /tmp/deno.zip
@@ -122,6 +136,24 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
+cat > /opt/taller/iniciar_blender.py <<'PYEOF'
+import bpy, addon_utils
+bpy.ops.preferences.addon_install(filepath="/opt/taller/blender_mcp_addon.py", overwrite=True)
+addon_utils.enable("blender_mcp_addon", default_set=True)
+PYEOF
+cat > /etc/systemd/system/blender-vivo.service <<UNIT
+[Unit]
+Description=Blender en vivo con MCP for Blender (pantalla virtual)
+After=network-online.target
+[Service]
+User=taller
+Environment=DISABLE_TELEMETRY=true
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1600x900x24" /home/taller/blender-4.2.3-linux-x64/blender --factory-startup -P /opt/taller/iniciar_blender.py
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload && systemctl enable --now blender-vivo >/dev/null || true
 # Comandos de ayuda (se usan en Termius):
 cat > /usr/local/bin/taller-llave <<'EOF'
 #!/usr/bin/env bash

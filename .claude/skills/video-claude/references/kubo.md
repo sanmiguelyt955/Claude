@@ -123,3 +123,12 @@ que cuenta la emoción sin idioma y un gag repetible que la audiencia espera.
   `[{"texto":"ROUTE","en":1.2,"color":"#38d94a"}, …]` (cada una dura hasta la siguiente). En `idiomas.<l>.conceptos`
   va la traducción por toma (texto o lista).
 - Prueba: proyectos/kubo/prueba_maqueta (10 s, 1.1 min de render normal).
+
+## Herramientas nuevas (2026-11-09)
+- `scripts/polyhaven.py buscar|bajar hdris|textures|models …`: biblioteca gratis CC0 (cielos para la luz de EEVEE/Cycles,
+  texturas, muebles). Guarda en `datos/polyhaven/` y reutiliza. Probado: búsqueda y descarga de HDRI.
+- En el VPS (instalador `vps/instalar.sh`): PySceneDetect, auto-editor, earshot 0.4.1 (la IA «escucha» el audio),
+  HyperFrames 0.9.26 (videos con HTML) y MCP for Blender 2.2.7 (Blender en vivo en pantalla virtual, servicio
+  `blender-vivo`, sin telemetría). El taller expone `blender_escena`, `blender_mirar`, `blender_codigo` (admins) y `polyhaven`.
+- Formato elegido por Sanmi (09 nov): **Kubo como narrador** de historias reales en 2.5D (personajes 2D, sets 3D con luz
+  bonita, objeto principal en 3D, fuentes verificadas). Render bonito en GPU rentada (RunPod A5000) cuando haya cuenta.
