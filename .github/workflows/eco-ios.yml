@@ -1,0 +1,95 @@
+# Compila Eco como app de iPhone (.ipa sin firmar) y la publica en la release "eco-ios-latest".
+# La .ipa sin firmar se instala firmándola en el propio dispositivo con AltStore o Sideloadly
+# (ver eco-ios/README.md). La release es pre-release y nunca "latest": el actualizador del
+# editor de vídeo sigue la release "latest" del repositorio.
+name: eco-ios
+
+on:
+  push:
+    branches: [main, claude/soundcloud-offline-app-y4az7u]
+    paths:
+      - "eco-player/public/**"
+      - "eco-ios/**"
+      - ".github/workflows/eco-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eco-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: eco-ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: eco-ios/package-lock.json
+
+      - name: Instalar Capacitor
+        run: npm ci
+
+      - name: Copiar la interfaz a la app
+        env:
+          # Opcional: variable del repositorio con la URL https de tu servidor Eco publicado.
+          ECO_SERVER_URL: ${{ vars.ECO_SERVER_URL }}
+        run: npm run copy
+
+      - name: Compilar (sin firmar)
+        run: |
+          xcodebuild -version
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -40
+          test -d build/Build/Products/Release-iphoneos/App.app
+
+      - name: Empaquetar .ipa
+        run: |
+          mkdir -p dist/Payload
+          cp -R build/Build/Products/Release-iphoneos/App.app dist/Payload/
+          (cd dist && zip -qry Eco.ipa Payload)
+          ls -la dist/Eco.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eco-ipa
+          path: eco-ios/dist/Eco.ipa
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Eco-ipa
+          path: dist
+
+      - name: Publicar en la release eco-ios-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete eco-ios-latest --yes --cleanup-tag || true
+          gh release create eco-ios-latest dist/Eco.ipa \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title "Eco para iPhone (última compilación)" \
+            --notes "IPA sin firmar de Eco, compilada desde ${GITHUB_SHA::7}. Para instalarla, fírmala con AltStore o Sideloadly: instrucciones en eco-ios/README.md."

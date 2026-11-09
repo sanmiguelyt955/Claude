@@ -82,6 +82,8 @@ async function waitPlaying(page, minTime = 0.5) {
     const t2 = rows.find((r) => r.title === 'Sin Etiquetas');
     assert.ok(t2 && t2.artist === 'Otro Artista', `nombre de archivo mal interpretado: ${JSON.stringify(rows)}`);
     assert.equal(rows.length, 2, 'el .txt no debería importarse');
+    await page.waitForSelector('.toast.show');
+    assert.equal(await page.textContent('.toast'), '2 añadidas · 1 no son audio');
 
     step('no duplica al importar de nuevo');
     await page.click('[data-sub=import]');

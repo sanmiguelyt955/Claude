@@ -1,0 +1,9 @@
+{
+  "appId": "io.github.sanmiguelyt955.eco",
+  "appName": "Eco",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#14110f"
+  }
+}

@@ -130,7 +130,9 @@ const LocalLibrary = (() => {
   }
 
   async function importFiles(files, onProgress) {
-    const audio = [...files].filter(isAudio);
+    // Copia síncrona: quien llama puede vaciar el <input> (y su FileList) mientras importamos.
+    const all = [...files];
+    const audio = all.filter(isAudio);
     const existing = new Set((await allTracks()).map((t) => t.fingerprint));
     let added = 0, skipped = 0, failed = 0;
     for (let n = 0; n < audio.length; n++) {
@@ -171,7 +173,7 @@ const LocalLibrary = (() => {
       }
     }
     onProgress && onProgress(audio.length, audio.length, '');
-    return { added, skipped, failed, ignored: files.length - audio.length };
+    return { added, skipped, failed, ignored: all.length - audio.length };
   }
 
   async function allTracks() { return tx(['tracks'], 'readonly', (s) => req2p(s.getAll())); }

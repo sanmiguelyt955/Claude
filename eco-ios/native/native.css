@@ -1,0 +1,10 @@
+/* Ajustes de la app de iPhone sobre la interfaz de eco-player. */
+
+/* En la app, la pestaña SoundCloud solo muestra el aviso nativo. */
+body.native #view-soundcloud > :not(.native-sc) { display: none !important; }
+
+/* iOS no permite elegir carpetas desde una app. */
+body.native label:has(#pick-folder) { display: none; }
+
+/* La app no depende de la red: el indicador de conexión sobra. */
+body.native #net { display: none; }
