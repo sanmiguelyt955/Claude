@@ -7,7 +7,7 @@
 <title>Proclama · Control remoto</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <style>
-  :root { --bg: #12151c; --panel: #1a1f2a; --line: #2f3848; --text: #e8ecf3; --muted: #93a0b5; --accent: #4c8dff; --live: #ff4d5e; color-scheme: dark; }
+  :root { --bg: #0d1016; --panel: #151a23; --line: #283040; --text: #eaeef6; --muted: #8e9ab0; --accent: #5b9dff; --live: #f2495c; color-scheme: dark; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--text); font: 16px/1.35 system-ui, "Segoe UI", Roboto, Arial, sans-serif; display: flex; flex-direction: column; height: 100dvh; }
@@ -28,10 +28,10 @@
   .item.active { border-color: var(--live); background: #3a1820; }
   .item small { color: var(--muted); display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
   footer { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; padding: 10px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); background: var(--panel); border-top: 1px solid var(--line); }
-  footer button { font-size: 22px; padding: 22px 8px; font-weight: 700; }
-  #next { background: var(--accent); border-color: var(--accent); }
+  footer button { font-size: 19px; padding: 22px 8px; font-weight: 700; }
+  #next { background: var(--accent); border-color: var(--accent); color: #06142e; }
   .tg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .tg button { padding: 12px 4px; font-size: 14px; }
+  .tg button { padding: 12px 2px; font-size: 13.5px; }
   #msg { color: var(--muted); font-size: 13px; min-height: 1.2em; }
 </style>
 </head>
@@ -39,23 +39,25 @@
 <header><div id="title">Conectando…</div><div id="now"></div></header>
 <main>
   <div class="tg">
-    <button id="black">Negro</button><button id="clear">Limpiar</button><button id="logo">Logo</button><button id="close">Cerrar</button>
+    <button id="black">Negro</button><button id="clear">Ocultar texto</button><button id="logo">Logo</button><button id="close">Quitar</button>
   </div>
-  <div class="row"><input id="ref" placeholder="Juan 3:16" aria-label="Cita bíblica" enterkeyhint="go"><button id="goRef">Mostrar</button></div>
-  <div class="row"><input id="alert" placeholder="Mensaje de alerta" aria-label="Alerta" enterkeyhint="send"><button id="goAlert">Alerta</button></div>
+  <h2>Proyectar una cita bíblica</h2>
+  <div class="row"><input id="ref" placeholder="Ej.: Juan 3:16" aria-label="Cita bíblica" enterkeyhint="go"><button id="goRef">Proyectar</button></div>
+  <h2>Alerta en pantalla</h2>
+  <div class="row"><input id="alert" placeholder="Ej.: Mover el auto placas ABC-123" aria-label="Alerta" enterkeyhint="send"><button id="goAlert">Mostrar</button></div>
   <div id="msg" role="status"></div>
   <h2>Diapositivas</h2><div id="slides" class="list"></div>
   <h2>Programa</h2><div id="sched" class="list"></div>
   <h2>Canciones</h2><div class="row"><input id="q" type="search" placeholder="Buscar canción…" aria-label="Buscar canción"></div><div id="songs" class="list"></div>
 </main>
-<footer><button id="prev" aria-label="Anterior">◀</button><button id="next">Siguiente ▶</button></footer>
+<footer><button id="prev" aria-label="Anterior">◀ Anterior</button><button id="next">Siguiente ▶</button></footer>
 <script type="module">
 import { createStore } from './js/store.js';
 import { resolveItem, itemInfo } from './js/resolve.js';
 import { norm } from './shared/model.js';
 import { parseReference, bibleToPresentation } from './shared/bible.js';
 const $ = (id) => document.getElementById(id);
-const store = await createStore();
+const store = await createStore('remote');
 const say = (t) => { $('msg').textContent = t; setTimeout(() => { if ($('msg').textContent === t) $('msg').textContent = ''; }, 3000); };
 const btn = (cls, small, text, fn) => { const b = document.createElement('button'); b.className = cls; if (small) { const s = document.createElement('small'); s.textContent = small; b.append(s); } b.append(text); b.onclick = fn; return b; };
 async function show(item) { try { store.dispatch({ type: 'show', pres: await resolveItem(item, store), index: item.start ?? 0 }); } catch (e) { say(e.message); } }
@@ -65,7 +67,7 @@ function drawLive() {
   $('now').textContent = s ? (s.media ? `[${s.label}]` : s.text) : '';
   $('now').classList.toggle('off', l.black || l.clear || l.logo.on);
   $('black').classList.toggle('on', l.black); $('clear').classList.toggle('on', l.clear); $('logo').classList.toggle('on', l.logo.on);
-  $('goAlert').classList.toggle('on', l.alert.on); $('goAlert').textContent = l.alert.on ? 'Quitar' : 'Alerta';
+  $('goAlert').classList.toggle('on', l.alert.on); $('goAlert').textContent = l.alert.on ? 'Quitar' : 'Mostrar';
   const box = $('slides'), slides = p?.slides ?? null;
   if (box._slides !== slides) { // solo se reconstruye la lista cuando cambia la presentación
     box._slides = slides; box._active = null;

@@ -56,6 +56,7 @@ function broadcast(type, data, origin = 'server', extra = {}) {
   const msg = `data: ${JSON.stringify({ type, data, origin, ...extra })}\n\n`;
   for (const res of clients) res.write(msg);
 }
+const clientCounts = () => { const c = {}; for (const r of clients) c[r.role] = (c[r.role] ?? 0) + 1; return c; };
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
 
 // ---------- utilidades ----------
@@ -192,9 +193,11 @@ async function api(req, res, url) {
 
   if (p === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-    res.write(`data: ${JSON.stringify({ type: 'hello', data: { db, live }, origin: 'server' })}\n\n`);
+    res.role = String(url.searchParams.get('role') || 'operator').replace(/[^a-z]/g, '').slice(0, 12);
     clients.add(res);
-    req.on('close', () => clients.delete(res));
+    res.write(`data: ${JSON.stringify({ type: 'hello', data: { db, live, clients: clientCounts() }, origin: 'server' })}\n\n`);
+    broadcast('clients', clientCounts());
+    req.on('close', () => { clients.delete(res); broadcast('clients', clientCounts()); });
     return;
   }
 

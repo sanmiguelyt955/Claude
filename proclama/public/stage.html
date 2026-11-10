@@ -30,7 +30,7 @@
 import { createStore } from './js/store.js';
 import { fmtClock } from './shared/model.js';
 const $ = (id) => document.getElementById(id);
-const store = await createStore();
+const store = await createStore('stage');
 function draw() {
   const l = store.live, p = l.pres, s = p?.slides[l.index], n = p?.slides[l.index + 1];
   $('title').textContent = p ? `${p.title}  ·  ${l.index + 1}/${p.slides.length}` : 'Sin presentación';

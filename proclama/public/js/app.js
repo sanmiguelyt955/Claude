@@ -6,6 +6,7 @@ import { defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresen
 import { BOOKS_ES, bookName, parseReference, formatRef, searchBible, bibleToPresentation } from '../shared/bible.js';
 import { importSongFile } from '../shared/importers.js';
 import { buildBible } from '../shared/bible-import.js';
+import { icon, hydrateIcons } from './icons.js';
 
 const $ = (id) => document.getElementById(id);
 function h(tag, props, ...kids) {
@@ -23,6 +24,9 @@ function h(tag, props, ...kids) {
   if (value !== undefined) e.value = value;
   return e;
 }
+/** Botón de acción con icono; `text` es la etiqueta visible (opcional). */
+const act = (ic, title, onclick, text = '', cls = '') => h('button', { class: 'act ' + cls, title, 'aria-label': title, onclick }, icon(ic, 16), text && h('span', {}, text));
+const KIND_ICON = { song: 'music', bible: 'book', media: 'image', text: 'text' };
 const debounce = (fn, ms = 180) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 let toastTimer;
 function toast(msg) {
@@ -35,7 +39,7 @@ function setPanel(p) {
   document.querySelectorAll('.mobnav button').forEach(b => b.classList.toggle('on', b.dataset.panel === p));
 }
 
-const store = await createStore();
+const store = await createStore('operator');
 const ui = {
   tab: 'songs', songQuery: '', preview: null, // preview: { pres, index, item? }
   bible: { version: store.db.settings.bibleVersion, book: 42, chapter: 3, query: '', data: null },
@@ -49,7 +53,7 @@ const lvScreen = createScreen($('lvMonitor'), { muted: true, lite });
 function syncSlides(box, slides, index, make, emptyText) {
   if (box._slides !== slides) {
     box._slides = slides;
-    box.replaceChildren(...(slides ? slides.map(make) : [h('div', { class: 'empty' }, emptyText)]));
+    box.replaceChildren(...(slides ? slides.map(make) : [typeof emptyText === 'function' ? emptyText() : h('div', { class: 'empty' }, emptyText)]));
     box._active = null;
   }
   if (!slides) return;
@@ -89,7 +93,7 @@ async function previewItem(item, live = false) {
   } catch (e) { toast(e.message); }
 }
 function goLive(index) {
-  if (!ui.preview) return toast('Elige primero algo para mostrar');
+  if (!ui.preview) return toast('Elige primero una canción, un pasaje o una imagen');
   if (index !== undefined) ui.preview.index = index;
   store.dispatch({ type: 'show', pres: ui.preview.pres, index: ui.preview.index });
   if (isMobile()) setPanel('live');
@@ -98,16 +102,20 @@ function goLive(index) {
 function slideCard(slide, i, active, onclick, ondblclick) {
   const c = labelColor(slide.label);
   return h('button', { class: 'slide' + (active ? ' active' : ''), onclick, ondblclick, style: c ? { '--lab': c } : {} },
-    h('span', { class: 'lab' }, `${i + 1}${slide.label ? ' · ' + slide.label : ''}`), slide.media ? `[${slide.label}]` : slide.text);
+    h('span', { class: 'lab' }, h('i', {}, String(i + 1)), slide.label), slide.media ? `(${slide.label.toLowerCase()})` : slide.text);
 }
 
 function renderPreview() {
   const p = ui.preview;
-  $('pvTitle').textContent = p?.pres.title ?? '';
+  $('pvTitle').textContent = p ? `${p.pres.title} · ${p.pres.slides.length} diapositiva${p.pres.slides.length === 1 ? '' : 's'}` : 'Revisa antes de proyectar';
   pvScreen.update({ ...defaultLive(), pres: p?.pres ?? null, index: p?.index ?? 0 });
   syncSlides($('pvSlides'), p?.pres.slides ?? null, p?.index ?? 0,
     (s, i) => slideCard(s, i, false, () => { ui.preview.index = i; renderPreview(); }, () => goLive(i)),
-    'Elige una canción, un pasaje o un medio. Doble clic lo envía en vivo.');
+    () => h('div', { class: 'guide' },
+      [['Elige', 'Toca una canción, un pasaje o una imagen en la biblioteca de abajo.'],
+        ['Revisa', 'Aquí ves cómo quedará, sin que la congregación lo vea todavía.'],
+        ['Proyecta', 'Pulsa «Proyectar» (o Enter). Luego avanza con «Siguiente» o la flecha →.']]
+        .map(([t, d], i) => h('div', { class: 'step' }, h('span', { class: 'n' }, String(i + 1)), h('span', {}, h('b', {}, t), h('small', {}, d))))));
   const sel = $('pvTheme');
   if (sel._themes !== store.db.themes || sel.options.length !== store.db.themes.length) {
     sel._themes = store.db.themes;
@@ -133,10 +141,15 @@ $('pvAdd').onclick = () => { if (ui.preview?.item) addToSchedule({ ...ui.preview
 // ---------- En vivo ----------
 function renderLive() {
   const l = store.live;
-  $('lvTitle').textContent = l.pres ? `${l.pres.title} · ${l.index + 1}/${l.pres.slides.length}` : 'Nada en pantalla';
+  $('lvTitle').textContent = l.pres ? `${l.pres.title} · ${l.index + 1} de ${l.pres.slides.length}` : 'Nada en pantalla';
+  const state = l.black ? 'PANTALLA EN NEGRO' : l.logo.on ? 'MOSTRANDO EL LOGO' : l.clear && l.pres ? 'TEXTO OCULTO' : '';
+  $('lvState').textContent = state; $('lvState').hidden = !state;
+  $('lvClose').disabled = !l.pres; $('lvPrev').disabled = !l.pres || l.index === 0; $('lvNext').disabled = !l.pres || l.index >= l.pres.slides.length - 1;
+  $('toolsDot').hidden = !(l.alert.on || l.countdown.on || l.stageMsg);
   lvScreen.update(l);
   syncSlides($('lvSlides'), l.pres?.slides ?? null, l.index,
-    (s, i) => slideCard(s, i, false, () => store.dispatch({ type: 'goto', index: i })), 'Nada en pantalla.');
+    (s, i) => slideCard(s, i, false, () => store.dispatch({ type: 'goto', index: i })),
+    () => h('div', { class: 'empty' }, h('b', {}, 'Nada en pantalla'), 'Lo que proyectes aparecerá aquí. Toca una diapositiva para saltar a ella.'));
   $('lvBlack').classList.toggle('on', l.black);
   $('lvClear').classList.toggle('on', l.clear);
   $('lvLogo').classList.toggle('on', l.logo.on);
@@ -182,7 +195,8 @@ function renderSchedule() {
   };
   $('schedList').replaceChildren(...(sch.items.length ? sch.items.map((item, i) => {
     const info = itemInfo(item, store.db);
-    const cls = 'row' + (ui.preview?.item?.id === item.id ? ' active' : '') + (store.live.pres?.itemId === item.id ? ' onair' : '');
+    const onAir = store.live.pres?.itemId === item.id;
+    const cls = 'row' + (ui.preview?.item?.id === item.id ? ' active' : '') + (onAir ? ' onair' : '');
     return h('div', {
       class: cls, draggable: 'true', tabindex: '0',
       onclick: () => previewItem(item), ondblclick: () => previewItem(item, true),
@@ -193,16 +207,16 @@ function renderSchedule() {
       ondragleave: (e) => e.currentTarget.classList.remove('over'),
       ondrop: (e) => { e.preventDefault(); if (dragFrom >= 0 && dragFrom !== i) move(dragFrom, i); dragFrom = -1; },
     },
-      h('span', { class: 'ico' }, info.icon),
-      h('span', { class: 'main' }, h('b', { class: 'ell' }, info.title), h('small', { class: 'ell' }, info.sub)),
+      h('span', { class: 'kind ' + item.type, title: onAir ? 'En pantalla ahora' : info.sub }, icon(info.icon === '▶' ? 'video' : KIND_ICON[item.type] ?? 'text', 16)),
+      h('span', { class: 'main' }, h('b', { class: 'ell' }, info.title), h('small', { class: 'ell' }, onAir ? 'En pantalla ahora' : info.sub)),
       h('span', { class: 'acts', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() },
-        h('button', { class: 'icon', title: 'En vivo', 'aria-label': 'Enviar en vivo', onclick: () => previewItem(item, true) }, '▶'),
-        h('button', { class: 'icon', title: 'Subir', 'aria-label': 'Subir', onclick: () => move(i, i - 1) }, '↑'),
-        h('button', { class: 'icon', title: 'Bajar', 'aria-label': 'Bajar', onclick: () => move(i, i + 1) }, '↓'),
-        item.type === 'text' && h('button', { class: 'icon', title: 'Editar', 'aria-label': 'Editar', onclick: () => editText(item) }, '✎'),
-        h('button', { class: 'icon danger', title: 'Quitar', 'aria-label': 'Quitar del programa', onclick: () => { sch.items.splice(i, 1); store.saveDb(); } }, '✕')),
+        act('play', 'Proyectar ahora', () => previewItem(item, true), 'Proyectar', 'go'),
+        act('up', 'Subir', () => move(i, i - 1), '', 'extra'),
+        act('down', 'Bajar', () => move(i, i + 1), '', 'extra'),
+        item.type === 'text' && act('edit', 'Editar', () => editText(item), '', 'extra'),
+        act('x', 'Quitar del programa', () => { sch.items.splice(i, 1); store.saveDb(); }, '', 'danger extra')),
     );
-  }) : [h('div', { class: 'empty' }, 'El programa está vacío. Añade canciones, pasajes y medios con el botón ＋.')]));
+  }) : [h('div', { class: 'empty' }, h('b', {}, 'Aquí va el orden del culto'), 'Busca una canción o un pasaje abajo y pulsa ', h('b', { style: { display: 'inline' } }, '＋ Programa'), ' para guardarlo aquí.')]));
 }
 $('schedName').onchange = (e) => { store.db.schedule.name = e.target.value || 'Culto'; store.saveDb(); };
 $('btnClearSched').onclick = () => {
@@ -254,9 +268,9 @@ function editSong(song) {
 
 function songsBar() {
   return [
-    h('input', { type: 'search', placeholder: 'Buscar por título, autor o letra…', value: ui.songQuery, style: { flex: '1' }, 'aria-label': 'Buscar canciones',
-      oninput: debounce((e) => { ui.songQuery = e.target.value; songsList(); }, 120) }),
-    h('button', { class: 'primary', onclick: () => editSong(null) }, '＋ Nueva'),
+    h('span', { class: 'searchbox' }, icon('search', 16), h('input', { type: 'search', placeholder: 'Buscar canción por título, autor o un pedazo de la letra…', value: ui.songQuery, 'aria-label': 'Buscar canciones',
+      oninput: debounce((e) => { ui.songQuery = e.target.value; songsList(); }, 120) })),
+    h('button', { onclick: () => editSong(null) }, icon('plus', 16), 'Nueva canción'),
   ];
 }
 const songIndex = new WeakMap(); // canción -> texto normalizado para buscar sin recalcular en cada tecla
@@ -279,15 +293,15 @@ function songsList() {
       onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) { e.stopPropagation(); previewItem(item, true); } } },
       h('span', { class: 'main' }, h('b', { class: 'ell' }, s.title), h('small', { class: 'ell' }, s.author || s.text.split('\n').find(l => l.trim() && l.length > 12) || '')),
       h('span', { class: 'acts', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() },
-        h('button', { class: 'icon', title: 'En vivo', 'aria-label': 'Enviar en vivo', onclick: () => previewItem(item, true) }, '▶'),
-        h('button', { class: 'icon', title: 'Añadir al programa', 'aria-label': 'Añadir al programa', onclick: () => addToSchedule(item) }, '＋'),
-        h('button', { class: 'icon', title: 'Editar', 'aria-label': 'Editar', onclick: () => editSong(s) }, '✎'),
-        h('button', { class: 'icon danger', title: 'Eliminar', 'aria-label': 'Eliminar', onclick: () => {
+        act('play', 'Proyectar ahora', () => previewItem(item, true), 'Proyectar', 'go'),
+        act('plus', 'Añadir al programa', () => addToSchedule(item), 'Programa', 'add'),
+        act('edit', 'Editar', () => editSong(s), '', ''),
+        act('trash', 'Eliminar', () => {
           if (confirm(`¿Eliminar “${s.title}” de la biblioteca?`)) { store.db.songs = store.db.songs.filter(x => x !== s); store.saveDb(); }
-        } }, '🗑')),
+        }, '', 'danger')),
     );
   }), all.length > songs.length && h('div', { class: 'empty' }, `Mostrando ${songs.length} de ${all.length}. Escribe en el buscador para encontrar las demás.`)]
-    : h('div', { class: 'empty' }, q ? 'Sin resultados.' : 'No hay canciones. Crea una o usa “Importar”.')));
+    : h('div', { class: 'empty' }, q ? [h('b', {}, 'No encontré esa canción'), 'Prueba con otra palabra o créala con «Nueva canción».'] : [h('b', {}, 'Aún no hay canciones'), 'Crea una con «Nueva canción» o tráelas de otro programa con «Importar».'])));
 }
 
 // ---------- Biblioteca: Biblia ----------
@@ -298,11 +312,14 @@ async function bibleBar() {
   const chapters = b.data.books[b.book].length;
   if (b.chapter > chapters) b.chapter = 1;
   return [
-    h('select', { value: b.version, 'aria-label': 'Versión', onchange: (e) => { b.version = e.target.value; store.db.settings.bibleVersion = b.version; store.saveDb(); renderLibrary(); } },
-      versions.map(v => h('option', { value: v.id }, v.name))),
-    h('input', { type: 'search', placeholder: 'Juan 3:16-18 o palabras…', value: b.query, style: { flex: '1' }, 'aria-label': 'Referencia o búsqueda',
+    h('select', { value: b.version, 'aria-label': 'Versión', title: 'Versión de la Biblia', onchange: (e) => {
+      if (e.target.value === '+') { e.target.value = b.version; return openBibleDialog(); }
+      b.version = e.target.value; store.db.settings.bibleVersion = b.version; store.saveDb(); renderLibrary();
+    } },
+      versions.map(v => h('option', { value: v.id }, v.name)), h('option', { value: '+' }, '＋ Añadir otra Biblia…')),
+    h('span', { class: 'searchbox' }, icon('search', 16), h('input', { type: 'search', placeholder: 'Escribe una cita (Juan 3:16) o palabras (buen pastor) y pulsa Enter', value: b.query, 'aria-label': 'Referencia o búsqueda',
       oninput: debounce((e) => { b.query = e.target.value; bibleQuery(false); }, 200),
-      onkeydown: (e) => { if (e.key === 'Enter') { b.query = e.target.value; bibleQuery(true, e.shiftKey || e.ctrlKey); } } }),
+      onkeydown: (e) => { if (e.key === 'Enter') { b.query = e.target.value; bibleQuery(true, e.shiftKey || e.ctrlKey); } } })),
     h('select', { value: String(b.book), 'aria-label': 'Libro', onchange: (e) => { b.book = Number(e.target.value); b.chapter = 1; b.query = ''; renderLibrary(); } },
       BOOKS_ES.map((_, i) => h('option', { value: String(i) }, bookName(b.data, i)))),
     h('select', { value: String(b.chapter), 'aria-label': 'Capítulo', onchange: (e) => { b.chapter = Number(e.target.value); b.query = ''; renderLibrary(); } },
@@ -338,7 +355,7 @@ function bibleList(mark = 0) {
       return h('div', { class: 'row verse', tabindex: '0', onclick: () => previewItem(item), ondblclick: () => previewItem(item, true) },
         h('span', { class: 'main' }, h('b', {}, formatRef(b.data, { book: x.book, chapter: x.chapter, from: x.verse, to: x.verse })), x.text),
         h('span', { class: 'acts', onclick: (e) => e.stopPropagation() },
-          h('button', { class: 'icon', title: 'En vivo', 'aria-label': 'Enviar en vivo', onclick: () => previewItem(item, true) }, '▶')));
+          act('play', 'Proyectar ahora', () => previewItem(item, true), 'Proyectar', 'go')));
     }) : h('div', { class: 'empty' }, 'Sin resultados para esa búsqueda.')));
   }
   const verses = b.data.books[b.book][b.chapter - 1];
@@ -347,9 +364,8 @@ function bibleList(mark = 0) {
     return h('div', { class: 'row verse' + (mark === i + 1 ? ' active' : ''), tabindex: '0', onclick: () => previewItem(item), ondblclick: () => previewItem(item, true) },
       h('span', { class: 'n' }, String(i + 1)), h('span', { class: 'main' }, t),
       h('span', { class: 'acts', onclick: (e) => e.stopPropagation(), ondblclick: (e) => e.stopPropagation() },
-        h('button', { class: 'icon', title: 'En vivo', 'aria-label': 'Enviar en vivo', onclick: () => previewItem(item, true) }, '▶'),
-        h('button', { class: 'icon', title: 'Añadir este versículo al programa', 'aria-label': 'Añadir al programa',
-          onclick: () => addToSchedule({ type: 'bible', version: b.version, book: b.book, chapter: b.chapter, from: i + 1, to: i + 1, title: formatRef(b.data, { book: b.book, chapter: b.chapter, from: i + 1, to: i + 1 }) }) }, '＋')));
+        act('play', 'Proyectar ahora', () => previewItem(item, true), 'Proyectar', 'go'),
+        act('plus', 'Añadir este versículo al programa', () => addToSchedule({ type: 'bible', version: b.version, book: b.book, chapter: b.chapter, from: i + 1, to: i + 1, title: formatRef(b.data, { book: b.book, chapter: b.chapter, from: i + 1, to: i + 1 }) }), 'Programa', 'add')));
   })));
   $('libBody').querySelector('.active')?.scrollIntoView({ block: 'center' });
 }
@@ -360,24 +376,24 @@ function mediaBar() {
     for (const f of e.target.files) { try { await store.uploadMedia(f); } catch (err) { toast(`${f.name}: ${err.message}`); } }
     e.target.value = ''; if (ui.tab === 'media') mediaList();
   } });
-  return [h('span', { class: 'muted ell', style: { flex: '1' } }, 'Imágenes y videos para mostrar o usar de fondo.'), input,
-    h('button', { class: 'primary', onclick: () => input.click() }, '＋ Añadir archivos')];
+  return [h('span', { class: 'muted ell', style: { flex: '1' } }, 'Para proyectarlos o usarlos de fondo en un tema.'), input,
+    h('button', { onclick: () => input.click() }, icon('plus', 16), 'Añadir imágenes o videos')];
 }
 function mediaList() {
   const tiles = store.db.media.map(m => {
-    const thumb = h('button', { class: 'thumb', title: 'Vista previa', 'aria-label': 'Vista previa de ' + m.name, onclick: () => previewItem({ type: 'media', mediaId: m.id }) }, m.kind === 'video' ? '▶' : '');
+    const thumb = h('button', { class: 'thumb', title: 'Vista previa', 'aria-label': 'Vista previa de ' + m.name, onclick: () => previewItem({ type: 'media', mediaId: m.id }) }, m.kind === 'video' ? icon('video', 28) : null);
     if (m.kind === 'image' || !lite()) resolveSrc(m.src).then(url => {
       if (!url) return;
       if (m.kind === 'image') thumb.replaceChildren(h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }));
       else thumb.replaceChildren(h('video', { src: url + '#t=1', muted: true, preload: 'metadata' }));
     });
     return h('div', { class: 'tile' }, thumb, h('div', { class: 'cap ell' }, m.name), h('div', { class: 'acts' },
-      h('button', { class: 'icon', title: 'En vivo', 'aria-label': 'Enviar en vivo', onclick: () => previewItem({ type: 'media', mediaId: m.id }, true) }, '▶'),
-      h('button', { class: 'icon', title: 'Añadir al programa', 'aria-label': 'Añadir al programa', onclick: () => addToSchedule({ type: 'media', mediaId: m.id }) }, '＋'),
-      m.kind === 'image' && h('button', { class: 'icon', title: 'Usar como logo', onclick: () => { store.db.settings.logoSrc = m.src; store.saveDb(); toast('Logo actualizado'); } }, 'Logo'),
-      h('button', { class: 'icon danger', title: 'Eliminar', 'aria-label': 'Eliminar', onclick: async () => { if (confirm(`¿Eliminar “${m.name}”?`)) { await store.deleteMedia(m.id); mediaList(); } } }, '🗑')));
+      act('play', 'Proyectar ahora', () => previewItem({ type: 'media', mediaId: m.id }, true), 'Proyectar', 'go'),
+      act('plus', 'Añadir al programa', () => addToSchedule({ type: 'media', mediaId: m.id }), 'Programa', 'add'),
+      m.kind === 'image' && act('logo', 'Usar esta imagen como logo de la iglesia', () => { store.db.settings.logoSrc = m.src; store.saveDb(); toast('Listo: se mostrará al pulsar «Logo»'); }, 'Logo'),
+      act('trash', 'Eliminar', async () => { if (confirm(`¿Eliminar “${m.name}”?`)) { await store.deleteMedia(m.id); mediaList(); } }, '', 'danger')));
   });
-  $('libBody').replaceChildren(tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty' }, 'Aún no hay medios. Añade imágenes o videos.'));
+  $('libBody').replaceChildren(tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty' }, h('b', {}, 'Aún no hay imágenes ni videos'), 'Añade fondos, anuncios en imagen o videos desde tu computadora.'));
 }
 
 // ---------- Biblioteca: temas ----------
@@ -468,23 +484,34 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { ui.ta
 document.querySelectorAll('.mobnav button').forEach(b => b.onclick = () => setPanel(b.dataset.panel));
 
 // ---------- Pantallas, importar, ajustes ----------
+const pageUrl = (file) => withToken(new URL(file, location.href).href);
+const lanUrl = (file) => (store.mode === 'server' && store.info?.urls?.[0] ? withToken(store.info.urls[0] + '/' + file) : pageUrl(file));
+function openProjector() {
+  window.open(pageUrl('output.html'), 'proclama-proyector', 'width=960,height=540');
+  toast('Lleva esa ventana al proyector y pulsa F para pantalla completa');
+}
+$('btnProjector').onclick = openProjector;
+function renderClients() {
+  const open = (store.clients?.output ?? 0) > 0;
+  $('btnProjector').classList.toggle('open', open);
+  $('projLabel').textContent = open ? 'Proyector abierto' : 'Abrir proyector';
+  $('btnProjector').title = open ? 'El proyector está conectado. Clic para abrir otra ventana.' : 'Abre la ventana que se muestra en el proyector';
+}
 $('btnOutputs').onclick = () => {
-  const base = store.mode === 'server' ? (store.info?.urls?.[0] ?? location.origin) : null;
-  const here = new URL('.', location.href).href;
-  const link = (name, desc, file, features) => {
-    const url = withToken(here + file);
-    return h('div', { class: 'linkrow' }, h('span', { class: 'main' }, h('b', {}, name), h('small', {}, desc), h('small', {}, base ? withToken(base + '/' + file) : url)),
-      h('button', { onclick: () => navigator.clipboard?.writeText(base ? withToken(base + '/' + file) : url).then(() => toast('Enlace copiado')) }, 'Copiar'),
-      h('button', { class: 'primary', onclick: () => window.open(url, 'proclama-' + file, features) }, 'Abrir'));
-  };
+  const n = store.clients ?? {};
+  const link = (ic, name, desc, file, role, features) => h('div', { class: 'linkrow' },
+    h('span', { class: 'kind' }, icon(ic, 18)),
+    h('span', { class: 'main' }, h('b', {}, name, n[role] ? h('span', { class: 'chip ok', style: { marginLeft: '8px' } }, 'Conectado') : null), h('small', {}, desc), h('small', {}, lanUrl(file))),
+    h('button', { onclick: () => navigator.clipboard?.writeText(lanUrl(file)).then(() => toast('Enlace copiado')) }, icon('copy', 16), 'Copiar'),
+    h('button', { class: 'primary', onclick: () => window.open(pageUrl(file), 'proclama-' + role, features) }, 'Abrir'));
   openDialog('Pantallas', [
-    link('Proyector', 'Arrástrala a la segunda pantalla y pulsa F para pantalla completa.', 'output.html', 'width=960,height=540'),
-    link('Pantalla de escenario', 'Letra actual, la siguiente, reloj y mensajes para los músicos.', 'stage.html', 'width=960,height=540'),
-    link('Transmisión (OBS)', 'Tercio inferior con fondo transparente. Añádela en OBS como “Navegador” a 1920×1080.', 'output.html?mode=lower', 'width=960,height=540'),
-    link('Control remoto', 'Para manejar desde el celular.', 'remote.html', 'width=420,height=800'),
-    store.mode === 'server'
-      ? h('p', { class: 'muted' }, 'Cualquier dispositivo en la misma red Wi-Fi puede abrir estos enlaces.')
-      : h('p', { class: 'muted' }, 'Modo local: las pantallas solo se sincronizan dentro de este navegador. Para usar otros dispositivos (celular, otra PC, OBS) ejecuta el servidor: node server.js'),
+    link('monitor', 'Proyector', 'Lo que ve la congregación. Lleva la ventana a la segunda pantalla y pulsa F.', 'output.html', 'output', 'width=960,height=540'),
+    link('music', 'Pantalla de escenario', 'Para los músicos: letra actual, la siguiente, reloj y mensajes.', 'stage.html', 'stage', 'width=960,height=540'),
+    link('broadcast', 'Transmisión (OBS)', 'Letra en la parte baja con fondo transparente. En OBS: fuente «Navegador», 1920×1080.', 'output.html?mode=lower', 'obs', 'width=960,height=540'),
+    link('phone', 'Control remoto', 'Abre este enlace en el celular para pasar las diapositivas.', 'remote.html', 'remote', 'width=420,height=800'),
+    h('div', { class: 'tip' }, store.mode === 'server'
+      ? 'Cualquier dispositivo conectado al mismo Wi-Fi puede abrir estos enlaces.'
+      : 'Modo local: las pantallas solo funcionan en este mismo navegador. Para usar el celular, otra computadora u OBS, inicia la app con «node server.js».'),
   ]);
 };
 
@@ -496,6 +523,46 @@ function addSongs(songs) {
   store.db.songs.push(...fresh);
   store.saveDb();
   toast(`${fresh.length} canción(es) importada(s)` + (songs.length - fresh.length ? `, ${songs.length - fresh.length} repetida(s) omitida(s)` : ''));
+}
+/** Controles para añadir o quitar Biblias propias. Se usa en «Importar» y en la pestaña Biblia. */
+function bibleSection() {
+  const bName = h('input', { value: 'Reina-Valera 1960', placeholder: 'Nombre de la Biblia' });
+  const bFiles = h('input', { type: 'file', multiple: true, accept: '.json,application/json' });
+  const bList = h('div', { class: 'list' });
+  const drawBibles = async () => {
+    const own = (await store.listBibles()).filter(b => b.custom);
+    bList.replaceChildren(...own.map(b => h('div', { class: 'linkrow' }, h('span', { class: 'main' }, h('b', {}, b.name)),
+      h('button', { class: 'danger', onclick: async () => {
+        if (!confirm(`¿Quitar “${b.name}”?`)) return;
+        await store.deleteBible(b.id);
+        if (ui.bible.version === b.id) { ui.bible.version = store.db.settings.bibleVersion; ui.bible.data = null; }
+        drawBibles(); if (ui.tab === 'bible') renderLibrary();
+      } }, 'Quitar'))));
+  };
+  const bBtn = h('button', { class: 'primary', onclick: async () => {
+    if (!bFiles.files.length) return toast('Elige el archivo JSON (o los 66 archivos, uno por libro)');
+    bBtn.disabled = true; bBtn.textContent = 'Importando…';
+    try {
+      const files = [];
+      for (const f of bFiles.files) files.push({ name: f.name, content: await readText(f) });
+      const bible = buildBible(files, { name: bName.value });
+      await store.saveBible(bible);
+      ui.bible.version = bible.id; ui.bible.data = null; store.db.settings.bibleVersion = bible.id; store.saveDb();
+      toast(`“${bible.name}” añadida`); bFiles.value = '';
+      drawBibles(); if (ui.tab === 'bible') renderLibrary();
+    } catch (err) { toast(err.message); }
+    bBtn.disabled = false; bBtn.textContent = 'Añadir Biblia';
+  } }, 'Añadir Biblia');
+  drawBibles();
+  return [
+    h('p', { class: 'muted' }, 'Añade una traducción que tengas derecho a usar. Se guarda solo en esta computadora. Sirve un archivo JSON con la Biblia completa o los 66 archivos JSON, uno por libro (genesis.json, exodo.json…).'),
+    h('div', { class: 'drow' }, field('1. Nombre que verás en la lista', bName), field('2. Archivo o archivos .json (no PDF ni Word)', bFiles)),
+    h('div', {}, bBtn), bList,
+  ];
+}
+function openBibleDialog() {
+  openDialog('Añadir otra Biblia', [...bibleSection(),
+    h('div', { class: 'tip' }, 'La app trae Reina-Valera 1909 y King James, que son de dominio público. Otras, como la Reina-Valera 1960 o la NVI, tienen derechos de autor: cárgalas solo si tu iglesia cuenta con permiso.')]);
 }
 $('btnImport').onclick = () => {
   const songFiles = h('input', { type: 'file', multiple: true, accept: '.txt,.json,.xml,.cho,.crd,.chopro,.chordpro,.pro,.rtf,text/plain,application/json', onchange: async (e) => {
@@ -527,34 +594,6 @@ $('btnImport').onclick = () => {
       store.saveDb(); toast('Copia restaurada');
     } catch (err) { toast(err.message); }
   } });
-  const bName = h('input', { value: 'Reina-Valera 1960', placeholder: 'Nombre de la Biblia' });
-  const bFiles = h('input', { type: 'file', multiple: true, accept: '.json,application/json' });
-  const bList = h('div', { class: 'list' });
-  const drawBibles = async () => {
-    const own = (await store.listBibles()).filter(b => b.custom);
-    bList.replaceChildren(...own.map(b => h('div', { class: 'linkrow' }, h('span', { class: 'main' }, h('b', {}, b.name)),
-      h('button', { class: 'danger', onclick: async () => {
-        if (!confirm(`¿Quitar “${b.name}”?`)) return;
-        await store.deleteBible(b.id);
-        if (ui.bible.version === b.id) { ui.bible.version = store.db.settings.bibleVersion; ui.bible.data = null; }
-        drawBibles(); if (ui.tab === 'bible') renderLibrary();
-      } }, 'Quitar'))));
-  };
-  const bBtn = h('button', { onclick: async () => {
-    if (!bFiles.files.length) return toast('Elige el archivo JSON (o los 66 archivos, uno por libro)');
-    bBtn.disabled = true; bBtn.textContent = 'Importando…';
-    try {
-      const files = [];
-      for (const f of bFiles.files) files.push({ name: f.name, content: await readText(f) });
-      const bible = buildBible(files, { name: bName.value });
-      await store.saveBible(bible);
-      ui.bible.version = bible.id; ui.bible.data = null; store.db.settings.bibleVersion = bible.id; store.saveDb();
-      toast(`“${bible.name}” añadida`); bFiles.value = '';
-      drawBibles(); if (ui.tab === 'bible') renderLibrary();
-    } catch (err) { toast(err.message); }
-    bBtn.disabled = false; bBtn.textContent = 'Añadir Biblia';
-  } }, 'Añadir Biblia');
-  drawBibles();
   openDialog('Importar y exportar', [
     h('h4', {}, 'Canciones'),
     h('p', { class: 'muted' }, 'Texto plano (.txt), ChordPro, OpenSong, OpenLyrics/OpenLP (.xml) y JSON de Holyrics. Puedes elegir varios archivos.'),
@@ -565,8 +604,7 @@ $('btnImport').onclick = () => {
         h('div', { class: 'drow' }, field('Songs.db', ewSongs), field('SongWords.db', ewWords)), h('div', {}, ewBtn)]
       : h('p', { class: 'muted' }, 'Disponible cuando la app se ejecuta con el servidor (node server.js).'),
     h('h4', {}, 'Biblias'),
-    h('p', { class: 'muted' }, 'Añade una traducción que tengas derecho a usar. Se guarda solo en esta instalación. Acepta un JSON con la Biblia completa o 66 archivos JSON, uno por libro (genesis.json, exodo.json…).'),
-    h('div', { class: 'drow' }, field('Nombre', bName), field('Archivo(s)', bFiles)), h('div', {}, bBtn), bList,
+    ...bibleSection(),
     h('h4', {}, 'Copia de seguridad'),
     h('div', { class: 'drow' },
       h('button', { onclick: () => {
@@ -594,7 +632,7 @@ $('btnSettings').onclick = async () => {
     s.logoSrc && h('div', {}, h('button', { onclick: () => { s.logoSrc = ''; store.saveDb(); toast('Logo quitado'); } }, 'Quitar la imagen del logo')),
     h('label', { class: 'check' }, f.lowPower, 'Modo de bajo consumo: en este panel los videos se ven como imagen fija y sin animaciones (el proyector no cambia)'),
     h('h4', {}, 'Atajos de teclado'),
-    h('p', { class: 'muted' }, '→ / espacio: siguiente · ←: anterior · Enter: enviar la vista previa en vivo · B: negro · C: limpiar · L: logo'),
+    h('p', { class: 'muted' }, '→ o espacio: siguiente · ←: anterior · Enter: proyectar la vista previa · B: negro · C: ocultar texto · L: logo'),
     h('h4', {}, 'Control por API'),
     store.mode === 'server'
       ? h('p', { class: 'muted' }, 'Ejemplos: ', h('code', {}, '/api/action/next'), ' ', h('code', {}, '/api/action/show-verse?ref=Juan 3:16'), ' ', h('code', {}, '/api/action/alert?text=Hola'), '. Sirve para Stream Deck, Companion o scripts.')
@@ -628,7 +666,7 @@ let lastOnAir = null;
 function renderStatus() {
   const s = $('status');
   if (store.mode === 'server') { s.textContent = store.online ? 'Conectado' : 'Sin conexión'; s.className = 'chip ' + (store.online ? 'ok' : 'bad'); }
-  else { s.textContent = 'Modo local'; s.className = 'chip'; s.title = 'Los datos se guardan en este navegador'; }
+  else { s.textContent = 'Modo local'; s.className = 'chip'; s.title = 'Sin servidor: los datos se guardan en este navegador'; }
 }
 store.on((what) => {
   if (what === 'live') {
@@ -643,8 +681,13 @@ store.on((what) => {
     const sel = $('pvTheme'), cur = sel.value;
     sel._themes = store.db.themes;
     sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name))); sel.value = cur;
-  } else if (what === 'bibles') { ui.bible.data = null; if (ui.tab === 'bible') renderLibrary(); }
+  } else if (what === 'clients') renderClients();
+  else if (what === 'bibles') { ui.bible.data = null; if (ui.tab === 'bible') renderLibrary(); }
   else renderStatus();
 });
+hydrateIcons();
+const tools = $('tools');
+try { tools.open = localStorage.getItem('proclama.tools') === '1'; } catch { /* sin almacenamiento */ }
+tools.addEventListener('toggle', () => { try { localStorage.setItem('proclama.tools', tools.open ? '1' : '0'); } catch { /* sin almacenamiento */ } });
 setPanel('library');
-renderStatus(); renderSchedule(); renderPreview(); renderLive(); renderLibrary();
+renderClients(); renderStatus(); renderSchedule(); renderPreview(); renderLive(); renderLibrary();

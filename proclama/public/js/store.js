@@ -38,11 +38,12 @@ export async function resolveSrc(src) {
   return blobUrls.get(src);
 }
 
-export async function createStore() {
+/** @param {string} role  operator | output | obs | stage | remote: sirve para saber qué pantallas están abiertas */
+export async function createStore(role = 'operator') {
   const me = uid();
   const listeners = new Set();
   const store = {
-    mode: 'local', db: defaultDb(), live: defaultLive(), info: null, online: true,
+    mode: 'local', db: defaultDb(), live: defaultLive(), info: null, online: true, clients: {},
     on(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   };
   const emit = (what) => { for (const fn of listeners) fn(what, store); };
@@ -61,11 +62,11 @@ export async function createStore() {
     store.db = st.db; store.live = st.live;
     store.info = await (await fetch(api('/api/info'))).json().catch(() => null);
     let sentPres = store.live.pres;
-    const es = new EventSource(api('/api/events'));
+    const es = new EventSource(api('/api/events?role=' + encodeURIComponent(role)));
     es.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'hello') {
-        store.db = msg.data.db; store.live = msg.data.live; sentPres = store.live.pres; emit('db'); emit('live');
+        store.db = msg.data.db; store.live = msg.data.live; store.clients = msg.data.clients ?? {}; sentPres = store.live.pres; emit('db'); emit('live'); emit('clients');
       } else if (msg.type === 'live' && msg.keepPres) {
         if (msg.origin === me) return;
         if (store.live.pres?.id === msg.keepPres) { store.live = { ...msg.data, pres: store.live.pres }; emit('live'); }
@@ -111,7 +112,21 @@ export async function createStore() {
       if (l) store.live = { ...store.live, ...l };
     } catch { /* almacenamiento vacío o bloqueado */ }
     const ch = 'BroadcastChannel' in window ? new BroadcastChannel('proclama') : null;
-    if (ch) ch.onmessage = (ev) => { store[ev.data.type] = ev.data.data; emit(ev.data.type); };
+    // Presencia: cada pantalla avisa cada 2 s; el operador sabe así si el proyector está abierto.
+    const seen = new Map();
+    const recount = () => {
+      const c = {}; const now = Date.now();
+      for (const [id, v] of seen) { if (now - v.t > 5000) seen.delete(id); else c[v.role] = (c[v.role] ?? 0) + 1; }
+      if (JSON.stringify(c) !== JSON.stringify(store.clients)) { store.clients = c; emit('clients'); }
+    };
+    if (ch) ch.onmessage = (ev) => {
+      if (ev.data.type === 'presence') { seen.set(ev.data.id, { role: ev.data.role, t: ev.data.bye ? 0 : Date.now() }); recount(); return; }
+      store[ev.data.type] = ev.data.data; emit(ev.data.type);
+    };
+    if (ch && role !== 'operator') {
+      const ping = (bye) => ch.postMessage({ type: 'presence', id: me, role, bye });
+      ping(); setInterval(ping, 2000); addEventListener('pagehide', () => ping(true));
+    } else if (ch) setInterval(recount, 2500);
     const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('No se pudo guardar', e); } };
     let liveTimer = null;
     store.setLive = (live) => {

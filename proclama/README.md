@@ -16,7 +16,9 @@ cd proclama
 node server.js          # o: npm start
 ```
 
-Abre `http://localhost:7700`. En el botón **Pantallas** están los enlaces a las demás vistas:
+Abre `http://localhost:7700`. El flujo es **elige → revisa → proyecta**: toca una canción o un pasaje, míralo en la vista
+previa y pulsa **Proyectar**. El botón **Abrir proyector** abre la ventana para la segunda pantalla (se pone verde cuando
+está conectada) y en **Más pantallas** están los enlaces a las demás vistas:
 
 | Vista | Dirección | Para qué |
 |---|---|---|
@@ -44,11 +46,11 @@ dispositivos, API ni importación de EasyWorship.
 - **Temas**: fuente, tamaño (se ajusta solo para que quepa), color, alineación, sombra, contorno, fondo de color, degradado,
   imagen o video. Los cambios se ven al instante, también en vivo.
 - **Programa**: canciones, pasajes, medios y textos en orden; arrastra para reordenar.
-- **En vivo**: Negro, Limpiar (deja el fondo), Logo, alerta que cruza la pantalla, cuenta regresiva y mensaje al escenario.
+- **En pantalla**: Negro, Ocultar texto (deja el fondo), Logo, alerta que cruza la pantalla, cuenta regresiva y mensaje al escenario.
 - **Importar**: texto plano, ChordPro, OpenSong, OpenLyrics/OpenLP, JSON de Holyrics y la base de datos de
   EasyWorship 6.1+ (`Songs.db` + `SongWords.db`). Copia de seguridad en JSON.
 
-Atajos: `→`/espacio siguiente · `←` anterior · `Enter` enviar la vista previa en vivo · `B` negro · `C` limpiar · `L` logo.
+Atajos: `→`/espacio siguiente · `←` anterior · `Enter` proyectar la vista previa · `B` negro · `C` ocultar texto · `L` logo.
 
 ## Pensada para equipos modestos
 
@@ -90,7 +92,8 @@ curl "http://localhost:7700/api/action/next"
 ## Añadir otra Biblia
 
 La app trae solo traducciones de dominio público. Para usar otra que tu iglesia tenga derecho a usar (por ejemplo la
-Reina-Valera 1960), cárgala en tu instalación: **Importar → Biblias**, escribe el nombre y elige el JSON completo o los
+Reina-Valera 1960), cárgala en tu instalación: en la pestaña **Biblia** abre la lista de versiones y elige
+**＋ Añadir otra Biblia…** (también está en **Importar → Biblias**), escribe el nombre y elige el JSON completo o los
 66 archivos JSON, uno por libro (`genesis.json`, `exodo.json`…, cada uno con una lista de capítulos y versículos).
 También por línea de comandos:
 
