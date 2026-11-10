@@ -1,0 +1,13 @@
+{
+  "name": "proclama",
+  "version": "0.1.0",
+  "description": "Software de presentación para iglesias: letras, Biblia, medios, programa, escenario, OBS y control remoto.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

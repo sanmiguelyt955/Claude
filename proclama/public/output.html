@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proclama · Proyector</title>
+<link rel="stylesheet" href="css/screen.css">
+</head>
+<body class="fullpage">
+<button class="fullhint" id="hint">Clic para pantalla completa (F)</button>
+<script type="module">
+import { createStore } from './js/store.js';
+import { createScreen } from './js/render.js';
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') === 'lower' ? 'lower' : 'full';
+if (mode === 'lower') { document.documentElement.style.background = 'transparent'; document.body.classList.add('transparent'); }
+const hint = document.getElementById('hint');
+if (mode === 'lower' || q.has('nohint')) hint.remove();
+const goFull = () => document.documentElement.requestFullscreen?.().catch(() => {});
+hint.onclick = goFull;
+addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') goFull(); });
+setTimeout(() => hint.classList.add('hide'), 5000);
+const store = await createStore();
+const screen = createScreen(document.body, { mode, muted: q.has('muted') || mode === 'lower' });
+screen.update(store.live);
+store.on((what) => { if (what === 'live') screen.update(store.live); });
+</script>
+</body>
+</html>

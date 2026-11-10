@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12151c">
+<title>Proclama</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/screen.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-panel="library">
+<header class="top">
+  <img src="icon.svg" alt="" width="26" height="26">
+  <strong class="brand">Proclama</strong>
+  <span id="status" class="chip"></span>
+  <span class="spacer"></span>
+  <button id="btnOutputs" title="Abrir proyector, escenario, OBS y control remoto">🖥 <span>Pantallas</span></button>
+  <button id="btnImport" title="Importar canciones y copias de seguridad">⇪ <span>Importar</span></button>
+  <button id="btnSettings" title="Ajustes">⚙ <span>Ajustes</span></button>
+</header>
+
+<main>
+  <section class="panel" id="pSchedule">
+    <div class="phead">
+      <input id="schedName" class="ghost" aria-label="Nombre del programa">
+      <button id="btnAddText" class="sm" title="Añadir un texto o anuncio">＋ Texto</button>
+      <button id="btnClearSched" class="sm" title="Vaciar el programa">Vaciar</button>
+    </div>
+    <div id="schedList" class="list grow"></div>
+  </section>
+
+  <section class="panel" id="pPreview">
+    <div class="phead"><span class="ptitle">Vista previa</span><span id="pvTitle" class="muted ell"></span></div>
+    <div class="monitor" id="pvMonitor"></div>
+    <div id="pvSlides" class="slides grow"></div>
+    <div class="pfoot">
+      <select id="pvTheme" title="Tema de esta presentación" aria-label="Tema"></select>
+      <button id="pvAdd" title="Añadir al programa">＋ Programa</button>
+      <button id="pvLive" class="primary" title="Enviar a la pantalla (Enter)">▶ En vivo</button>
+    </div>
+  </section>
+
+  <section class="panel" id="pLive">
+    <div class="phead"><span class="ptitle live">● En vivo</span><span id="lvTitle" class="muted ell"></span></div>
+    <div class="monitor" id="lvMonitor"></div>
+    <div id="lvSlides" class="slides grow"></div>
+    <div class="pfoot wrap">
+      <button id="lvPrev" title="Anterior (←)">◀</button>
+      <button id="lvNext" class="primary" title="Siguiente (→ o espacio)">Siguiente ▶</button>
+      <button id="lvBlack" class="toggle" title="Pantalla en negro (B)">Negro</button>
+      <button id="lvClear" class="toggle" title="Ocultar el texto, dejar el fondo (C)">Limpiar</button>
+      <button id="lvLogo" class="toggle" title="Mostrar el logo (L)">Logo</button>
+      <button id="lvClose" title="Quitar la presentación">✕</button>
+    </div>
+    <div class="pfoot wrap tools">
+      <label class="field"><span>Alerta</span><input id="alertText" placeholder="Mensaje que cruza la pantalla"></label>
+      <button id="alertBtn" class="toggle">Mostrar</button>
+      <label class="field sm"><span>Cuenta (min)</span><input id="cdMin" type="number" min="0" step="0.5" value="5"></label>
+      <button id="cdBtn" class="toggle">Iniciar</button>
+      <label class="field"><span>Mensaje al escenario</span><input id="stageText" placeholder="Solo lo ven los músicos"></label>
+    </div>
+  </section>
+
+  <section class="panel" id="pLibrary">
+    <div class="tabs" role="tablist">
+      <button data-tab="songs" role="tab">♪ Canciones</button>
+      <button data-tab="bible" role="tab">✝ Biblia</button>
+      <button data-tab="media" role="tab">▣ Medios</button>
+      <button data-tab="themes" role="tab">◐ Temas</button>
+    </div>
+    <div id="libBar" class="phead"></div>
+    <div id="libBody" class="grow"></div>
+  </section>
+</main>
+
+<nav class="mobnav">
+  <button data-panel="schedule">☰<span>Programa</span></button>
+  <button data-panel="library">♪<span>Biblioteca</span></button>
+  <button data-panel="preview">◱<span>Vista previa</span></button>
+  <button data-panel="live">●<span>En vivo</span></button>
+</nav>
+
+<dialog id="dlg"></dialog>
+<div id="toast" role="status"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
