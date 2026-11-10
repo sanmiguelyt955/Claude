@@ -57,15 +57,18 @@ export function formatRef(bible, { book, chapter, from, to }) {
 }
 
 /** Búsqueda de texto: todas las palabras deben aparecer en el versículo. */
+const searchIndex = new WeakMap(); // Biblia -> texto normalizado (se calcula una sola vez)
 export function searchBible(bible, query, limit = 60) {
   const words = norm(query).split(/\s+/).filter(w => w.length > 1);
   const out = [];
   if (!words.length) return out;
+  let idx = searchIndex.get(bible);
+  if (!idx) searchIndex.set(bible, idx = bible.books.map(bk => bk.map(ch => ch.map(norm))));
   for (let b = 0; b < bible.books.length; b++) {
     const book = bible.books[b];
     for (let c = 0; c < book.length; c++) {
       for (let v = 0; v < book[c].length; v++) {
-        const t = norm(book[c][v]);
+        const t = idx[b][c][v];
         if (words.every(w => t.includes(w))) {
           out.push({ book: b, chapter: c + 1, verse: v + 1, text: book[c][v] });
           if (out.length >= limit) return out;

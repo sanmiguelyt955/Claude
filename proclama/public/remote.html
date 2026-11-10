@@ -66,8 +66,13 @@ function drawLive() {
   $('now').classList.toggle('off', l.black || l.clear || l.logo.on);
   $('black').classList.toggle('on', l.black); $('clear').classList.toggle('on', l.clear); $('logo').classList.toggle('on', l.logo.on);
   $('goAlert').classList.toggle('on', l.alert.on); $('goAlert').textContent = l.alert.on ? 'Quitar' : 'Alerta';
-  $('slides').replaceChildren(...(p?.slides ?? []).map((x, i) => btn('item' + (i === l.index ? ' active' : ''), `${i + 1}${x.label ? ' · ' + x.label : ''}`, x.media ? '' : x.text, () => store.dispatch({ type: 'goto', index: i }))));
-  $('slides').querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+  const box = $('slides'), slides = p?.slides ?? null;
+  if (box._slides !== slides) { // solo se reconstruye la lista cuando cambia la presentación
+    box._slides = slides; box._active = null;
+    box.replaceChildren(...(slides ?? []).map((x, i) => btn('item', `${i + 1}${x.label ? ' · ' + x.label : ''}`, x.media ? '' : x.text, () => store.dispatch({ type: 'goto', index: i }))));
+  }
+  const cur = slides ? box.children[l.index] ?? null : null;
+  if (box._active !== cur) { box._active?.classList.remove('active'); cur?.classList.add('active'); box._active = cur; cur?.scrollIntoView({ block: 'nearest' }); }
 }
 function drawDb() {
   $('sched').replaceChildren(...store.db.schedule.items.map(it => { const info = itemInfo(it, store.db); return btn('item' + (store.live.pres?.itemId === it.id ? ' active' : ''), info.sub, `${info.icon} ${info.title}`, () => show(it)); }));
@@ -97,7 +102,8 @@ const goAlert = () => {
 };
 $('goAlert').onclick = goAlert; $('alert').onkeydown = (e) => { if (e.key === 'Enter') goAlert(); };
 $('q').oninput = drawDb;
-store.on((what) => { if (what === 'live') { drawLive(); drawDb(); } else if (what === 'db') drawDb(); else if (what === 'online') say(store.online ? 'Conectado' : 'Sin conexión, reintentando…'); });
+let onAir = null;
+store.on((what) => { if (what === 'live') { drawLive(); const id = store.live.pres?.itemId ?? null; if (id !== onAir) { onAir = id; drawDb(); } } else if (what === 'db') drawDb(); else if (what === 'online') say(store.online ? 'Conectado' : 'Sin conexión, reintentando…'); });
 drawLive(); drawDb();
 </script>
 </body>

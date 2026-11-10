@@ -4,6 +4,7 @@ import { fmtClock } from '../shared/model.js';
 import { resolveSrc } from './store.js';
 
 const W = 1920, H = 1080;
+const fitCache = new Map(); // tamaño de letra ya calculado para cada diapositiva + tema
 const el = (cls, tag = 'div') => { const e = document.createElement(tag); e.className = cls; return e; };
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -33,6 +34,7 @@ export function createScreen(container, opts = {}) {
   };
   const ro = new ResizeObserver(fit); ro.observe(container); fit();
 
+  let lastCount = '';
   let front = textA, back = textB, lastKey = '', lastBg = '', lastMedia = '', lastAlert = '', timer = null, state = null, seq = 0;
 
   function styleText(box, theme) {
@@ -44,21 +46,34 @@ export function createScreen(container, opts = {}) {
       padding: `${m}%`, paddingBottom: mode === 'lower' ? '2%' : `calc(${m}% + ${theme.footer ? 50 : 0}px)`,
       textShadow: theme.shadow ? '0 4px 14px rgba(0,0,0,.85), 0 0 3px rgba(0,0,0,.9)' : 'none',
       webkitTextStroke: theme.outline ? `${theme.outline}px #000` : '0',
-      transitionDuration: (theme.fade ?? 350) + 'ms',
+      transitionDuration: (lite() ? 0 : theme.fade ?? 350) + 'ms',
     });
   }
 
+  // Ajusta la letra para que quepa. Busca por bisección (pocas mediciones) y recuerda el resultado.
   function autoFit(box, theme) {
     const inner = box.firstChild;
-    let size = mode === 'lower' ? Math.min(theme.size, 64) : theme.size;
-    const maxH = box.clientHeight - parseFloat(getComputedStyle(box).paddingTop) - parseFloat(getComputedStyle(box).paddingBottom);
-    inner.style.fontSize = size + 'px';
-    for (let i = 0; i < 40 && size > 18 && inner.scrollHeight > maxH; i++) { size = Math.floor(size * 0.94); inner.style.fontSize = size + 'px'; }
+    const max = mode === 'lower' ? Math.min(theme.size, 64) : theme.size;
+    const key = [mode, max, theme.font, theme.bold, theme.italic, theme.upper, theme.lineHeight, theme.margin, theme.footer, theme.outline, inner.innerHTML].join('|');
+    const known = fitCache.get(key);
+    if (known) { inner.style.fontSize = known + 'px'; return; }
+    const cs = getComputedStyle(box);
+    const maxH = box.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    const fits = (s) => { inner.style.fontSize = s + 'px'; return inner.scrollHeight <= maxH; };
+    let size = max;
+    if (!fits(max)) {
+      let lo = 18, hi = max;
+      while (hi - lo > 2) { const mid = (lo + hi) >> 1; if (fits(mid)) lo = mid; else hi = mid; }
+      size = lo; inner.style.fontSize = size + 'px';
+    }
+    if (fitCache.size > 600) fitCache.clear();
+    fitCache.set(key, size);
   }
+  const lite = () => (typeof opts.lite === 'function' ? !!opts.lite() : !!opts.lite);
 
   async function setBg(theme, my) {
     const b = mode === 'lower' ? { type: 'none' } : theme.bg;
-    const key = JSON.stringify(b);
+    const key = JSON.stringify(b) + lite();
     if (key === lastBg) return;
     lastBg = key;
     const url = (b.type === 'image' || b.type === 'video') ? await resolveSrc(b.src) : '';
@@ -67,13 +82,14 @@ export function createScreen(container, opts = {}) {
     bg.style.background = b.type === 'none' ? 'transparent' : b.type === 'gradient' ? `linear-gradient(160deg, ${b.color}, ${b.color2})` : (b.color || '#000');
     if (b.type === 'image' && url) { bg.style.background = `#000 url("${url}") center / cover no-repeat`; }
     if (b.type === 'video' && url) {
-      const v = el('', 'video'); v.src = url; v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
-      bg.append(v); v.play().catch(() => {});
+      const v = el('', 'video'); v.muted = true; v.loop = true; v.playsInline = true;
+      if (lite()) { v.preload = 'metadata'; v.src = url + '#t=0.5'; bg.append(v); } // bajo consumo: solo un cuadro fijo
+      else { v.src = url; v.autoplay = true; bg.append(v); v.play().catch(() => {}); }
     }
   }
 
   async function setMedia(m, my) {
-    const key = m ? m.kind + m.src : '';
+    const key = m ? m.kind + m.src + lite() : '';
     if (key === lastMedia) return;
     lastMedia = key;
     const url = m ? await resolveSrc(m.src) : '';
@@ -81,9 +97,10 @@ export function createScreen(container, opts = {}) {
     media.replaceChildren();
     if (!m || !url) return;
     if (m.kind === 'video') {
-      const v = el('', 'video'); v.src = url; v.playsInline = true; v.autoplay = true; v.muted = !!opts.muted; v.controls = false;
+      const v = el('', 'video'); v.playsInline = true; v.muted = !!opts.muted; v.controls = false;
       media.append(v);
-      v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+      if (lite()) { v.preload = 'metadata'; v.src = url + '#t=0.5'; }
+      else { v.src = url; v.autoplay = true; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
     } else { const i = el('', 'img'); i.src = url; i.alt = ''; media.append(i); }
   }
 
@@ -93,7 +110,8 @@ export function createScreen(container, opts = {}) {
     const left = cd.endAt - Date.now();
     count.classList.add('on');
     count.classList.toggle('big', !state.pres || state.clear);
-    count.innerHTML = (cd.label ? `<small>${esc(cd.label)}</small>` : '') + `<b>${fmtClock(left)}</b>`;
+    const html = (cd.label ? `<small>${esc(cd.label)}</small>` : '') + `<b>${fmtClock(left)}</b>`;
+    if (html !== lastCount) { lastCount = html; count.innerHTML = html; }
   }
 
   async function update(live) {
@@ -136,17 +154,18 @@ export function createScreen(container, opts = {}) {
       }
     }
     const a = chrome && live.alert?.on ? live.alert.text : '';
+    alertBar.classList.toggle('still', lite());
     if (a !== lastAlert) {
       lastAlert = a;
       const span = alertBar.firstChild;
       span.textContent = a;
       span.style.animation = 'none'; void span.offsetWidth;
-      span.style.animation = a ? `ps-marquee ${Math.max(12, a.length * 0.28)}s linear infinite` : 'none';
+      span.style.animation = a && !lite() ? `ps-marquee ${Math.max(12, a.length * 0.28)}s linear infinite` : 'none';
     }
     alertBar.classList.toggle('on', !!a);
     tick();
     clearInterval(timer);
-    if (live.countdown?.on && chrome) timer = setInterval(tick, 250);
+    if (live.countdown?.on && chrome) timer = setInterval(tick, lite() ? 500 : 250);
   }
 
   return { update, destroy() { clearInterval(timer); ro.disconnect(); root.remove(); } };

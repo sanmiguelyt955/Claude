@@ -41,8 +41,24 @@ const ui = {
   bible: { version: store.db.settings.bibleVersion, book: 42, chapter: 3, query: '', data: null },
   themeId: store.db.themes[0]?.id,
 };
-const pvScreen = createScreen($('pvMonitor'), { chrome: false, muted: true });
-const lvScreen = createScreen($('lvMonitor'), { muted: true });
+// Bajo consumo: los monitores del operador no reproducen video ni animaciones (el proyector sí).
+const lite = () => store.db.settings.lowPower !== false;
+const pvScreen = createScreen($('pvMonitor'), { chrome: false, muted: true, lite });
+const lvScreen = createScreen($('lvMonitor'), { muted: true, lite });
+/** Redibuja las tarjetas solo si cambió la lista de diapositivas; si no, solo mueve la marca de "activa". */
+function syncSlides(box, slides, index, make, emptyText) {
+  if (box._slides !== slides) {
+    box._slides = slides;
+    box.replaceChildren(...(slides ? slides.map(make) : [h('div', { class: 'empty' }, emptyText)]));
+    box._active = null;
+  }
+  if (!slides) return;
+  const next = box.children[index] ?? null;
+  if (box._active !== next) {
+    box._active?.classList.remove('active'); next?.classList.add('active'); box._active = next;
+    next?.scrollIntoView({ block: 'nearest' });
+  }
+}
 
 // ---------- Diálogos ----------
 function openDialog(title, body, buttons = []) {
@@ -89,15 +105,17 @@ function renderPreview() {
   const p = ui.preview;
   $('pvTitle').textContent = p?.pres.title ?? '';
   pvScreen.update({ ...defaultLive(), pres: p?.pres ?? null, index: p?.index ?? 0 });
-  $('pvSlides').replaceChildren(...(p
-    ? p.pres.slides.map((s, i) => slideCard(s, i, i === p.index, () => { p.index = i; renderPreview(); }, () => goLive(i)))
-    : [h('div', { class: 'empty' }, 'Elige una canción, un pasaje o un medio. Doble clic lo envía en vivo.')]));
+  syncSlides($('pvSlides'), p?.pres.slides ?? null, p?.index ?? 0,
+    (s, i) => slideCard(s, i, false, () => { ui.preview.index = i; renderPreview(); }, () => goLive(i)),
+    'Elige una canción, un pasaje o un medio. Doble clic lo envía en vivo.');
   const sel = $('pvTheme');
-  sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name)));
+  if (sel._themes !== store.db.themes || sel.options.length !== store.db.themes.length) {
+    sel._themes = store.db.themes;
+    sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name)));
+  }
   sel.disabled = !p || p.pres.type === 'media';
   if (p) sel.value = p.pres.theme.id;
   $('pvLive').disabled = $('pvAdd').disabled = !p;
-  $('pvSlides').querySelector('.active')?.scrollIntoView({ block: 'nearest' });
 }
 $('pvTheme').onchange = (e) => {
   const p = ui.preview; if (!p) return;
@@ -117,10 +135,8 @@ function renderLive() {
   const l = store.live;
   $('lvTitle').textContent = l.pres ? `${l.pres.title} · ${l.index + 1}/${l.pres.slides.length}` : 'Nada en pantalla';
   lvScreen.update(l);
-  $('lvSlides').replaceChildren(...(l.pres
-    ? l.pres.slides.map((s, i) => slideCard(s, i, i === l.index, () => store.dispatch({ type: 'goto', index: i })))
-    : [h('div', { class: 'empty' }, 'Nada en pantalla.')]));
-  $('lvSlides').querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+  syncSlides($('lvSlides'), l.pres?.slides ?? null, l.index,
+    (s, i) => slideCard(s, i, false, () => store.dispatch({ type: 'goto', index: i })), 'Nada en pantalla.');
   $('lvBlack').classList.toggle('on', l.black);
   $('lvClear').classList.toggle('on', l.clear);
   $('lvLogo').classList.toggle('on', l.logo.on);
@@ -243,12 +259,21 @@ function songsBar() {
     h('button', { class: 'primary', onclick: () => editSong(null) }, '＋ Nueva'),
   ];
 }
+const songIndex = new WeakMap(); // canción -> texto normalizado para buscar sin recalcular en cada tecla
+const collator = new Intl.Collator('es');
+const MAX_ROWS = 120;
+function songKeys(s) {
+  let k = songIndex.get(s);
+  if (!k || k.src !== s.title + s.author + s.text.length) songIndex.set(s, k = { src: s.title + s.author + s.text.length, title: norm(s.title), author: norm(s.author), text: norm(s.text) });
+  return k;
+}
 function songsList() {
   const q = norm(ui.songQuery).trim();
-  const songs = store.db.songs
-    .map(s => ({ s, rank: !q ? 1 : norm(s.title).includes(q) ? 3 : norm(s.author).includes(q) ? 2 : norm(s.text).includes(q) ? 1 : 0 }))
-    .filter(x => x.rank).sort((a, b) => b.rank - a.rank || a.s.title.localeCompare(b.s.title, 'es')).map(x => x.s);
-  $('libBody').replaceChildren(h('div', { class: 'list' }, songs.length ? songs.map(s => {
+  const all = store.db.songs
+    .map(s => { const k = q && songKeys(s); return { s, rank: !q ? 1 : k.title.includes(q) ? 3 : k.author.includes(q) ? 2 : k.text.includes(q) ? 1 : 0 }; })
+    .filter(x => x.rank).sort((a, b) => b.rank - a.rank || collator.compare(a.s.title, b.s.title)).map(x => x.s);
+  const songs = all.slice(0, MAX_ROWS);
+  $('libBody').replaceChildren(h('div', { class: 'list' }, songs.length ? [songs.map(s => {
     const item = { type: 'song', songId: s.id };
     return h('div', { class: 'row', tabindex: '0', onclick: () => previewItem(item), ondblclick: () => previewItem(item, true),
       onkeydown: (e) => { if (e.key === 'Enter' && e.target === e.currentTarget) { e.stopPropagation(); previewItem(item, true); } } },
@@ -261,7 +286,8 @@ function songsList() {
           if (confirm(`¿Eliminar “${s.title}” de la biblioteca?`)) { store.db.songs = store.db.songs.filter(x => x !== s); store.saveDb(); }
         } }, '🗑')),
     );
-  }) : h('div', { class: 'empty' }, q ? 'Sin resultados.' : 'No hay canciones. Crea una o usa “Importar”.')));
+  }), all.length > songs.length && h('div', { class: 'empty' }, `Mostrando ${songs.length} de ${all.length}. Escribe en el buscador para encontrar las demás.`)]
+    : h('div', { class: 'empty' }, q ? 'Sin resultados.' : 'No hay canciones. Crea una o usa “Importar”.')));
 }
 
 // ---------- Biblioteca: Biblia ----------
@@ -340,9 +366,9 @@ function mediaBar() {
 function mediaList() {
   const tiles = store.db.media.map(m => {
     const thumb = h('button', { class: 'thumb', title: 'Vista previa', 'aria-label': 'Vista previa de ' + m.name, onclick: () => previewItem({ type: 'media', mediaId: m.id }) }, m.kind === 'video' ? '▶' : '');
-    resolveSrc(m.src).then(url => {
+    if (m.kind === 'image' || !lite()) resolveSrc(m.src).then(url => {
       if (!url) return;
-      if (m.kind === 'image') thumb.style.backgroundImage = `url("${url}")`;
+      if (m.kind === 'image') thumb.replaceChildren(h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }));
       else thumb.replaceChildren(h('video', { src: url + '#t=1', muted: true, preload: 'metadata' }));
     });
     return h('div', { class: 'tile' }, thumb, h('div', { class: 'cap ell' }, m.name), h('div', { class: 'acts' },
@@ -416,7 +442,7 @@ function themesView() {
         h('span', { class: 'main' }, h('b', { class: 'ell' }, x.name), h('small', { class: 'ell' }, uses(x) || ' ')))),
       h('div', { class: 'row', onclick: () => { const n = defaultTheme({ name: 'Tema nuevo' }); db.themes.push(n); ui.themeId = n.id; store.saveDb(); themesView(); } }, h('span', { class: 'main muted' }, '＋ Tema nuevo'))),
     form));
-  themeScreen = createScreen(mon, { chrome: false, muted: true });
+  themeScreen = createScreen(mon, { chrome: false, muted: true, lite });
   themeScreen.update(sample());
 }
 
@@ -558,12 +584,15 @@ $('btnSettings').onclick = async () => {
   const f = {
     churchName: h('input', { value: s.churchName }),
     versesPerSlide: h('input', { type: 'number', min: 1, max: 6, value: String(s.versesPerSlide) }),
+    lowPower: h('input', { type: 'checkbox' }),
     bibleVersion: h('select', { value: s.bibleVersion }, versions.map(v => h('option', { value: v.id }, v.name))),
   };
+  f.lowPower.checked = s.lowPower !== false;
   openDialog('Ajustes', [
     field('Nombre de la iglesia (se muestra con el botón Logo si no hay imagen)', f.churchName),
     h('div', { class: 'drow' }, field('Versículos por diapositiva', f.versesPerSlide), field('Biblia predeterminada', f.bibleVersion)),
     s.logoSrc && h('div', {}, h('button', { onclick: () => { s.logoSrc = ''; store.saveDb(); toast('Logo quitado'); } }, 'Quitar la imagen del logo')),
+    h('label', { class: 'check' }, f.lowPower, 'Modo de bajo consumo: en este panel los videos se ven como imagen fija y sin animaciones (el proyector no cambia)'),
     h('h4', {}, 'Atajos de teclado'),
     h('p', { class: 'muted' }, '→ / espacio: siguiente · ←: anterior · Enter: enviar la vista previa en vivo · B: negro · C: limpiar · L: logo'),
     h('h4', {}, 'Control por API'),
@@ -572,7 +601,8 @@ $('btnSettings').onclick = async () => {
       : h('p', { class: 'muted' }, 'Disponible con el servidor (node server.js).'),
   ], [['Cancelar'], ['Guardar', () => {
     s.churchName = f.churchName.value.trim(); s.versesPerSlide = Math.max(1, Number(f.versesPerSlide.value) || 1);
-    s.bibleVersion = f.bibleVersion.value; ui.bible.version = s.bibleVersion; store.saveDb();
+    s.bibleVersion = f.bibleVersion.value; ui.bible.version = s.bibleVersion; s.lowPower = f.lowPower.checked; store.saveDb();
+    renderPreview(); renderLive(); if (ui.tab === 'media') mediaList();
   }, 'primary']]);
 };
 
@@ -594,18 +624,24 @@ addEventListener('keydown', (e) => {
 });
 
 // ---------- Arranque ----------
+let lastOnAir = null;
 function renderStatus() {
   const s = $('status');
   if (store.mode === 'server') { s.textContent = store.online ? 'Conectado' : 'Sin conexión'; s.className = 'chip ' + (store.online ? 'ok' : 'bad'); }
   else { s.textContent = 'Modo local'; s.className = 'chip'; s.title = 'Los datos se guardan en este navegador'; }
 }
 store.on((what) => {
-  if (what === 'live') { renderLive(); renderSchedule(); }
+  if (what === 'live') {
+    renderLive();
+    const onAir = store.live.pres?.itemId ?? null;
+    if (onAir !== lastOnAir) { lastOnAir = onAir; renderSchedule(); }
+  }
   else if (what === 'db') {
     renderSchedule();
     if (ui.tab === 'songs') songsList(); else if (ui.tab === 'media') mediaList();
     else if (ui.tab === 'themes' && !$('libBody').contains(document.activeElement)) themesView();
     const sel = $('pvTheme'), cur = sel.value;
+    sel._themes = store.db.themes;
     sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name))); sel.value = cur;
   } else if (what === 'bibles') { ui.bible.data = null; if (ui.tab === 'bible') renderLibrary(); }
   else renderStatus();

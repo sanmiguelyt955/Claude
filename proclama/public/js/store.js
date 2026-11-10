@@ -60,22 +60,35 @@ export async function createStore() {
     const st = await (await fetch(api('/api/state'))).json();
     store.db = st.db; store.live = st.live;
     store.info = await (await fetch(api('/api/info'))).json().catch(() => null);
+    let sentPres = store.live.pres;
     const es = new EventSource(api('/api/events'));
     es.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'hello') {
-        store.db = msg.data.db; store.live = msg.data.live; emit('db'); emit('live');
+        store.db = msg.data.db; store.live = msg.data.live; sentPres = store.live.pres; emit('db'); emit('live');
+      } else if (msg.type === 'live' && msg.keepPres) {
+        if (msg.origin === me) return;
+        if (store.live.pres?.id === msg.keepPres) { store.live = { ...msg.data, pres: store.live.pres }; emit('live'); }
+        else fetch(api('/api/state')).then(r => r.json()).then(st => { store.live = st.live; sentPres = st.live.pres; emit('live'); }).catch(() => {});
       } else if (msg.type === 'bibles') {
         store.bibleIndex = null; bibles.clear(); emit('bibles');
       } else if (msg.origin !== me) {
-        store[msg.type] = msg.data; emit(msg.type);
+        store[msg.type] = msg.data; if (msg.type === 'live') sentPres = msg.data.pres; emit(msg.type);
       }
     };
     es.onopen = () => { store.online = true; emit('online'); };
     es.onerror = () => { store.online = false; emit('online'); };
     const put = (path, body) => fetch(api(path), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, origin: me }) })
       .catch(() => { store.online = false; emit('online'); });
-    store.setLive = (live) => { store.live = live; emit('live'); put('/api/live', { live }); };
+    // Solo se envían las diapositivas cuando cambia la presentación; al avanzar va un mensaje pequeño.
+    store.setLive = (live) => {
+      store.live = live; emit('live');
+      const keep = !!live.pres && live.pres === sentPres;
+      sentPres = live.pres;
+      if (!keep) return put('/api/live', { live });
+      put('/api/live', { live: { ...live, pres: null }, keepPres: live.pres.id })
+        .then(r => { if (r?.status === 409) put('/api/live', { live: store.live }); });
+    };
     let dbTimer = null;
     store.saveDb = () => { emit('db'); clearTimeout(dbTimer); dbTimer = setTimeout(() => put('/api/db', { db: store.db }), 150); };
     store.uploadMedia = async (file) => {
@@ -100,7 +113,11 @@ export async function createStore() {
     const ch = 'BroadcastChannel' in window ? new BroadcastChannel('proclama') : null;
     if (ch) ch.onmessage = (ev) => { store[ev.data.type] = ev.data.data; emit(ev.data.type); };
     const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('No se pudo guardar', e); } };
-    store.setLive = (live) => { store.live = live; emit('live'); ch?.postMessage({ type: 'live', data: live }); persist('proclama.live', live); };
+    let liveTimer = null;
+    store.setLive = (live) => {
+      store.live = live; emit('live'); ch?.postMessage({ type: 'live', data: live });
+      clearTimeout(liveTimer); liveTimer = setTimeout(() => persist('proclama.live', store.live), 400);
+    };
     store.saveDb = () => { emit('db'); ch?.postMessage({ type: 'db', data: store.db }); persist('proclama.db', store.db); };
     store.uploadMedia = async (file) => {
       const kind = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;

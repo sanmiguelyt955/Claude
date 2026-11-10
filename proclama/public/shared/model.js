@@ -104,7 +104,7 @@ export function defaultDb() {
     schedule: { name: 'Culto', items: [] },
     settings: {
       churchName: 'Mi Iglesia', songThemeId: tSong.id, bibleThemeId: tBible.id, textThemeId: tSong.id,
-      bibleVersion: 'rv1909', versesPerSlide: 1, logoSrc: '',
+      bibleVersion: 'rv1909', versesPerSlide: 1, logoSrc: '', lowPower: true,
     },
   };
 }

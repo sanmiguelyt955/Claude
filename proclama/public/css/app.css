@@ -108,3 +108,7 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
   #pLive .pfoot:not(.tools), #pPreview .pfoot { position: sticky; bottom: 0; background: var(--panel); z-index: 2; }
 }
 .slides { grid-auto-rows: max-content; }
+.tile .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.row, .slide { content-visibility: auto; contain-intrinsic-size: auto 44px; }
+.slide { contain-intrinsic-size: auto 90px; }
+.slide { display: flex; flex-direction: column; justify-content: flex-start; }

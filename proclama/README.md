@@ -50,6 +50,21 @@ dispositivos, API ni importación de EasyWorship.
 
 Atajos: `→`/espacio siguiente · `←` anterior · `Enter` enviar la vista previa en vivo · `B` negro · `C` limpiar · `L` logo.
 
+## Pensada para equipos modestos
+
+- Sin instalación ni dependencias: un solo proceso de Node y un navegador.
+- **Modo de bajo consumo** (activado por defecto, en Ajustes): en el panel del operador los videos se ven como imagen fija
+  y sin animaciones. El proyector sí los reproduce.
+- Al avanzar de diapositiva solo viaja un mensaje de unos 300 bytes; las letras se envían una vez por presentación.
+- Las listas largas se dibujan por partes (120 canciones a la vez) y las búsquedas usan un índice en memoria.
+- El tamaño de letra de cada diapositiva se calcula una vez y se recuerda.
+
+Medido con la CPU frenada 6× y 1500 canciones: el panel abre en 0,8 s (antes 3,2 s), buscar una canción tarda 0,07 s
+(antes 0,5 s) y avanzar en un capítulo de 176 versículos tarda 30 ms (antes 120 ms).
+
+Consejos: usa videos de fondo en MP4 H.264 a 720p, cierra otras pestañas del navegador y, si el equipo sufre con video,
+usa fondos de imagen o degradado.
+
 ## API de control
 
 Para Stream Deck, Bitfocus Companion o scripts. `GET` o `POST` (JSON) a `/api/action/<acción>`:

@@ -52,8 +52,8 @@ function saveDb() {
 
 // ---------- SSE ----------
 const clients = new Set();
-function broadcast(type, data, origin = 'server') {
-  const msg = `data: ${JSON.stringify({ type, data, origin })}\n\n`;
+function broadcast(type, data, origin = 'server', extra = {}) {
+  const msg = `data: ${JSON.stringify({ type, data, origin, ...extra })}\n\n`;
   for (const res of clients) res.write(msg);
 }
 setInterval(() => { for (const res of clients) res.write(': ping\n\n'); }, 25000).unref();
@@ -114,6 +114,9 @@ async function serveFile(req, res, file) {
   if (!stat.isFile()) return send(res, 404, 'No encontrado');
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
   const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': file.startsWith(MEDIA) || file.includes(`${path.sep}bibles${path.sep}`) ? 'max-age=3600' : 'no-cache' };
+  const modified = new Date(Math.floor(stat.mtimeMs / 1000) * 1000).toUTCString();
+  headers['Last-Modified'] = modified;
+  if (!req.headers.range && req.headers['if-modified-since'] === modified) { res.writeHead(304, headers); return res.end(); }
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range && (range[1] || range[2])) { // necesario para adelantar/retroceder videos
     let start = range[1] ? Number(range[1]) : Math.max(0, stat.size - Number(range[2]));
@@ -127,9 +130,13 @@ async function serveFile(req, res, file) {
   fs.createReadStream(file).pipe(res);
 }
 
+// Si la presentación no cambió (solo el índice, negro, alerta…) se envía el estado sin las diapositivas:
+// cada pantalla conserva las que ya tiene. Así un avance pesa unos cientos de bytes y no decenas de KB.
 function setLive(next, origin) {
+  const same = !!next.pres && next.pres === live.pres;
   live = next;
-  broadcast('live', live, origin);
+  if (same) broadcast('live', { ...live, pres: null }, origin, { keepPres: live.pres.id });
+  else broadcast('live', live, origin);
 }
 
 // ---------- API de acciones (control remoto / automatización) ----------
@@ -193,7 +200,10 @@ async function api(req, res, url) {
 
   if (p === '/api/live' && req.method === 'PUT') {
     const body = JSON.parse(await readBody(req, 50e6));
-    setLive({ ...defaultLive(), ...body.live }, body.origin);
+    if (body.keepPres) {
+      if (live.pres?.id !== body.keepPres) return send(res, 409, { error: 'Presentación distinta' });
+      setLive({ ...defaultLive(), ...body.live, pres: live.pres }, body.origin);
+    } else setLive({ ...defaultLive(), ...body.live }, body.origin);
     return send(res, 200, { ok: true });
   }
 
