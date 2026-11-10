@@ -74,13 +74,17 @@ curl "http://localhost:7700/api/action/next"
 
 ## Añadir otra Biblia
 
-Con un JSON en el formato de [scrollmapper/bible_databases](https://github.com/scrollmapper/bible_databases):
+La app trae solo traducciones de dominio público. Para usar otra que tu iglesia tenga derecho a usar (por ejemplo la
+Reina-Valera 1960), cárgala en tu instalación: **Importar → Biblias**, escribe el nombre y elige el JSON completo o los
+66 archivos JSON, uno por libro (`genesis.json`, `exodo.json`…, cada uno con una lista de capítulos y versículos).
+También por línea de comandos:
 
 ```bash
-node tools/build-bibles.mjs entrada.json id "Nombre" es
+node tools/import-bible.mjs <archivo.json | carpeta con un JSON por libro> "Reina-Valera 1960"
 ```
 
-Usa solo traducciones de dominio público o con licencia. La RVR1960, NVI y similares tienen derechos de autor.
+La Biblia importada se guarda en `data/bibles/` (o en el navegador, en modo local) y **no** forma parte del repositorio.
+La RVR1960, la NVI y otras tienen derechos de autor: para distribuirlas dentro de la app hace falta permiso de su editor.
 
 ## Estructura
 

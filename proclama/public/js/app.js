@@ -5,6 +5,7 @@ import { resolveItem, itemInfo, labelColor } from './resolve.js';
 import { defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresentation, themeById, norm, uid, FONTS } from '../shared/model.js';
 import { BOOKS_ES, bookName, parseReference, formatRef, searchBible, bibleToPresentation } from '../shared/bible.js';
 import { importSongFile } from '../shared/importers.js';
+import { buildBible } from '../shared/bible-import.js';
 
 const $ = (id) => document.getElementById(id);
 function h(tag, props, ...kids) {
@@ -500,6 +501,34 @@ $('btnImport').onclick = () => {
       store.saveDb(); toast('Copia restaurada');
     } catch (err) { toast(err.message); }
   } });
+  const bName = h('input', { value: 'Reina-Valera 1960', placeholder: 'Nombre de la Biblia' });
+  const bFiles = h('input', { type: 'file', multiple: true, accept: '.json,application/json' });
+  const bList = h('div', { class: 'list' });
+  const drawBibles = async () => {
+    const own = (await store.listBibles()).filter(b => b.custom);
+    bList.replaceChildren(...own.map(b => h('div', { class: 'linkrow' }, h('span', { class: 'main' }, h('b', {}, b.name)),
+      h('button', { class: 'danger', onclick: async () => {
+        if (!confirm(`¿Quitar “${b.name}”?`)) return;
+        await store.deleteBible(b.id);
+        if (ui.bible.version === b.id) { ui.bible.version = store.db.settings.bibleVersion; ui.bible.data = null; }
+        drawBibles(); if (ui.tab === 'bible') renderLibrary();
+      } }, 'Quitar'))));
+  };
+  const bBtn = h('button', { onclick: async () => {
+    if (!bFiles.files.length) return toast('Elige el archivo JSON (o los 66 archivos, uno por libro)');
+    bBtn.disabled = true; bBtn.textContent = 'Importando…';
+    try {
+      const files = [];
+      for (const f of bFiles.files) files.push({ name: f.name, content: await readText(f) });
+      const bible = buildBible(files, { name: bName.value });
+      await store.saveBible(bible);
+      ui.bible.version = bible.id; ui.bible.data = null; store.db.settings.bibleVersion = bible.id; store.saveDb();
+      toast(`“${bible.name}” añadida`); bFiles.value = '';
+      drawBibles(); if (ui.tab === 'bible') renderLibrary();
+    } catch (err) { toast(err.message); }
+    bBtn.disabled = false; bBtn.textContent = 'Añadir Biblia';
+  } }, 'Añadir Biblia');
+  drawBibles();
   openDialog('Importar y exportar', [
     h('h4', {}, 'Canciones'),
     h('p', { class: 'muted' }, 'Texto plano (.txt), ChordPro, OpenSong, OpenLyrics/OpenLP (.xml) y JSON de Holyrics. Puedes elegir varios archivos.'),
@@ -509,6 +538,9 @@ $('btnImport').onclick = () => {
       ? [h('p', { class: 'muted' }, 'Los archivos están en C:\\Users\\Public\\Softouch\\EasyWorship\\Default\\Databases\\Data\\'),
         h('div', { class: 'drow' }, field('Songs.db', ewSongs), field('SongWords.db', ewWords)), h('div', {}, ewBtn)]
       : h('p', { class: 'muted' }, 'Disponible cuando la app se ejecuta con el servidor (node server.js).'),
+    h('h4', {}, 'Biblias'),
+    h('p', { class: 'muted' }, 'Añade una traducción que tengas derecho a usar. Se guarda solo en esta instalación. Acepta un JSON con la Biblia completa o 66 archivos JSON, uno por libro (genesis.json, exodo.json…).'),
+    h('div', { class: 'drow' }, field('Nombre', bName), field('Archivo(s)', bFiles)), h('div', {}, bBtn), bList,
     h('h4', {}, 'Copia de seguridad'),
     h('div', { class: 'drow' },
       h('button', { onclick: () => {
@@ -575,7 +607,8 @@ store.on((what) => {
     else if (ui.tab === 'themes' && !$('libBody').contains(document.activeElement)) themesView();
     const sel = $('pvTheme'), cur = sel.value;
     sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name))); sel.value = cur;
-  } else renderStatus();
+  } else if (what === 'bibles') { ui.bible.data = null; if (ui.tab === 'bible') renderLibrary(); }
+  else renderStatus();
 });
 setPanel('library');
 renderStatus(); renderSchedule(); renderPreview(); renderLive(); renderLibrary();

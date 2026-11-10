@@ -16,6 +16,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.resolve(process.env.PROCLAMA_DATA || path.join(ROOT, 'data'));
 const MEDIA = path.join(DATA, 'media');
+const BIBLES = path.join(DATA, 'bibles');
 const DB_FILE = path.join(DATA, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 7700);
 const TOKEN = process.env.PROCLAMA_TOKEN || '';
@@ -30,6 +31,7 @@ const MEDIA_KINDS = { image: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif',
 const PAGES = { '/': 'index.html', '/output': 'output.html', '/stage': 'stage.html', '/remote': 'remote.html', '/obs': 'output.html' };
 
 fs.mkdirSync(MEDIA, { recursive: true });
+fs.mkdirSync(BIBLES, { recursive: true });
 
 let db = defaultDb();
 try {
@@ -85,8 +87,25 @@ function lanUrls() {
 const bibles = new Map();
 async function loadBible(id) {
   const safe = String(id || db.settings.bibleVersion).replace(/[^a-z0-9_-]/gi, '');
-  if (!bibles.has(safe)) bibles.set(safe, JSON.parse(await fsp.readFile(path.join(PUBLIC, 'bibles', safe + '.json'), 'utf8')));
+  if (!bibles.has(safe)) {
+    const own = path.join(BIBLES, safe + '.json');
+    bibles.set(safe, JSON.parse(await fsp.readFile(fs.existsSync(own) ? own : path.join(PUBLIC, 'bibles', safe + '.json'), 'utf8')));
+  }
   return bibles.get(safe);
+}
+
+/** Biblias incluidas + las que añadió el usuario (data/bibles/). */
+async function bibleIndex() {
+  const base = JSON.parse(await fsp.readFile(path.join(PUBLIC, 'bibles', 'index.json'), 'utf8'));
+  const own = [];
+  for (const f of await fsp.readdir(BIBLES)) {
+    if (!f.endsWith('.json')) continue;
+    try {
+      const head = (await fsp.readFile(path.join(BIBLES, f), 'utf8')).slice(0, 400);
+      own.push({ id: f.slice(0, -5), name: /"name":"([^"]*)"/.exec(head)?.[1] ?? f.slice(0, -5), lang: /"lang":"([^"]*)"/.exec(head)?.[1] ?? 'es', custom: true });
+    } catch { /* archivo ilegible */ }
+  }
+  return [...base.filter(b => !own.some(o => o.id === b.id)), ...own];
 }
 
 async function serveFile(req, res, file) {
@@ -213,6 +232,25 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  if (p === '/api/bibles' && req.method === 'POST') {
+    const b = JSON.parse(await readBody(req, 100e6));
+    const id = String(b.id || '').replace(/[^a-z0-9_-]/gi, '');
+    if (!id || !b.name || !Array.isArray(b.books) || b.books.length !== 66) return send(res, 400, { error: 'Biblia inválida' });
+    await fsp.writeFile(path.join(BIBLES, id + '.json'), JSON.stringify({ id, name: String(b.name), lang: b.lang || 'es', custom: true, books: b.books }));
+    bibles.delete(id);
+    broadcast('bibles', null);
+    return send(res, 200, { ok: true, id });
+  }
+
+  if (p.startsWith('/api/bibles/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(p.slice('/api/bibles/'.length)).replace(/[^a-z0-9_-]/gi, '');
+    await fsp.rm(path.join(BIBLES, id + '.json'), { force: true });
+    bibles.delete(id);
+    if (db.settings.bibleVersion === id) { db.settings.bibleVersion = 'rv1909'; saveDb(); broadcast('db', db); }
+    broadcast('bibles', null);
+    return send(res, 200, { ok: true });
+  }
+
   if (p === '/api/import/easyworship' && req.method === 'POST') {
     const body = JSON.parse(await readBody(req, 600e6));
     const songs = await importEasyWorship(Buffer.from(body.songs, 'base64'), Buffer.from(body.words, 'base64'));
@@ -245,6 +283,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Método no permitido');
     let rel = decodeURIComponent(url.pathname);
     if (PAGES[rel]) rel = '/' + PAGES[rel];
+    if (rel === '/bibles/index.json') return send(res, 200, await bibleIndex());
+    if (rel.startsWith('/bibles/')) {
+      const own = path.join(BIBLES, path.basename(rel));
+      if (fs.existsSync(own)) return await serveFile(req, res, own);
+    }
     const base = rel.startsWith('/media/') ? MEDIA : PUBLIC;
     const file = path.join(base, rel.startsWith('/media/') ? rel.slice('/media/'.length) : rel);
     if (file !== base && !file.startsWith(base + path.sep)) return send(res, 403, 'Prohibido');

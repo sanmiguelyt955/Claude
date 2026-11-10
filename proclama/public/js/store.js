@@ -46,6 +46,8 @@ export async function createStore() {
     on(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   };
   const emit = (what) => { for (const fn of listeners) fn(what, store); };
+  const bibles = new Map();
+  store.bibleIndex = null;
 
   let server = false;
   try {
@@ -63,6 +65,8 @@ export async function createStore() {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'hello') {
         store.db = msg.data.db; store.live = msg.data.live; emit('db'); emit('live');
+      } else if (msg.type === 'bibles') {
+        store.bibleIndex = null; bibles.clear(); emit('bibles');
       } else if (msg.origin !== me) {
         store[msg.type] = msg.data; emit(msg.type);
       }
@@ -118,13 +122,51 @@ export async function createStore() {
     if (next !== store.live) store.setLive(next);
   };
 
-  const bibles = new Map();
-  store.bibleIndex = null;
-  store.listBibles = async () => (store.bibleIndex ??= await (await fetch('bibles/index.json')).json().catch(() => []));
+  // Biblias: las incluidas + las que añade el usuario (servidor: data/bibles/; modo local: IndexedDB).
+  const localBibles = () => { try { return JSON.parse(localStorage.getItem('proclama.bibles')) ?? []; } catch { return []; } };
+  store.listBibles = async () => {
+    if (!store.bibleIndex) {
+      const base = await fetch('bibles/index.json', { cache: 'no-store' }).then(r => r.json()).catch(() => []);
+      const own = store.mode === 'server' ? [] : localBibles();
+      store.bibleIndex = [...base.filter(b => !own.some(o => o.id === b.id)), ...own];
+    }
+    return store.bibleIndex;
+  };
   store.loadBible = (id) => {
     const k = id || store.db.settings.bibleVersion;
-    if (!bibles.has(k)) bibles.set(k, fetch(`bibles/${encodeURIComponent(k)}.json`).then(r => { if (!r.ok) throw new Error('Biblia no disponible'); return r.json(); }));
+    if (!bibles.has(k)) {
+      const p = (async () => {
+        if (store.mode !== 'server' && localBibles().some(b => b.id === k)) {
+          const b = await idbOp('readonly', s => s.get('bible:' + k));
+          if (b) return b;
+        }
+        const r = await fetch(`bibles/${encodeURIComponent(k)}.json`);
+        if (!r.ok) throw new Error('Esa Biblia no está disponible');
+        return r.json();
+      })();
+      p.catch(() => bibles.delete(k));
+      bibles.set(k, p);
+    }
     return bibles.get(k);
+  };
+  store.saveBible = async (bible) => {
+    if (store.mode === 'server') {
+      const r = await fetch(api('/api/bibles'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bible) });
+      if (!r.ok) throw new Error((await r.json()).error || 'No se pudo guardar');
+    } else {
+      await idbOp('readwrite', s => s.put(bible, 'bible:' + bible.id));
+      localStorage.setItem('proclama.bibles', JSON.stringify([...localBibles().filter(b => b.id !== bible.id), { id: bible.id, name: bible.name, lang: bible.lang, custom: true }]));
+    }
+    store.bibleIndex = null; bibles.delete(bible.id);
+  };
+  store.deleteBible = async (id) => {
+    if (store.mode === 'server') await fetch(api('/api/bibles/' + encodeURIComponent(id)), { method: 'DELETE' });
+    else {
+      await idbOp('readwrite', s => s.delete('bible:' + id)).catch(() => {});
+      localStorage.setItem('proclama.bibles', JSON.stringify(localBibles().filter(b => b.id !== id)));
+    }
+    store.bibleIndex = null; bibles.delete(id);
+    if (store.db.settings.bibleVersion === id) { store.db.settings.bibleVersion = 'rv1909'; store.saveDb(); }
   };
   return store;
 }

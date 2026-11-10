@@ -85,3 +85,15 @@ test('RTF de EasyWorship', () => {
   const rtf = "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Arial;}}{\\colortbl;\\red0\\green0\\blue0;}\\pard\\f0\\fs40 Verse 1\\par Se\\'f1or, t\\u250?\\par\\par Chorus\\par \\u161?Gloria!\\par}";
   assert.equal(rtfToText(rtf), 'Verse 1\nSeñor, tú\n\nChorus\n¡Gloria!');
 });
+
+test('importar Biblia del usuario', async () => {
+  const { buildBible } = await import('../public/shared/bible-import.js');
+  const perBook = BOOKS.map((b, i) => ({ name: b + '.json', content: JSON.stringify([[`_Texto ${i}_ /n dos`, 'Bet=el']]) }));
+  const b = buildBible([...perBook, { name: '_index.json', content: '[{"key":"genesis"}]' }], { name: 'Reina-Valera 1960' });
+  assert.equal(b.id, 'reina-valera-1960'); assert.equal(b.books.length, 66);
+  assert.equal(b.books[42][0][0], 'Texto 42 dos'); assert.equal(b.books[0][0][1], 'Bet-el');
+  assert.throws(() => buildBible(perBook.slice(0, 60), { name: 'X' }), /Faltan 6/);
+  const whole = buildBible([{ name: 'b.json', content: JSON.stringify({ books: bible.books.map(c => ({ chapters: c.map(v => ({ verses: v.map(t => ({ text: t })) })) })) }) }], { name: 'Otra' });
+  assert.equal(whole.books[42][2][15], bible.books[42][2][15]);
+});
+const BOOKS = ['genesis', 'exodo', 'levitico', 'numeros', 'deuteronomio', 'josue', 'jueces', 'rut', '1_samuel', '2_samuel', '1_reyes', '2_reyes', '1_cronicas', '2_cronicas', 'esdras', 'nehemias', 'ester', 'job', 'salmos', 'proverbios', 'eclesiastes', 'cantares', 'isaias', 'jeremias', 'lamentaciones', 'ezequiel', 'daniel', 'oseas', 'joel', 'amos', 'abdias', 'jonas', 'miqueas', 'nahum', 'habacuc', 'sofonias', 'hageo', 'zacarias', 'malaquias', 'mateo', 'marcos', 'lucas', 'juan', 'hechos', 'romanos', '1_corintios', '2_corintios', 'galatas', 'efesios', 'filipenses', 'colosenses', '1_tesalonicenses', '2_tesalonicenses', '1_timoteo', '2_timoteo', 'tito', 'filemon', 'hebreos', 'santiago', '1_pedro', '2_pedro', '1_juan', '2_juan', '3_juan', 'judas', 'apocalipsis'];
