@@ -422,11 +422,18 @@ const SC = {
     const offline = !navigator.onLine;
     $('sc-offline').hidden = !offline;
     if (offline) { $('sc-login').hidden = true; $('sc-library').hidden = true; $('sc-unconfigured').hidden = true; return; }
+    let res;
     try {
-      this.status = await (await fetch('/auth/status', { cache: 'no-store' })).json();
+      res = await fetch('/auth/status', { cache: 'no-store' });
     } catch {
       $('sc-offline').hidden = false;
       return;
+    }
+    try {
+      this.status = await res.json();
+    } catch {
+      // Publicada como web estática (sin el servidor de Eco): no hay parte de SoundCloud.
+      this.status = { configured: false, loggedIn: false };
     }
     $('sc-unconfigured').hidden = this.status.configured;
     $('sc-login').hidden = !this.status.configured || this.status.loggedIn;
