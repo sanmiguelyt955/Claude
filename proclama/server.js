@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { APP_NAME, VERSION, defaultDb, defaultLive, liveReducer, songToPresentation, textToPresentation, mediaToPresentation, norm, uid } from './public/shared/model.js';
 import { parseReference, bibleToPresentation } from './public/shared/bible.js';
 import { importEasyWorship } from './lib/easyworship.js';
+import { checkUpdate, applyUpdate } from './lib/update.js';
+import { spawn } from 'node:child_process';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
@@ -20,6 +22,13 @@ const BIBLES = path.join(DATA, 'bibles');
 const DB_FILE = path.join(DATA, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 7700);
 const TOKEN = process.env.PROCLAMA_TOKEN || '';
+// De dónde se descargan las actualizaciones (carpeta con release.json). PROCLAMA_UPDATE_URL=none las desactiva.
+const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+const UPDATE_URL = (() => {
+  const u = process.env.PROCLAMA_UPDATE_URL ?? PKG.proclama?.updateUrl ?? '';
+  return !u || u === 'none' ? '' : u.endsWith('/') ? u : u + '/';
+})();
+let updateInfo = null, updateAt = 0, updating = false;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -191,11 +200,35 @@ async function api(req, res, url) {
   if (p === '/api/info') return send(res, 200, { name: APP_NAME, version: VERSION, port: PORT, urls: lanUrls(), token: !!TOKEN });
   if (p === '/api/state') return send(res, 200, { db, live });
 
+  if (p === '/api/update' && req.method === 'GET') {
+    if (!updateInfo || url.searchParams.has('force') || Date.now() - updateAt > 10 * 60e3) {
+      updateInfo = await checkUpdate({ url: UPDATE_URL, current: VERSION }); updateAt = Date.now();
+    }
+    return send(res, 200, { ...updateInfo, canInstall: isLocal(req) });
+  }
+
+  if (p === '/api/update/apply' && req.method === 'POST') {
+    // Instalar cambia el programa: solo se permite desde la misma computadora donde corre.
+    if (!isLocal(req)) return send(res, 403, { error: 'La actualización se instala desde la computadora donde corre Proclama' });
+    if (updating) return send(res, 409, { error: 'Ya hay una actualización en curso' });
+    updating = true;
+    try {
+      const r = await applyUpdate({ root: ROOT, url: UPDATE_URL, dataDir: DATA, current: VERSION,
+        onProgress: (done, total) => broadcast('update-progress', { done, total }) });
+      updateInfo = null;
+      send(res, 200, { ok: true, version: r.version, files: r.changed.length, restarting: r.restart });
+      broadcast('reload', { version: r.version, restarting: r.restart });
+      if (r.restart) setTimeout(restart, 600);
+    } catch (e) { send(res, 500, { error: e.message }); }
+    finally { updating = false; }
+    return;
+  }
+
   if (p === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     res.role = String(url.searchParams.get('role') || 'operator').replace(/[^a-z]/g, '').slice(0, 12);
     clients.add(res);
-    res.write(`data: ${JSON.stringify({ type: 'hello', data: { db, live, clients: clientCounts() }, origin: 'server' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'hello', data: { db, live, clients: clientCounts(), version: VERSION }, origin: 'server' })}\n\n`);
     broadcast('clients', clientCounts());
     req.on('close', () => { clients.delete(res); broadcast('clients', clientCounts()); });
     return;
@@ -281,6 +314,17 @@ async function api(req, res, url) {
   }
 
   return send(res, 404, { error: 'No encontrado' });
+}
+
+/** Vuelve a arrancar el servidor con el código nuevo (mismo puerto y opciones). */
+function restart() {
+  if (saveTimer) { clearTimeout(saveTimer); try { fs.writeFileSync(DB_FILE, JSON.stringify(db)); } catch { /* se conserva el archivo anterior */ } }
+  for (const res of clients) res.end();
+  server.close(() => {
+    spawn(process.execPath, process.argv.slice(1), { cwd: process.cwd(), env: process.env, detached: true, stdio: 'ignore' }).unref();
+    process.exit(0);
+  });
+  server.closeAllConnections?.();
 }
 
 const server = http.createServer(async (req, res) => {

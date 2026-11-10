@@ -121,3 +121,15 @@ test('Biblia desde las líneas de un PDF', async () => {
   const items = [{ str: 'por mí', transform: [10, 0, 0, 10, 45, 700], width: 30 }, { str: 'y por ti.', transform: [10, 0, 0, 10, 79, 700], width: 40 }, { str: 'Otra', transform: [10, 0, 0, 10, 45, 686], width: 20 }];
   assert.deepEqual(linesFromItems(items).map(l => l.s), ['por mí y por ti.', 'Otra']);
 });
+
+test('actualizaciones: versiones y release.json al día', async () => {
+  const { compareVersions, listFiles } = await import('../lib/update.js');
+  assert.ok(compareVersions('0.10.0', '0.9.9') > 0); assert.ok(compareVersions('1.0.0', '1.0.0') === 0); assert.ok(compareVersions('0.2.9', '0.3.0') < 0);
+  const root = new URL('..', import.meta.url).pathname;
+  const release = JSON.parse(fs.readFileSync(root + 'release.json', 'utf8'));
+  const files = await listFiles(root);
+  assert.ok(!Object.keys(files).some(f => f.startsWith('data/') || f.startsWith('docs/') || f === 'release.json'));
+  // Si esto falla, ejecuta: node tools/make-release.mjs <versión> "novedades"
+  assert.deepEqual(files, release.files, 'release.json no coincide con los archivos: vuelve a generar la versión');
+  assert.equal(release.version, JSON.parse(fs.readFileSync(root + 'package.json', 'utf8')).version);
+});

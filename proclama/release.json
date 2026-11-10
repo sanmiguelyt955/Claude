@@ -1,0 +1,153 @@
+{
+ "name": "Proclama",
+ "version": "0.3.0",
+ "date": "2026-11-10",
+ "notes": [
+  "Importar Biblias desde PDF",
+  "Nuevo diseño, más claro e intuitivo",
+  "Modo de bajo consumo para equipos modestos",
+  "Actualizaciones desde la propia app"
+ ],
+ "files": {
+  ".gitignore": {
+   "sha256": "8ad7c156211aead77386755a3eb0d9d13f266ada65389632b24828200fd616c9",
+   "size": 20
+  },
+  "lib/easyworship.js": {
+   "sha256": "7a2386bdb6359db669c1ea12bc4e93f6b074a264ea65b2590a4bdc370dcfa644",
+   "size": 1450
+  },
+  "lib/update.js": {
+   "sha256": "1cb8f8c10d417a7613771259b4ba5948b5af4774583e8a98141edac9497b7dfa",
+   "size": 5067
+  },
+  "package.json": {
+   "sha256": "c3358e712c655a0e166fedd518ee5de51dd049e8aabaf36f2164bc20b1c7f971",
+   "size": 463
+  },
+  "public/bibles/index.json": {
+   "sha256": "30900221b6981155b1ffc201e9c01553fb08c8bc3be0c7b257796e98f191e16c",
+   "size": 142
+  },
+  "public/bibles/kjv.json": {
+   "sha256": "06e216621ad674f384f96a5eb8bcf152e41f69268061a20783bb76b295545182",
+   "size": 4216286
+  },
+  "public/bibles/rv1909.json": {
+   "sha256": "d25bee41f4c2a348b8be94ce0cc0f9f4f6d2c27d853981269541bb061fc4b11a",
+   "size": 4003891
+  },
+  "public/css/app.css": {
+   "sha256": "13878eba93bcfb69e242b19227894a23f09e8fba31454c0e0be6a71ffa3d3ac1",
+   "size": 19290
+  },
+  "public/css/screen.css": {
+   "sha256": "affb6c413ee7f061e62eca83f96654f9446de945124f62220fa8f98703cad88a",
+   "size": 3794
+  },
+  "public/icon.svg": {
+   "sha256": "ffbe85bc824e464f7a55a660ab6167c387861c618750d3d101590fa7aa2b278e",
+   "size": 354
+  },
+  "public/index.html": {
+   "sha256": "778212172104b973956375c14c76657ef45cb255de72d3c12f9fad23057f7dd9",
+   "size": 5973
+  },
+  "public/js/app.js": {
+   "sha256": "b8c4719655733d3dad8e6f58d047f5a4f003792d1f6fb5bbafc074dcc431625e",
+   "size": 50159
+  },
+  "public/js/icons.js": {
+   "sha256": "77fe4534464d23603bd0a4e1f178ad4ae0dcc2f3ab019291c2e5701622ec2425",
+   "size": 3029
+  },
+  "public/js/pdf-bible.js": {
+   "sha256": "0ee6bb0962bf72cc3c36f15d615b529ba521517c51e62a998fd749a9d489a552",
+   "size": 1532
+  },
+  "public/js/render.js": {
+   "sha256": "cbf83019308f2058111ed10dfa013c824244b31bbf1510e1c67503c79d7c95cc",
+   "size": 8597
+  },
+  "public/js/resolve.js": {
+   "sha256": "12d19d46e40a741e869fbbabb9561739138f1be4e8b77052ac5b6309a23fd21f",
+   "size": 1926
+  },
+  "public/js/store.js": {
+   "sha256": "5917d97f2a6a49ed435c5fcd8d99d0af92612797d8cc851d2f91072bc1a2f68f",
+   "size": 10663
+  },
+  "public/manifest.webmanifest": {
+   "sha256": "5bf8d75ce0c92ceacf43fb1abc0d442e987b5db44509b46d90dd87004dfe05a0",
+   "size": 225
+  },
+  "public/output.html": {
+   "sha256": "2028c6ccac0f3d885e44a2f1970dd9808dc9f8b8c9484febb6c3dcaa79d8689b",
+   "size": 1387
+  },
+  "public/remote.html": {
+   "sha256": "32d59cc054e8cad72dd98b150ab89ef385277d918d8bdec7703d7a50b03d5ef1",
+   "size": 8056
+  },
+  "public/shared/bible-import.js": {
+   "sha256": "24a15e883469ba43f52dcf36f3e10528296c176ca8ea7abc1da3d84672223246",
+   "size": 2531
+  },
+  "public/shared/bible-pdf.js": {
+   "sha256": "cda4269ad63d6991e87eb7083ed073569e72b5cb232ed535ed0fa49f6158db9f",
+   "size": 13045
+  },
+  "public/shared/bible.js": {
+   "sha256": "eea5f0d24c5f1786e1983b720fe6220ff64df977415613b64d5902c24c78a475",
+   "size": 5400
+  },
+  "public/shared/importers.js": {
+   "sha256": "9c3cce35dd17f62def647e6689522dbf7b34d0102a619218c8d6563dd5918215",
+   "size": 10392
+  },
+  "public/shared/model.js": {
+   "sha256": "a0418b0e684580747d3887bf510472557125c151df4659cb737d17e696867e43",
+   "size": 10765
+  },
+  "public/stage.html": {
+   "sha256": "a6d01b2b46298974713ee80608cc6a96777dbe0fa48d0096699a9163cb42231a",
+   "size": 3193
+  },
+  "public/vendor/pdfjs/LEEME.txt": {
+   "sha256": "4b49a36ec7b2506dd1e4bbf299071465db7224deb667ea6bbde7c59776d3a543",
+   "size": 120
+  },
+  "public/vendor/pdfjs/LICENSE": {
+   "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+   "size": 10174
+  },
+  "public/vendor/pdfjs/pdf.min.mjs": {
+   "sha256": "44ec6f011027ee77791386b66c14876a5fc29e20bf0433c07c6726fff7212b72",
+   "size": 398237
+  },
+  "public/vendor/pdfjs/pdf.worker.min.mjs": {
+   "sha256": "bd88805178a26c729db8c0107a5b630cb900ec070f4d8c7529a3e45530afd41d",
+   "size": 1417586
+  },
+  "README.md": {
+   "sha256": "30ec502cc371d6f4168d70d0ad1cb13da20fb19ef7b0f5a7f6f7e94c23fd479b",
+   "size": 8525
+  },
+  "server.js": {
+   "sha256": "7292473c3c3f032c91f807e7b0bf41c6f2b2900c8773d978ed85f09b60cb9204",
+   "size": 18832
+  },
+  "tools/build-bibles.mjs": {
+   "sha256": "46ddf160f6d35b7c7a9c46a65184c2de6461d76846c1aae488c0bb7f45e721a9",
+   "size": 1289
+  },
+  "tools/import-bible.mjs": {
+   "sha256": "32102475ba87c0fe6ac774caf70670b172070e4bd78fdf357ce1b3524fa552cd",
+   "size": 1169
+  },
+  "tools/make-release.mjs": {
+   "sha256": "f42ca04cf214a3786d601acd48a153a28632094290ef72f5e25c0a29ede8d0b3",
+   "size": 1718
+  }
+ }
+}

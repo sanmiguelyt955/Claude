@@ -93,8 +93,13 @@ curl "http://localhost:7700/api/action/next"
 
 La app trae solo traducciones de dominio público. Para usar otra que tu iglesia tenga derecho a usar (por ejemplo la
 Reina-Valera 1960), cárgala en tu instalación: en la pestaña **Biblia** abre la lista de versiones y elige
-**＋ Añadir otra Biblia…** (también está en **Importar → Biblias**), escribe el nombre y elige el JSON completo o los
-66 archivos JSON, uno por libro (`genesis.json`, `exodo.json`…, cada uno con una lista de capítulos y versículos).
+**＋ Añadir otra Biblia…** (también está en **Importar → Biblias**), escribe el nombre y elige el archivo:
+
+- **PDF** con texto seleccionable (no escaneado), con un título por capítulo («Génesis 1») y los versículos numerados.
+  La app separa libros, capítulos y versículos, descarta encabezados, títulos de sección y referencias, y al terminar
+  informa cuántos versículos leyó y cuáles conviene revisar (por ejemplo, si el PDF trae un número de versículo dañado).
+- **JSON** con la Biblia completa, o 66 archivos JSON, uno por libro (`genesis.json`, `exodo.json`…).
+
 También por línea de comandos:
 
 ```bash
@@ -103,6 +108,25 @@ node tools/import-bible.mjs <archivo.json | carpeta con un JSON por libro> "Rein
 
 La Biblia importada se guarda en `data/bibles/` (o en el navegador, en modo local) y **no** forma parte del repositorio.
 La RVR1960, la NVI y otras tienen derechos de autor: para distribuirlas dentro de la app hace falta permiso de su editor.
+
+## Actualizaciones
+
+La app busca sola si hay una versión nueva (al abrir y cada 6 horas). Si la hay, aparece arriba el botón
+**Actualizar a X.Y.Z**: muestra las novedades y, al aceptar, descarga solo los archivos que cambiaron, guarda copia de
+los anteriores en `data/backup/`, se reinicia y recarga todas las pantallas. Canciones, Biblias, medios y ajustes no se
+tocan. También se puede comprobar a mano en **Ajustes → Buscar actualizaciones**. Por seguridad, solo se puede instalar
+desde la computadora donde corre Proclama, y cada archivo se verifica antes de reemplazar nada.
+
+**Publicar una versión** (cuando tú quieras):
+
+```bash
+node tools/make-release.mjs 0.4.0 "Novedad 1" "Novedad 2"   # sube la versión y genera release.json
+git add -A && git commit -m "Proclama 0.4.0" && git push      # a la rama publicada (main)
+```
+
+Las instalaciones leen `release.json` de la carpeta `proclama/` de la rama `main` de este repositorio (se cambia en
+`package.json` → `proclama.updateUrl`, o con la variable `PROCLAMA_UPDATE_URL`; el valor `none` desactiva las
+actualizaciones). Mientras no publiques una versión con número mayor, nadie ve el botón.
 
 ## Estructura
 

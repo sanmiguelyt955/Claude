@@ -66,11 +66,15 @@ export async function createStore(role = 'operator') {
     es.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'hello') {
-        store.db = msg.data.db; store.live = msg.data.live; store.clients = msg.data.clients ?? {}; sentPres = store.live.pres; emit('db'); emit('live'); emit('clients');
+        store.db = msg.data.db; store.live = msg.data.live; store.clients = msg.data.clients ?? {}; sentPres = store.live.pres;
+        if (store.version && msg.data.version && msg.data.version !== store.version) { emit('reload'); return; } // el servidor se actualizó
+        store.version = msg.data.version ?? store.version; emit('db'); emit('live'); emit('clients');
       } else if (msg.type === 'live' && msg.keepPres) {
         if (msg.origin === me) return;
         if (store.live.pres?.id === msg.keepPres) { store.live = { ...msg.data, pres: store.live.pres }; emit('live'); }
         else fetch(api('/api/state')).then(r => r.json()).then(st => { store.live = st.live; sentPres = st.live.pres; emit('live'); }).catch(() => {});
+      } else if (msg.type === 'reload' || msg.type === 'update-progress') {
+        store.updateProgress = msg.data; emit(msg.type);
       } else if (msg.type === 'bibles') {
         store.bibleIndex = null; bibles.clear(); emit('bibles');
       } else if (msg.origin !== me) {

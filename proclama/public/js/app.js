@@ -631,6 +631,43 @@ $('btnImport').onclick = () => {
   ]);
 };
 
+// ---------- Actualizaciones ----------
+let update = null;
+async function checkForUpdate(force = false) {
+  if (store.mode !== 'server') return null;
+  try { update = await (await fetch(withToken('/api/update' + (force ? '?force=1' : '')))).json(); } catch { update = null; }
+  $('btnUpdate').hidden = !update?.available;
+  if (update?.available) { $('updLabel').textContent = 'Actualizar a ' + update.latest; $('btnUpdate').title = 'Hay una versión nueva de Proclama'; }
+  return update;
+}
+function openUpdateDialog() {
+  if (!update?.available) return;
+  const status = h('p', { class: 'muted' }, update.canInstall
+    ? 'Se descargan solo los archivos que cambiaron. Tus canciones, Biblias, medios y ajustes no se tocan, y se guarda una copia de la versión anterior.'
+    : 'Para instalarla, abre Proclama en la computadora donde está instalado.');
+  const btn = h('button', { class: 'primary', disabled: !update.canInstall, onclick: async () => {
+    if (store.live.pres && !confirm('Hay algo en pantalla. La app se reinicia unos segundos al actualizar. ¿Continuar?')) return;
+    btn.disabled = later.disabled = true; btn.textContent = 'Descargando…';
+    try {
+      const r = await fetch(withToken('/api/update/apply'), { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
+      status.textContent = `Versión ${data.version} instalada. Recargando…`;
+      if (!data.restarting) setTimeout(() => location.reload(), 1200);
+    } catch (e) { status.textContent = 'No se pudo actualizar: ' + e.message; btn.disabled = later.disabled = false; btn.textContent = 'Reintentar'; }
+  } }, 'Actualizar ahora');
+  const later = h('button', { onclick: () => $('dlg').close() }, 'Ahora no');
+  $('dlg').replaceChildren(
+    h('div', { class: 'dhead' }, `Proclama ${update.latest} disponible`),
+    h('div', { class: 'dbody' },
+      h('p', {}, `Tienes la versión ${update.current}.`, update.date ? ` La nueva se publicó el ${update.date}.` : ''),
+      update.notes.length ? [h('h4', {}, 'Novedades'), h('ul', { class: 'notes' }, update.notes.map(n => h('li', {}, n)))] : null,
+      status),
+    h('div', { class: 'dfoot' }, later, btn));
+  if (!$('dlg').open) $('dlg').showModal();
+}
+$('btnUpdate').onclick = openUpdateDialog;
+
 $('btnSettings').onclick = async () => {
   const s = store.db.settings;
   const versions = await store.listBibles();
@@ -646,6 +683,15 @@ $('btnSettings').onclick = async () => {
     h('div', { class: 'drow' }, field('Versículos por diapositiva', f.versesPerSlide), field('Biblia predeterminada', f.bibleVersion)),
     s.logoSrc && h('div', {}, h('button', { onclick: () => { s.logoSrc = ''; store.saveDb(); toast('Logo quitado'); } }, 'Quitar la imagen del logo')),
     h('label', { class: 'check' }, f.lowPower, 'Modo de bajo consumo: en este panel los videos se ven como imagen fija y sin animaciones (el proyector no cambia)'),
+    h('h4', {}, 'Versión'),
+    h('div', { class: 'drow', style: { alignItems: 'center' } }, h('span', {}, `Proclama ${store.version ?? ''}`),
+      store.mode === 'server' ? h('button', { onclick: async (e) => {
+        e.target.disabled = true; e.target.textContent = 'Buscando…';
+        const u = await checkForUpdate(true);
+        if (u?.available) return openUpdateDialog();
+        e.target.disabled = false; e.target.textContent = 'Buscar actualizaciones';
+        toast(u?.error ? 'No se pudo comprobar: ' + u.error : u?.disabled ? 'Las actualizaciones están desactivadas' : 'Ya tienes la última versión');
+      } }, 'Buscar actualizaciones') : h('span', { class: 'muted' }, 'En modo local la app se actualiza al volver a publicarla.')),
     h('h4', {}, 'Atajos de teclado'),
     h('p', { class: 'muted' }, '→ o espacio: siguiente · ←: anterior · Enter: proyectar la vista previa · B: negro · C: ocultar texto · L: logo'),
     h('h4', {}, 'Control por API'),
@@ -697,6 +743,8 @@ store.on((what) => {
     sel._themes = store.db.themes;
     sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name))); sel.value = cur;
   } else if (what === 'clients') renderClients();
+  else if (what === 'reload') { toast('Proclama se actualizó. Recargando…'); setTimeout(() => location.reload(), 1500); }
+  else if (what === 'update-progress') { const b = document.querySelector('#dlg .dfoot .primary'); if (b && store.updateProgress) b.textContent = `Descargando ${store.updateProgress.done} de ${store.updateProgress.total}…`; }
   else if (what === 'bibles') { ui.bible.data = null; if (ui.tab === 'bible') renderLibrary(); }
   else renderStatus();
 });
@@ -705,4 +753,5 @@ const tools = $('tools');
 try { tools.open = localStorage.getItem('proclama.tools') === '1'; } catch { /* sin almacenamiento */ }
 tools.addEventListener('toggle', () => { try { localStorage.setItem('proclama.tools', tools.open ? '1' : '0'); } catch { /* sin almacenamiento */ } });
 setPanel('library');
-renderClients(); renderStatus(); renderSchedule(); renderPreview(); renderLive(); renderLibrary();
+renderClients(); renderStatus();
+setTimeout(checkForUpdate, 2500); setInterval(checkForUpdate, 6 * 3600e3); renderSchedule(); renderPreview(); renderLive(); renderLibrary();

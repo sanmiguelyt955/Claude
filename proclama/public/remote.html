@@ -105,7 +105,7 @@ const goAlert = () => {
 $('goAlert').onclick = goAlert; $('alert').onkeydown = (e) => { if (e.key === 'Enter') goAlert(); };
 $('q').oninput = drawDb;
 let onAir = null;
-store.on((what) => { if (what === 'live') { drawLive(); const id = store.live.pres?.itemId ?? null; if (id !== onAir) { onAir = id; drawDb(); } } else if (what === 'db') drawDb(); else if (what === 'online') say(store.online ? 'Conectado' : 'Sin conexión, reintentando…'); });
+store.on((what) => { if (what === 'live') { drawLive(); const id = store.live.pres?.itemId ?? null; if (id !== onAir) { onAir = id; drawDb(); } } else if (what === 'db') drawDb(); else if (what === 'reload') setTimeout(() => location.reload(), 1500); else if (what === 'online') say(store.online ? 'Conectado' : 'Sin conexión, reintentando…'); });
 drawLive(); drawDb();
 </script>
 </body>

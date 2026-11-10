@@ -23,7 +23,7 @@ setTimeout(() => hint.classList.add('hide'), 5000);
 const store = await createStore(mode === 'lower' ? 'obs' : 'output');
 const screen = createScreen(document.body, { mode, muted: q.has('muted') || mode === 'lower' });
 screen.update(store.live);
-store.on((what) => { if (what === 'live') screen.update(store.live); });
+store.on((what) => { if (what === 'live') screen.update(store.live); else if (what === 'reload') setTimeout(() => location.reload(), 1500); });
 </script>
 </body>
 </html>

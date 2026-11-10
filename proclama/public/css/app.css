@@ -224,3 +224,10 @@ main { grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr); }
 #pLive:has(.tools[open]) .slides.grow { min-height: 0; }
 .tools { flex: none; }
 #pLive { overflow: hidden auto; }
+
+/* Actualización disponible */
+.update { background: #3a2f10; border-color: #6b5413; color: #ffd36b; font-weight: 700; }
+.update:hover { background: #4a3c14; border-color: #8a6c18; }
+.notes { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+@media (max-width: 900px) { .update span { display: none; } }
+[hidden] { display: none !important; }
