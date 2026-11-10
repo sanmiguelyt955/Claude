@@ -97,3 +97,27 @@ test('importar Biblia del usuario', async () => {
   assert.equal(whole.books[42][2][15], bible.books[42][2][15]);
 });
 const BOOKS = ['genesis', 'exodo', 'levitico', 'numeros', 'deuteronomio', 'josue', 'jueces', 'rut', '1_samuel', '2_samuel', '1_reyes', '2_reyes', '1_cronicas', '2_cronicas', 'esdras', 'nehemias', 'ester', 'job', 'salmos', 'proverbios', 'eclesiastes', 'cantares', 'isaias', 'jeremias', 'lamentaciones', 'ezequiel', 'daniel', 'oseas', 'joel', 'amos', 'abdias', 'jonas', 'miqueas', 'nahum', 'habacuc', 'sofonias', 'hageo', 'zacarias', 'malaquias', 'mateo', 'marcos', 'lucas', 'juan', 'hechos', 'romanos', '1_corintios', '2_corintios', 'galatas', 'efesios', 'filipenses', 'colosenses', '1_tesalonicenses', '2_tesalonicenses', '1_timoteo', '2_timoteo', 'tito', 'filemon', 'hebreos', 'santiago', '1_pedro', '2_pedro', '1_juan', '2_juan', '3_juan', 'judas', 'apocalipsis'];
+
+test('Biblia desde las líneas de un PDF', async () => {
+  const { parseBiblePages, splitVerses, linesFromItems } = await import('../public/shared/bible-pdf.js');
+  const L = (ys) => ys.map(([y, s]) => ({ x: 45, y, s }));
+  const head = [800, 'Santa Biblia'], foot = [20, 'www.ejemplo.org'];
+  // Interlineado de 14 dentro de un párrafo y de 28 entre párrafos, como en un PDF real.
+  const pages = [
+    L([head, foot, [760, 'LIBRO PRIMERO DE MOISÉS'], [732, 'GÉNESIS'], [704, 'La creación'], [676, 'Génesis 1'],
+      [648, '1 En el principio'], [634, 'creó Dios. 2 Y la tierra'], [620, 'estaba vacía,'], [606, 'y las tinieblas estaban.3 Y dijo Dios:'], [592, 'Sea la luz;']]),
+    L([head, foot, [760, 'y fue la luz.'], [732, 'El hombre en el huerto'], [718, '(Gn. 2.4-25)'], [690, 'Génesis 2'],
+      [662, '1 Fueron, pues, acabados'], [648, 'los cielos, 2 y la tierra.'], [620, '¿Quién es el mayor?'], [592, '2 Y acabó Dios'], [578, 'en el día séptimo.']]),
+    ...Array.from({ length: 6 }, () => L([head, foot])),
+  ];
+  const r = parseBiblePages(pages);
+  assert.deepEqual(r.books[0][0], ['En el principio creó Dios.', 'Y la tierra estaba vacía, y las tinieblas estaban.', 'Y dijo Dios: Sea la luz; y fue la luz.']);
+  assert.deepEqual(r.books[0][1], ['Fueron, pues, acabados los cielos, y la tierra.', 'Y acabó Dios en el día séptimo.']);
+  assert.ok(r.missing > 1000);
+  const gaps = [];
+  assert.deepEqual(splitVerses('1 Uno. 2 Dos.x6* roto 4 Cuatro. 5 Cinco.', gaps), ['Uno.', 'Dos.x* roto', '', 'Cuatro.', 'Cinco.']);
+  assert.deepEqual(gaps, [3]);
+  assert.deepEqual(splitVerses('1 Uno. 2 Dos; 4 para que fin.', [], 3), ['Uno.', 'Dos;', 'para que fin.']);
+  const items = [{ str: 'por mí', transform: [10, 0, 0, 10, 45, 700], width: 30 }, { str: 'y por ti.', transform: [10, 0, 0, 10, 79, 700], width: 40 }, { str: 'Otra', transform: [10, 0, 0, 10, 45, 686], width: 20 }];
+  assert.deepEqual(linesFromItems(items).map(l => l.s), ['por mí y por ti.', 'Otra']);
+});

@@ -1,0 +1,1 @@
+pdf.js 4.10.38 (compilación «legacy»), de Mozilla, licencia Apache 2.0. Solo se carga al importar una Biblia en PDF.

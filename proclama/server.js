@@ -22,7 +22,7 @@ const PORT = Number(process.env.PORT || process.argv[2] || 7700);
 const TOKEN = process.env.PROCLAMA_TOKEN || '';
 
 const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
   '.m4v': 'video/mp4', '.ogv': 'video/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json',

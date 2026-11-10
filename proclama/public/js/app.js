@@ -527,7 +527,8 @@ function addSongs(songs) {
 /** Controles para añadir o quitar Biblias propias. Se usa en «Importar» y en la pestaña Biblia. */
 function bibleSection() {
   const bName = h('input', { value: 'Reina-Valera 1960', placeholder: 'Nombre de la Biblia' });
-  const bFiles = h('input', { type: 'file', multiple: true, accept: '.json,application/json' });
+  const bFiles = h('input', { type: 'file', multiple: true, accept: '.pdf,.json,application/pdf,application/json' });
+  const bReport = h('div', {});
   const bList = h('div', { class: 'list' });
   const drawBibles = async () => {
     const own = (await store.listBibles()).filter(b => b.custom);
@@ -540,24 +541,38 @@ function bibleSection() {
       } }, 'Quitar'))));
   };
   const bBtn = h('button', { class: 'primary', onclick: async () => {
-    if (!bFiles.files.length) return toast('Elige el archivo JSON (o los 66 archivos, uno por libro)');
+    if (!bFiles.files.length) return toast('Elige primero el archivo PDF o JSON de la Biblia');
     bBtn.disabled = true; bBtn.textContent = 'Importando…';
+    bReport.replaceChildren();
     try {
-      const files = [];
-      for (const f of bFiles.files) files.push({ name: f.name, content: await readText(f) });
-      const bible = buildBible(files, { name: bName.value });
+      let bible, notes = [];
+      const pdf = [...bFiles.files].find(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+      if (pdf) {
+        const { bibleFromPdf } = await import('./pdf-bible.js');
+        const ref = await store.loadBible('rv1909').catch(() => null);
+        const r = await bibleFromPdf(pdf, (done, total) => { bBtn.textContent = `Leyendo página ${done} de ${total}…`; }, ref);
+        if (r.missing) throw new Error(r.warnings[0] + '. Revisa que el PDF tenga la Biblia completa, con un título por capítulo («Génesis 1») y los versículos numerados.');
+        bible = buildBible([{ name: 'pdf.json', content: JSON.stringify({ books: r.books }) }], { name: bName.value });
+        notes = [`Leí ${r.pages} páginas: 66 libros, 1189 capítulos y ${r.verses.toLocaleString('es')} versículos.`, ...r.warnings,
+          r.differs.length ? `${r.differs.length} capítulo(s) tienen un número de versículos distinto al habitual; conviene revisarlos: ${r.differs.slice(0, 6).join(', ')}${r.differs.length > 6 ? '…' : ''}` : 'Todos los capítulos tienen el número de versículos esperado.'];
+      } else {
+        const files = [];
+        for (const f of bFiles.files) files.push({ name: f.name, content: await readText(f) });
+        bible = buildBible(files, { name: bName.value });
+      }
       await store.saveBible(bible);
       ui.bible.version = bible.id; ui.bible.data = null; store.db.settings.bibleVersion = bible.id; store.saveDb();
       toast(`“${bible.name}” añadida`); bFiles.value = '';
+      if (notes.length) bReport.replaceChildren(h('div', { class: 'tip' }, h('b', {}, `“${bible.name}” quedó añadida.`), notes.map(n => h('div', { style: { marginTop: '4px' } }, n))));
       drawBibles(); if (ui.tab === 'bible') renderLibrary();
-    } catch (err) { toast(err.message); }
+    } catch (err) { toast(err.message); bReport.replaceChildren(h('div', { class: 'tip', style: { background: 'var(--live-soft)', color: '#ffc4cb' } }, err.message)); }
     bBtn.disabled = false; bBtn.textContent = 'Añadir Biblia';
   } }, 'Añadir Biblia');
   drawBibles();
   return [
-    h('p', { class: 'muted' }, 'Añade una traducción que tengas derecho a usar. Se guarda solo en esta computadora. Sirve un archivo JSON con la Biblia completa o los 66 archivos JSON, uno por libro (genesis.json, exodo.json…).'),
-    h('div', { class: 'drow' }, field('1. Nombre que verás en la lista', bName), field('2. Archivo o archivos .json (no PDF ni Word)', bFiles)),
-    h('div', {}, bBtn), bList,
+    h('p', { class: 'muted' }, 'Añade una traducción que tengas derecho a usar. Se guarda solo en esta computadora. Sirve un PDF con texto (no escaneado), un archivo JSON con la Biblia completa o 66 archivos JSON, uno por libro.'),
+    h('div', { class: 'drow' }, field('1. Nombre que verás en la lista', bName), field('2. Archivo PDF o JSON', bFiles)),
+    h('div', {}, bBtn), bReport, bList,
   ];
 }
 function openBibleDialog() {
