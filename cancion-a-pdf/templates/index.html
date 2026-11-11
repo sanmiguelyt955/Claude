@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canción → MP3 → PDF</title>
+<style>
+  :root { --fondo:#f6f5f2; --tarjeta:#fff; --texto:#1d1d1f; --acento:#6b4eff; --borde:#d9d6cf; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --fondo:#15151a; --tarjeta:#21212a; --texto:#f2f2f5; --acento:#9d8bff; --borde:#3a3a46; }
+  }
+  :root[data-theme="dark"] { --fondo:#15151a; --tarjeta:#21212a; --texto:#f2f2f5; --acento:#9d8bff; --borde:#3a3a46; }
+  body { margin:0; background:var(--fondo); color:var(--texto); font-family:system-ui,sans-serif; }
+  main { max-width:620px; margin:0 auto; padding:24px 16px; }
+  .tarjeta { background:var(--tarjeta); border:1px solid var(--borde); border-radius:12px; padding:20px; }
+  label { display:block; font-weight:600; margin:14px 0 6px; }
+  input[type=text], select, textarea { width:100%; box-sizing:border-box; padding:10px; border:1px solid var(--borde);
+    border-radius:8px; background:transparent; color:var(--texto); font:inherit; }
+  textarea { min-height:120px; }
+  button { margin-top:18px; width:100%; padding:12px; border:0; border-radius:8px; background:var(--acento);
+    color:#fff; font-weight:700; font-size:16px; cursor:pointer; }
+  .aviso { padding:10px; border-radius:8px; background:#ffe3e3; color:#8a1c1c; margin-bottom:12px; }
+  .ok { padding:12px; border-radius:8px; background:#e3f7e8; color:#1e5e2c; }
+  a.enlace { display:inline-block; margin:8px 12px 0 0; color:var(--acento); font-weight:600; }
+  small { opacity:.75; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Canción → MP3 → PDF</h1>
+  <div class="tarjeta">
+    {% if error %}<div class="aviso">{{ error }}</div>{% endif %}
+    {% if resultado %}
+      <div class="ok">Listo: <strong>{{ resultado.titulo }}</strong></div>
+      <a class="enlace" href="{{ resultado.pdf }}">Descargar PDF</a>
+      <a class="enlace" href="{{ resultado.mp3 }}">Descargar MP3</a>
+      <hr style="border:0;border-top:1px solid var(--borde);margin:18px 0">
+    {% endif %}
+    <form action="/convertir" method="post" enctype="multipart/form-data">
+      <label for="video">Video o audio</label>
+      <input type="file" id="video" name="video" accept="video/*,audio/*" required>
+
+      <label for="titulo">Título de la canción</label>
+      <input type="text" id="titulo" name="titulo" placeholder="Ej. Mi canción favorita">
+
+      <label for="letra">Letra (opcional)</label>
+      <textarea id="letra" name="letra" placeholder="Si pegas la letra aquí, se usa tal cual. Si lo dejas vacío, la app la transcribe del audio."></textarea>
+      <small>Pegar la letra es más preciso que la transcripción automática.</small>
+
+      <label for="modelo">Calidad de transcripción</label>
+      <select id="modelo" name="modelo">
+        {% for m in modelos %}<option value="{{ m }}" {% if m == 'small' %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+      <small>"small" equilibra velocidad y precisión. "medium" es más preciso pero más lento.</small>
+
+      <label for="idioma">Idioma de la letra (opcional)</label>
+      <input type="text" id="idioma" name="idioma" placeholder="es, en, pt… (vacío = automático)">
+
+      <label><input type="checkbox" name="con_tiempos"> Incluir marcas de tiempo</label>
+
+      <button type="submit">Convertir</button>
+    </form>
+  </div>
+</main>
+</body>
+</html>
