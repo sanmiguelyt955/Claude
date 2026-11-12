@@ -66,7 +66,9 @@ python -m pytest -q tests
 | `templates/index.html` | Interfaz |
 | `tests/` | Pruebas del núcleo |
 
-Los archivos generados se guardan en `salidas/` (ignorada por git).
+Los archivos generados se guardan en `salidas/` (ignorada por git) y se borran automáticamente a las 24 horas.
+
+La primera transcripción descarga el modelo de Whisper (decenas o cientos de MB según el modelo) y puede tardar varios minutos según la duración del audio.
 
 ## Empaquetar como programa instalable (opcional, sin probar aún)
 

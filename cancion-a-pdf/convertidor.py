@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 MODELOS_VALIDOS = ("tiny", "base", "small", "medium")
 _modelo_cache: dict[str, object] = {}
+_cerrojo_modelo = threading.Lock()
 
 
 class ErrorConversion(Exception):
@@ -55,11 +57,12 @@ def extraer_mp3(video: Path, mp3: Path) -> Path:
 def _cargar_modelo(nombre: str):
     if nombre not in MODELOS_VALIDOS:
         raise ErrorConversion(f"Modelo no válido: {nombre}")
-    if nombre not in _modelo_cache:
-        from faster_whisper import WhisperModel  # import perezoso: es pesado
+    with _cerrojo_modelo:  # evita cargar el mismo modelo dos veces en peticiones simultáneas
+        if nombre not in _modelo_cache:
+            from faster_whisper import WhisperModel  # import perezoso: es pesado
 
-        _modelo_cache[nombre] = WhisperModel(nombre, device="cpu", compute_type="int8")
-    return _modelo_cache[nombre]
+            _modelo_cache[nombre] = WhisperModel(nombre, device="cpu", compute_type="int8")
+        return _modelo_cache[nombre]
 
 
 def transcribir(mp3: Path, modelo: str = "small", idioma: str | None = None) -> list[Segmento]:
@@ -119,7 +122,10 @@ def generar_pdf(
             historia.append(Paragraph(prefijo + escape(seg.texto), estilos["BodyText"]))
 
     if len(historia) <= 2:
-        raise ErrorConversion("No hay texto para escribir en el PDF.")
+        raise ErrorConversion(
+            "No se detectó voz cantada o hablada en el audio. "
+            "Pega la letra en el campo 'Letra' para generar el PDF."
+        )
     doc.build(historia)
     return pdf
 
