@@ -60,6 +60,7 @@ button:disabled { opacity: .45; cursor: default; }
 .danger { color: var(--danger); }
 .wide { width: 100%; justify-content: center; margin: 8px 0; }
 input[type=search], input:not([type]), select {
+  font-size: 16px; /* con menos de 16 px, iOS hace zoom al tocar el campo */
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;

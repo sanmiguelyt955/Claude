@@ -150,6 +150,24 @@ const Player = {
   },
 
   current() { return this.queue[this.index]; },
+
+  // Quita una canción borrada de la cola; si era la que sonaba, la detiene.
+  forget(id) {
+    const cur = this.current();
+    this.queue = this.queue.filter((x) => x.id !== id);
+    if (cur && cur.id === id) {
+      audio.pause();
+      this.release();
+      audio.removeAttribute('src');
+      audio.load();
+      this.index = -1;
+      $('player').hidden = true;
+      document.body.classList.remove('has-player');
+      if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+    } else if (cur) {
+      this.index = this.queue.indexOf(cur);
+    }
+  },
 };
 
 let hlsPromise = null;
@@ -175,7 +193,16 @@ $('btn-repeat').addEventListener('click', (e) => {
 audio.addEventListener('play', () => { $('btn-play').textContent = '⏸'; $('btn-play').setAttribute('aria-label', 'Pausa'); });
 audio.addEventListener('pause', () => { $('btn-play').textContent = '▶'; $('btn-play').setAttribute('aria-label', 'Reproducir'); });
 audio.addEventListener('ended', () => Player.next(true));
-audio.addEventListener('loadedmetadata', () => { if (Number.isFinite(audio.duration)) $('np-dur').textContent = fmt(audio.duration); });
+audio.addEventListener('loadedmetadata', () => {
+  if (!Number.isFinite(audio.duration)) return;
+  $('np-dur').textContent = fmt(audio.duration);
+  // iOS no da la duración al importar: se guarda la primera vez que suena.
+  const cur = Player.current();
+  if (cur && cur.kind === 'local' && !(cur.duration > 0)) {
+    cur.duration = audio.duration;
+    LocalLibrary.setDuration(cur.id, audio.duration).then(() => Local.refresh()).catch(() => {});
+  }
+});
 let seeking = false;
 audio.addEventListener('timeupdate', () => {
   $('np-time').textContent = fmt(audio.currentTime);
@@ -248,9 +275,22 @@ const Local = {
     return this.artUrls.get(t.id);
   },
 
+  // Carga la carátula solo cuando la fila se ve en pantalla (bibliotecas grandes).
+  observer: 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      Local.observer.unobserve(e.target);
+      const t = Local.tracks.find((x) => x.id === e.target.dataset.art);
+      if (t) Local.art(t).then((src) => { e.target.src = src; });
+    }
+  }, { rootMargin: '300px' }) : null,
+
   row(t, list, i, extra) {
-    const img = el('img', { alt: '', width: 44, height: 44, loading: 'lazy', src: 'icon.svg' });
-    this.art(t).then((src) => { img.src = src; });
+    const img = el('img', { alt: '', width: 44, height: 44, src: 'icon.svg', 'data-art': t.id });
+    if (t.hasArt) {
+      if (this.observer) this.observer.observe(img);
+      else this.art(t).then((src) => { img.src = src; });
+    }
     const li = el('li', { 'data-id': t.id },
       img,
       el('button', { class: 'meta', onclick: () => Player.playQueue(list.map((x) => this.item(x)), i) },
@@ -296,6 +336,10 @@ const Local = {
         onclick: async () => {
           if (!confirm(`¿Borrar «${t.title}» de este dispositivo?`)) return;
           await LocalLibrary.removeTrack(t.id);
+          Player.forget(t.id);
+          const art = this.artUrls.get(t.id);
+          if (art && art.startsWith('blob:')) URL.revokeObjectURL(art);
+          this.artUrls.delete(t.id);
           dlg.close(); await this.refresh();
         },
       }, 'Borrar del dispositivo')),
@@ -542,6 +586,29 @@ $('logout').addEventListener('click', async () => {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker no registrado', e));
 }
+// iOS no deja elegir carpetas desde la web (iPad con iPadOS se presenta como Mac táctil).
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (isIOS) $('pick-folder').closest('label').hidden = true;
+
+// Publicada como web estática no hay servidor de Eco: solo existe la biblioteca local.
+// Se recuerda la última respuesta para decidir también al abrir sin conexión.
+const SERVER_KEY = 'eco-has-server';
+function setServerMode(has) {
+  document.querySelector('.tabs').hidden = !has;
+  if (!has && !$('view-soundcloud').hidden) showView('local');
+}
+function storedServerMode() {
+  try { return localStorage.getItem(SERVER_KEY) === '1'; } catch { return false; }
+}
+setServerMode(storedServerMode());
+fetch('/auth/status', { cache: 'no-store' })
+  .then((r) => r.json())
+  .then(() => true, () => !navigator.onLine && storedServerMode())
+  .then((has) => {
+    try { localStorage.setItem(SERVER_KEY, has ? '1' : '0'); } catch { /* sin almacenamiento */ }
+    setServerMode(has);
+  });
+
 renderNet();
 Local.refresh();
 const params = new URLSearchParams(location.search);
@@ -554,4 +621,4 @@ if (params.get('login')) {
   toast(msgs[params.get('login')] || msgs.cancelado);
   history.replaceState(null, '', location.pathname + location.hash);
 }
-showView(location.hash === '#soundcloud' ? 'soundcloud' : 'local');
+showView(location.hash === '#soundcloud' && storedServerMode() ? 'soundcloud' : 'local');

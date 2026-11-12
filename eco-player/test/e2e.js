@@ -2,13 +2,14 @@
 'use strict';
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 
 const ROOT = path.join(__dirname, '..');
-const APP_PORT = 8799, MOCK_PORT = 9797;
+const APP_PORT = 8799, MOCK_PORT = 9797, STATIC_PORT = 8798;
 const APP = `http://localhost:${APP_PORT}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'eco-e2e-'));
 const media = path.join(tmp, 'media');
@@ -25,6 +26,18 @@ ff('-i', path.join(tmp, 'plain.mp3'), '-i', path.join(tmp, 'cover.jpg'), '-map',
   '-metadata', 'album=Demo', '-metadata:s:v', 'comment=Cover (front)', tagged);
 const untagged = path.join(tmp, 'Otro Artista - Sin Etiquetas.mp3');
 ff('-f', 'lavfi', '-i', 'sine=frequency=550:duration=4', '-c:a', 'libmp3lame', '-map_metadata', '-1', untagged);
+// M4A con etiquetas de iTunes y carátula (Opus en MP4: Chromium de pruebas no trae AAC).
+ff('-f', 'lavfi', '-i', 'sine=frequency=500:duration=4', '-c:a', 'libopus', '-f', 'mp4', path.join(tmp, 'audio.mp4'));
+const m4a = path.join(tmp, 'tema.m4a');
+ff('-i', path.join(tmp, 'audio.mp4'), '-i', path.join(tmp, 'cover.jpg'), '-map', '0', '-map', '1', '-c', 'copy',
+  '-disposition:v:0', 'attached_pic', '-metadata', 'title=Tema M4A', '-metadata', 'artist=Artista M4A',
+  '-metadata', 'album=Álbum M4A', '-f', 'mp4', m4a);
+// MP3 antiguo: sin ID3v2, solo ID3v1 (128 bytes «TAG» al final).
+const v1 = path.join(tmp, 'raro.mp3');
+ff('-f', 'lavfi', '-i', 'sine=frequency=600:duration=3', '-c:a', 'libmp3lame', '-id3v2_version', '0', '-map_metadata', '-1', v1);
+const v1field = (s, n) => Buffer.from(s, 'latin1').subarray(0, n).toString('latin1').padEnd(n, '\0');
+fs.appendFileSync(v1, Buffer.from('TAG' + v1field('Viejo V1', 30) + v1field('Artista V1', 30) + v1field('Album V1', 30) +
+  '2001' + v1field('', 30) + '\xff', 'latin1'));
 fs.writeFileSync(path.join(tmp, 'notas.txt'), 'no soy audio');
 
 const procs = [];
@@ -67,10 +80,12 @@ async function waitPlaying(page, minTime = 0.5) {
     await page.waitForFunction(() => navigator.serviceWorker.controller || navigator.serviceWorker.ready.then(() => true));
     await page.evaluate(() => navigator.serviceWorker.ready);
 
-    step('importa archivos locales y lee las etiquetas ID3');
+    step('importa archivos locales y lee las etiquetas (ID3v2, ID3v1, M4A y nombre de archivo)');
     await page.click('[data-sub=import]');
-    await page.setInputFiles('#pick-files', [tagged, untagged, path.join(tmp, 'notas.txt')]);
-    await page.waitForSelector('#local-list li:nth-child(2)');
+    await page.setInputFiles('#pick-files', [tagged, untagged, m4a, v1, path.join(tmp, 'notas.txt')]);
+    await page.waitForSelector('#local-list li:nth-child(4)');
+    // Las carátulas se cargan al verse la fila: espera a que lleguen las dos que existen.
+    await page.waitForFunction(() => document.querySelectorAll('#local-list img[src^="blob:"]').length === 2);
     const rows = await page.$$eval('#local-list li', (lis) => lis.map((li) => ({
       title: li.querySelector('.title').textContent, artist: li.querySelector('.artist').textContent,
       art: li.querySelector('img').src,
@@ -81,9 +96,14 @@ async function waitPlaying(page, minTime = 0.5) {
     assert.ok(t1.art.startsWith('blob:'), 'la carátula ID3 no se cargó');
     const t2 = rows.find((r) => r.title === 'Sin Etiquetas');
     assert.ok(t2 && t2.artist === 'Otro Artista', `nombre de archivo mal interpretado: ${JSON.stringify(rows)}`);
-    assert.equal(rows.length, 2, 'el .txt no debería importarse');
+    const t3 = rows.find((r) => r.title === 'Tema M4A');
+    assert.ok(t3 && t3.artist === 'Artista M4A · Álbum M4A', `etiquetas M4A: ${JSON.stringify(rows)}`);
+    assert.ok(t3.art.startsWith('blob:'), 'la carátula M4A no se cargó');
+    const t4 = rows.find((r) => r.title === 'Viejo V1');
+    assert.ok(t4 && t4.artist === 'Artista V1 · Album V1', `etiquetas ID3v1: ${JSON.stringify(rows)}`);
+    assert.equal(rows.length, 4, 'el .txt no debería importarse');
     await page.waitForSelector('.toast.show');
-    assert.equal(await page.textContent('.toast'), '2 añadidas · 1 no son audio');
+    assert.equal(await page.textContent('.toast'), '4 añadidas · 1 no son audio');
 
     step('no duplica al importar de nuevo');
     await page.click('[data-sub=import]');
@@ -164,7 +184,7 @@ async function waitPlaying(page, minTime = 0.5) {
     await page.click('#tab-soundcloud');
     assert.ok(await page.isVisible('#sc-offline'));
     const cached = await page.evaluate(async () => {
-      const c = await caches.open('eco-shell-v1');
+      const c = await caches.open('eco-shell-v2');
       return (await c.keys()).map((r) => new URL(r.url).pathname);
     });
     assert.ok(cached.every((p) => !/^\/(api|play|hls|auth)/.test(p)), `caché con contenido de SoundCloud: ${cached}`);
@@ -177,12 +197,60 @@ async function waitPlaying(page, minTime = 0.5) {
     await page.waitForSelector('#sc-login:not([hidden])');
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tmp, 'data', 'sessions.json'), 'utf8')), {});
 
-    step('borra una canción local');
+    step('duración desconocida al importar (iOS): se guarda al reproducir');
+    await page.evaluate(() => new Promise((resolve, reject) => {
+      const r = indexedDB.open('eco');
+      r.onsuccess = () => {
+        const t = r.result.transaction('tracks', 'readwrite');
+        const s = t.objectStore('tracks');
+        s.getAll().onsuccess = (e) => {
+          const tr = e.target.result.find((x) => x.title === 'Viejo V1');
+          s.put({ ...tr, duration: 0 });
+        };
+        t.oncomplete = resolve;
+        t.onerror = reject;
+      };
+    }));
+    await page.reload();
     await page.click('#tab-local');
+    await page.waitForSelector('#local-list li:has-text("Viejo V1")');
+    assert.equal(await page.textContent('#local-list li:has-text("Viejo V1") .dur'), '0:00');
+    await page.click('#local-list li:has-text("Viejo V1") .meta');
+    await waitPlaying(page, 0.2);
+    await page.waitForFunction(() => {
+      const li = [...document.querySelectorAll('#local-list li')].find((x) => x.textContent.includes('Viejo V1'));
+      return li && li.querySelector('.dur').textContent === '0:03';
+    });
+    await page.evaluate(() => document.getElementById('audio').pause());
+
+    step('borrar la canción que suena la detiene');
+    await page.click('#tab-local');
+    await page.click('#local-list li:has-text("Sin Etiquetas") .meta');
+    await waitPlaying(page);
     page.once('dialog', (d) => d.accept());
     await page.click('#local-list li:has-text("Sin Etiquetas") .icon');
     await page.click('#add-options button:has-text("Borrar")');
-    await page.waitForFunction(() => document.querySelectorAll('#local-list li').length === 1);
+    await page.waitForFunction(() => document.querySelectorAll('#local-list li').length === 3);
+    assert.ok(await page.isHidden('#player'), 'el reproductor debería cerrarse');
+    assert.ok(await page.evaluate(() => document.getElementById('audio').paused), 'el audio debería pararse');
+
+    step('publicada como web estática: sin pestaña SoundCloud');
+    const stat = http.createServer((req, res) => {
+      const file = path.join(ROOT, 'public', new URL(req.url, 'http://x').pathname.replace(/\/$/, '/index.html'));
+      fs.readFile(file, (err, data) => {
+        if (err) { res.writeHead(404, { 'content-type': 'text/html' }); return res.end('<h1>404</h1>'); }
+        const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml' };
+        res.writeHead(200, { 'content-type': types[path.extname(file)] || 'application/octet-stream' });
+        res.end(data);
+      });
+    }).listen(STATIC_PORT);
+    const sp = await ctx.newPage();
+    sp.on('pageerror', (e) => errors.push(e.message));
+    await sp.goto(`http://localhost:${STATIC_PORT}/#soundcloud`);
+    await sp.waitForFunction(() => document.querySelector('.tabs').hidden);
+    assert.ok(await sp.isVisible('#view-local'), 'debe abrir la biblioteca local');
+    assert.ok(await sp.isHidden('#view-soundcloud'), 'sin servidor no hay vista de SoundCloud');
+    stat.close();
 
     assert.deepEqual(errors, [], `errores en la página: ${errors.join('\n')}`);
     await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR || tmp, 'eco.png'), fullPage: true });

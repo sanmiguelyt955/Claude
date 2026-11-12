@@ -19,6 +19,20 @@ SoundCloud: el servidor reenvía el audio sin almacenarlo y el service worker ex
 Para escuchar sin datos, importa en **En mi dispositivo** archivos que ya tengas, por ejemplo los
 originales de las pistas que tú subes.
 
+## Solo la biblioteca sin conexión (sin servidor)
+
+`public/` funciona como web estática: sin el servidor, Eco oculta la pestaña SoundCloud y queda solo
+**En mi dispositivo**. Así está publicada en <https://eco-musica.onrender.com> (Render, sitio estático
+desde la carpeta `eco-player/public`, se actualiza solo con cada push a la rama).
+
+En el iPhone: Safari → **Compartir → Añadir a pantalla de inicio**. Ábrela una vez con internet;
+después abre y suena sin datos.
+
+Detalles para iPhone:
+- Lee etiquetas de **MP3** (ID3v2.2/2.3/2.4 e ID3v1) y **M4A** (iTunes: título, artista, álbum y carátula).
+- iOS no siempre da la duración al importar; se completa la primera vez que suena la canción.
+- Abre desde la copia guardada al instante y se actualiza por detrás (los cambios llegan en la siguiente apertura).
+
 ## Puesta en marcha
 
 1. Registra una app en <https://soundcloud.com/you/apps> (SoundCloud permite una por persona).

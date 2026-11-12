@@ -71,12 +71,33 @@ const LocalLibrary = (() => {
     return new Blob([b.subarray(i)], { type: mime });
   }
 
+  // Desunsincronización ID3: quita el 0x00 insertado tras cada 0xFF.
+  function unsync(b) {
+    const out = new Uint8Array(b.length);
+    let n = 0;
+    for (let i = 0; i < b.length; i++) {
+      out[n++] = b[i];
+      if (b[i] === 0xff && b[i + 1] === 0x00) i++;
+    }
+    return out.subarray(0, n);
+  }
+
+  // ID3v1: 128 bytes al final de MP3 antiguos («TAG» + título, artista, álbum).
+  async function readId3v1(file) {
+    if (file.size < 128) return {};
+    const b = new Uint8Array(await file.slice(file.size - 128).arrayBuffer());
+    if (b[0] !== 0x54 || b[1] !== 0x41 || b[2] !== 0x47) return {};
+    const field = (from, len) => new TextDecoder('latin1').decode(b.subarray(from, from + len)).split('\u0000')[0].trim();
+    return { title: field(3, 30), artist: field(33, 30), album: field(63, 30) };
+  }
+
   async function readId3(file) {
     const head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
-    if (head.length < 10 || head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return {};
+    if (head.length < 10 || head[0] !== 0x49 || head[1] !== 0x44 || head[2] !== 0x33) return readId3v1(file);
     const major = head[3];
     const size = syncsafe(head, 6);
-    const b = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
+    let b = new Uint8Array(await file.slice(10, 10 + size).arrayBuffer());
+    if (major < 4 && head[5] & 0x80) b = unsync(b); // en v2.4 se marca por cuadro
     const out = {};
     const v2 = major === 2;
     const ids = v2
@@ -95,12 +116,91 @@ const LocalLibrary = (() => {
       const start = i + (v2 ? 6 : 10);
       if (len <= 0 || start + len > b.length) break;
       const key = ids[id];
-      const data = b.subarray(start, start + len);
+      let data = b.subarray(start, start + len);
+      if (major === 4) {
+        const fmt = b[i + 9];
+        if (fmt & 0x0c) { i = start + len; continue; } // comprimido o cifrado: no lo leemos
+        if (fmt & 0x01) data = data.subarray(4);       // indicador de longitud de datos
+        if (fmt & 0x02) data = unsync(data);
+      } else if (major === 3 && b[i + 9] & 0xc0) {      // v2.3 comprimido o cifrado
+        i = start + len; continue;
+      }
       if (key === 'art' && !out.art) out.art = parseApic(data, v2);
       else if (key && !out[key]) out[key] = decodeText(data);
       i = start + len;
     }
+    if (!out.title || !out.artist) {
+      const v1 = await readId3v1(file);
+      for (const k of ['title', 'artist', 'album']) if (!out[k] && v1[k]) out[k] = v1[k];
+    }
     return out;
+  }
+
+  // ---------- Etiquetas iTunes (M4A/MP4) ----------
+  // Lee moov > udta > meta > ilst sin cargar el audio: solo las cabeceras de cada caja.
+  async function readMp4Tags(file) {
+    const u32 = (v, o) => v.getUint32(o);
+    const boxSize = (v, o) => {
+      const s = u32(v, o);
+      return s === 1 ? Number(v.getBigUint64(o + 8)) : s; // tamaño de 64 bits
+    };
+    // Busca la caja moov entre las de primer nivel sin leer el resto del archivo.
+    let pos = 0, moov = null;
+    while (pos + 8 <= file.size) {
+      const h = new DataView(await file.slice(pos, pos + 16).arrayBuffer());
+      let size = boxSize(h, 0);
+      const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+      if (size === 0) size = file.size - pos;
+      if (size < 8) break;
+      if (type === 'moov') {
+        if (size > 64 * 1024 * 1024) return {};
+        moov = new Uint8Array(await file.slice(pos, pos + size).arrayBuffer());
+        break;
+      }
+      pos += size;
+    }
+    if (!moov) return {};
+    const v = new DataView(moov.buffer, moov.byteOffset, moov.byteLength);
+    const typeAt = (o) => String.fromCharCode(moov[o + 4], moov[o + 5], moov[o + 6], moov[o + 7]);
+    const find = (from, to, type) => {
+      for (let o = from; o + 8 <= to;) {
+        const s = boxSize(v, o);
+        if (s < 8 || o + s > to) return null;
+        if (typeAt(o) === type) return [o, o + s];
+        o += s;
+      }
+      return null;
+    };
+    const udta = find(8, moov.length, 'udta');
+    const meta = udta && find(udta[0] + 8, udta[1], 'meta');
+    const ilst = meta && find(meta[0] + 12, meta[1], 'ilst'); // meta lleva 4 bytes de versión
+    if (!ilst) return {};
+    const keys = { '©nam': 'title', '©ART': 'artist', 'aART': 'artist', '©alb': 'album', covr: 'art' };
+    const out = {};
+    for (let o = ilst[0] + 8; o + 8 <= ilst[1];) {
+      const s = boxSize(v, o);
+      if (s < 8) break;
+      const key = keys[typeAt(o)];
+      const data = key && find(o + 8, o + s, 'data');
+      if (data && !out[key]) {
+        const kind = u32(v, data[0] + 8) & 0xffffff; // 1 = UTF-8, 13 = JPEG, 14 = PNG
+        const body = moov.subarray(data[0] + 16, data[1]);
+        if (key === 'art') out.art = new Blob([body], { type: kind === 14 ? 'image/png' : 'image/jpeg' });
+        else if (kind === 1) out[key] = new TextDecoder('utf-8').decode(body).trim();
+      }
+      o += s;
+    }
+    return out;
+  }
+
+  const MP4_EXT = /\.(m4a|mp4|aac|m4b)$/i;
+  async function readTags(file) {
+    try {
+      return MP4_EXT.test(file.name) || /mp4|m4a/.test(file.type) ? await readMp4Tags(file) : await readId3(file);
+    } catch (e) {
+      console.warn('Etiquetas ilegibles en', file.name, e);
+      return {};
+    }
   }
 
   function fromFilename(name) {
@@ -109,15 +209,27 @@ const LocalLibrary = (() => {
     return m ? { artist: m[1].trim(), title: m[2].trim() } : { title: base };
   }
 
+  // Duración del audio, o null si el navegador no sabe reproducirlo.
+  // iOS a menudo no carga metadatos sin reproducir: tras 3 s se deja en 0 y se completa
+  // la primera vez que suena (ver LocalLibrary.setDuration).
   function probeDuration(blob) {
     return new Promise((resolve) => {
       const a = document.createElement('audio');
       const url = URL.createObjectURL(blob);
-      const done = (d) => { URL.revokeObjectURL(url); a.src = ''; resolve(d); };
+      let settled = false;
+      const done = (d) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        URL.revokeObjectURL(url);
+        a.removeAttribute('src');
+        a.load();
+        resolve(d);
+      };
+      const timer = setTimeout(() => done(0), 3000);
       a.preload = 'metadata';
       a.onloadedmetadata = () => done(Number.isFinite(a.duration) ? a.duration : 0);
       a.onerror = () => done(null);
-      setTimeout(() => done(0), 15000);
       a.src = url;
     });
   }
@@ -143,8 +255,7 @@ const LocalLibrary = (() => {
         if (existing.has(fp)) { skipped++; continue; }
         const duration = await probeDuration(file);
         if (duration === null) { failed++; continue; } // el navegador no sabe reproducirlo
-        let tags = {};
-        try { tags = await readId3(file); } catch { tags = {}; }
+        const tags = await readTags(file);
         const guess = fromFilename(file.name);
         const id = crypto.randomUUID();
         const track = {
@@ -177,6 +288,14 @@ const LocalLibrary = (() => {
   }
 
   async function allTracks() { return tx(['tracks'], 'readonly', (s) => req2p(s.getAll())); }
+
+  // Guarda la duración real cuando se supo al reproducir (iOS no la da al importar).
+  async function setDuration(id, duration) {
+    return tx(['tracks'], 'readwrite', async (s) => {
+      const t = await req2p(s.get(id));
+      if (t && !(t.duration > 0)) s.put({ ...t, duration });
+    });
+  }
   async function getFile(id) { return tx(['files'], 'readonly', (s) => req2p(s.get(id))); }
   async function getArt(id) { return tx(['art'], 'readonly', (s) => req2p(s.get(id))); }
 
@@ -210,7 +329,7 @@ const LocalLibrary = (() => {
   }
 
   return {
-    importFiles, allTracks, getFile, getArt, removeTrack,
-    allLists, saveList, deleteList, createList, storageInfo, readId3, fromFilename,
+    importFiles, allTracks, getFile, getArt, removeTrack, setDuration,
+    allLists, saveList, deleteList, createList, storageInfo, readTags, fromFilename,
   };
 })();
