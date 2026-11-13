@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proclama · Escenario</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif; overflow: hidden; }
+  body { display: grid; grid-template-rows: auto 1fr auto auto; height: 100dvh; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 2vw; padding: 1.5vh 2.5vw; background: #111; font-size: 3.2vh; }
+  #title { color: #9ec5ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #clock { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 4.5vh; }
+  #count { color: #ffd166; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 4.5vh; }
+  #cur { padding: 2vh 3vw; font-weight: 700; font-size: 8.5vh; line-height: 1.2; white-space: pre-wrap; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; overflow: hidden; }
+  #cur.off { opacity: .35; }
+  #next { padding: 1.5vh 3vw 2vh; font-size: 4.6vh; line-height: 1.2; color: #8fd694; white-space: pre-wrap; border-top: 2px solid #333; max-height: 26vh; overflow: hidden; }
+  #next:empty { display: none; }
+  #next::before { content: "SIGUIENTE  "; font-size: 2vh; letter-spacing: .15em; color: #777; display: block; margin-bottom: .6vh; }
+  #msg { background: #c8102e; font-weight: 700; font-size: 6vh; padding: 1.5vh 3vw; text-align: center; }
+  #msg:empty { display: none; }
+  .tag { font-size: 2.6vh; font-weight: 400; background: #333; padding: .3vh 1vw; border-radius: 99px; margin-bottom: 1.2vh; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header><span id="title"></span><span><span id="count"></span> <span id="clock"></span></span></header>
+<div id="cur"></div>
+<div id="next"></div>
+<div id="msg"></div>
+<script type="module">
+import { createStore } from './js/store.js';
+import { fmtClock } from './shared/model.js';
+const $ = (id) => document.getElementById(id);
+const store = await createStore('stage');
+function draw() {
+  const l = store.live, p = l.pres, s = p?.slides[l.index], n = p?.slides[l.index + 1];
+  $('title').textContent = p ? `${p.title}  ·  ${l.index + 1}/${p.slides.length}` : 'Sin presentación';
+  $('cur').textContent = '';
+  if (s) {
+    if (s.label) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = s.label; $('cur').append(t); }
+    $('cur').append(document.createTextNode(s.media ? `[${s.label}]` : s.text));
+  }
+  $('cur').classList.toggle('off', !!(l.black || l.clear || l.logo.on));
+  $('next').textContent = n ? (n.media ? `[${n.label}]` : n.text) : '';
+  $('msg').textContent = l.stageMsg || '';
+}
+function tick() {
+  $('clock').textContent = new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const cd = store.live.countdown;
+  $('count').textContent = cd.on ? '⏱ ' + fmtClock(cd.endAt - Date.now()) : '';
+}
+store.on((what) => { if (what === 'reload') setTimeout(() => location.reload(), 1500); else draw(); }); draw(); tick(); setInterval(tick, 500);
+</script>
+</body>
+</html>

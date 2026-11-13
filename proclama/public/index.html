@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1117">
+<title>Proclama</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/screen.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body data-panel="library">
+<header class="top">
+  <img src="icon.svg" alt="" width="28" height="28">
+  <strong class="brand">Proclama</strong>
+  <span id="status" class="chip"></span>
+  <span class="spacer"></span>
+  <button id="btnUpdate" class="update" data-icon="down" hidden><span id="updLabel">Actualizar</span></button>
+  <button id="btnProjector" class="projector" data-icon="monitor"><span id="projLabel">Abrir proyector</span></button>
+  <button id="btnOutputs" class="quiet" data-icon="broadcast" title="Escenario, transmisión (OBS) y control remoto"><span>Más pantallas</span></button>
+  <button id="btnImport" class="quiet" data-icon="upload" title="Importar canciones, Biblias y copias de seguridad"><span>Importar</span></button>
+  <button id="btnSettings" class="quiet" data-icon="settings" title="Ajustes"><span>Ajustes</span></button>
+</header>
+
+<main>
+  <section class="panel" id="pSchedule" aria-label="Programa">
+    <div class="phead">
+      <span class="pico" data-icon="list"></span>
+      <div class="ptext"><span class="ptitle">Programa</span><input id="schedName" class="ghost" aria-label="Nombre del programa" title="Nombre del programa (clic para cambiarlo)"></div>
+      <button id="btnAddText" class="sm" data-icon="plus" data-icon-size="14" title="Añadir un anuncio o texto libre">Texto</button>
+    </div>
+    <div id="schedList" class="list grow"></div>
+    <div class="pfoot slim"><span class="muted">Arrastra para ordenar</span><span class="spacer"></span><button id="btnClearSched" class="sm quiet danger">Vaciar</button></div>
+  </section>
+
+  <section class="panel" id="pPreview" aria-label="Vista previa">
+    <div class="phead">
+      <span class="pico pv" data-icon="eye"></span>
+      <div class="ptext"><span class="ptitle">Vista previa</span><span id="pvTitle" class="psub ell">Revisa antes de proyectar</span></div>
+      <select id="pvTheme" title="Tema (colores y letra) de esta presentación" aria-label="Tema"></select>
+    </div>
+    <div class="monitor" id="pvMonitor"></div>
+    <div id="pvSlides" class="slides grow"></div>
+    <div class="pfoot">
+      <button id="pvAdd" data-icon="plus" title="Guardarlo en el programa del culto">Al programa</button>
+      <button id="pvLive" class="primary big" title="Mostrarlo en el proyector (Enter)">Proyectar <kbd>Enter</kbd></button>
+    </div>
+  </section>
+
+  <section class="panel" id="pLive" aria-label="En pantalla">
+    <div class="phead">
+      <span class="pico lv" data-icon="monitor"></span>
+      <div class="ptext"><span class="ptitle live">En pantalla</span><span id="lvTitle" class="psub ell"></span></div>
+      <button id="lvClose" class="sm quiet" data-icon="x" data-icon-size="14" title="Quitar esta presentación de la pantalla">Quitar</button>
+    </div>
+    <div class="monitor" id="lvMonitor"><div id="lvState" class="mstate" hidden></div></div>
+    <div id="lvSlides" class="slides grow"></div>
+    <div class="pfoot navrow">
+      <button id="lvPrev" data-icon="left" title="Diapositiva anterior (←)">Anterior</button>
+      <button id="lvNext" class="primary big" title="Diapositiva siguiente (→ o espacio)">Siguiente <kbd>→</kbd></button>
+    </div>
+    <div class="pfoot toggles">
+      <button id="lvBlack" class="toggle" data-icon="black" title="Apaga la imagen: pantalla en negro (B)">Negro <kbd>B</kbd></button>
+      <button id="lvClear" class="toggle" data-icon="eyeoff" title="Oculta la letra y deja el fondo (C)">Ocultar texto <kbd>C</kbd></button>
+      <button id="lvLogo" class="toggle" data-icon="logo" title="Muestra el logo de la iglesia (L)">Logo <kbd>L</kbd></button>
+    </div>
+    <details id="tools" class="tools">
+      <summary><span data-icon="more" data-icon-size="16"></span>Alerta, cuenta regresiva y mensaje al escenario<span id="toolsDot" class="dot" hidden></span></summary>
+      <div class="toolgrid">
+        <label class="field"><span>Alerta en pantalla</span><input id="alertText" placeholder="Ej.: Mover el auto placas ABC-123"></label>
+        <button id="alertBtn" class="toggle">Mostrar</button>
+        <label class="field"><span>Cuenta (min)</span><input id="cdMin" type="number" min="0" step="0.5" value="5"></label>
+        <button id="cdBtn" class="toggle">Iniciar</button>
+        <label class="field wide"><span>Mensaje a los músicos</span><input id="stageText" placeholder="Ej.: Repetir el coro"></label>
+      </div>
+    </details>
+  </section>
+
+  <section class="panel" id="pLibrary" aria-label="Biblioteca">
+    <div class="tabs" role="tablist">
+      <button data-tab="songs" role="tab" data-icon="music">Canciones</button>
+      <button data-tab="bible" role="tab" data-icon="book">Biblia</button>
+      <button data-tab="media" role="tab" data-icon="image">Imágenes y videos</button>
+      <button data-tab="themes" role="tab" data-icon="palette">Temas</button>
+    </div>
+    <div id="libBar" class="phead bar"></div>
+    <div id="libBody" class="grow"></div>
+  </section>
+</main>
+
+<nav class="mobnav" aria-label="Secciones">
+  <button data-panel="library" data-icon="search" data-icon-size="22"><span>Buscar</span></button>
+  <button data-panel="schedule" data-icon="list" data-icon-size="22"><span>Programa</span></button>
+  <button data-panel="preview" data-icon="eye" data-icon-size="22"><span>Vista previa</span></button>
+  <button data-panel="live" data-icon="monitor" data-icon-size="22"><span>En pantalla</span></button>
+</nav>
+
+<dialog id="dlg"></dialog>
+<div id="toast" role="status"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

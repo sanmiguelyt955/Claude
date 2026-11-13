@@ -1,0 +1,45 @@
+/* Lienzo lógico 1920x1080 escalado por JS. */
+.pscreen { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center; overflow: hidden; background: #000; color: #fff; }
+.pscreen.lower { background: transparent; }
+.pscreen > div { position: absolute; inset: 0; }
+.ps-bg video, .ps-media video, .ps-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ps-media video, .ps-media img { object-fit: contain; background: #000; }
+.ps-media:empty { display: none; }
+.ps-text { display: flex; flex-direction: column; box-sizing: border-box; opacity: 0; transition: opacity 350ms ease; white-space: pre-wrap; overflow-wrap: break-word; paint-order: stroke fill; }
+.ps-text.on { opacity: 1; }
+.ps-inner { max-width: 100%; }
+.ps-inner sup { font-size: .5em; opacity: .75; margin-right: .25em; font-weight: 700; vertical-align: super; line-height: 0; }
+.pscreen .ps-footer { inset: auto 0 28px 0; text-align: center; font-size: 30px; opacity: 0; transition: opacity 350ms; text-shadow: 0 2px 6px rgba(0,0,0,.8); padding: 0 80px; }
+.pscreen .ps-footer.on { opacity: .8; }
+.pscreen .ps-count { inset: 36px 48px auto auto; display: none; flex-direction: column; align-items: flex-end; font-family: system-ui, sans-serif; text-shadow: 0 3px 10px rgba(0,0,0,.8); }
+.pscreen .ps-count.on { display: flex; }
+.ps-count b { font-size: 84px; font-variant-numeric: tabular-nums; line-height: 1; }
+.ps-count small { font-size: 34px; opacity: .85; }
+.pscreen .ps-count.big { inset: 0; align-items: center; justify-content: center; }
+.ps-count.big b { font-size: 330px; }
+.ps-count.big small { font-size: 72px; margin-bottom: 24px; }
+.pscreen .ps-alert { inset: auto 0 0 0; height: 96px; background: #c8102e; display: none; overflow: hidden; white-space: nowrap; font: 700 54px/96px system-ui, sans-serif; }
+.pscreen .ps-alert.on { display: block; }
+.ps-alert-in { display: inline-block; padding-left: 100%; }
+@keyframes ps-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+.pscreen .ps-logo, .pscreen .ps-black { display: none; background: #000; align-items: center; justify-content: center; }
+.pscreen .ps-logo.on { display: flex; }
+.pscreen .ps-black.on { display: block; }
+.ps-logo img { max-width: 70%; max-height: 70%; object-fit: contain; }
+.ps-logo span { font: 700 120px system-ui, sans-serif; letter-spacing: .02em; text-align: center; padding: 0 80px; }
+
+/* Tercio inferior (OBS / transmisión): fondo transparente y texto en una banda abajo. */
+.pscreen.lower .ps-bg, .pscreen.lower .ps-dim, .pscreen.lower .ps-footer, .pscreen.lower .ps-logo, .pscreen.lower .ps-black, .pscreen.lower .ps-media { display: none !important; }
+.pscreen.lower .ps-text { inset: auto 4% 5% 4%; height: 24%; background: rgba(0,0,0,.62); border-radius: 18px; }
+.pscreen.lower .ps-alert { inset: 0 0 auto 0; }
+.pscreen.lower .ps-count.big { inset: 36px 48px auto auto; align-items: flex-end; justify-content: flex-start; }
+.pscreen.lower .ps-count.big b { font-size: 84px; }
+.pscreen.lower .ps-count.big small { font-size: 34px; margin: 0; }
+
+.fullpage { margin: 0; height: 100vh; height: 100dvh; background: #000; overflow: hidden; position: relative; cursor: none; }
+.fullpage.transparent { background: transparent; }
+.fullhint { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; font: 14px system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.6); border: 1px solid rgba(255,255,255,.3); padding: 8px 14px; border-radius: 999px; cursor: pointer; transition: opacity .4s; }
+.fullhint.hide { opacity: 0; pointer-events: none; }
+.pscreen.lower .ps-count, .pscreen.lower .ps-count.big { top: 120px; }
+.pscreen { contain: strict; }
+.ps-alert.still .ps-alert-in { padding-left: 40px; }
