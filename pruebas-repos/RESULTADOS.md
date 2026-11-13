@@ -75,3 +75,18 @@ Entorno: contenedor Linux, Python 3.13, Node 22 (Node 24 vía `npx node@24`), si
 - @astronaut_1216: DS-Bot (github.com/Fei2411/DS-Bot), plugin para DeepSeek Harness; promociona además un "中转站" (revendedor de API) y un descuento: precaución.
 - @mxvdl: desglose de un shader de pinceladas en Three.js hecho con Fable 5.2 (vídeo).
 - @robiartec: describe free-claude-code; coincide con lo que probamos aquí (proxy, NVIDIA NIM gratis, panel admin, modelo por tier).
+
+## Repos de vídeo de las listas de X — pruebas reales (2026-11-13)
+| Repo | Resultado |
+|---|---|
+| remotion-dev/remotion | `npx create-video --hello-world` + `npx remotion render HelloWorld --browser-executable=/opt/pw-browsers/chromium`: MP4 1080p de 5 s con título "Hola desde Remotion". `artefactos/remotion-hola.mp4`. Gratis para equipos de hasta 3 personas; empresas más grandes pagan licencia. |
+| remotion-dev/skills | 13 skills oficiales (best-practices, captions, create, render, maps, saas, studio...). Instalar: `npx skills add remotion-dev/skills`. |
+| OpenMontage (calesthio y OpenMontageInc son el mismo repo, mismo commit) | 1515 tests de contrato pasan. 164 herramientas: 37 disponibles sin claves (subtítulos, silence_cutter, color_grade, auto_reframe, video_stitch, hyperframes_compose, threejs_world...), 125 piden claves (Kling, fal, Pexels...). `render_demo.py focusflow-pitch` renderizó una demo de 22 s sin claves: `artefactos/openmontage-focusflow-pitch.mp4`. |
+| Vincentwei1021/video-shotcraft | Skill con 124 recetas de planos para promos de producto en Remotion (SKILL.md en chino). 23 tests pasan. |
+| SYSTRAN/faster-whisper | Transcribió un audio en español (voz sintética espeak-ng) con tiempos por palabra en 4,1 s en CPU (modelo `small`, int8). **Fallo real**: la versión 1.2.1 de PyPI falla con PyAV 19 (`metadata_errors`); arreglado en `main` del repo. Instalar desde GitHub o fijar `av<19`. Script: `artefactos/faster-whisper-transcribir.py`. |
+| Vanilagy/mediabunny | En Node leyó el MP4 (avc 1920x1080, 30 fps, 5 s) y lo recortó a 2 s sin recodificar. `artefactos/mediabunny-recorte.mjs`. |
+| wheresryan22/anatomy | Skill de figuras isométricas "despiezadas". 265/270 tests pasan; los 5 fallos solo piden instalar `react`. |
+| ahujasid/mcp-for-blender | 671 tests pasan, 1 falla (`test_addon_status_always_answers`). Uso real: addon en Blender con GUI + `claude mcp add blender uvx mcp-for-blender`. |
+| greensock/gsap-skills | 8 skills (core, timeline, scrolltrigger, plugins, react, performance...). Solo documentación para el agente. |
+| Nutlope/hallmark | Skill de diseño "anti-IA" (50 temas). Su eval necesita claves de modelos; no se ejecutó. |
+| No probados | three.js, Blender, FFmpeg (proyectos grandes y conocidos; FFmpeg ya se usa aquí), ComfyUI (pesado, mejor con GPU), anime.js (librería JS estándar). |
