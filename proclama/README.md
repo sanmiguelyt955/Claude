@@ -7,7 +7,27 @@ con código propio y sin dependencias.
 
 ![Panel del operador](docs/01-operador.png)
 
-## Cómo usarlo
+## Instalar en Windows (lo más fácil)
+
+Descarga `Proclama-Setup-<versión>.exe` de la carpeta [`instaladores/`](../instaladores) y ejecútalo. No pide permisos de
+administrador ni necesita instalar Node: deja un icono **Proclama** en el escritorio y en el menú Inicio.
+
+- Requiere Windows 10 u 11 de 64 bits.
+- Como el instalador no está firmado, Windows puede mostrar «Windows protegió su PC»: pulsa **Más información → Ejecutar
+  de todas formas**.
+- La primera vez, el Firewall de Windows pregunta si permite el acceso a la red: acéptalo en **redes privadas** para poder
+  usar el control remoto desde el celular y las demás pantallas.
+- Se abre en su propia ventana (usa Edge o Chrome, sin pestañas) y se cierra sola poco después de cerrar la última ventana.
+- Tus canciones, Biblias, medios y ajustes quedan en `%APPDATA%\Proclama` y se conservan al actualizar, reinstalar o
+  desinstalar. El registro de errores está ahí mismo, en `proclama.log`.
+
+Para generar el instalador: `node tools/build-installer.mjs` (necesita `makensis`; en Linux, `apt install nsis`).
+
+## Cómo usarlo (sin instalador)
+
+En macOS o Linux, o para desarrollar, con Node instalado también puedes abrirla como app de escritorio con
+`node launcher.mjs`, o solo el servidor como se explica aquí.
+
 
 Necesitas [Node.js](https://nodejs.org) 22.5 o más nuevo. No hay nada que instalar.
 
@@ -132,6 +152,7 @@ actualizaciones). Mientras no publiques una versión con número mayor, nadie ve
 
 ```
 server.js            servidor (HTTP, SSE, API, medios) — sin dependencias
+launcher.mjs         arranque como app de escritorio (ventana propia, datos en la carpeta del usuario)
 lib/easyworship.js   lector de la base de datos de EasyWorship (node:sqlite)
 public/shared/       lógica común a navegador y servidor: modelo, Biblia, importadores
 public/js/           operador (app.js), motor de pantalla (render.js), sincronización (store.js)
@@ -149,4 +170,4 @@ Ningún código copiado; sirvieron para entender formatos y funciones:
 ## Pendiente
 
 Guardar varios programas, fondos de video en bucle por canción, editor de diapositivas con varias cajas de texto,
-disparadores/scripts al estilo Holyrics, acordes para músicos, empaquetado como app de escritorio (Electron/Tauri).
+disparadores/scripts al estilo Holyrics, acordes para músicos, instalador para macOS.

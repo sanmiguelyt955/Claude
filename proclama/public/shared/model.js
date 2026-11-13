@@ -1,7 +1,7 @@
 // Modelo de datos y lógica compartida entre el navegador y el servidor (sin dependencias).
 
 export const APP_NAME = 'Proclama';
-export const VERSION = '0.3.0';
+export const VERSION = '0.3.1';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 

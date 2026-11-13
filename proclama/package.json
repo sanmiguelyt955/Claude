@@ -1,6 +1,6 @@
 {
   "name": "proclama",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Software de presentación para iglesias: letras, Biblia, medios, programa, escenario, OBS y control remoto.",
   "type": "module",
   "private": true,

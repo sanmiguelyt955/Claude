@@ -200,6 +200,12 @@ async function api(req, res, url) {
   if (p === '/api/info') return send(res, 200, { name: APP_NAME, version: VERSION, port: PORT, urls: lanUrls(), token: !!TOKEN });
   if (p === '/api/state') return send(res, 200, { db, live });
 
+  if (p === '/api/quit' && req.method === 'POST') { // lo usa el instalador para cerrar la app antes de reemplazarla
+    if (!isLocal(req)) return send(res, 403, { error: 'Solo desde esta computadora' });
+    send(res, 200, { ok: true });
+    return setTimeout(quit, 200);
+  }
+
   if (p === '/api/update' && req.method === 'GET') {
     if (!updateInfo || url.searchParams.has('force') || Date.now() - updateAt > 10 * 60e3) {
       updateInfo = await checkUpdate({ url: UPDATE_URL, current: VERSION }); updateAt = Date.now();
@@ -316,12 +322,28 @@ async function api(req, res, url) {
   return send(res, 404, { error: 'No encontrado' });
 }
 
+function quit() {
+  if (saveTimer) { clearTimeout(saveTimer); try { fs.writeFileSync(DB_FILE, JSON.stringify(db)); } catch { /* se conserva el archivo anterior */ } }
+  process.exit(0);
+}
+
+// Como app de escritorio no hay consola que cerrar: el servidor termina solo cuando lleva un rato sin ninguna
+// pantalla conectada (operador, proyector, escenario o control remoto).
+if (process.env.PROCLAMA_AUTO_EXIT === '1') {
+  let emptySince = Date.now(), everConnected = false;
+  setInterval(() => {
+    if (clients.size) { everConnected = true; emptySince = Date.now(); return; }
+    if (updating) { emptySince = Date.now(); return; }
+    if (Date.now() - emptySince > (everConnected ? 40e3 : 180e3)) quit();
+  }, 5000).unref();
+}
+
 /** Vuelve a arrancar el servidor con el código nuevo (mismo puerto y opciones). */
 function restart() {
   if (saveTimer) { clearTimeout(saveTimer); try { fs.writeFileSync(DB_FILE, JSON.stringify(db)); } catch { /* se conserva el archivo anterior */ } }
   for (const res of clients) res.end();
   server.close(() => {
-    spawn(process.execPath, process.argv.slice(1), { cwd: process.cwd(), env: process.env, detached: true, stdio: 'ignore' }).unref();
+    spawn(process.execPath, process.argv.slice(1), { cwd: process.cwd(), env: { ...process.env, PROCLAMA_RESTARTED: '1' }, detached: true, stdio: 'ignore' }).unref();
     process.exit(0);
   });
   server.closeAllConnections?.();
