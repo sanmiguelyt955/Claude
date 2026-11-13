@@ -1,17 +1,19 @@
 {
  "name": "Proclama",
- "version": "0.3.0",
- "date": "2026-11-10",
+ "version": "0.3.1",
+ "date": "2026-11-13",
  "notes": [
-  "Importar Biblias desde PDF",
-  "Nuevo diseño, más claro e intuitivo",
-  "Modo de bajo consumo para equipos modestos",
-  "Actualizaciones desde la propia app"
+  "Instalador para Windows: icono en el escritorio y ventana propia",
+  "Se cierra sola al cerrar la última ventana"
  ],
  "files": {
   ".gitignore": {
    "sha256": "8ad7c156211aead77386755a3eb0d9d13f266ada65389632b24828200fd616c9",
    "size": 20
+  },
+  "launcher.mjs": {
+   "sha256": "155ed0bd776bbfe44442f4fa7f819e1c525026256b590c6b484ff282acd75dd5",
+   "size": 4268
   },
   "lib/easyworship.js": {
    "sha256": "7a2386bdb6359db669c1ea12bc4e93f6b074a264ea65b2590a4bdc370dcfa644",
@@ -22,7 +24,7 @@
    "size": 5067
   },
   "package.json": {
-   "sha256": "c3358e712c655a0e166fedd518ee5de51dd049e8aabaf36f2164bc20b1c7f971",
+   "sha256": "9a3576509299d3d0da30fe2d8478e789d00189ce83b07b4fcf559799ee892882",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -106,7 +108,7 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "a0418b0e684580747d3887bf510472557125c151df4659cb737d17e696867e43",
+   "sha256": "39b13140e4a47b52906a82134231b923c346d0ceadf34d61300cfee92f4cf796",
    "size": 10765
   },
   "public/stage.html": {
@@ -130,20 +132,36 @@
    "size": 1417586
   },
   "README.md": {
-   "sha256": "30ec502cc371d6f4168d70d0ad1cb13da20fb19ef7b0f5a7f6f7e94c23fd479b",
-   "size": 8525
+   "sha256": "c01ff5c45313d823ca9d993204e3a1b83ef7665044df46c4fa9b76cbd2a9ed5c",
+   "size": 9875
   },
   "server.js": {
-   "sha256": "7292473c3c3f032c91f807e7b0bf41c6f2b2900c8773d978ed85f09b60cb9204",
-   "size": 18832
+   "sha256": "18540396e4d9e7907d36e5a6e223039d3f51c47a099b5b72011afa531459e1df",
+   "size": 19870
   },
   "tools/build-bibles.mjs": {
    "sha256": "46ddf160f6d35b7c7a9c46a65184c2de6461d76846c1aae488c0bb7f45e721a9",
    "size": 1289
   },
+  "tools/build-installer.mjs": {
+   "sha256": "df3a5df053188ccfaefe7582a0669df1a54e7a50a8a0ed9ae2e55ca4c8a16cf2",
+   "size": 3540
+  },
   "tools/import-bible.mjs": {
    "sha256": "32102475ba87c0fe6ac774caf70670b172070e4bd78fdf357ce1b3524fa552cd",
    "size": 1169
+  },
+  "tools/installer/icon.ico": {
+   "sha256": "2f575307682f0799f766d5da2516172982fde2328635a5fd5de7279bcfc538ed",
+   "size": 41314
+  },
+  "tools/installer/installer.nsi": {
+   "sha256": "a8b15a5545f93bb2afd6d875d54700c59f100e129817b45679ccd2c90d0bc9df",
+   "size": 3615
+  },
+  "tools/installer/launcher.nsi": {
+   "sha256": "7ee83b7eacf3b6f0b7687b9908460caa56c5f9c6535b47170af66ca84b6b2217",
+   "size": 547
   },
   "tools/make-release.mjs": {
    "sha256": "f42ca04cf214a3786d601acd48a153a28632094290ef72f5e25c0a29ede8d0b3",
