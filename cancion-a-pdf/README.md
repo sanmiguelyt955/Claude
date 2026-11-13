@@ -49,6 +49,22 @@ python app_escritorio.py
 
 Luego: elige el video, escribe el título, opcionalmente pega la letra, y pulsa **Convertir**.
 
+## Usar desde el celular
+
+**En casa (misma red Wi-Fi):** en el computador ejecuta
+`CANCION_HOST=0.0.0.0 python app_web.py` (en Windows: `set CANCION_HOST=0.0.0.0` y luego `python app_web.py`)
+y abre en el celular `http://IP_DEL_COMPUTADOR:5057`. Desde el menú del navegador puedes "Añadir a pantalla de inicio".
+
+**En la nube:** usa el `Dockerfile` incluido (trae ffmpeg y los modelos ya descargados). Define siempre
+`CANCION_CLAVE` con una contraseña para que nadie más pueda usarla. El navegador la pide una vez.
+
+Memoria necesaria (medida): pico de ~1,4 GB con el modelo `small` y ~600 MB con `base`.
+**No cabe en servidores de 512 MB** (plan gratuito o Starter de Render): el proceso muere por falta de memoria.
+Hugging Face Spaces (CPU gratuito, 16 GB) sí tiene espacio de sobra.
+
+La conversión corre en segundo plano y la página de estado se actualiza sola, así que se puede bloquear
+el celular mientras espera.
+
 ## Pruebas
 
 ```bash

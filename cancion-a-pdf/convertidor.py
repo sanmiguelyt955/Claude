@@ -65,11 +65,38 @@ def _cargar_modelo(nombre: str):
         return _modelo_cache[nombre]
 
 
+FRECUENCIA_WHISPER = 16000
+
+
+def cargar_audio(ruta: Path):
+    """Decodifica el audio con ffmpeg a mono 16 kHz en float32 (lo que espera Whisper).
+
+    Se hace con ffmpeg en vez de dejarlo a faster-whisper, que usa PyAV y se rompe
+    cuando PyAV publica versiones incompatibles.
+    """
+    import numpy as np
+
+    verificar_ffmpeg()
+    cmd = ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(ruta),
+           "-f", "f32le", "-ac", "1", "-ar", str(FRECUENCIA_WHISPER), "-"]
+    resultado = subprocess.run(cmd, capture_output=True)
+    if resultado.returncode != 0:
+        raise ErrorConversion(
+            "No se pudo leer el audio. "
+            f"Detalle: {resultado.stderr.decode(errors='replace').strip()[:300]}"
+        )
+    audio = np.frombuffer(resultado.stdout, dtype=np.float32)
+    if audio.size == 0:
+        raise ErrorConversion("El archivo no tiene audio.")
+    return audio
+
+
 def transcribir(mp3: Path, modelo: str = "small", idioma: str | None = None) -> list[Segmento]:
     """Convierte el audio en texto por segmentos de tiempo."""
+    audio = cargar_audio(mp3)
     whisper = _cargar_modelo(modelo)
     segmentos, _info = whisper.transcribe(
-        str(mp3),
+        audio,
         language=idioma or None,
         vad_filter=True,  # ignora silencios y música sin voz
         beam_size=5,

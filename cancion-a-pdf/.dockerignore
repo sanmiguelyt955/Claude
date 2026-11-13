@@ -1,0 +1,6 @@
+.venv/
+salidas/
+__pycache__/
+tests/
+*.md
+app_escritorio.py

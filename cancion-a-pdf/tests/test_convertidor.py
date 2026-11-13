@@ -40,3 +40,22 @@ def test_pdf_vacio_falla(tmp_path):
 def test_modelo_invalido():
     with pytest.raises(c.ErrorConversion):
         c._cargar_modelo("gigante")
+
+
+@requiere_ffmpeg
+def test_cargar_audio_mono_16k(tmp_path):
+    wav = tmp_path / "a.wav"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "sine=frequency=440:duration=1", "-ac", "2", "-ar", "44100", str(wav)], check=True)
+    audio = c.cargar_audio(wav)
+    assert audio.dtype.name == "float32"
+    assert abs(audio.size - c.FRECUENCIA_WHISPER) < 200  # 1 segundo a 16 kHz
+
+
+@requiere_ffmpeg
+def test_video_sin_audio_da_error_claro(tmp_path):
+    video = tmp_path / "mudo.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "testsrc=duration=1:size=160x120:rate=5", "-c:v", "libx264", str(video)], check=True)
+    with pytest.raises(c.ErrorConversion):
+        c.extraer_mp3(video, tmp_path / "x.mp3")

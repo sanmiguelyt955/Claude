@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{% if trabajo and trabajo.estado in ['en_cola', 'procesando'] %}<meta http-equiv="refresh" content="5">{% endif %}
 <title>Canción → MP3 → PDF</title>
 <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
 <meta name="theme-color" content="#6b4eff">
@@ -27,6 +28,13 @@
   .ok { padding:12px; border-radius:8px; background:#e3f7e8; color:#1e5e2c; }
   a.enlace { display:inline-block; margin:8px 12px 0 0; color:var(--acento); font-weight:600; }
   small { opacity:.75; }
+  button:disabled { opacity:.6; cursor:wait; }
+  input[type=file] { width:100%; font-size:16px; }
+  .casilla { font-weight:400; display:flex; gap:8px; align-items:center; }
+  .espera { display:flex; gap:14px; align-items:center; padding:12px; border:1px solid var(--borde); border-radius:8px; }
+  .giro { flex:none; width:28px; height:28px; border-radius:50%; border:3px solid var(--borde); border-top-color:var(--acento); animation:giro 1s linear infinite; }
+  @keyframes giro { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .giro { animation:none; } }
 </style>
 </head>
 <body>
@@ -34,36 +42,56 @@
   <h1>Canción → MP3 → PDF</h1>
   <div class="tarjeta">
     {% if error %}<div class="aviso">{{ error }}</div>{% endif %}
-    {% if resultado %}
-      <div class="ok">Listo: <strong>{{ resultado.titulo }}</strong></div>
-      <a class="enlace" href="{{ resultado.pdf }}">Descargar PDF</a>
-      <a class="enlace" href="{{ resultado.mp3 }}">Descargar MP3</a>
-      <hr style="border:0;border-top:1px solid var(--borde);margin:18px 0">
-    {% endif %}
-    <form action="/convertir" method="post" enctype="multipart/form-data">
+    {% if trabajo %}
+      {% if trabajo.estado == 'listo' %}
+        <div class="ok">Listo: <strong>{{ trabajo.titulo }}</strong></div>
+        <a class="enlace" href="{{ trabajo.url_pdf }}">Descargar PDF</a>
+        <a class="enlace" href="{{ trabajo.url_mp3 }}">Descargar MP3</a>
+        <p><small>Los archivos se borran del servidor a las 24 horas.</small></p>
+      {% elif trabajo.estado == 'error' %}
+        <div class="aviso">{{ trabajo.mensaje }}</div>
+      {% else %}
+        <div class="espera">
+          <div class="giro" aria-hidden="true"></div>
+          <div>
+            <strong>{{ 'En cola…' if trabajo.estado == 'en_cola' else 'Convirtiendo…' }}</strong> {{ trabajo.titulo }}<br>
+            <small>Puede tardar varios minutos. Esta página se actualiza sola; puedes bloquear el celular y volver.</small>
+          </div>
+        </div>
+      {% endif %}
+      <a class="enlace" href="{{ url_for('inicio') }}">Convertir otra canción</a>
+    {% else %}
+    <form action="{{ url_for('convertir') }}" method="post" enctype="multipart/form-data" id="formulario">
       <label for="video">Video o audio</label>
       <input type="file" id="video" name="video" accept="video/*,audio/*" required>
 
       <label for="titulo">Título de la canción</label>
-      <input type="text" id="titulo" name="titulo" placeholder="Ej. Mi canción favorita">
+      <input type="text" id="titulo" name="titulo" maxlength="120" placeholder="Ej. Mi canción favorita">
 
       <label for="letra">Letra (opcional)</label>
       <textarea id="letra" name="letra" placeholder="Si pegas la letra aquí, se usa tal cual. Si lo dejas vacío, la app la transcribe del audio."></textarea>
-      <small>Pegar la letra es más preciso que la transcripción automática.</small>
+      <small>Pegar la letra es más preciso y mucho más rápido que la transcripción automática.</small>
 
+      {% set nombres = {'tiny': 'Rápida', 'base': 'Normal', 'small': 'Buena', 'medium': 'Máxima (lenta)'} %}
       <label for="modelo">Calidad de transcripción</label>
       <select id="modelo" name="modelo">
-        {% for m in modelos %}<option value="{{ m }}" {% if m == 'small' %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        {% for m in modelos %}<option value="{{ m }}" {% if m == modelo_defecto %}selected{% endif %}>{{ nombres.get(m, m) }}</option>{% endfor %}
       </select>
-      <small>"small" equilibra velocidad y precisión. "medium" es más preciso pero más lento.</small>
 
       <label for="idioma">Idioma de la letra (opcional)</label>
-      <input type="text" id="idioma" name="idioma" placeholder="es, en, pt… (vacío = automático)">
+      <input type="text" id="idioma" name="idioma" maxlength="10" autocapitalize="off" placeholder="es, en, pt… (vacío = automático)">
 
-      <label><input type="checkbox" name="con_tiempos"> Incluir marcas de tiempo</label>
+      <label class="casilla"><input type="checkbox" name="con_tiempos"> Incluir marcas de tiempo</label>
 
-      <button type="submit">Convertir</button>
+      <button type="submit" id="enviar">Convertir</button>
     </form>
+    <script>
+      document.getElementById('formulario').addEventListener('submit', function () {
+        var b = document.getElementById('enviar');
+        b.disabled = true; b.textContent = 'Subiendo… no cierres la página';
+      });
+    </script>
+    {% endif %}
   </div>
 </main>
 </body>
