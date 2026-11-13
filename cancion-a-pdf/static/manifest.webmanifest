@@ -1,0 +1,9 @@
+{
+  "name": "Canción → MP3 → PDF",
+  "short_name": "Canción PDF",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f2",
+  "theme_color": "#6b4eff",
+  "icons": [{ "src": "/static/icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

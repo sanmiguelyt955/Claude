@@ -1,6 +1,7 @@
 """Versión web: sube un video, descarga el MP3 y el PDF con la letra."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
@@ -96,4 +97,8 @@ def descargar(id_trabajo: str, archivo: str):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5057, debug=False)
+    # Por defecto solo es accesible desde este equipo.
+    # Para usarla desde el celular en la misma red Wi-Fi: CANCION_HOST=0.0.0.0
+    anfitrion = os.environ.get("CANCION_HOST", "127.0.0.1")
+    puerto = int(os.environ.get("CANCION_PORT", "5057"))
+    app.run(host=anfitrion, port=puerto, debug=False, threaded=True)
