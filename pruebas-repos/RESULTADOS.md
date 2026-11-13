@@ -45,3 +45,9 @@ Entorno: contenedor Linux, Python 3.13, Node 22 (Node 24 vía `npx node@24`), si
 - Claude Code (`claude -p`) contra `ANTHROPIC_BASE_URL=http://127.0.0.1:8082` y el lanzador `fcc-claude -p` crean archivos con la herramienta Write usando Nemotron de NVIDIA NIM.
 - Lección: el servidor debe arrancar con `NVIDIA_NIM_API_KEY` en su entorno; si ya hay una instancia en :8082 sin clave, Claude Code reintenta 503 y parece colgado. Matar la instancia y relanzar.
 - `--dangerously-skip-permissions` fue bloqueado por el clasificador; se usó `--allowedTools Write`.
+
+## Verificación de 2 posts de Reddit (2026-11-13)
+- r/claudeskills "Sketchy": skill para que Claude dibuje diagramas. Repo `ddkbs/sketchy` existe, MIT, commit 2026-11-12; README confirma skill en zip para Claude (web/escritorio/móvil) y servidor MCP para Claude Code/Codex. VERDAD en lo comprobable; no se ejecutó.
+- r/SATNA_PROJECT "10 repos": los 10 repos existen y están activos (Dream Loop, Blender Skills, TRELLIS.2, OpenDesign, Impeccable, HyperFrames, Superpowers, Graphify, Browser Use, Google Workspace CLI). Las salvedades del post coinciden con los README (TRELLIS.2: Linux + GPU NVIDIA de 24 GB; Google Workspace CLI: "not an officially supported Google product"; Dream Loop necesita generación de imágenes y visión). El post es promocional (enlace a Discord); el tono es exagerado pero el contenido es correcto.
+- Límite: solo se leyeron README y metadatos; no se instaló ni ejecutó ninguno.
+- Reddit bloquea curl y Firecrawl; funcionó TinyFish `fetch_content`.
