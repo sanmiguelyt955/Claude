@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="es"><head><meta charset="UTF-8" /><meta name="viewport" content="width=1080, height=1920" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<style>
+@font-face{font-family:"Archivo Black";font-weight:400;src:url("https://cdn.jsdelivr.net/npm/@fontsource/archivo-black@5.2.5/files/archivo-black-latin-400-normal.woff2") format("woff2")}
+@font-face{font-family:"Archivo";font-weight:600;src:url("https://cdn.jsdelivr.net/npm/@fontsource/archivo@5.2.5/files/archivo-latin-600-normal.woff2") format("woff2")}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:1080px;height:1920px;overflow:hidden;background:#0B1026}
+#root{position:relative;width:1080px;height:1920px;font-family:"Archivo",sans-serif;color:#F4F1E8;background:radial-gradient(circle at 70% 30%, #1C2550 0%, #0B1026 60%)}
+.scene{position:absolute;inset:0}
+.head{position:absolute}
+.kicker{font-size:34px;letter-spacing:.14em;text-transform:uppercase;color:#FFC845;margin-bottom:18px}
+.title{font-family:"Archivo Black";font-size:110px;line-height:.98;letter-spacing:-0.035em}
+.tw{display:inline-block}
+.stage{position:absolute;display:flex;align-items:center;justify-content:center}
+.lamp{position:relative;width:420px;height:520px}
+.lamp.small{transform-origin:center}
+.glow{position:absolute;left:-80px;top:120px;width:580px;height:460px;background:radial-gradient(ellipse at 50% 20%, #FFC845cc 0%, #FFC84533 35%, transparent 70%);filter:blur(8px)}
+.lbase{position:absolute;left:130px;bottom:0;width:160px;height:40px;border-radius:20px;background:#F4F1E8}
+.lbase.mag::after{content:"";position:absolute;left:50px;top:-10px;width:60px;height:12px;border-radius:6px;background:#FFC845}
+.larm{position:absolute;left:198px;bottom:30px;width:24px;height:380px;border-radius:12px;background:#F4F1E8;transform-origin:50% 100%}
+.lhead{position:absolute;left:-60px;top:-30px;width:150px;height:60px;border-radius:30px 30px 12px 12px;background:#F4F1E8}
+.lled{position:absolute;left:18px;bottom:-6px;width:114px;height:12px;border-radius:6px;background:#FFC845;box-shadow:0 0 40px #FFC845}
+.wall{position:absolute;left:130px;top:0;width:30px;height:100%;background:#F4F1E822;border-radius:8px}
+.ring{position:absolute;width:560px;height:560px;border-radius:50%;border:6px dashed #FFC84588}
+.clock{position:relative;width:380px;height:380px;border-radius:50%;border:16px solid #F4F1E8}
+.ch{position:absolute;left:50%;bottom:50%;width:14px;margin-left:-7px;border-radius:7px;background:#F4F1E8;transform-origin:50% 100%}
+.ch.h{height:100px} .ch.m{height:150px;background:#FFC845}
+.cdot{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px;border-radius:50%;background:#F4F1E8}
+.vlabel{position:absolute;bottom:10px;font-family:"Archivo Black";font-size:70px;color:#FFC845}
+.tones{display:flex;gap:50px}
+.tone{text-align:center} .tdot{width:170px;height:170px;border-radius:50%;margin:0 auto 26px}
+.tlab{font-size:40px;font-weight:600}
+.counter{font-family:"Archivo Black";color:#FFC845;text-align:center}
+.cnum{font-size:300px;letter-spacing:-0.05em} .cunit{font-size:110px;margin-left:16px}
+.bar{position:absolute;bottom:80px;width:70%;height:34px;border-radius:17px;background:#F4F1E822}
+.barfill{width:100%;height:100%;border-radius:17px;background:#FFC845}
+.list{display:flex;flex-direction:column;gap:30px;font-size:58px;font-weight:600}
+.li{display:flex;align-items:center;gap:26px} .lib{width:26px;height:26px;border-radius:50%;background:#FFC845}
+.price{text-align:center}
+.old{position:relative;display:inline-block;font-size:90px;opacity:.6;font-weight:600}
+.strike{position:absolute;left:-4%;top:50%;width:108%;height:10px;background:#FF5A5F;border-radius:5px}
+.new{font-family:"Archivo Black";font-size:220px;color:#FFC845;letter-spacing:-0.04em;line-height:1.05}
+.save{display:inline-block;margin-top:10px;padding:14px 34px;border-radius:40px;background:#F4F1E8;color:#0B1026;font-size:44px;font-weight:600}
+.badges{display:flex;flex-direction:column;gap:34px;align-items:center}
+.badge2{padding:26px 50px;border-radius:60px;background:#FFC845;color:#0B1026;font-family:"Archivo Black";font-size:60px}
+.scale{position:relative;width:700px;height:420px}
+.beam{position:absolute;left:50px;top:150px;width:600px;height:16px;border-radius:8px;background:#F4F1E8}
+.pan{position:absolute;top:180px;width:240px;height:150px;border-radius:0 0 120px 120px;background:#F4F1E822;border:6px solid #F4F1E8;display:flex;align-items:center;justify-content:center}
+.pan.l{left:30px} .pan.r{right:30px} .plab{font-family:"Archivo Black";font-size:44px;text-align:center}
+.brandmark{font-family:"Archivo Black";font-size:260px;letter-spacing:-0.05em} .brandmark b{color:#FFC845}
+#caps{position:absolute;z-index:10;left:60px;right:60px;top:1480px;height:200px}
+.capline{position:absolute;left:0;right:0;text-align:center;font-family:"Archivo Black";font-size:68px;line-height:1.1;color:#F4F1E8;visibility:hidden;text-shadow:0 4px 20px #0008}
+.w{display:inline-block;margin:0 .18em}
+.moon{position:relative;width:460px;height:460px;border-radius:50%;background:radial-gradient(circle at 35% 30%, #F2F0E6, #B9B6AA 70%, #8E8B80);box-shadow:0 0 90px #F2F0E655}
+.crater{position:absolute;border-radius:50%;background:#0000001f;box-shadow:inset 4px 4px 8px #00000033}
+.poof{position:absolute;opacity:0;width:200px;height:200px;border-radius:50%;border:8px solid #FFC845}
+.sea{position:relative;width:760px;height:560px;border-radius:40px;overflow:hidden;background:#F4F1E810;border:4px solid #F4F1E833}
+.wave{position:absolute;left:-10%;width:120%;top:60%;height:100%;background:#2F80ED;border-radius:40% 45% 0 0}
+.tidemark{position:absolute;right:30px;top:30px;font-family:"Archivo Black";font-size:54px;color:#FFC845}
+.earthwrap{position:relative;width:600px;height:640px;display:flex;align-items:center;justify-content:center}
+.axis{position:relative;width:380px;height:380px}
+.earth{position:absolute;inset:0;border-radius:50%;background:#2F80ED;overflow:hidden;box-shadow:inset -40px -20px 60px #0006}
+.land{position:absolute;background:#5BAA5E;border-radius:45% 55% 50% 40%} .land.a{left:15%;top:20%;width:40%;height:35%} .land.b{left:55%;top:58%;width:32%;height:28%}
+.pole{position:absolute;left:50%;top:-70px;width:10px;margin-left:-5px;height:520px;background:#FFC845;border-radius:5px}
+.sky{position:absolute;inset:0} .star{position:absolute;border-radius:50%;background:#FFF8D6;box-shadow:0 0 8px #FFF8D6}
+.fracs{display:flex;flex-direction:column;gap:46px;width:90%}
+.frow{display:grid;grid-template-columns:230px 1fr 170px;align-items:center;gap:24px}
+.flab{font-family:"Archivo Black";font-size:48px} .fval{font-family:"Archivo Black";font-size:52px;color:#FFC845}
+.fbar{height:60px;border-radius:30px;background:#F4F1E81f;overflow:hidden} .ffill{height:100%;background:#FFC845;border-radius:30px}
+</style></head><body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="100" data-width="1080" data-height="1920">
+ <audio id="vo" src="voz.wav" data-start="0" data-track-index="9" data-volume="1"></audio>
+ <div class="scene clip" id="s0" data-start="0.00" data-duration="9.85" data-track-index="0">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k0">¿Qué pasaría si…?</div><div class="title" id="t0"><span class="tw">La</span> <span class="tw">Luna</span> <br/><span class="tw">desaparece</span> <br/><span class="tw">esta</span> <span class="tw">noche</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="moon" id="mn0"><div class="crater" style="left:20%;top:25%;width:18%;height:18%"></div><div class="crater" style="left:55%;top:15%;width:12%;height:12%"></div><div class="crater" style="left:60%;top:55%;width:22%;height:22%"></div><div class="crater" style="left:30%;top:65%;width:10%;height:10%"></div><div class="crater" style="left:75%;top:35%;width:8%;height:8%"></div></div><div class="poof" id="pf0"></div></div></div><div class="scene clip" id="s1" data-start="9.85" data-duration="11.24" data-track-index="1">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k1">Lo primero</div><div class="title" id="t1"><span class="tw">El</span> <span class="tw">cielo</span> <br/><span class="tw">se</span> <span class="tw">apaga</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="sky" id="sk1"><div class="star" style="left:15.6%;top:82.7%;width:9px;height:6px"></div><div class="star" style="left:49.6%;top:45.3%;width:8px;height:9px"></div><div class="star" style="left:11.8%;top:5.7%;width:9px;height:7px"></div><div class="star" style="left:74.7%;top:3.2%;width:7px;height:8px"></div><div class="star" style="left:24.5%;top:91.9%;width:9px;height:4px"></div><div class="star" style="left:5.4%;top:53.9%;width:10px;height:6px"></div><div class="star" style="left:23.4%;top:42.7%;width:4px;height:5px"></div><div class="star" style="left:44.2%;top:49.6%;width:5px;height:5px"></div><div class="star" style="left:23.6%;top:46.2%;width:6px;height:4px"></div><div class="star" style="left:81.7%;top:55.3%;width:8px;height:5px"></div><div class="star" style="left:96.3%;top:83.8%;width:5px;height:6px"></div><div class="star" style="left:70.8%;top:69.9%;width:10px;height:7px"></div><div class="star" style="left:81.0%;top:66.0%;width:6px;height:8px"></div><div class="star" style="left:86.0%;top:82.5%;width:7px;height:8px"></div><div class="star" style="left:6.2%;top:25.8%;width:9px;height:6px"></div><div class="star" style="left:19.3%;top:54.6%;width:8px;height:8px"></div><div class="star" style="left:38.2%;top:44.3%;width:7px;height:9px"></div><div class="star" style="left:52.0%;top:40.0%;width:7px;height:4px"></div><div class="star" style="left:7.1%;top:69.1%;width:10px;height:8px"></div><div class="star" style="left:40.0%;top:19.0%;width:7px;height:10px"></div><div class="star" style="left:75.4%;top:53.7%;width:9px;height:5px"></div><div class="star" style="left:51.3%;top:92.5%;width:7px;height:7px"></div><div class="star" style="left:28.3%;top:54.5%;width:10px;height:4px"></div><div class="star" style="left:76.7%;top:80.1%;width:9px;height:8px"></div><div class="star" style="left:79.1%;top:51.8%;width:7px;height:7px"></div><div class="star" style="left:8.3%;top:84.8%;width:7px;height:5px"></div><div class="star" style="left:50.4%;top:48.6%;width:6px;height:6px"></div><div class="star" style="left:53.6%;top:61.6%;width:8px;height:7px"></div><div class="star" style="left:5.6%;top:24.6%;width:5px;height:8px"></div><div class="star" style="left:83.9%;top:78.1%;width:9px;height:9px"></div><div class="star" style="left:27.0%;top:82.1%;width:8px;height:4px"></div><div class="star" style="left:4.6%;top:4.4%;width:9px;height:5px"></div><div class="star" style="left:13.3%;top:61.7%;width:6px;height:4px"></div><div class="star" style="left:18.0%;top:52.6%;width:5px;height:6px"></div><div class="star" style="left:69.9%;top:45.7%;width:6px;height:7px"></div><div class="star" style="left:5.2%;top:39.3%;width:7px;height:5px"></div><div class="star" style="left:13.2%;top:87.6%;width:7px;height:5px"></div><div class="star" style="left:59.9%;top:79.8%;width:4px;height:4px"></div><div class="star" style="left:16.8%;top:70.6%;width:5px;height:8px"></div><div class="star" style="left:66.7%;top:54.2%;width:5px;height:10px"></div><div class="star" style="left:78.0%;top:51.6%;width:5px;height:8px"></div><div class="star" style="left:40.1%;top:57.1%;width:6px;height:8px"></div><div class="star" style="left:8.5%;top:31.1%;width:10px;height:9px"></div><div class="star" style="left:31.8%;top:83.7%;width:6px;height:10px"></div><div class="star" style="left:72.9%;top:42.1%;width:6px;height:4px"></div><div class="star" style="left:85.6%;top:6.6%;width:9px;height:10px"></div><div class="star" style="left:56.6%;top:19.1%;width:9px;height:10px"></div><div class="star" style="left:69.2%;top:50.8%;width:6px;height:6px"></div><div class="star" style="left:22.3%;top:66.4%;width:7px;height:5px"></div><div class="star" style="left:12.8%;top:65.6%;width:6px;height:7px"></div><div class="star" style="left:33.6%;top:84.9%;width:9px;height:4px"></div><div class="star" style="left:21.9%;top:33.8%;width:10px;height:9px"></div><div class="star" style="left:34.9%;top:23.0%;width:8px;height:9px"></div><div class="star" style="left:90.6%;top:35.3%;width:9px;height:8px"></div><div class="star" style="left:48.5%;top:95.6%;width:5px;height:8px"></div><div class="star" style="left:11.0%;top:19.0%;width:9px;height:5px"></div><div class="star" style="left:74.4%;top:59.4%;width:9px;height:6px"></div><div class="star" style="left:35.0%;top:30.4%;width:9px;height:8px"></div><div class="star" style="left:92.7%;top:86.4%;width:5px;height:7px"></div><div class="star" style="left:12.8%;top:6.7%;width:4px;height:9px"></div><div class="star" style="left:77.1%;top:80.9%;width:6px;height:8px"></div><div class="star" style="left:76.5%;top:38.5%;width:7px;height:5px"></div><div class="star" style="left:10.7%;top:28.1%;width:9px;height:7px"></div><div class="star" style="left:90.0%;top:46.0%;width:6px;height:9px"></div><div class="star" style="left:80.8%;top:4.2%;width:8px;height:5px"></div><div class="star" style="left:13.8%;top:86.2%;width:4px;height:5px"></div><div class="star" style="left:95.9%;top:42.6%;width:5px;height:5px"></div><div class="star" style="left:25.7%;top:72.9%;width:5px;height:9px"></div><div class="star" style="left:38.6%;top:94.2%;width:9px;height:6px"></div><div class="star" style="left:26.8%;top:47.8%;width:5px;height:8px"></div></div></div></div><div class="scene clip" id="s2" data-start="21.09" data-duration="11.99" data-track-index="0">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k2">Segundo</div><div class="title" id="t2"><span class="tw">Las</span> <span class="tw">mareas</span> <br/><span class="tw">se</span> <span class="tw">encogen</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="sea"><div class="wave" id="wv2"></div><div class="tidemark" id="tm2">≈ ⅓</div></div></div></div><div class="scene clip" id="s3" data-start="33.08" data-duration="12.58" data-track-index="1">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k3">Y eso importa</div><div class="title" id="t3"><span class="tw">La</span> <span class="tw">vida</span> <br/><span class="tw">en</span> <span class="tw">la</span> <span class="tw">orilla</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="list"><div class="li" id="li3_0"><span class="lib"></span>Cangrejos</div><div class="li" id="li3_1"><span class="lib"></span>Corales</div><div class="li" id="li3_2"><span class="lib"></span>Tortugas</div><div class="li" id="li3_3"><span class="lib"></span>Aves costeras</div></div></div></div><div class="scene clip" id="s4" data-start="45.66" data-duration="13.93" data-track-index="0">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k4">Lo más grave</div><div class="title" id="t4"><span class="tw">La</span> <span class="tw">Tierra</span> <br/><span class="tw">se</span> <span class="tw">tambalea</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="earthwrap"><div class="axis" id="ax4"><div class="earth"><div class="land a"></div><div class="land b"></div></div><div class="pole"></div></div><div class="vlabel" id="axl4">23,4°</div></div></div></div><div class="scene clip" id="s5" data-start="59.59" data-duration="9.36" data-track-index="1">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k5">Resultado</div><div class="title" id="t5"><span class="tw">Estaciones</span> <br/><span class="tw">extremas</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="fracs"><div class="frow" id="fr5_0"><div class="flab">Hoy</div><div class="fbar"><div class="ffill" style="width:45%"></div></div><div class="fval">estable</div></div><div class="frow" id="fr5_1"><div class="flab">Sin Luna</div><div class="fbar"><div class="ffill" style="width:95%"></div></div><div class="fval">caos</div></div></div></div></div><div class="scene clip" id="s6" data-start="68.95" data-duration="12.24" data-track-index="0">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k6">El giro</div><div class="title" id="t6"><span class="tw">La</span> <span class="tw">Luna</span> <br/><span class="tw">ya</span> <span class="tw">se</span> <span class="tw">está</span> <br/><span class="tw">yendo</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="counter"><span class="cnum" id="cn6">0</span><span class="cunit">cm/año</span></div><div class="bar"><div class="barfill" id="bf6"></div></div></div></div><div class="scene clip" id="s7" data-start="81.19" data-duration="9.00" data-track-index="1">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k7">Tranquilo</div><div class="title" id="t7"><span class="tw">No</span> <span class="tw">te</span> <br/><span class="tw">preocupes</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"><div class="moon" id="mn7"><div class="crater" style="left:20%;top:25%;width:18%;height:18%"></div><div class="crater" style="left:55%;top:15%;width:12%;height:12%"></div><div class="crater" style="left:60%;top:55%;width:22%;height:22%"></div><div class="crater" style="left:30%;top:65%;width:10%;height:10%"></div><div class="crater" style="left:75%;top:35%;width:8%;height:8%"></div></div><div class="poof" id="pf7"></div></div></div><div class="scene clip" id="s8" data-start="90.19" data-duration="9.81" data-track-index="0">
+ <div class="head" style="left:90px;top:180px;width:900px"><div class="kicker" id="k8">Comparte</div><div class="title" id="t8"><span class="tw">Envíaselo</span> <span class="tw">a</span> <br/><span class="tw">ese</span> <span class="tw">amigo</span> </div></div>
+ <div class="stage" style="left:0;top:560px;width:1080px;height:820px"></div></div>
+ <div id="caps" class="clip" data-start="0" data-duration="100" data-track-index="3"><div class="capline" id="cl0"><span class="w" id="w0">Imagina</span><span class="w" id="w1">que</span><span class="w" id="w2">esta</span><span class="w" id="w3">noche</span></div><div class="capline" id="cl1"><span class="w" id="w4">miras</span><span class="w" id="w5">al</span><span class="w" id="w6">cielo…</span><span class="w" id="w7">y</span></div><div class="capline" id="cl2"><span class="w" id="w8">la</span><span class="w" id="w9">Luna</span><span class="w" id="w10">ya</span><span class="w" id="w11">no</span></div><div class="capline" id="cl3"><span class="w" id="w12">está.</span></div><div class="capline" id="cl4"><span class="w" id="w13">No</span><span class="w" id="w14">explota,</span></div><div class="capline" id="cl5"><span class="w" id="w15">no</span><span class="w" id="w16">se</span><span class="w" id="w17">va</span><span class="w" id="w18">lejos.</span></div><div class="capline" id="cl6"><span class="w" id="w19">Simplemente</span><span class="w" id="w20">desaparece.</span></div><div class="capline" id="cl7"><span class="w" id="w21">Lo</span><span class="w" id="w22">primero</span><span class="w" id="w23">que</span><span class="w" id="w24">notarías</span></div><div class="capline" id="cl8"><span class="w" id="w25">es</span><span class="w" id="w26">la</span><span class="w" id="w27">oscuridad.</span></div><div class="capline" id="cl9"><span class="w" id="w28">Una</span><span class="w" id="w29">noche</span><span class="w" id="w30">de</span><span class="w" id="w31">luna</span></div><div class="capline" id="cl10"><span class="w" id="w32">llena</span><span class="w" id="w33">es</span><span class="w" id="w34">cientos</span><span class="w" id="w35">de</span></div><div class="capline" id="cl11"><span class="w" id="w36">veces</span><span class="w" id="w37">más</span><span class="w" id="w38">brillante</span><span class="w" id="w39">que</span></div><div class="capline" id="cl12"><span class="w" id="w40">una</span><span class="w" id="w41">noche</span><span class="w" id="w42">sin</span><span class="w" id="w43">luna.</span></div><div class="capline" id="cl13"><span class="w" id="w44">Sin</span><span class="w" id="w45">ella,</span></div><div class="capline" id="cl14"><span class="w" id="w46">todas</span><span class="w" id="w47">las</span><span class="w" id="w48">noches</span><span class="w" id="w49">serían</span></div><div class="capline" id="cl15"><span class="w" id="w50">así.</span></div><div class="capline" id="cl16"><span class="w" id="w51">Después</span><span class="w" id="w52">vendrían</span><span class="w" id="w53">las</span><span class="w" id="w54">mareas.</span></div><div class="capline" id="cl17"><span class="w" id="w55">La</span><span class="w" id="w56">Luna</span><span class="w" id="w57">es</span><span class="w" id="w58">la</span></div><div class="capline" id="cl18"><span class="w" id="w59">que</span><span class="w" id="w60">más</span><span class="w" id="w61">jala</span><span class="w" id="w62">del</span></div><div class="capline" id="cl19"><span class="w" id="w63">agua</span><span class="w" id="w64">de</span><span class="w" id="w65">los</span><span class="w" id="w66">océanos.</span></div><div class="capline" id="cl20"><span class="w" id="w67">Sin</span><span class="w" id="w68">ella,</span></div><div class="capline" id="cl21"><span class="w" id="w69">solo</span><span class="w" id="w70">quedaría</span><span class="w" id="w71">la</span><span class="w" id="w72">marea</span></div><div class="capline" id="cl22"><span class="w" id="w73">del</span><span class="w" id="w74">Sol,</span></div><div class="capline" id="cl23"><span class="w" id="w75">y</span><span class="w" id="w76">sería</span><span class="w" id="w77">más</span><span class="w" id="w78">o</span></div><div class="capline" id="cl24"><span class="w" id="w79">menos</span><span class="w" id="w80">un</span><span class="w" id="w81">tercio</span><span class="w" id="w82">de</span></div><div class="capline" id="cl25"><span class="w" id="w83">lo</span><span class="w" id="w84">que</span><span class="w" id="w85">es</span><span class="w" id="w86">hoy.</span></div><div class="capline" id="cl26"><span class="w" id="w87">Y</span><span class="w" id="w88">eso</span><span class="w" id="w89">no</span><span class="w" id="w90">es</span></div><div class="capline" id="cl27"><span class="w" id="w91">poca</span><span class="w" id="w92">cosa.</span></div><div class="capline" id="cl28"><span class="w" id="w93">Muchísimos</span><span class="w" id="w94">animales</span><span class="w" id="w95">de</span><span class="w" id="w96">las</span></div><div class="capline" id="cl29"><span class="w" id="w97">costas</span><span class="w" id="w98">viven</span><span class="w" id="w99">al</span><span class="w" id="w100">ritmo</span></div><div class="capline" id="cl30"><span class="w" id="w101">de</span><span class="w" id="w102">las</span><span class="w" id="w103">mareas</span><span class="w" id="w104">y</span></div><div class="capline" id="cl31"><span class="w" id="w105">de</span><span class="w" id="w106">la</span><span class="w" id="w107">luz</span><span class="w" id="w108">de</span></div><div class="capline" id="cl32"><span class="w" id="w109">la</span><span class="w" id="w110">Luna.</span></div><div class="capline" id="cl33"><span class="w" id="w111">Algunos</span><span class="w" id="w112">corales,</span></div><div class="capline" id="cl34"><span class="w" id="w113">por</span><span class="w" id="w114">ejemplo,</span></div><div class="capline" id="cl35"><span class="w" id="w115">se</span><span class="w" id="w116">reproducen</span><span class="w" id="w117">guiados</span><span class="w" id="w118">por</span></div><div class="capline" id="cl36"><span class="w" id="w119">la</span><span class="w" id="w120">luna</span><span class="w" id="w121">llena.</span></div><div class="capline" id="cl37"><span class="w" id="w122">Pero</span><span class="w" id="w123">lo</span><span class="w" id="w124">más</span><span class="w" id="w125">grave</span></div><div class="capline" id="cl38"><span class="w" id="w126">tardaría</span><span class="w" id="w127">más.</span></div><div class="capline" id="cl39"><span class="w" id="w128">Hoy</span><span class="w" id="w129">la</span><span class="w" id="w130">Tierra</span><span class="w" id="w131">está</span></div><div class="capline" id="cl40"><span class="w" id="w132">inclinada</span><span class="w" id="w133">unos</span><span class="w" id="w134">veintitrés</span></div><div class="capline" id="cl41"><span class="w" id="w135">grados,</span></div><div class="capline" id="cl42"><span class="w" id="w136">y</span><span class="w" id="w137">la</span><span class="w" id="w138">Luna</span><span class="w" id="w139">ayuda</span></div><div class="capline" id="cl43"><span class="w" id="w140">a</span><span class="w" id="w141">mantenerla</span><span class="w" id="w142">estable.</span></div><div class="capline" id="cl44"><span class="w" id="w143">Sin</span><span class="w" id="w144">ella,</span></div><div class="capline" id="cl45"><span class="w" id="w145">esa</span><span class="w" id="w146">inclinación</span><span class="w" id="w147">podría</span><span class="w" id="w148">cambiar</span></div><div class="capline" id="cl46"><span class="w" id="w149">mucho</span><span class="w" id="w150">más</span><span class="w" id="w151">a</span><span class="w" id="w152">lo</span></div><div class="capline" id="cl47"><span class="w" id="w153">largo</span><span class="w" id="w154">de</span><span class="w" id="w155">millones</span><span class="w" id="w156">de</span></div><div class="capline" id="cl48"><span class="w" id="w157">años.</span></div><div class="capline" id="cl49"><span class="w" id="w158">Y</span><span class="w" id="w159">si</span><span class="w" id="w160">cambia</span><span class="w" id="w161">la</span></div><div class="capline" id="cl50"><span class="w" id="w162">inclinación,</span></div><div class="capline" id="cl51"><span class="w" id="w163">cambian</span><span class="w" id="w164">las</span><span class="w" id="w165">estaciones.</span></div><div class="capline" id="cl52"><span class="w" id="w166">Inviernos</span><span class="w" id="w167">y</span><span class="w" id="w168">veranos</span><span class="w" id="w169">mucho</span></div><div class="capline" id="cl53"><span class="w" id="w170">más</span><span class="w" id="w171">extremos,</span></div><div class="capline" id="cl54"><span class="w" id="w172">en</span><span class="w" id="w173">lugares</span><span class="w" id="w174">donde</span><span class="w" id="w175">hoy</span></div><div class="capline" id="cl55"><span class="w" id="w176">el</span><span class="w" id="w177">clima</span><span class="w" id="w178">es</span><span class="w" id="w179">tranquilo.</span></div><div class="capline" id="cl56"><span class="w" id="w180">Y</span><span class="w" id="w181">aquí</span><span class="w" id="w182">viene</span><span class="w" id="w183">lo</span></div><div class="capline" id="cl57"><span class="w" id="w184">curioso:</span></div><div class="capline" id="cl58"><span class="w" id="w185">la</span><span class="w" id="w186">Luna</span><span class="w" id="w187">sí</span><span class="w" id="w188">se</span></div><div class="capline" id="cl59"><span class="w" id="w189">está</span><span class="w" id="w190">alejando</span><span class="w" id="w191">de</span><span class="w" id="w192">verdad.</span></div><div class="capline" id="cl60"><span class="w" id="w193">Cada</span><span class="w" id="w194">año</span><span class="w" id="w195">se</span><span class="w" id="w196">separa</span></div><div class="capline" id="cl61"><span class="w" id="w197">de</span><span class="w" id="w198">la</span><span class="w" id="w199">Tierra</span><span class="w" id="w200">unos</span></div><div class="capline" id="cl62"><span class="w" id="w201">tres</span><span class="w" id="w202">punto</span><span class="w" id="w203">ocho</span><span class="w" id="w204">centímetros.</span></div><div class="capline" id="cl63"><span class="w" id="w205">Más</span><span class="w" id="w206">o</span><span class="w" id="w207">menos</span><span class="w" id="w208">lo</span></div><div class="capline" id="cl64"><span class="w" id="w209">que</span><span class="w" id="w210">crecen</span><span class="w" id="w211">tus</span><span class="w" id="w212">uñas</span></div><div class="capline" id="cl65"><span class="w" id="w213">en</span><span class="w" id="w214">un</span><span class="w" id="w215">año.</span></div><div class="capline" id="cl66"><span class="w" id="w216">Tranquilo,</span></div><div class="capline" id="cl67"><span class="w" id="w217">a</span><span class="w" id="w218">ese</span><span class="w" id="w219">ritmo</span><span class="w" id="w220">nos</span></div><div class="capline" id="cl68"><span class="w" id="w221">quedan</span><span class="w" id="w222">miles</span><span class="w" id="w223">de</span><span class="w" id="w224">millones</span></div><div class="capline" id="cl69"><span class="w" id="w225">de</span><span class="w" id="w226">años</span><span class="w" id="w227">de</span><span class="w" id="w228">Luna.</span></div><div class="capline" id="cl70"><span class="w" id="w229">Pero</span><span class="w" id="w230">ahora</span><span class="w" id="w231">ya</span><span class="w" id="w232">sabes</span></div><div class="capline" id="cl71"><span class="w" id="w233">lo</span><span class="w" id="w234">mucho</span><span class="w" id="w235">que</span><span class="w" id="w236">hace</span></div><div class="capline" id="cl72"><span class="w" id="w237">por</span><span class="w" id="w238">nosotros</span><span class="w" id="w239">cada</span><span class="w" id="w240">noche.</span></div><div class="capline" id="cl73"><span class="w" id="w241">Envíale</span><span class="w" id="w242">este</span><span class="w" id="w243">video</span><span class="w" id="w244">a</span></div><div class="capline" id="cl74"><span class="w" id="w245">ese</span><span class="w" id="w246">amigo</span><span class="w" id="w247">que</span><span class="w" id="w248">siempre</span></div><div class="capline" id="cl75"><span class="w" id="w249">mira</span><span class="w" id="w250">la</span><span class="w" id="w251">Luna.</span></div><div class="capline" id="cl76"><span class="w" id="w252">Y</span><span class="w" id="w253">dime</span><span class="w" id="w254">en</span><span class="w" id="w255">los</span></div><div class="capline" id="cl77"><span class="w" id="w256">comentarios:</span></div><div class="capline" id="cl78"><span class="w" id="w257">¿qué</span><span class="w" id="w258">crees</span><span class="w" id="w259">que</span><span class="w" id="w260">pasaría</span></div><div class="capline" id="cl79"><span class="w" id="w261">si</span><span class="w" id="w262">la</span><span class="w" id="w263">Tierra</span><span class="w" id="w264">tuviera</span></div><div class="capline" id="cl80"><span class="w" id="w265">dos</span><span class="w" id="w266">lunas?</span></div></div>
+</div>
+<script>
+const tl = gsap.timeline({ paused: true }); let S=0;
+S=0.00;
+tl.from("#k0",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t0 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#mn0",{scale:0.3,autoAlpha:0,duration:0.7,ease:"back.out(1.6)"},S+0.1);tl.to("#mn0",{rotation:20,duration:4,ease:"none"},S+0.1);tl.to("#mn0",{scale:0.05,autoAlpha:0,duration:0.5,ease:"power4.in"},S+8.0);tl.fromTo("#pf0",{scale:0,opacity:0},{scale:1,opacity:1,duration:0.4,ease:"power2.out"},S+8.40);tl.to("#pf0",{opacity:0,scale:2,duration:0.6},S+8.80);
+tl.to("#s0 .head, #s0 .stage",{autoAlpha:0,y:-30,duration:0.2},9.65);
+S=9.85;
+tl.from("#k1",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t1 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#sk1 .star",{autoAlpha:0,scale:0,duration:0.3,stagger:{each:0.02,from:"random"}},S+0.1);tl.to("#sk1 .star",{opacity:0.3,duration:0.4,yoyo:true,repeat:5,stagger:{each:0.03,from:"random"}},S+1.5);
+tl.to("#s1 .head, #s1 .stage",{autoAlpha:0,y:-30,duration:0.2},20.89);
+S=21.09;
+tl.from("#k2",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t2 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.fromTo("#wv2",{yPercent:0},{yPercent:-38,duration:1.1,yoyo:true,repeat:1,ease:"sine.inOut"},S+0.2);tl.to("#wv2",{yPercent:-12,duration:0.6,yoyo:true,repeat:3,ease:"sine.inOut"},S+2.6);tl.from("#tm2",{autoAlpha:0,duration:0.3},S+2.4);
+tl.to("#s2 .head, #s2 .stage",{autoAlpha:0,y:-30,duration:0.2},32.88);
+S=33.08;
+tl.from("#k3",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t3 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#li3_0",{x:80,autoAlpha:0,duration:0.35,ease:"power3.out"},S+0.30);tl.from("#li3_1",{x:80,autoAlpha:0,duration:0.35,ease:"power3.out"},S+1.20);tl.from("#li3_2",{x:80,autoAlpha:0,duration:0.35,ease:"power3.out"},S+2.10);tl.from("#li3_3",{x:80,autoAlpha:0,duration:0.35,ease:"power3.out"},S+3.00);
+tl.to("#s3 .head, #s3 .stage",{autoAlpha:0,y:-30,duration:0.2},45.46);
+S=45.66;
+tl.from("#k4",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t4 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#ax4",{scale:0,duration:0.5,ease:"back.out(2)"},S+0.1);tl.fromTo("#ax4",{rotation:-23},{rotation:23,duration:0.9,yoyo:true,repeat:5,ease:"sine.inOut"},S+0.7);tl.from("#axl4",{autoAlpha:0,y:20,duration:0.3},S+0.9);
+tl.to("#s4 .head, #s4 .stage",{autoAlpha:0,y:-30,duration:0.2},59.39);
+S=59.59;
+tl.from("#k5",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t5 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#fr5_0 .ffill",{scaleX:0,transformOrigin:"left",duration:0.8,ease:"power3.out"},S+0.30);tl.from("#fr5_0",{autoAlpha:0,duration:0.3},S+0.25);tl.from("#fr5_1 .ffill",{scaleX:0,transformOrigin:"left",duration:0.8,ease:"power3.out"},S+1.70);tl.from("#fr5_1",{autoAlpha:0,duration:0.3},S+1.65);
+tl.to("#s5 .head, #s5 .stage",{autoAlpha:0,y:-30,duration:0.2},68.75);
+S=68.95;
+tl.from("#k6",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t6 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+(function(){const o={v:0};tl.to(o,{v:3.8,duration:1.6,ease:"power2.out",onUpdate:()=>{document.getElementById("cn6").textContent=(Number.isInteger(3.8)?Math.round(o.v):o.v.toFixed(1)).toString().replace(".",",")}},S+0.3);})();tl.from("#bf6",{scaleX:0,transformOrigin:"left",duration:1.6,ease:"power2.out"},S+0.3);
+tl.to("#s6 .head, #s6 .stage",{autoAlpha:0,y:-30,duration:0.2},80.99);
+S=81.19;
+tl.from("#k7",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t7 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+tl.from("#mn7",{scale:0.3,autoAlpha:0,duration:0.7,ease:"back.out(1.6)"},S+0.1);tl.to("#mn7",{rotation:20,duration:4,ease:"none"},S+0.1);
+tl.to("#s7 .head, #s7 .stage",{autoAlpha:0,y:-30,duration:0.2},89.99);
+S=90.19;
+tl.from("#k8",{autoAlpha:0,y:20,duration:0.3},S+0.05);
+tl.from("#t8 .tw",{y:70,autoAlpha:0,duration:0.45,stagger:0.06,ease:"power3.out"},S+0.12);
+
+tl.to("#w0",{color:"#FFC845",duration:0.06},0.40);
+tl.to("#w1",{color:"#FFC845",duration:0.06},1.04);
+tl.to("#w2",{color:"#FFC845",duration:0.06},1.22);
+tl.to("#w3",{color:"#FFC845",duration:0.06},1.44);
+tl.fromTo("#cl0",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},0.36);tl.to("#cl0",{autoAlpha:0,duration:0.08},1.60);
+tl.to("#w4",{color:"#FFC845",duration:0.06},1.68);
+tl.to("#w5",{color:"#FFC845",duration:0.06},2.08);
+tl.to("#w6",{color:"#FFC845",duration:0.06},2.24);
+tl.to("#w7",{color:"#FFC845",duration:0.06},2.92);
+tl.fromTo("#cl1",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},1.64);tl.to("#cl1",{autoAlpha:0,duration:0.08},2.86);
+tl.to("#w8",{color:"#FFC845",duration:0.06},2.94);
+tl.to("#w9",{color:"#FFC845",duration:0.06},3.06);
+tl.to("#w10",{color:"#FFC845",duration:0.06},3.28);
+tl.to("#w11",{color:"#FFC845",duration:0.06},3.48);
+tl.fromTo("#cl2",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},2.90);tl.to("#cl2",{autoAlpha:0,duration:0.08},3.54);
+tl.to("#w12",{color:"#FFC845",duration:0.06},3.62);
+tl.fromTo("#cl3",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},3.58);tl.to("#cl3",{autoAlpha:0,duration:0.08},4.66);
+tl.to("#w13",{color:"#FFC845",duration:0.06},4.76);
+tl.to("#w14",{color:"#FFC845",duration:0.06},4.94);
+tl.fromTo("#cl4",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},4.72);tl.to("#cl4",{autoAlpha:0,duration:0.08},5.64);
+tl.to("#w15",{color:"#FFC845",duration:0.06},5.72);
+tl.to("#w16",{color:"#FFC845",duration:0.06},5.84);
+tl.to("#w17",{color:"#FFC845",duration:0.06},5.98);
+tl.to("#w18",{color:"#FFC845",duration:0.06},6.10);
+tl.fromTo("#cl5",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},5.68);tl.to("#cl5",{autoAlpha:0,duration:0.08},7.26);
+tl.to("#w19",{color:"#FFC845",duration:0.06},7.66);
+tl.to("#w20",{color:"#FFC845",duration:0.06},8.10);
+tl.fromTo("#cl6",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},7.62);tl.to("#cl6",{autoAlpha:0,duration:0.08},9.58);
+tl.to("#w21",{color:"#FFC845",duration:0.06},10.05);
+tl.to("#w22",{color:"#FFC845",duration:0.06},10.33);
+tl.to("#w23",{color:"#FFC845",duration:0.06},10.61);
+tl.to("#w24",{color:"#FFC845",duration:0.06},10.79);
+tl.fromTo("#cl7",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},10.01);tl.to("#cl7",{autoAlpha:0,duration:0.08},11.19);
+tl.to("#w25",{color:"#FFC845",duration:0.06},11.27);
+tl.to("#w26",{color:"#FFC845",duration:0.06},11.45);
+tl.to("#w27",{color:"#FFC845",duration:0.06},11.61);
+tl.fromTo("#cl8",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},11.23);tl.to("#cl8",{autoAlpha:0,duration:0.08},12.83);
+tl.to("#w28",{color:"#FFC845",duration:0.06},12.91);
+tl.to("#w29",{color:"#FFC845",duration:0.06},13.09);
+tl.to("#w30",{color:"#FFC845",duration:0.06},13.37);
+tl.to("#w31",{color:"#FFC845",duration:0.06},13.55);
+tl.fromTo("#cl9",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},12.87);tl.to("#cl9",{autoAlpha:0,duration:0.08},13.69);
+tl.to("#w32",{color:"#FFC845",duration:0.06},13.77);
+tl.to("#w33",{color:"#FFC845",duration:0.06},14.09);
+tl.to("#w34",{color:"#FFC845",duration:0.06},14.19);
+tl.to("#w35",{color:"#FFC845",duration:0.06},14.55);
+tl.fromTo("#cl10",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},13.73);tl.to("#cl10",{autoAlpha:0,duration:0.08},14.63);
+tl.to("#w36",{color:"#FFC845",duration:0.06},14.71);
+tl.to("#w37",{color:"#FFC845",duration:0.06},14.89);
+tl.to("#w38",{color:"#FFC845",duration:0.06},15.17);
+tl.to("#w39",{color:"#FFC845",duration:0.06},15.71);
+tl.fromTo("#cl11",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},14.67);tl.to("#cl11",{autoAlpha:0,duration:0.08},15.79);
+tl.to("#w40",{color:"#FFC845",duration:0.06},15.87);
+tl.to("#w41",{color:"#FFC845",duration:0.06},16.07);
+tl.to("#w42",{color:"#FFC845",duration:0.06},16.37);
+tl.to("#w43",{color:"#FFC845",duration:0.06},16.63);
+tl.fromTo("#cl12",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},15.83);tl.to("#cl12",{autoAlpha:0,duration:0.08},17.61);
+tl.to("#w44",{color:"#FFC845",duration:0.06},17.69);
+tl.to("#w45",{color:"#FFC845",duration:0.06},17.99);
+tl.fromTo("#cl13",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},17.65);tl.to("#cl13",{autoAlpha:0,duration:0.08},18.55);
+tl.to("#w46",{color:"#FFC845",duration:0.06},18.63);
+tl.to("#w47",{color:"#FFC845",duration:0.06},18.89);
+tl.to("#w48",{color:"#FFC845",duration:0.06},18.99);
+tl.to("#w49",{color:"#FFC845",duration:0.06},19.39);
+tl.fromTo("#cl14",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},18.59);tl.to("#cl14",{autoAlpha:0,duration:0.08},19.65);
+tl.to("#w50",{color:"#FFC845",duration:0.06},19.73);
+tl.fromTo("#cl15",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},19.69);tl.to("#cl15",{autoAlpha:0,duration:0.08},20.77);
+tl.to("#w51",{color:"#FFC845",duration:0.06},21.34);
+tl.to("#w52",{color:"#FFC845",duration:0.06},21.87);
+tl.to("#w53",{color:"#FFC845",duration:0.06},22.47);
+tl.to("#w54",{color:"#FFC845",duration:0.06},22.69);
+tl.fromTo("#cl16",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},21.30);tl.to("#cl16",{autoAlpha:0,duration:0.08},23.19);
+tl.to("#w55",{color:"#FFC845",duration:0.06},23.27);
+tl.to("#w56",{color:"#FFC845",duration:0.06},23.71);
+tl.to("#w57",{color:"#FFC845",duration:0.06},24.15);
+tl.to("#w58",{color:"#FFC845",duration:0.06},24.33);
+tl.fromTo("#cl17",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},23.23);tl.to("#cl17",{autoAlpha:0,duration:0.08},24.35);
+tl.to("#w59",{color:"#FFC845",duration:0.06},24.43);
+tl.to("#w60",{color:"#FFC845",duration:0.06},24.55);
+tl.to("#w61",{color:"#FFC845",duration:0.06},24.73);
+tl.to("#w62",{color:"#FFC845",duration:0.06},24.99);
+tl.fromTo("#cl18",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},24.39);tl.to("#cl18",{autoAlpha:0,duration:0.08},25.09);
+tl.to("#w63",{color:"#FFC845",duration:0.06},25.17);
+tl.to("#w64",{color:"#FFC845",duration:0.06},25.39);
+tl.to("#w65",{color:"#FFC845",duration:0.06},25.53);
+tl.to("#w66",{color:"#FFC845",duration:0.06},25.63);
+tl.fromTo("#cl19",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},25.13);tl.to("#cl19",{autoAlpha:0,duration:0.08},26.79);
+tl.to("#w67",{color:"#FFC845",duration:0.06},26.87);
+tl.to("#w68",{color:"#FFC845",duration:0.06},27.31);
+tl.fromTo("#cl20",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},26.83);tl.to("#cl20",{autoAlpha:0,duration:0.08},27.85);
+tl.to("#w69",{color:"#FFC845",duration:0.06},27.93);
+tl.to("#w70",{color:"#FFC845",duration:0.06},28.07);
+tl.to("#w71",{color:"#FFC845",duration:0.06},28.55);
+tl.to("#w72",{color:"#FFC845",duration:0.06},28.67);
+tl.fromTo("#cl21",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},27.89);tl.to("#cl21",{autoAlpha:0,duration:0.08},28.87);
+tl.to("#w73",{color:"#FFC845",duration:0.06},28.95);
+tl.to("#w74",{color:"#FFC845",duration:0.06},29.11);
+tl.fromTo("#cl22",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},28.91);tl.to("#cl22",{autoAlpha:0,duration:0.08},29.61);
+tl.to("#w75",{color:"#FFC845",duration:0.06},29.69);
+tl.to("#w76",{color:"#FFC845",duration:0.06},29.79);
+tl.to("#w77",{color:"#FFC845",duration:0.06},30.05);
+tl.to("#w78",{color:"#FFC845",duration:0.06},30.27);
+tl.fromTo("#cl23",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},29.65);tl.to("#cl23",{autoAlpha:0,duration:0.08},30.39);
+tl.to("#w79",{color:"#FFC845",duration:0.06},30.47);
+tl.to("#w80",{color:"#FFC845",duration:0.06},30.69);
+tl.to("#w81",{color:"#FFC845",duration:0.06},30.91);
+tl.to("#w82",{color:"#FFC845",duration:0.06},31.25);
+tl.fromTo("#cl24",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},30.43);tl.to("#cl24",{autoAlpha:0,duration:0.08},31.31);
+tl.to("#w83",{color:"#FFC845",duration:0.06},31.39);
+tl.to("#w84",{color:"#FFC845",duration:0.06},31.49);
+tl.to("#w85",{color:"#FFC845",duration:0.06},31.65);
+tl.to("#w86",{color:"#FFC845",duration:0.06},31.81);
+tl.fromTo("#cl25",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},31.35);tl.to("#cl25",{autoAlpha:0,duration:0.08},32.83);
+tl.to("#w87",{color:"#FFC845",duration:0.06},33.28);
+tl.to("#w88",{color:"#FFC845",duration:0.06},33.56);
+tl.to("#w89",{color:"#FFC845",duration:0.06},33.80);
+tl.to("#w90",{color:"#FFC845",duration:0.06},33.96);
+tl.fromTo("#cl26",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},33.24);tl.to("#cl26",{autoAlpha:0,duration:0.08},34.08);
+tl.to("#w91",{color:"#FFC845",duration:0.06},34.16);
+tl.to("#w92",{color:"#FFC845",duration:0.06},34.40);
+tl.fromTo("#cl27",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},34.12);tl.to("#cl27",{autoAlpha:0,duration:0.08},35.48);
+tl.to("#w93",{color:"#FFC845",duration:0.06},35.64);
+tl.to("#w94",{color:"#FFC845",duration:0.06},36.12);
+tl.to("#w95",{color:"#FFC845",duration:0.06},36.48);
+tl.to("#w96",{color:"#FFC845",duration:0.06},36.72);
+tl.fromTo("#cl28",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},35.60);tl.to("#cl28",{autoAlpha:0,duration:0.08},36.78);
+tl.to("#w97",{color:"#FFC845",duration:0.06},36.86);
+tl.to("#w98",{color:"#FFC845",duration:0.06},37.24);
+tl.to("#w99",{color:"#FFC845",duration:0.06},37.54);
+tl.to("#w100",{color:"#FFC845",duration:0.06},37.66);
+tl.fromTo("#cl29",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},36.82);tl.to("#cl29",{autoAlpha:0,duration:0.08},37.90);
+tl.to("#w101",{color:"#FFC845",duration:0.06},37.98);
+tl.to("#w102",{color:"#FFC845",duration:0.06},38.08);
+tl.to("#w103",{color:"#FFC845",duration:0.06},38.22);
+tl.to("#w104",{color:"#FFC845",duration:0.06},38.64);
+tl.fromTo("#cl30",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},37.94);tl.to("#cl30",{autoAlpha:0,duration:0.08},38.70);
+tl.to("#w105",{color:"#FFC845",duration:0.06},38.78);
+tl.to("#w106",{color:"#FFC845",duration:0.06},38.86);
+tl.to("#w107",{color:"#FFC845",duration:0.06},38.98);
+tl.to("#w108",{color:"#FFC845",duration:0.06},39.16);
+tl.fromTo("#cl31",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},38.74);tl.to("#cl31",{autoAlpha:0,duration:0.08},39.22);
+tl.to("#w109",{color:"#FFC845",duration:0.06},39.30);
+tl.to("#w110",{color:"#FFC845",duration:0.06},39.40);
+tl.fromTo("#cl32",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},39.26);tl.to("#cl32",{autoAlpha:0,duration:0.08},40.44);
+tl.to("#w111",{color:"#FFC845",duration:0.06},40.52);
+tl.to("#w112",{color:"#FFC845",duration:0.06},41.00);
+tl.fromTo("#cl33",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},40.48);tl.to("#cl33",{autoAlpha:0,duration:0.08},41.66);
+tl.to("#w113",{color:"#FFC845",duration:0.06},41.74);
+tl.to("#w114",{color:"#FFC845",duration:0.06},41.86);
+tl.fromTo("#cl34",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},41.70);tl.to("#cl34",{autoAlpha:0,duration:0.08},42.50);
+tl.to("#w115",{color:"#FFC845",duration:0.06},42.58);
+tl.to("#w116",{color:"#FFC845",duration:0.06},42.70);
+tl.to("#w117",{color:"#FFC845",duration:0.06},43.22);
+tl.to("#w118",{color:"#FFC845",duration:0.06},43.58);
+tl.fromTo("#cl35",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},42.54);tl.to("#cl35",{autoAlpha:0,duration:0.08},43.74);
+tl.to("#w119",{color:"#FFC845",duration:0.06},43.82);
+tl.to("#w120",{color:"#FFC845",duration:0.06},43.96);
+tl.to("#w121",{color:"#FFC845",duration:0.06},44.20);
+tl.fromTo("#cl36",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},43.78);tl.to("#cl36",{autoAlpha:0,duration:0.08},45.34);
+tl.to("#w122",{color:"#FFC845",duration:0.06},45.91);
+tl.to("#w123",{color:"#FFC845",duration:0.06},46.22);
+tl.to("#w124",{color:"#FFC845",duration:0.06},46.38);
+tl.to("#w125",{color:"#FFC845",duration:0.06},46.61);
+tl.fromTo("#cl37",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},45.87);tl.to("#cl37",{autoAlpha:0,duration:0.08},46.93);
+tl.to("#w126",{color:"#FFC845",duration:0.06},47.01);
+tl.to("#w127",{color:"#FFC845",duration:0.06},47.63);
+tl.fromTo("#cl38",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},46.97);tl.to("#cl38",{autoAlpha:0,duration:0.08},47.87);
+tl.to("#w128",{color:"#FFC845",duration:0.06},47.95);
+tl.to("#w129",{color:"#FFC845",duration:0.06},48.18);
+tl.to("#w130",{color:"#FFC845",duration:0.06},48.34);
+tl.to("#w131",{color:"#FFC845",duration:0.06},48.81);
+tl.fromTo("#cl39",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},47.91);tl.to("#cl39",{autoAlpha:0,duration:0.08},49.04);
+tl.to("#w132",{color:"#FFC845",duration:0.06},49.12);
+tl.to("#w133",{color:"#FFC845",duration:0.06},49.82);
+tl.to("#w134",{color:"#FFC845",duration:0.06},50.14);
+tl.fromTo("#cl40",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},49.08);tl.to("#cl40",{autoAlpha:0,duration:0.08},50.84);
+tl.to("#w135",{color:"#FFC845",duration:0.06},50.92);
+tl.fromTo("#cl41",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},50.88);tl.to("#cl41",{autoAlpha:0,duration:0.08},51.39);
+tl.to("#w136",{color:"#FFC845",duration:0.06},51.47);
+tl.to("#w137",{color:"#FFC845",duration:0.06},51.55);
+tl.to("#w138",{color:"#FFC845",duration:0.06},51.70);
+tl.to("#w139",{color:"#FFC845",duration:0.06},52.02);
+tl.fromTo("#cl42",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},51.43);tl.to("#cl42",{autoAlpha:0,duration:0.08},52.33);
+tl.to("#w140",{color:"#FFC845",duration:0.06},52.41);
+tl.to("#w141",{color:"#FFC845",duration:0.06},52.49);
+tl.to("#w142",{color:"#FFC845",duration:0.06},53.27);
+tl.fromTo("#cl43",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},52.37);tl.to("#cl43",{autoAlpha:0,duration:0.08},53.82);
+tl.to("#w143",{color:"#FFC845",duration:0.06},53.90);
+tl.to("#w144",{color:"#FFC845",duration:0.06},54.13);
+tl.fromTo("#cl44",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},53.86);tl.to("#cl44",{autoAlpha:0,duration:0.08},54.44);
+tl.to("#w145",{color:"#FFC845",duration:0.06},54.52);
+tl.to("#w146",{color:"#FFC845",duration:0.06},54.76);
+tl.to("#w147",{color:"#FFC845",duration:0.06},55.62);
+tl.to("#w148",{color:"#FFC845",duration:0.06},56.09);
+tl.fromTo("#cl45",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},54.48);tl.to("#cl45",{autoAlpha:0,duration:0.08},56.56);
+tl.to("#w149",{color:"#FFC845",duration:0.06},56.64);
+tl.to("#w150",{color:"#FFC845",duration:0.06},57.03);
+tl.to("#w151",{color:"#FFC845",duration:0.06},57.26);
+tl.to("#w152",{color:"#FFC845",duration:0.06},57.34);
+tl.fromTo("#cl46",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},56.60);tl.to("#cl46",{autoAlpha:0,duration:0.08},57.42);
+tl.to("#w153",{color:"#FFC845",duration:0.06},57.50);
+tl.to("#w154",{color:"#FFC845",duration:0.06},57.89);
+tl.to("#w155",{color:"#FFC845",duration:0.06},58.05);
+tl.to("#w156",{color:"#FFC845",duration:0.06},58.67);
+tl.fromTo("#cl47",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},57.46);tl.to("#cl47",{autoAlpha:0,duration:0.08},58.75);
+tl.to("#w157",{color:"#FFC845",duration:0.06},58.83);
+tl.fromTo("#cl48",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},58.79);tl.to("#cl48",{autoAlpha:0,duration:0.08},59.71);
+tl.to("#w158",{color:"#FFC845",duration:0.06},59.79);
+tl.to("#w159",{color:"#FFC845",duration:0.06},60.05);
+tl.to("#w160",{color:"#FFC845",duration:0.06},60.15);
+tl.to("#w161",{color:"#FFC845",duration:0.06},60.49);
+tl.fromTo("#cl49",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},59.75);tl.to("#cl49",{autoAlpha:0,duration:0.08},60.51);
+tl.to("#w162",{color:"#FFC845",duration:0.06},60.59);
+tl.fromTo("#cl50",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},60.55);tl.to("#cl50",{autoAlpha:0,duration:0.08},61.43);
+tl.to("#w163",{color:"#FFC845",duration:0.06},61.51);
+tl.to("#w164",{color:"#FFC845",duration:0.06},61.79);
+tl.to("#w165",{color:"#FFC845",duration:0.06},61.95);
+tl.fromTo("#cl51",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},61.47);tl.to("#cl51",{autoAlpha:0,duration:0.08},63.27);
+tl.to("#w166",{color:"#FFC845",duration:0.06},63.39);
+tl.to("#w167",{color:"#FFC845",duration:0.06},63.97);
+tl.to("#w168",{color:"#FFC845",duration:0.06},64.11);
+tl.to("#w169",{color:"#FFC845",duration:0.06},64.41);
+tl.fromTo("#cl52",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},63.35);tl.to("#cl52",{autoAlpha:0,duration:0.08},64.69);
+tl.to("#w170",{color:"#FFC845",duration:0.06},64.77);
+tl.to("#w171",{color:"#FFC845",duration:0.06},64.97);
+tl.fromTo("#cl53",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},64.73);tl.to("#cl53",{autoAlpha:0,duration:0.08},65.71);
+tl.to("#w172",{color:"#FFC845",duration:0.06},65.79);
+tl.to("#w173",{color:"#FFC845",duration:0.06},65.95);
+tl.to("#w174",{color:"#FFC845",duration:0.06},66.17);
+tl.to("#w175",{color:"#FFC845",duration:0.06},66.49);
+tl.fromTo("#cl54",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},65.75);tl.to("#cl54",{autoAlpha:0,duration:0.08},66.69);
+tl.to("#w176",{color:"#FFC845",duration:0.06},66.77);
+tl.to("#w177",{color:"#FFC845",duration:0.06},66.91);
+tl.to("#w178",{color:"#FFC845",duration:0.06},67.21);
+tl.to("#w179",{color:"#FFC845",duration:0.06},67.35);
+tl.fromTo("#cl55",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},66.73);tl.to("#cl55",{autoAlpha:0,duration:0.08},68.67);
+tl.to("#w180",{color:"#FFC845",duration:0.06},69.15);
+tl.to("#w181",{color:"#FFC845",duration:0.06},69.43);
+tl.to("#w182",{color:"#FFC845",duration:0.06},69.63);
+tl.to("#w183",{color:"#FFC845",duration:0.06},69.91);
+tl.fromTo("#cl56",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},69.11);tl.to("#cl56",{autoAlpha:0,duration:0.08},69.95);
+tl.to("#w184",{color:"#FFC845",duration:0.06},70.03);
+tl.fromTo("#cl57",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},69.99);tl.to("#cl57",{autoAlpha:0,duration:0.08},70.69);
+tl.to("#w185",{color:"#FFC845",duration:0.06},70.77);
+tl.to("#w186",{color:"#FFC845",duration:0.06},70.89);
+tl.to("#w187",{color:"#FFC845",duration:0.06},71.09);
+tl.to("#w188",{color:"#FFC845",duration:0.06},71.33);
+tl.fromTo("#cl58",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},70.73);tl.to("#cl58",{autoAlpha:0,duration:0.08},71.37);
+tl.to("#w189",{color:"#FFC845",duration:0.06},71.45);
+tl.to("#w190",{color:"#FFC845",duration:0.06},71.69);
+tl.to("#w191",{color:"#FFC845",duration:0.06},72.11);
+tl.to("#w192",{color:"#FFC845",duration:0.06},72.23);
+tl.fromTo("#cl59",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},71.41);tl.to("#cl59",{autoAlpha:0,duration:0.08},73.27);
+tl.to("#w193",{color:"#FFC845",duration:0.06},73.35);
+tl.to("#w194",{color:"#FFC845",duration:0.06},73.67);
+tl.to("#w195",{color:"#FFC845",duration:0.06},73.95);
+tl.to("#w196",{color:"#FFC845",duration:0.06},74.11);
+tl.fromTo("#cl60",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},73.31);tl.to("#cl60",{autoAlpha:0,duration:0.08},74.41);
+tl.to("#w197",{color:"#FFC845",duration:0.06},74.49);
+tl.to("#w198",{color:"#FFC845",duration:0.06},74.57);
+tl.to("#w199",{color:"#FFC845",duration:0.06},74.69);
+tl.to("#w200",{color:"#FFC845",duration:0.06},74.97);
+tl.fromTo("#cl61",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},74.45);tl.to("#cl61",{autoAlpha:0,duration:0.08},75.09);
+tl.to("#w201",{color:"#FFC845",duration:0.06},75.17);
+tl.to("#w202",{color:"#FFC845",duration:0.06},75.51);
+tl.to("#w203",{color:"#FFC845",duration:0.06},75.75);
+tl.to("#w204",{color:"#FFC845",duration:0.06},76.23);
+tl.fromTo("#cl62",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},75.13);tl.to("#cl62",{autoAlpha:0,duration:0.08},77.67);
+tl.to("#w205",{color:"#FFC845",duration:0.06},77.79);
+tl.to("#w206",{color:"#FFC845",duration:0.06},78.09);
+tl.to("#w207",{color:"#FFC845",duration:0.06},78.19);
+tl.to("#w208",{color:"#FFC845",duration:0.06},78.39);
+tl.fromTo("#cl63",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},77.75);tl.to("#cl63",{autoAlpha:0,duration:0.08},78.51);
+tl.to("#w209",{color:"#FFC845",duration:0.06},78.59);
+tl.to("#w210",{color:"#FFC845",duration:0.06},78.73);
+tl.to("#w211",{color:"#FFC845",duration:0.06},79.05);
+tl.to("#w212",{color:"#FFC845",duration:0.06},79.27);
+tl.fromTo("#cl64",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},78.55);tl.to("#cl64",{autoAlpha:0,duration:0.08},79.45);
+tl.to("#w213",{color:"#FFC845",duration:0.06},79.53);
+tl.to("#w214",{color:"#FFC845",duration:0.06},79.71);
+tl.to("#w215",{color:"#FFC845",duration:0.06},79.85);
+tl.fromTo("#cl65",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},79.49);tl.to("#cl65",{autoAlpha:0,duration:0.08},80.87);
+tl.to("#w216",{color:"#FFC845",duration:0.06},81.44);
+tl.fromTo("#cl66",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},81.40);tl.to("#cl66",{autoAlpha:0,duration:0.08},82.08);
+tl.to("#w217",{color:"#FFC845",duration:0.06},82.16);
+tl.to("#w218",{color:"#FFC845",duration:0.06},82.23);
+tl.to("#w219",{color:"#FFC845",duration:0.06},82.45);
+tl.to("#w220",{color:"#FFC845",duration:0.06},82.81);
+tl.fromTo("#cl67",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},82.12);tl.to("#cl67",{autoAlpha:0,duration:0.08},82.95);
+tl.to("#w221",{color:"#FFC845",duration:0.06},83.03);
+tl.to("#w222",{color:"#FFC845",duration:0.06},83.46);
+tl.to("#w223",{color:"#FFC845",duration:0.06},83.82);
+tl.to("#w224",{color:"#FFC845",duration:0.06},83.96);
+tl.fromTo("#cl68",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},82.99);tl.to("#cl68",{autoAlpha:0,duration:0.08},84.46);
+tl.to("#w225",{color:"#FFC845",duration:0.06},84.54);
+tl.to("#w226",{color:"#FFC845",duration:0.06},84.69);
+tl.to("#w227",{color:"#FFC845",duration:0.06},84.97);
+tl.to("#w228",{color:"#FFC845",duration:0.06},85.12);
+tl.fromTo("#cl69",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},84.50);tl.to("#cl69",{autoAlpha:0,duration:0.08},85.45);
+tl.to("#w229",{color:"#FFC845",duration:0.06},85.53);
+tl.to("#w230",{color:"#FFC845",duration:0.06},86.05);
+tl.to("#w231",{color:"#FFC845",duration:0.06},86.57);
+tl.to("#w232",{color:"#FFC845",duration:0.06},86.75);
+tl.fromTo("#cl70",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},85.49);tl.to("#cl70",{autoAlpha:0,duration:0.08},86.95);
+tl.to("#w233",{color:"#FFC845",duration:0.06},87.03);
+tl.to("#w234",{color:"#FFC845",duration:0.06},87.21);
+tl.to("#w235",{color:"#FFC845",duration:0.06},87.45);
+tl.to("#w236",{color:"#FFC845",duration:0.06},87.65);
+tl.fromTo("#cl71",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},86.99);tl.to("#cl71",{autoAlpha:0,duration:0.08},87.73);
+tl.to("#w237",{color:"#FFC845",duration:0.06},87.81);
+tl.to("#w238",{color:"#FFC845",duration:0.06},88.05);
+tl.to("#w239",{color:"#FFC845",duration:0.06},88.31);
+tl.to("#w240",{color:"#FFC845",duration:0.06},88.67);
+tl.fromTo("#cl72",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},87.77);tl.to("#cl72",{autoAlpha:0,duration:0.08},89.85);
+tl.to("#w241",{color:"#FFC845",duration:0.06},90.39);
+tl.to("#w242",{color:"#FFC845",duration:0.06},90.95);
+tl.to("#w243",{color:"#FFC845",duration:0.06},91.19);
+tl.to("#w244",{color:"#FFC845",duration:0.06},91.47);
+tl.fromTo("#cl73",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},90.35);tl.to("#cl73",{autoAlpha:0,duration:0.08},91.61);
+tl.to("#w245",{color:"#FFC845",duration:0.06},91.69);
+tl.to("#w246",{color:"#FFC845",duration:0.06},91.87);
+tl.to("#w247",{color:"#FFC845",duration:0.06},92.13);
+tl.to("#w248",{color:"#FFC845",duration:0.06},92.37);
+tl.fromTo("#cl74",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},91.65);tl.to("#cl74",{autoAlpha:0,duration:0.08},92.57);
+tl.to("#w249",{color:"#FFC845",duration:0.06},92.65);
+tl.to("#w250",{color:"#FFC845",duration:0.06},93.01);
+tl.to("#w251",{color:"#FFC845",duration:0.06},93.15);
+tl.fromTo("#cl75",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},92.61);tl.to("#cl75",{autoAlpha:0,duration:0.08},94.11);
+tl.to("#w252",{color:"#FFC845",duration:0.06},94.19);
+tl.to("#w253",{color:"#FFC845",duration:0.06},94.47);
+tl.to("#w254",{color:"#FFC845",duration:0.06},94.65);
+tl.to("#w255",{color:"#FFC845",duration:0.06},94.81);
+tl.fromTo("#cl76",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},94.15);tl.to("#cl76",{autoAlpha:0,duration:0.08},94.81);
+tl.to("#w256",{color:"#FFC845",duration:0.06},94.89);
+tl.fromTo("#cl77",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},94.85);tl.to("#cl77",{autoAlpha:0,duration:0.08},95.29);
+tl.to("#w257",{color:"#FFC845",duration:0.06},95.37);
+tl.to("#w258",{color:"#FFC845",duration:0.06},95.95);
+tl.to("#w259",{color:"#FFC845",duration:0.06},96.23);
+tl.to("#w260",{color:"#FFC845",duration:0.06},96.33);
+tl.fromTo("#cl78",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},95.33);tl.to("#cl78",{autoAlpha:0,duration:0.08},96.65);
+tl.to("#w261",{color:"#FFC845",duration:0.06},96.73);
+tl.to("#w262",{color:"#FFC845",duration:0.06},96.89);
+tl.to("#w263",{color:"#FFC845",duration:0.06},97.03);
+tl.to("#w264",{color:"#FFC845",duration:0.06},97.31);
+tl.fromTo("#cl79",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},96.69);tl.to("#cl79",{autoAlpha:0,duration:0.08},97.63);
+tl.to("#w265",{color:"#FFC845",duration:0.06},97.71);
+tl.to("#w266",{color:"#FFC845",duration:0.06},97.89);
+tl.fromTo("#cl80",{autoAlpha:0,y:14},{autoAlpha:1,y:0,duration:0.12},97.67);tl.to("#cl80",{autoAlpha:0,duration:0.08},99.03);
+window.__timelines["main"] = tl;
+tl.seek(0);
+</script></body></html>

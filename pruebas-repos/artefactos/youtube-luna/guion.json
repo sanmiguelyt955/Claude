@@ -1,0 +1,113 @@
+{
+ "titulo": "¿Qué pasaría si la Luna desapareciera?",
+ "ancho": 1080,
+ "alto": 1920,
+ "voz": "es-MX-JorgeNeural",
+ "rate": "+8%",
+ "gap": 0.4,
+ "duracion": 100,
+ "paleta": {
+  "fondo": "#0B1026",
+  "fondo2": "#1C2550",
+  "tinta": "#F4F1E8",
+  "acento": "#FFC845",
+  "rojo": "#FF5A5F",
+  "agua": "#2F80ED",
+  "luz": "#FFC845",
+  "producto": "#F4F1E8"
+ },
+ "escenas": [
+  {
+   "kicker": "¿Qué pasaría si…?",
+   "titulo": "La Luna | desaparece | esta noche",
+   "visual": "luna",
+   "p": {
+    "desaparece": true,
+    "t": 8.0
+   },
+   "voz": "Imagina que esta noche miras al cielo… y la Luna ya no está. No explota, no se va lejos. Simplemente desaparece."
+  },
+  {
+   "kicker": "Lo primero",
+   "titulo": "El cielo | se apaga",
+   "visual": "estrellas",
+   "voz": "Lo primero que notarías es la oscuridad. Una noche de luna llena es cientos de veces más brillante que una noche sin luna. Sin ella, todas las noches serían así."
+  },
+  {
+   "kicker": "Segundo",
+   "titulo": "Las mareas | se encogen",
+   "visual": "marea",
+   "p": {
+    "txt": "≈ ⅓"
+   },
+   "voz": "Después vendrían las mareas. La Luna es la que más jala del agua de los océanos. Sin ella, solo quedaría la marea del Sol, y sería más o menos un tercio de lo que es hoy."
+  },
+  {
+   "kicker": "Y eso importa",
+   "titulo": "La vida | en la orilla",
+   "visual": "lista",
+   "p": {
+    "items": [
+     "Cangrejos",
+     "Corales",
+     "Tortugas",
+     "Aves costeras"
+    ],
+    "paso": 0.9
+   },
+   "voz": "Y eso no es poca cosa. Muchísimos animales de las costas viven al ritmo de las mareas y de la luz de la Luna. Algunos corales, por ejemplo, se reproducen guiados por la luna llena."
+  },
+  {
+   "kicker": "Lo más grave",
+   "titulo": "La Tierra | se tambalea",
+   "visual": "eje",
+   "p": {
+    "txt": "23,4°"
+   },
+   "voz": "Pero lo más grave tardaría más. Hoy la Tierra está inclinada unos veintitrés grados, y la Luna ayuda a mantenerla estable. Sin ella, esa inclinación podría cambiar mucho más a lo largo de millones de años."
+  },
+  {
+   "kicker": "Resultado",
+   "titulo": "Estaciones | extremas",
+   "visual": "fraccion",
+   "p": {
+    "filas": [
+     [
+      "Hoy",
+      "45",
+      "estable"
+     ],
+     [
+      "Sin Luna",
+      "95",
+      "caos"
+     ]
+    ],
+    "paso": 1.4
+   },
+   "voz": "Y si cambia la inclinación, cambian las estaciones. Inviernos y veranos mucho más extremos, en lugares donde hoy el clima es tranquilo."
+  },
+  {
+   "kicker": "El giro",
+   "titulo": "La Luna | ya se está | yendo",
+   "visual": "contador",
+   "p": {
+    "n": 3.8,
+    "unidad": "cm/año"
+   },
+   "voz": "Y aquí viene lo curioso: la Luna sí se está alejando de verdad. Cada año se separa de la Tierra unos tres punto ocho centímetros. Más o menos lo que crecen tus uñas en un año."
+  },
+  {
+   "kicker": "Tranquilo",
+   "titulo": "No te | preocupes",
+   "visual": "luna",
+   "voz": "Tranquilo, a ese ritmo nos quedan miles de millones de años de Luna. Pero ahora ya sabes lo mucho que hace por nosotros cada noche."
+  },
+  {
+   "kicker": "Comparte",
+   "titulo": "Envíaselo a | ese amigo",
+   "visual": "texto",
+   "voz": "Envíale este video a ese amigo que siempre mira la Luna. Y dime en los comentarios: ¿qué crees que pasaría si la Tierra tuviera dos lunas?"
+  }
+ ]
+}
