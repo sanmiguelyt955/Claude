@@ -9,7 +9,7 @@ con código propio y sin dependencias.
 
 ## Instalar en Windows (lo más fácil)
 
-[**⬇ Descargar Proclama-Setup-0.4.0.exe**](https://github.com/sanmiguelyt955/Claude/raw/claude/easyworship-holyrics-app-ewit4p/instaladores/Proclama-Setup-0.4.0.exe) (sin ZIP) y ejecútalo. No pide permisos de
+[**⬇ Descargar Proclama-Setup-0.4.0.exe**](https://github.com/sanmiguelyt955/Proclama/raw/main/instaladores/Proclama-Setup-0.4.0.exe) (sin ZIP) y ejecútalo. No pide permisos de
 administrador ni necesita instalar Node: deja un icono **Proclama** en el escritorio y en el menú Inicio.
 
 - Requiere Windows 10 u 11 de 64 bits.
@@ -26,7 +26,7 @@ Para generar el instalador: `node tools/build-installer.mjs` (necesita `makensis
 ## Instalar en Linux
 
 ```bash
-git clone https://github.com/sanmiguelyt955/Claude && cd Claude/proclama   # o descarga el ZIP del repositorio
+git clone https://github.com/sanmiguelyt955/Proclama && cd Proclama
 bash tools/install-linux.sh
 ```
 
