@@ -520,13 +520,17 @@ function themesView() {
   const uses = (x) => [db.settings.songThemeId === x.id && 'canciones', db.settings.bibleThemeId === x.id && 'Biblia', db.settings.textThemeId === x.id && 'textos'].filter(Boolean).join(', ');
   const rowThemes = db.themes.map(x => {
     const sub = uses(x) || (x.bg.type === 'video' ? 'Tema de video' : x.bg.type === 'image' ? 'Tema de foto' : ' ');
+    const th = (x.bg.type === 'image' || x.bg.type === 'video') && x.bg.src ? h('span', { class: 'tthumb' }) : null;
+    if (th && (x.bg.type === 'image' || !lite())) resolveSrc(x.bg.src).then(url => { if (url) th.replaceChildren(x.bg.type === 'image' ? h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async' }) : h('video', { src: url + '#t=1', muted: true, preload: 'metadata' })); });
     return h('div', { class: 'row' + (x === t ? ' active' : ''), tabindex: '0', onclick: () => { ui.themeId = x.id; themesView(); } },
-      h('span', { class: 'main' }, h('b', { class: 'ell' }, x.name), h('small', { class: 'ell' }, sub)));
+      th, h('span', { class: 'main' }, h('b', { class: 'ell' }, x.name), h('small', { class: 'ell' }, sub)));
   });
   const newRow = h('div', { class: 'row', onclick: () => { const n = defaultTheme({ name: 'Tema nuevo' }); db.themes.push(n); ui.themeId = n.id; store.saveDb(); themesView(); } },
     h('span', { class: 'main muted' }, '＋ Tema nuevo'));
   const mediaRow = h('div', { class: 'row', onclick: () => addFile.click() },
     h('span', { class: 'main' }, h('b', {}, icon('image', 16), ' Tema desde foto o video…'), h('small', {}, 'Sube un archivo y se convierte en tema con ese fondo')));
+  $('libBar').replaceChildren(h('span', { class: 'muted ell', style: { flex: '1' } }, 'Cada foto o video que añadas se convierte en un tema con ese fondo.'),
+    h('button', { class: 'primary', onclick: () => addFile.click() }, icon('plus', 16), 'Añadir fotos o videos como tema'));
   $('libBody').replaceChildren(h('div', { class: 'themes' },
     h('div', { class: 'list' }, mediaRow, newRow, rowThemes, addFile),
     form));
@@ -559,7 +563,7 @@ async function renderLibrary(opts = {}) {
     if (opts.keepQuery && active) { const i = $('libBar').querySelector('input'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
     bibleList(opts.keepQuery ? parseReference(ui.bible.query, ui.bible.data)?.from ?? 0 : 0);
   } else if (tab === 'media') { $('libBar').replaceChildren(...mediaBar()); mediaList(); }
-  else { $('libBar').replaceChildren(); themesView(); }
+  else { themesView(); }
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { ui.tab = b.dataset.tab; renderLibrary(); });
 document.querySelectorAll('.mobnav button').forEach(b => b.onclick = () => setPanel(b.dataset.panel));

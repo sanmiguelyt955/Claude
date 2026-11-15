@@ -1,9 +1,9 @@
 {
  "name": "Proclama",
- "version": "0.4.3",
+ "version": "0.4.4",
  "date": "2026-11-15",
  "notes": [
-  "Se quita la opción de transmitir en OBS (no funcionaba sin su conexión)"
+  "Temas: botón visible «Añadir fotos o videos como tema» y miniaturas de los temas con foto o video."
  ],
  "files": {
   ".gitignore": {
@@ -23,7 +23,7 @@
    "size": 5083
   },
   "package.json": {
-   "sha256": "89c870d54ef69c798f038cdbd9571945db0881ac7d9791c1bfdb2a23e23969aa",
+   "sha256": "1e8f8efee25f2a3e775636e7e43aa0ae8624a55e507805873330eac3125e974a",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -39,8 +39,8 @@
    "size": 4003891
   },
   "public/css/app.css": {
-   "sha256": "5c70112d59f736cbca70135afd5d8dca67ba51590b15f80cada5b3f694f76622",
-   "size": 27343
+   "sha256": "40079bc7ff80b8a18fec969c812a1e63ccd2c5b24c0f08cdedb5e7400f260e99",
+   "size": 27568
   },
   "public/css/screen.css": {
    "sha256": "b686ab45072992221a715c4f29d41cfb608a49b060696f80a565900227095d40",
@@ -55,8 +55,8 @@
    "size": 6353
   },
   "public/js/app.js": {
-   "sha256": "2de45323b82beb1615ba1007ba531453364e91f7a12b4ace54e9466a6297c483",
-   "size": 58054
+   "sha256": "8a9fd5a1c0d6b51cc95a732567b986be282f9f537611e9d602410f833b30cdf9",
+   "size": 58710
   },
   "public/js/icons.js": {
    "sha256": "255657450d7b746d5b3eef7ed7d506a1cdcbd15c3a33de3c11296d56f82b659f",
@@ -119,7 +119,7 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "f43c7c8e5c4a818968a4aaa9e16a7fef86c66019b829283973b50d5ff3f77026",
+   "sha256": "ba71ec07c9745be8e2e3a0229049a4c14a5c708b8cf235adc898abe216729135",
    "size": 13572
   },
   "public/shared/timer.js": {

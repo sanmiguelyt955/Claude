@@ -315,3 +315,6 @@ body[data-view=pdf] .mobnav { display: none; }
 .tform .bgpick { grid-column: 1 / -1; }
 .tform .bgpick .drow { flex-wrap: nowrap; align-items: center; }
 .tform .bgpick .drow select { flex: 1; }
+
+.tthumb { flex: none; width: 64px; aspect-ratio: 16 / 9; background: #000; border-radius: 4px; overflow: hidden; display: block; }
+.tthumb img, .tthumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
