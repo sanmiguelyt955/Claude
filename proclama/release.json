@@ -1,12 +1,10 @@
 {
  "name": "Proclama",
- "version": "0.4.0",
+ "version": "0.4.1",
  "date": "2026-11-15",
  "notes": [
-  "Nueva sección «Presentar PDF» para dos pantallas: página actual y siguiente, cronómetro, puntero, resaltador, lupa y cuadrícula",
-  "Historial de PDF que se limpia solo a las 2 semanas sin abrirlo",
-  "Los PDF se pueden añadir al programa del culto y controlar desde el celular",
-  "Instalador para Linux"
+  "Temas: crear un tema desde una foto o video",
+  "Temas: cambiar el archivo de fondo de un tema sin ir a Medios"
  ],
  "files": {
   ".gitignore": {
@@ -26,7 +24,7 @@
    "size": 5067
   },
   "package.json": {
-   "sha256": "55fc8ec775489caca50ad16a6a3a2ccd2b19c742eff2350ae92fe3d9e2e0b6f9",
+   "sha256": "afaadf3ae9d67fcedd0f0f866479704ff0fa5045c191fc8834208609046ed1a0",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -42,8 +40,8 @@
    "size": 4003891
   },
   "public/css/app.css": {
-   "sha256": "f0197b6e8336a985437c668e673402c433536cacca2276a6d20809583febe38e",
-   "size": 27197
+   "sha256": "5c70112d59f736cbca70135afd5d8dca67ba51590b15f80cada5b3f694f76622",
+   "size": 27343
   },
   "public/css/screen.css": {
    "sha256": "9abdd4066285e1294cfeba8e16e27c496cef37fbe25c490f820152e2587d993e",
@@ -58,8 +56,8 @@
    "size": 6362
   },
   "public/js/app.js": {
-   "sha256": "ca738d0d003ccc4cee1ade0d6ddfbd0774d2777648f0b65a2f3191470965a74c",
-   "size": 54227
+   "sha256": "0aa47be90b138a228f3ef650fd945152a31ab9e8fa5c2147e5d8b4c2d8d02984",
+   "size": 56730
   },
   "public/js/icons.js": {
    "sha256": "255657450d7b746d5b3eef7ed7d506a1cdcbd15c3a33de3c11296d56f82b659f",
@@ -122,7 +120,7 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "acb625b6bd78fa6ce9e6f76366681720e5ab8022341a5b406aff5980ec08bc26",
+   "sha256": "0b580baac13c0f3f743214745cf59486988b3ce51537bc8b9a38cee8bd3a3f63",
    "size": 13014
   },
   "public/shared/timer.js": {
@@ -150,8 +148,8 @@
    "size": 1417586
   },
   "README.md": {
-   "sha256": "100bcc9ba437996904f845fb5aa5581ecda7e692bf99f7c2b972490e6032f5ec",
-   "size": 12282
+   "sha256": "d609148276083bfaf8c285522e9ca035f79d8302039a25e90ce4367af3613026",
+   "size": 12295
   },
   "server.js": {
    "sha256": "1bc948d47ad44f573d29f7def4187437c13ca8d4ad8db7a55f696e324facadbb",

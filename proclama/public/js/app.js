@@ -432,15 +432,24 @@ function mediaList() {
 
 // ---------- Biblioteca: temas ----------
 let themeScreen = null;
-/** Sube una foto o video y lo convierte en un tema nuevo (su fondo es ese archivo). Devuelve el tema. */
-async function themeFromMedia(file) {
-  const kind = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
-  if (!kind) throw new Error(`«${file.name}» no es una foto ni un video`);
-  const item = await store.uploadMedia(file);
-  const t = defaultTheme({ name: file.name.replace(/\.[^.]+$/, ''), dim: kind === 'video' ? 25 : 10,
-    bg: { type: kind, color: '#000000', color2: '#000000', src: item.src } });
-  store.db.themes.push(t);
-  return t;
+/**
+ * Sube fotos y videos y crea un tema por cada uno (su fondo es ese archivo). Primero se suben todos: cada subida
+ * recibe la base de datos del servidor, así que los temas se añaden al final, con un solo guardado.
+ */
+async function themesFromMedia(files) {
+  const made = [];
+  for (const file of files) {
+    try {
+      const kind = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
+      if (!kind) throw new Error(`«${file.name}» no es una foto ni un video`);
+      made.push({ kind, name: file.name.replace(/\.[^.]+$/, ''), item: await store.uploadMedia(file) });
+    } catch (err) { toast(err.message); }
+  }
+  const themes = made.map(({ kind, name, item }) => defaultTheme({ name, dim: kind === 'video' ? 25 : 10,
+    bg: { type: kind, color: '#000000', color2: '#000000', src: item.src } }));
+  store.db.themes.push(...themes);
+  if (themes.length) store.saveDb();
+  return themes;
 }
 
 function themesView() {
@@ -520,12 +529,12 @@ function themesView() {
     form));
   addFile.onchange = async (e) => {
     const files = [...e.target.files]; e.target.value = '';
-    let last = null;
-    for (const f of files) {
-      try { last = await themeFromMedia(f); }
-      catch (err) { toast(err.message); }
+    const themes = await themesFromMedia(files);
+    if (themes.length) {
+      ui.themeId = themes.at(-1).id;
+      toast(themes.length > 1 ? `${themes.length} temas creados` : `Tema «${themes[0].name}» creado`);
+      themesView();
     }
-    if (last) { ui.themeId = last.id; store.saveDb(); toast(files.length > 1 ? `${files.length} temas creados` : `Tema «${last.name}» creado`); themesView(); }
   };
   themeScreen = createScreen(mon, { chrome: false, muted: true, lite });
   themeScreen.update(sample());
