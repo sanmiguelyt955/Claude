@@ -1,7 +1,7 @@
 // Modelo de datos y lógica compartida entre el navegador y el servidor (sin dependencias).
 
 export const APP_NAME = 'Proclama';
-export const VERSION = '0.4.1';
+export const VERSION = '0.4.2';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -117,10 +117,16 @@ export function defaultDb() {
  */
 export const emptyOv = () => ({ pointer: null, strokes: [], draft: null, zoom: null, sv: 0 });
 
+/** Lo que debe mostrar el logo según los ajustes: un tema si se eligió uno, si no la imagen, si no el nombre. */
+export function logoFromSettings(db) {
+  const t = db.settings.logoThemeId ? (db.themes ?? []).find(x => x.id === db.settings.logoThemeId) : null;
+  return { src: t ? '' : (db.settings.logoSrc || ''), text: db.settings.churchName || '', theme: t ? structuredClone(t) : null };
+}
+
 export function defaultLive() {
   return {
     rev: 0, pres: null, index: 0, black: false, clear: false, ov: emptyOv(),
-    logo: { on: false, src: '', text: '' },
+    logo: { on: false, src: '', text: '', theme: null },
     alert: { on: false, text: '' },
     countdown: { on: false, endAt: 0, label: '' },
     stageMsg: '',
@@ -270,7 +276,8 @@ export function liveReducer(live, action) {
     case 'black': l.black = on(l.black, action.value); break;
     case 'clear': l.clear = on(l.clear, action.value); break;
     case 'logo':
-      l.logo = { on: on(l.logo.on, action.value), src: action.src ?? l.logo.src, text: action.text ?? l.logo.text };
+      // El logo puede ser una imagen (src) o un tema entero (theme: su fondo y su letra, con el nombre de la iglesia).
+      l.logo = { on: on(l.logo.on, action.value), src: action.src ?? l.logo.src, text: action.text ?? l.logo.text, theme: action.theme ?? null };
       break;
     case 'close': l.pres = null; l.index = 0; l.clear = false; l.ov = emptyOv(); break;
     case 'overlay': l.ov = { ...(l.ov ?? emptyOv()), ...action.patch }; break; // puntero, anotaciones y lupa del presentador

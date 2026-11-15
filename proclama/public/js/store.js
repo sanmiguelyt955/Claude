@@ -97,7 +97,7 @@ export async function createStore(role = 'operator') {
     let dbTimer = null;
     store.saveDb = () => { emit('db'); clearTimeout(dbTimer); dbTimer = setTimeout(() => put('/api/db', { db: store.db }), 150); };
     store.uploadMedia = async (file) => {
-      const r = await fetch(api('/api/media?name=' + encodeURIComponent(file.name)), { method: 'POST', body: file });
+      const r = await fetch(api('/api/media?name=' + encodeURIComponent(file.name) + '&origin=' + me), { method: 'POST', body: file });
       if (!r.ok) throw new Error((await r.json()).error || 'Error al subir');
       const item = await r.json();
       if (!store.db.media.some(m => m.id === item.id)) store.db.media.push(item);

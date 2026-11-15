@@ -2,7 +2,7 @@
 import { createStore, resolveSrc, withToken } from './store.js';
 import { createScreen } from './render.js';
 import { resolveItem, itemInfo, labelColor } from './resolve.js';
-import { defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresentation, themeById, norm, uid, FONTS, PDF_KEEP_DAYS, pdfDaysLeft, pdfLastUse } from '../shared/model.js';
+import { logoFromSettings, defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresentation, themeById, norm, uid, FONTS, PDF_KEEP_DAYS, pdfDaysLeft, pdfLastUse } from '../shared/model.js';
 import { BOOKS_ES, bookName, parseReference, formatRef, searchBible, bibleToPresentation } from '../shared/bible.js';
 import { importSongFile } from '../shared/importers.js';
 import { buildBible } from '../shared/bible-import.js';
@@ -193,7 +193,9 @@ function renderLive() {
   if (document.activeElement !== $('alertText') && l.alert.text) $('alertText').value = l.alert.text;
   document.querySelector('.mobnav [data-panel=live]').classList.toggle('onair', !!l.pres && !l.black);
 }
-const toggleLogo = () => store.dispatch({ type: 'logo', src: store.db.settings.logoSrc, text: store.db.settings.churchName });
+// El logo se muestra o se oculta; si ya está en pantalla, se actualiza con lo que haya en los ajustes.
+const toggleLogo = () => store.dispatch({ type: 'logo', value: !store.live.logo?.on, ...logoFromSettings(store.db) });
+function refreshLogo() { if (store.live.logo?.on) store.dispatch({ type: 'logo', value: true, ...logoFromSettings(store.db) }); }
 $('lvPrev').onclick = () => store.dispatch({ type: 'prev' });
 $('lvNext').onclick = () => store.dispatch({ type: 'next' });
 $('lvBlack').onclick = () => store.dispatch({ type: 'black' });
@@ -424,7 +426,7 @@ function mediaList() {
     return h('div', { class: 'tile' }, thumb, h('div', { class: 'cap ell' }, m.name), h('div', { class: 'acts' },
       act('play', 'Proyectar ahora', () => previewItem({ type: 'media', mediaId: m.id }, true), 'Proyectar', 'go'),
       act('plus', 'Añadir al programa', () => addToSchedule({ type: 'media', mediaId: m.id }), 'Programa', 'add'),
-      m.kind === 'image' && act('logo', 'Usar esta imagen como logo de la iglesia', () => { store.db.settings.logoSrc = m.src; store.saveDb(); toast('Listo: se mostrará al pulsar «Logo»'); }, 'Logo'),
+      m.kind === 'image' && act('logo', 'Usar esta imagen como logo de la iglesia', () => { store.db.settings.logoSrc = m.src; store.db.settings.logoThemeId = ''; store.saveDb(); refreshLogo(); toast('Listo: esta imagen es el logo'); }, 'Logo'),
       act('trash', 'Eliminar', async () => { if (confirm(`¿Eliminar “${m.name}”?`)) { await store.deleteMedia(m.id); mediaList(); } }, '', 'danger')));
   });
   $('libBody').replaceChildren(tiles.length ? h('div', { class: 'tiles' }, tiles) : h('div', { class: 'empty' }, h('b', {}, 'Aún no hay imágenes ni videos'), 'Añade fondos, anuncios en imagen o videos desde tu computadora.'));
@@ -506,6 +508,7 @@ function themesView() {
       h('button', { onclick: () => { db.settings.songThemeId = t.id; store.saveDb(); toast('Predeterminado para canciones'); themesView(); } }, 'Usar en canciones'),
       h('button', { onclick: () => { db.settings.bibleThemeId = t.id; store.saveDb(); toast('Predeterminado para Biblia'); themesView(); } }, 'Usar en Biblia'),
       h('button', { onclick: () => { db.settings.textThemeId = t.id; store.saveDb(); toast('Predeterminado para textos'); themesView(); } }, 'Usar en textos'),
+      h('button', { title: 'El logo mostrará el fondo de este tema con el nombre de la iglesia', onclick: () => { db.settings.logoThemeId = t.id; db.settings.logoSrc = ''; store.saveDb(); refreshLogo(); toast(`Logo: tema «${t.name}»`); themesView(); } }, icon('logo', 16), 'Usar como logo'),
       h('button', { onclick: () => { const c = { ...structuredClone(t), id: uid(), name: t.name + ' (copia)' }; db.themes.push(c); ui.themeId = c.id; store.saveDb(); themesView(); } }, 'Duplicar'),
       h('button', { class: 'danger', disabled: db.themes.length < 2, onclick: () => {
         if (!confirm(`¿Eliminar el tema “${t.name}”?`)) return;
@@ -780,10 +783,23 @@ $('btnSettings').onclick = async () => {
     bibleVersion: h('select', { value: s.bibleVersion }, versions.map(v => h('option', { value: v.id }, v.name))),
   };
   f.lowPower.checked = s.lowPower !== false;
+  const logoIn = h('input', { type: 'file', accept: 'image/*', hidden: true, onchange: async (e) => {
+    const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+    try { const item = await store.uploadMedia(file); s.logoSrc = item.src; s.logoThemeId = ''; store.saveDb(); refreshLogo(); $('dlg').close(); toast('Logo cambiado'); }
+    catch (err) { toast(err.message); }
+  } });
+  const logoName = () => {
+    const t = s.logoThemeId ? store.db.themes.find(x => x.id === s.logoThemeId) : null;
+    return t ? `Tema: ${t.name}` : s.logoSrc ? 'Imagen subida' : 'Sin logo: se muestra el nombre de la iglesia';
+  };
   openDialog('Ajustes', [
     field('Nombre de la iglesia (se muestra con el botón Logo si no hay imagen)', f.churchName),
     h('div', { class: 'drow' }, field('Versículos por diapositiva', f.versesPerSlide), field('Biblia predeterminada', f.bibleVersion)),
-    s.logoSrc && h('div', {}, h('button', { onclick: () => { s.logoSrc = ''; store.saveDb(); toast('Logo quitado'); } }, 'Quitar la imagen del logo')),
+    h('h4', {}, 'Logo de la iglesia'),
+    h('div', { class: 'linkrow' }, h('span', { class: 'main' }, h('b', {}, logoName()), h('small', {}, 'Se muestra al pulsar «Logo» (L). Puede ser una imagen o un tema.')),
+      h('button', { onclick: () => logoIn.click() }, icon('upload', 16), 'Subir imagen…'),
+      h('button', { onclick: () => { s.logoSrc = ''; s.logoThemeId = ''; store.saveDb(); refreshLogo(); toast('Logo quitado'); } }, 'Quitar')),
+    logoIn,
     h('label', { class: 'check' }, f.lowPower, 'Modo de bajo consumo: en este panel los videos se ven como imagen fija y sin animaciones (el proyector no cambia)'),
     h('h4', {}, 'Versión'),
     h('div', { class: 'drow', style: { alignItems: 'center' } }, h('span', {}, `Proclama ${store.version ?? ''}`),

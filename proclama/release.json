@@ -1,10 +1,12 @@
 {
  "name": "Proclama",
- "version": "0.4.1",
+ "version": "0.4.2",
  "date": "2026-11-15",
  "notes": [
-  "Temas: crear un tema desde una foto o video",
-  "Temas: cambiar el archivo de fondo de un tema sin ir a Medios"
+  "Logo: subir la imagen del logo desde Ajustes",
+  "Logo: usar un tema como logo (fondo y nombre de la iglesia)",
+  "Temas: arreglo al subir varias fotos o videos a la vez",
+  "Arreglo: los cambios no se perdían al subir archivos"
  ],
  "files": {
   ".gitignore": {
@@ -24,7 +26,7 @@
    "size": 5083
   },
   "package.json": {
-   "sha256": "afaadf3ae9d67fcedd0f0f866479704ff0fa5045c191fc8834208609046ed1a0",
+   "sha256": "03196f86c8e1435100c344e4bd5c3fce1cbde5e7c8f3b113f4cbfad943f5cde3",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -44,8 +46,8 @@
    "size": 27343
   },
   "public/css/screen.css": {
-   "sha256": "9abdd4066285e1294cfeba8e16e27c496cef37fbe25c490f820152e2587d993e",
-   "size": 4134
+   "sha256": "b686ab45072992221a715c4f29d41cfb608a49b060696f80a565900227095d40",
+   "size": 4453
   },
   "public/icon.svg": {
    "sha256": "ffbe85bc824e464f7a55a660ab6167c387861c618750d3d101590fa7aa2b278e",
@@ -56,8 +58,8 @@
    "size": 6362
   },
   "public/js/app.js": {
-   "sha256": "0aa47be90b138a228f3ef650fd945152a31ab9e8fa5c2147e5d8b4c2d8d02984",
-   "size": 56730
+   "sha256": "3deff6b80e70ffc86f66171ae5538b17036b8d8e391d2b8e552da8f91b083052",
+   "size": 58253
   },
   "public/js/icons.js": {
    "sha256": "255657450d7b746d5b3eef7ed7d506a1cdcbd15c3a33de3c11296d56f82b659f",
@@ -80,16 +82,16 @@
    "size": 29787
   },
   "public/js/render.js": {
-   "sha256": "b170e04ad26b12f8ef5df46e8299debbe414a69de758af968201dfcaeedc4eab",
-   "size": 10275
+   "sha256": "efbdc1b8f9ef4b6a0efd30a9d02b31c12392444bd78e6690b387bdbafff42d4d",
+   "size": 11921
   },
   "public/js/resolve.js": {
    "sha256": "fd028682b717f1b77965aaa029995e372dd3989d2c1d48df92361d3073c68974",
    "size": 2592
   },
   "public/js/store.js": {
-   "sha256": "b9c572e4dd6624e1eeef024802b8fe5da368a491ebc7c9ac1cf8c0c5c9f5fffb",
-   "size": 11971
+   "sha256": "9775df93a65b232485e32f8450dbd5c0626ddc7c359a6f6f75a9c39967a1b2e7",
+   "size": 11989
   },
   "public/manifest.webmanifest": {
    "sha256": "5bf8d75ce0c92ceacf43fb1abc0d442e987b5db44509b46d90dd87004dfe05a0",
@@ -120,8 +122,8 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "0b580baac13c0f3f743214745cf59486988b3ce51537bc8b9a38cee8bd3a3f63",
-   "size": 13014
+   "sha256": "7cdc5c50dab4d29e6dfbb1c4448800dc60b36c364bbb514449bf235152e219db",
+   "size": 13572
   },
   "public/shared/timer.js": {
    "sha256": "723a1dc9ff76fe73a94a271a70bb0fddfdb02cec17a94980ba87ce46bfee61e5",
@@ -152,8 +154,8 @@
    "size": 12295
   },
   "server.js": {
-   "sha256": "1bc948d47ad44f573d29f7def4187437c13ca8d4ad8db7a55f696e324facadbb",
-   "size": 21996
+   "sha256": "0da6dafa4604b505dc96a4aea2533971fb7ff35de15058607ad317e544c949a5",
+   "size": 22152
   },
   "tools/build-bibles.mjs": {
    "sha256": "46ddf160f6d35b7c7a9c46a65184c2de6461d76846c1aae488c0bb7f45e721a9",

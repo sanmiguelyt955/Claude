@@ -91,6 +91,35 @@ export function createScreen(container, opts = {}) {
     }
   }
 
+  /** Pinta el logo: un tema (su fondo y su letra) o una imagen. Si mientras tanto cambió, se descarta. */
+  async function paintLogo(L, key) {
+    const text = (txt, extra = {}) => { const s = el('', 'span'); s.textContent = txt || ''; Object.assign(s.style, extra); return s; };
+    let node;
+    if (L.theme) {
+      const t = L.theme, b = t.bg || {};
+      const stage = el('ps-logo-theme');
+      if (b.type === 'image' && b.src) { const u = await resolveSrc(b.src); if (u) stage.style.background = `#000 url("${u}") center / cover no-repeat`; }
+      else if (b.type === 'video' && b.src) {
+        const u = await resolveSrc(b.src);
+        if (u && !lite()) { const v = el('', 'video'); v.src = u; v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true; stage.append(v); }
+        else stage.style.background = b.color || '#000';
+      }
+      else if (b.type === 'gradient') stage.style.background = `linear-gradient(160deg, ${b.color}, ${b.color2})`;
+      else stage.style.background = b.color || '#000';
+      stage.append(text(L.text, {
+        position: 'relative', fontFamily: t.font, color: t.color, fontWeight: t.bold ? '700' : '400', fontStyle: t.italic ? 'italic' : 'normal',
+        textShadow: t.shadow ? '0 4px 14px rgba(0,0,0,.85)' : 'none', fontSize: '110px', textAlign: 'center', padding: '0 80px', lineHeight: 1.2,
+      }));
+      node = stage;
+    } else if (L.src) {
+      const url = await resolveSrc(L.src);
+      if (url) { node = el('', 'img'); node.src = url; node.alt = ''; }
+    }
+    if (!node) node = text(L.text, { fontSize: '120px', fontWeight: '700', padding: '0 80px', textAlign: 'center' });
+    if (logo.dataset.k !== key) return; // ya cambió: no se pinta un logo viejo
+    logo.replaceChildren(node);
+  }
+
   let mediaSeq = 0;
   async function setMedia(m) {
     const key = m ? m.kind + m.src + lite() : '';
@@ -173,12 +202,8 @@ export function createScreen(container, opts = {}) {
     black.classList.toggle('on', chrome && !!live.black);
     logo.classList.toggle('on', chrome && !!live.logo?.on);
     if (chrome && live.logo?.on) {
-      const lk = live.logo.src + '|' + live.logo.text;
-      if (logo.dataset.k !== lk) {
-        logo.dataset.k = lk;
-        const url = await resolveSrc(live.logo.src);
-        logo.innerHTML = url ? `<img src="${esc(url)}" alt="">` : `<span>${esc(live.logo.text || '')}</span>`;
-      }
+      const lk = JSON.stringify([live.logo.src, live.logo.text, live.logo.theme]);
+      if (logo.dataset.k !== lk) { logo.dataset.k = lk; paintLogo(live.logo, lk); }
     }
     const a = chrome && live.alert?.on ? live.alert.text : '';
     alertBar.classList.toggle('still', lite());

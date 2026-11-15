@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { expiredPdfs, APP_NAME, VERSION, defaultDb, defaultLive, liveReducer, songToPresentation, textToPresentation, mediaToPresentation, norm, uid } from './public/shared/model.js';
+import { logoFromSettings, expiredPdfs, APP_NAME, VERSION, defaultDb, defaultLive, liveReducer, songToPresentation, textToPresentation, mediaToPresentation, norm, uid } from './public/shared/model.js';
 import { parseReference, bibleToPresentation } from './public/shared/bible.js';
 import { importEasyWorship } from './lib/easyworship.js';
 import { checkUpdate, applyUpdate } from './lib/update.js';
@@ -160,7 +160,7 @@ async function runAction(name, p) {
     case 'goto': setLive(liveReducer(live, { type: 'goto', index: Number(p.index) || 0 }), 'api'); break;
     case 'black': case 'clear': setLive(liveReducer(live, { type: name, value: bool(p.value) }), 'api'); break;
     case 'logo':
-      setLive(liveReducer(live, { type: 'logo', value: bool(p.value), src: db.settings.logoSrc, text: db.settings.churchName }), 'api'); break;
+      setLive(liveReducer(live, { type: 'logo', value: bool(p.value), ...logoFromSettings(db) }), 'api'); break;
     case 'alert': setLive(liveReducer(live, { type: 'alert', text: p.text, value: p.text ? true : bool(p.value) ?? false }), 'api'); break;
     case 'countdown':
       setLive(liveReducer(live, { type: 'countdown', seconds: Number(p.seconds) || Number(p.minutes) * 60 || 0, label: p.label }), 'api'); break;
@@ -286,7 +286,8 @@ async function api(req, res, url) {
     const item = { id, name: original.replace(/\.[^.]+$/, ''), kind, src: '/media/' + file };
     db.media = [...db.media, item];
     saveDb();
-    broadcast('db', db);
+    // A quien subió el archivo no se le reenvía la base de datos: ya la tiene y podría pisar cambios que está haciendo.
+    broadcast('db', db, url.searchParams.get('origin') || 'server');
     return send(res, 200, item);
   }
 
