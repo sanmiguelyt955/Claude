@@ -312,3 +312,6 @@ body[data-view=pdf] .mobnav { display: none; }
   .views button { padding: 6px 9px; }
   .pd-nav button span, .pd-tools button span { display: none; } .pd-nav .big span { display: inline; }
 }
+.tform .bgpick { grid-column: 1 / -1; }
+.tform .bgpick .drow { flex-wrap: nowrap; align-items: center; }
+.tform .bgpick .drow select { flex: 1; }
