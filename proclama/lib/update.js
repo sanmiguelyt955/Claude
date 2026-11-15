@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-const SKIP_DIRS = new Set(['data', 'node_modules', 'docs', 'test', '.git']);
+const SKIP_DIRS = new Set(['data', 'node_modules', 'docs', 'test', '.git', 'instaladores']);
 const SKIP_FILES = new Set(['release.json']);
 
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
