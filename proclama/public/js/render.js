@@ -2,6 +2,7 @@
 // Lo usan el proyector, OBS, la vista previa y el monitor "en vivo" del operador.
 import { fmtClock } from '../shared/model.js';
 import { resolveSrc } from './store.js';
+import { createOverlay, fitRect, zoomTransform } from './overlay.js';
 
 const W = 1920, H = 1080;
 const fitCache = new Map(); // tamaño de letra ya calculado para cada diapositiva + tema
@@ -21,10 +22,12 @@ export function createScreen(container, opts = {}) {
   const mode = opts.mode ?? 'full';
   const root = el('pscreen' + (mode === 'lower' ? ' lower' : ''));
   const bg = el('ps-bg'), media = el('ps-media'), dim = el('ps-dim');
+  const zoomEl = el('ps-zoom'), ovBox = el('ps-ov'), overlay = createOverlay(); // la lupa mueve imagen y anotaciones juntas
+  ovBox.append(overlay.svg); zoomEl.append(media, ovBox);
   const textA = el('ps-text'), textB = el('ps-text');
   const footer = el('ps-footer'), count = el('ps-count'), alertBar = el('ps-alert'), logo = el('ps-logo'), black = el('ps-black');
   alertBar.append(el('ps-alert-in', 'span'));
-  root.append(bg, dim, media, textA, textB, footer, count, logo, alertBar, black);
+  root.append(bg, dim, zoomEl, textA, textB, footer, count, logo, alertBar, black);
   container.append(root);
 
   const fit = () => {
@@ -88,20 +91,31 @@ export function createScreen(container, opts = {}) {
     }
   }
 
-  async function setMedia(m, my) {
+  let mediaSeq = 0;
+  async function setMedia(m) {
     const key = m ? m.kind + m.src + lite() : '';
     if (key === lastMedia) return;
     lastMedia = key;
+    const mine = ++mediaSeq; // solo cuenta cuando cambia el medio (otras actualizaciones no lo cancelan)
     const url = m ? await resolveSrc(m.src) : '';
-    if (my !== seq) return;
+    if (mine !== mediaSeq) return;
+    if (!m || !url) { media.replaceChildren(); return; }
+    if (m.kind === 'image') {
+      // Se espera a que la imagen esté lista antes de cambiarla: sin parpadeo al pasar de página.
+      const i = el('', 'img'); i.alt = ''; i.src = url;
+      try { await i.decode(); } catch { /* se muestra igual */ }
+      if (mine !== mediaSeq) return;
+      media.replaceChildren(i);
+      paintOverlay();
+      return;
+    }
     media.replaceChildren();
-    if (!m || !url) return;
     if (m.kind === 'video') {
       const v = el('', 'video'); v.playsInline = true; v.muted = !!opts.muted; v.controls = false;
       media.append(v);
       if (lite()) { v.preload = 'metadata'; v.src = url + '#t=0.5'; }
       else { v.src = url; v.autoplay = true; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
-    } else { const i = el('', 'img'); i.src = url; i.alt = ''; media.append(i); }
+    }
   }
 
   function tick() {
@@ -114,6 +128,16 @@ export function createScreen(container, opts = {}) {
     if (html !== lastCount) { lastCount = html; count.innerHTML = html; }
   }
 
+  /** Puntero, anotaciones y lupa del presentador sobre la página de PDF que se está mostrando. */
+  function paintOverlay() {
+    const img = media.firstChild, live = state;
+    if (live?.pres?.type !== 'pdf' || live.clear || img?.tagName !== 'IMG' || !img.naturalWidth) { ovBox.style.display = 'none'; zoomEl.style.transform = ''; return; }
+    const asp = img.naturalWidth / img.naturalHeight, r = fitRect(asp, W, H);
+    Object.assign(ovBox.style, { display: 'block', inset: 'auto', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    overlay.update(live.ov, asp);
+    zoomEl.style.transform = zoomTransform(live.ov?.zoom, asp, W, H);
+  }
+
   async function update(live) {
     state = live;
     const my = ++seq;
@@ -122,7 +146,10 @@ export function createScreen(container, opts = {}) {
     root.classList.toggle('empty', !pres);
     if (pres) { setBg(pres.theme, my); dim.style.background = `rgba(0,0,0,${(pres.theme.dim || 0) / 100})`; }
     else if (mode !== 'lower') { lastBg = ''; bg.replaceChildren(); bg.style.background = '#000'; dim.style.background = 'transparent'; }
-    setMedia(pres && !live.clear ? slide?.media : null, my);
+    setMedia(pres && !live.clear ? slide?.media : null);
+    paintOverlay();
+    const nextMedia = pres?.slides[live.index + 1]?.media; // se precarga la página siguiente para que el cambio sea instantáneo
+    if (nextMedia?.kind === 'image' && !lite() && opts.chrome !== false) resolveSrc(nextMedia.src).then(u => { if (u) new Image().src = u; });
 
     const showText = !!pres && !live.clear && !slide?.media && !!slide?.text;
     const key = showText ? pres.id + '|' + live.index + '|' + JSON.stringify(pres.theme) + '|' + slide.text : '';

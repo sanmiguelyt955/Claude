@@ -2,7 +2,7 @@
 //  - "servidor": con server.js (SSE + REST). Sincroniza todos los dispositivos de la red.
 //  - "local": sin servidor (archivo estático / hosting). Usa localStorage + BroadcastChannel + IndexedDB,
 //    y sincroniza las ventanas del mismo navegador.
-import { defaultDb, defaultLive, liveReducer, uid } from '../shared/model.js';
+import { defaultDb, defaultLive, liveReducer, uid, expiredPdfs, pdfKey } from '../shared/model.js';
 
 const token = new URLSearchParams(location.search).get('token') || '';
 const api = (p) => p + (token ? (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) : '');
@@ -104,6 +104,12 @@ export async function createStore(role = 'operator') {
       emit('db');
       return item;
     };
+    // Páginas de un PDF (ya convertidas a imagen): se guardan en el servidor, en data/pdfs/<id>/.
+    store.savePdfPage = async (id, key, blob) => {
+      const r = await fetch(api(`/api/pdf/${id}/${key}`), { method: 'POST', body: blob });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo guardar la página');
+    };
+    store.deletePdfFiles = async (pdf) => { await fetch(api('/api/pdf/' + pdf.id), { method: 'DELETE' }).catch(() => {}); };
     store.deleteMedia = async (id) => {
       await fetch(api('/api/media/' + encodeURIComponent(id)), { method: 'DELETE' });
       store.db.media = store.db.media.filter(m => m.id !== id); emit('db');
@@ -147,11 +153,26 @@ export async function createStore(role = 'operator') {
       store.db.media.push(item); store.saveDb();
       return item;
     };
+    // Modo local: las páginas del PDF van a IndexedDB (clave pdf:<id>:p0001).
+    store.savePdfPage = (id, key, blob) => idbOp('readwrite', s => s.put(blob, `pdf:${id}:${key}`));
+    store.deletePdfFiles = async (pdf) => {
+      for (let n = 1; n <= pdf.pages; n++) for (const k of ['p', 't']) await idbOp('readwrite', s => s.delete(`pdf:${pdf.id}:${pdfKey(k, n)}`)).catch(() => {});
+    };
     store.deleteMedia = async (id) => {
       await idbOp('readwrite', s => s.delete(id)).catch(() => {});
       store.db.media = store.db.media.filter(m => m.id !== id); store.saveDb();
     };
   }
+
+  /** PDF del historial con más de dos semanas sin abrirse: se quitan (en modo servidor lo hace el servidor). */
+  store.pruneLocalPdfs = async () => {
+    if (store.mode === 'server') return;
+    const old = expiredPdfs(store.db);
+    if (!old.length) return;
+    store.db.pdfs = store.db.pdfs.filter(p => !old.includes(p));
+    for (const p of old) await store.deletePdfFiles(p);
+    store.saveDb();
+  };
 
   store.dispatch = (action) => {
     const next = liveReducer(store.live, action);

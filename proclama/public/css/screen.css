@@ -43,3 +43,10 @@
 .pscreen.lower .ps-count, .pscreen.lower .ps-count.big { top: 120px; }
 .pscreen { contain: strict; }
 .ps-alert.still .ps-alert-in { padding-left: 40px; }
+
+/* Página de PDF: la lupa mueve imagen y anotaciones juntas */
+.ps-zoom { transform-origin: 0 0; }
+.ps-zoom > div { position: absolute; inset: 0; }
+.ps-ov { pointer-events: none; display: none; }
+.ov-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.pscreen.lower .ps-zoom { display: none !important; }

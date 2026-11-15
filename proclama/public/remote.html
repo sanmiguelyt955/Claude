@@ -48,11 +48,12 @@
   <div id="msg" role="status"></div>
   <h2>Diapositivas</h2><div id="slides" class="list"></div>
   <h2>Programa</h2><div id="sched" class="list"></div>
+  <h2>PDF</h2><div id="pdfs" class="list"></div>
   <h2>Canciones</h2><div class="row"><input id="q" type="search" placeholder="Buscar canción…" aria-label="Buscar canción"></div><div id="songs" class="list"></div>
 </main>
 <footer><button id="prev" aria-label="Anterior">◀ Anterior</button><button id="next">Siguiente ▶</button></footer>
 <script type="module">
-import { createStore } from './js/store.js';
+import { createStore, resolveSrc } from './js/store.js';
 import { resolveItem, itemInfo } from './js/resolve.js';
 import { norm } from './shared/model.js';
 import { parseReference, bibleToPresentation } from './shared/bible.js';
@@ -71,13 +72,22 @@ function drawLive() {
   const box = $('slides'), slides = p?.slides ?? null;
   if (box._slides !== slides) { // solo se reconstruye la lista cuando cambia la presentación
     box._slides = slides; box._active = null;
-    box.replaceChildren(...(slides ?? []).map((x, i) => btn('item', `${i + 1}${x.label ? ' · ' + x.label : ''}`, x.media ? '' : x.text, () => store.dispatch({ type: 'goto', index: i }))));
+    box.replaceChildren(...(slides ?? []).map((x, i) => {
+      const b = btn('item', `${i + 1}${x.label ? ' · ' + x.label : ''}`, x.media ? '' : x.text, () => store.dispatch({ type: 'goto', index: i }));
+      if (x.media?.kind === 'image') { // página de PDF o imagen: se muestra su miniatura
+        const img = document.createElement('img'); img.alt = ''; img.loading = 'lazy'; img.style.cssText = 'display:block;width:100%;max-height:120px;object-fit:contain;background:#000;border-radius:6px;margin-top:6px';
+        resolveSrc(x.media.thumb || x.media.src).then(u => { if (u) img.src = u; }); b.append(img);
+      }
+      return b;
+    }));
   }
   const cur = slides ? box.children[l.index] ?? null : null;
   if (box._active !== cur) { box._active?.classList.remove('active'); cur?.classList.add('active'); box._active = cur; cur?.scrollIntoView({ block: 'nearest' }); }
 }
 function drawDb() {
   $('sched').replaceChildren(...store.db.schedule.items.map(it => { const info = itemInfo(it, store.db); return btn('item' + (store.live.pres?.itemId === it.id ? ' active' : ''), info.sub, `${info.icon} ${info.title}`, () => show(it)); }));
+  $('pdfs').replaceChildren(...(store.db.pdfs ?? []).slice(0, 12).map(p => btn('item' + (store.live.pres?.pdfId === p.id ? ' active' : ''), `${p.pages} página${p.pages === 1 ? '' : 's'}`, p.name, () => show({ type: 'pdf', pdfId: p.id }))));
+  $('pdfs').previousElementSibling.hidden = $('pdfs').hidden = !(store.db.pdfs ?? []).length;
   const q = norm($('q').value).trim();
   $('songs').replaceChildren(...store.db.songs.filter(s => !q || norm(s.title + ' ' + s.text).includes(q)).slice(0, 30)
     .map(s => btn('item', s.author, s.title, () => show({ type: 'song', songId: s.id }))));

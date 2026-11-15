@@ -23,6 +23,33 @@ administrador ni necesita instalar Node: deja un icono **Proclama** en el escrit
 
 Para generar el instalador: `node tools/build-installer.mjs` (necesita `makensis`; en Linux, `apt install nsis`).
 
+## Instalar en Linux
+
+```bash
+git clone https://github.com/sanmiguelyt955/Claude && cd Claude/proclama   # o descarga el ZIP del repositorio
+bash tools/install-linux.sh
+```
+
+Sin permisos de administrador. Usa tu Node si es 22.5 o más nuevo; si no, descarga uno propio (verificado con la huella oficial).
+Crea el icono **Proclama** en el menú de aplicaciones y el comando `proclama`. Para quitarlo: `bash tools/install-linux.sh --quitar`
+(tus datos en `~/.local/share/proclama` se conservan). Probado en Ubuntu 24.04; no en Linux Mint.
+
+## Presentar un PDF
+
+1. En la cabecera, **Presentar PDF**. Pulsa **Abrir PDF…** o arrastra el archivo a la ventana (hasta 500 páginas).
+2. Pulsa **Abrir proyector** y lleva esa ventana a la segunda pantalla (con Chrome o Edge se coloca sola; pulsa `F` para pantalla completa).
+3. Pulsa **Proyectar** (`Enter`). Avanza con `→`, `←` o espacio; también desde el celular en `/remote`.
+
+| Tecla | Acción | Tecla | Acción |
+|---|---|---|---|
+| `→ ↓ Av Pág espacio` | Siguiente | `L` | Puntero láser |
+| `← ↑ Re Pág` | Anterior | `H` · `1`–`7` | Dibujar · elegir resaltador o lápiz |
+| `Inicio` · `Fin` | Primera · última | `0` o `E` | Borrador |
+| `G` | Ir a una página | `Ctrl+Z` · `Ctrl+Mayús+Z` | Deshacer · rehacer |
+| `D` | Ver todas las páginas | `Z` · `U` | Lupa · quitar lupa |
+| `B` | Pantalla en negro | `P` · `R` · `T` | Pausar · reiniciar · duración prevista |
+| `S` | Intercambiar pantallas | `Esc` | Salir de lo último que abriste, y al final, terminar |
+
 ## Cómo usarlo (sin instalador)
 
 En macOS o Linux, o para desarrollar, con Node instalado también puedes abrirla como app de escritorio con
@@ -67,10 +94,17 @@ dispositivos, API ni importación de EasyWorship.
   imagen o video. Los cambios se ven al instante, también en vivo.
 - **Programa**: canciones, pasajes, medios y textos en orden; arrastra para reordenar.
 - **En pantalla**: Negro, Ocultar texto (deja el fondo), Logo, alerta que cruza la pantalla, cuenta regresiva y mensaje al escenario.
+- **Presentar PDF** (sección aparte, para dos pantallas): abre o arrastra un PDF y cada página es una diapositiva, sin pasarlo a
+  PowerPoint. La laptop muestra la página actual, la siguiente, el cronómetro (con duración prevista y colores), el reloj y las
+  herramientas; el proyector solo la página actual. Puntero láser, resaltador y lápiz con deshacer, lupa, cuadrícula de páginas,
+  pantalla en negro e ir a una página. Historial «Mis PDF» que se limpia solo a las 2 semanas sin abrirlo. Estudio de la
+  herramienta en que se inspira: [docs/pympress-ingenieria-inversa.md](docs/pympress-ingenieria-inversa.md).
 - **Importar**: texto plano, ChordPro, OpenSong, OpenLyrics/OpenLP, JSON de Holyrics y la base de datos de
   EasyWorship 6.1+ (`Songs.db` + `SongWords.db`). Copia de seguridad en JSON.
 
-Atajos: `→`/espacio siguiente · `←` anterior · `Enter` proyectar la vista previa · `B` negro · `C` ocultar texto · `L` logo.
+![Presentar PDF](docs/12-pdf-herramientas.png)
+
+Atajos en «Culto»: `→`/espacio siguiente · `←` anterior · `Enter` proyectar la vista previa · `B` negro · `C` ocultar texto · `L` logo.
 
 ## Pensada para equipos modestos
 
@@ -155,7 +189,7 @@ server.js            servidor (HTTP, SSE, API, medios) — sin dependencias
 launcher.mjs         arranque como app de escritorio (ventana propia, datos en la carpeta del usuario)
 lib/easyworship.js   lector de la base de datos de EasyWorship (node:sqlite)
 public/shared/       lógica común a navegador y servidor: modelo, Biblia, importadores
-public/js/           operador (app.js), motor de pantalla (render.js), sincronización (store.js)
+public/js/           operador (app.js), presentador de PDF (presenter.js, pdf-slides.js, overlay.js), motor de pantalla (render.js), sincronización (store.js)
 public/*.html        operador, proyector/OBS, escenario, control remoto
 test/                pruebas (`npm test`)
 ```
@@ -169,5 +203,5 @@ Ningún código copiado; sirvieron para entender formatos y funciones:
 
 ## Pendiente
 
-Guardar varios programas, fondos de video en bucle por canción, editor de diapositivas con varias cajas de texto,
-disparadores/scripts al estilo Holyrics, acordes para músicos, instalador para macOS.
+Notas del presentador y videos dentro de los PDF, guardar varios programas, fondos de video en bucle por canción, editor de diapositivas con varias cajas de texto,
+disparadores/scripts al estilo Holyrics, acordes para músicos, instalador para macOS, probar el intercambio de pantallas con dos monitores reales.

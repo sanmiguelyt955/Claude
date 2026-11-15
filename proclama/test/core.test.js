@@ -133,3 +133,36 @@ test('actualizaciones: versiones y release.json al día', async () => {
   assert.deepEqual(files, release.files, 'release.json no coincide con los archivos: vuelve a generar la versión');
   assert.equal(release.version, JSON.parse(fs.readFileSync(root + 'package.json', 'utf8')).version);
 });
+
+test('PDF: presentación, caducidad de 2 semanas y capa del presentador', async () => {
+  const { pdfToPresentation, expiredPdfs, pdfDaysLeft, pdfSrc, pdfKey, emptyOv, PDF_KEEP_DAYS } = await import('../public/shared/model.js');
+  const { zoomTransform, fitRect } = await import('../public/js/overlay.js');
+  const { timerColor, mmss } = await import('../public/shared/timer.js');
+  const pdf = { id: 'abc12345', name: 'Prueba', pages: 3, pattern: '/pdf/abc12345/{k}.jpg' };
+  assert.equal(pdfKey('p', 7), 'p0007'); assert.equal(pdfSrc(pdf, 't', 12), '/pdf/abc12345/t0012.jpg');
+  const pres = pdfToPresentation(pdf);
+  assert.equal(pres.type, 'pdf'); assert.equal(pres.pdfId, 'abc12345'); assert.equal(pres.slides.length, 3);
+  assert.equal(pres.slides[1].media.src, '/pdf/abc12345/p0002.jpg'); assert.equal(pres.slides[1].media.thumb, '/pdf/abc12345/t0002.jpg');
+  // 14 días desde la última vez que se abrió (no desde que se añadió)
+  const DAY = 86400e3, now = Date.now();
+  const db = { pdfs: [{ ...pdf, id: 'a', addedAt: now - 30 * DAY, lastOpened: now - 3 * DAY }, { ...pdf, id: 'b', addedAt: now - 30 * DAY, lastOpened: now - 15 * DAY }, { ...pdf, id: 'c', addedAt: now - 15 * DAY }] };
+  assert.deepEqual(expiredPdfs(db, now).map(p => p.id), ['b', 'c']); assert.equal(PDF_KEEP_DAYS, 14);
+  assert.equal(pdfDaysLeft(db.pdfs[0], now), 11); assert.equal(pdfDaysLeft(db.pdfs[1], now), 0);
+  // anotaciones y cambio de página
+  let l = liveReducer(defaultLive(), { type: 'show', pres, index: 0 });
+  l = liveReducer(l, { type: 'overlay', patch: { pointer: { x: 0.5, y: 0.5, c: '#f00' }, zoom: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 }, strokes: [{ c: '#fff', a: 1, w: 0.005, p: [[0.1, 0.1]] }], sv: 5 } });
+  assert.equal(l.ov.strokes.length, 1); assert.equal(l.ov.sv, 5);
+  l = liveReducer(l, { type: 'goto', index: 2, ov: { strokes: [{ c: '#000', a: 1, w: 0.005, p: [[0.2, 0.2]] }], sv: 9 } });
+  assert.equal(l.ov.pointer, null); assert.equal(l.ov.zoom, null); assert.equal(l.ov.strokes[0].c, '#000'); assert.equal(l.ov.sv, 9);
+  l = liveReducer(l, { type: 'next' }); assert.equal(l.index, 2); // ya es la última página
+  l = liveReducer(liveReducer(l, { type: 'prev' }), { type: 'overlay', patch: { zoom: { x: 0, y: 0, w: 1, h: 1 } } });
+  l = liveReducer(l, { type: 'prev' }); assert.equal(l.ov.zoom, null); assert.deepEqual(l.ov.strokes, []);
+  assert.deepEqual(liveReducer(l, { type: 'close' }).ov, emptyOv());
+  // lupa: una región de la mitad de una página 16:9 en un lienzo 1920×1080 se ve al doble
+  assert.equal(zoomTransform(null, 16 / 9, 1920, 1080), '');
+  assert.match(zoomTransform({ x: 0, y: 0, w: 0.5, h: 0.5 }, 16 / 9, 1920, 1080), /scale\(2\.0000\)/);
+  assert.deepEqual(fitRect(1, 1920, 1080), { left: 420, top: 0, width: 1080, height: 1080 });
+  // cronómetro: color según el tiempo que falta
+  assert.equal(timerColor(600), 'rgb(234,238,246)'); assert.equal(timerColor(0), 'rgb(255,194,71)'); assert.equal(timerColor(-300), 'rgb(255,77,94)'); assert.equal(timerColor(-1000), 'rgb(255,77,94)');
+  assert.equal(mmss(65.9), '01:05'); assert.equal(mmss(3725), '1:02:05'); assert.equal(mmss(-3), '00:00');
+});

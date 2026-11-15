@@ -231,3 +231,84 @@ main { grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr); }
 .notes { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 @media (max-width: 900px) { .update span { display: none; } }
 [hidden] { display: none !important; }
+
+/* PDF */
+.kind.pdf { color: #ff9d6e; }
+.slide .thumbimg { display: block; width: 100%; height: 92px; object-fit: contain; background: #000; border-radius: 4px; }
+progress { height: 8px; accent-color: var(--accent); }
+body.dropping::after { content: "Suelta el PDF aquí para presentarlo"; position: fixed; inset: 8px; z-index: 60; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 16px; background: rgba(13,16,22,.88); font-size: 22px; font-weight: 700; color: var(--accent); pointer-events: none; }
+
+/* ---------- Sección «Presentar PDF» ---------- */
+.views { display: flex; gap: 2px; background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 2px; margin-left: 6px; }
+.views button { border: 0; background: transparent; color: var(--muted); padding: 6px 12px; border-radius: 8px; }
+.views button:hover { color: var(--text); }
+.views button.on { background: var(--accent-soft); color: var(--text); font-weight: 700; }
+.views button.on .ic { color: var(--accent); }
+.pdview { flex: 1; min-height: 0; display: grid; grid-template-columns: 270px 1fr; gap: 8px; padding: 8px; position: relative; }
+.pd-side, .pd-main { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); min-height: 0; min-width: 0; overflow: hidden; }
+.pd-side { display: flex; flex-direction: column; }
+.pd-sidehead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-bottom: 1px solid var(--line); }
+.pd-list { flex: 1; overflow: auto; }
+.pd-sidefoot { padding: 8px 10px; font-size: 12px; border-top: 1px solid var(--line); }
+.pd-row { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-bottom: 1px solid #1f2633; cursor: pointer; }
+.pd-row:hover { background: #1a212c; } .pd-row.active { background: var(--accent-soft); box-shadow: inset 3px 0 var(--accent); } .pd-row.onair { box-shadow: inset 3px 0 var(--live); }
+.pd-row .main { flex: 1; min-width: 0; } .pd-row .main b { display: block; font-weight: 600; } .pd-row small { display: block; color: var(--muted); font-size: 12px; }
+.pd-row .acts { display: flex; flex: none; } .pd-row .acts .act { padding: 5px 6px; }
+.pd-main { display: flex; flex-direction: column; }
+.pd-work { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pd-stage { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 290px; gap: 10px; padding: 10px; }
+.pd-curwrap { position: relative; min-width: 0; min-height: 0; display: grid; place-items: center; background: #07090d; border-radius: 10px; overflow: hidden; }
+.pd-slide { position: relative; touch-action: none; user-select: none; background: #000; box-shadow: 0 0 0 2px var(--line2); }
+.pd-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.pd-slide .ov-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.pd-zoomrect { position: absolute; border: 2px solid #ffd36b; background: rgba(255,211,107,.12); pointer-events: none; }
+.pd-zoomrect.drag { border-style: dashed; }
+.pd-hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.78); border: 1px solid var(--line2); padding: 6px 14px; border-radius: 99px; font-size: 13px; pointer-events: none; white-space: nowrap; }
+.pd-right { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; }
+.pd-card { background: var(--field); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.pd-cap { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.pd-nextbox { aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; cursor: pointer; display: grid; place-items: center; }
+.pd-nextimg { width: 100%; height: 100%; object-fit: contain; }
+.pd-nextend { color: var(--muted); font-size: 14px; }
+.pd-time { font: 700 40px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; flex: 1; }
+.pd-timerow { display: flex; align-items: center; gap: 6px; }
+.pd-timesub { font-size: 12.5px; margin-top: 6px; min-height: 1.2em; }
+.pd-ettrow { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+.pd-ettrow input { width: 66px; }
+.pd-pagerow { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 700; }
+.pd-pagein { width: 86px; font-size: 22px; font-weight: 700; text-align: center; }
+.pd-bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+.pd-bar i { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+.pd-clock { font: 600 30px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.pd-tools, .pd-nav { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pd-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+.pd-pens { display: flex; gap: 5px; margin-left: 2px; }
+.pen { width: 26px; height: 26px; padding: 0; border-radius: 50%; background: var(--c); border: 2px solid var(--line2); }
+.pen.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
+.pd-tools button.on { background: var(--accent-soft); border-color: var(--accent); color: #fff; }
+.pd-nav .projector-on, .pd-nav button.open { color: var(--ok); border-color: #1f5a3c; background: var(--ok-soft); }
+.pd-strip { display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px; border-top: 1px solid var(--line); min-height: 88px; }
+.pd-thumb { position: relative; flex: none; width: 118px; padding: 0; border: 2px solid var(--line); border-radius: 6px; background: #000; overflow: hidden; aspect-ratio: 16 / 9; }
+.pd-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pd-thumb i { position: absolute; left: 4px; bottom: 3px; font-style: normal; font-size: 11px; font-weight: 700; background: rgba(0,0,0,.72); padding: 1px 6px; border-radius: 4px; }
+.pd-thumb.active { border-color: var(--accent); }
+.pd-banner { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #3a2f10; color: #ffd36b; border-bottom: 1px solid #6b5413; }
+.pd-banner span { flex: 1; }
+.pd-over { position: absolute; inset: 0; z-index: 30; background: rgba(5,7,11,.86); display: grid; place-items: center; padding: 20px; }
+.pd-overbox { width: min(1200px, 100%); max-height: 100%; background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
+.pd-overhead { display: flex; gap: 6px; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.pd-overgrid { padding: 14px; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.pd-overgrid .pd-thumb { width: auto; }
+.pd-empty { flex: 1; display: grid; place-items: center; padding: 20px; overflow: auto; }
+.pd-emptybox { max-width: 660px; display: grid; gap: 14px; justify-items: center; text-align: center; color: var(--accent); }
+.pd-emptybox h2 { margin: 0; font-size: 24px; color: var(--text); } .pd-emptybox p { margin: 0; }
+.pd-emptybox .guide { text-align: left; width: 100%; color: var(--text); }
+body[data-view=pdf] .mobnav { display: none; }
+@media (max-width: 980px) {
+  .pdview { display: flex; flex-direction: column; overflow: auto; }
+  .pd-side, .pd-main { overflow: visible; flex: none; } .pd-list { max-height: 30vh; }
+  .pd-stage { display: flex; flex-direction: column; flex: none; } .pd-curwrap { aspect-ratio: 16 / 9; flex: none; width: 100%; }
+  .pd-right { flex-direction: row; overflow-x: auto; } .pd-right .pd-card { min-width: 160px; flex: none; }
+  .views button { padding: 6px 9px; }
+  .pd-nav button span, .pd-tools button span { display: none; } .pd-nav .big span { display: inline; }
+}

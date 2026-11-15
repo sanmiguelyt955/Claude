@@ -15,6 +15,10 @@
   <img src="icon.svg" alt="" width="28" height="28">
   <strong class="brand">Proclama</strong>
   <span id="status" class="chip"></span>
+  <nav class="views" aria-label="Secciones">
+    <button data-view="culto" class="on" data-icon="list" title="Canciones, Biblia, imágenes y programa del culto">Culto</button>
+    <button data-view="pdf" data-icon="file" title="Presentar un PDF como si fuera un PowerPoint">Presentar PDF</button>
+  </nav>
   <span class="spacer"></span>
   <button id="btnUpdate" class="update" data-icon="down" hidden><span id="updLabel">Actualizar</span></button>
   <button id="btnProjector" class="projector" data-icon="monitor"><span id="projLabel">Abrir proyector</span></button>
@@ -88,6 +92,8 @@
     <div id="libBody" class="grow"></div>
   </section>
 </main>
+
+<section id="pdfView" class="pdview" aria-label="Presentar PDF" hidden></section>
 
 <nav class="mobnav" aria-label="Secciones">
   <button data-panel="library" data-icon="search" data-icon-size="22"><span>Buscar</span></button>

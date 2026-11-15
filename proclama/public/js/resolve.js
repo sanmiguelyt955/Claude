@@ -1,5 +1,5 @@
 // Convierte un elemento del programa (canción, pasaje, medio, texto) en una presentación lista para mostrar.
-import { songToPresentation, textToPresentation, mediaToPresentation } from '../shared/model.js';
+import { songToPresentation, textToPresentation, mediaToPresentation, pdfToPresentation } from '../shared/model.js';
 import { bibleToPresentation } from '../shared/bible.js';
 
 export async function resolveItem(item, store) {
@@ -15,6 +15,11 @@ export async function resolveItem(item, store) {
     const m = db.media.find(x => x.id === item.mediaId);
     if (!m) throw new Error('Ese archivo ya no está en la biblioteca');
     pres = mediaToPresentation(m, db);
+  } else if (item.type === 'pdf') {
+    const pdf = (db.pdfs ?? []).find(x => x.id === item.pdfId);
+    if (!pdf) throw new Error('Ese PDF ya no está en el historial (se quita si pasan 2 semanas sin abrirlo). Ábrelo otra vez.');
+    if (Date.now() - (pdf.lastOpened ?? 0) > 3600e3) { pdf.lastOpened = Date.now(); store.saveDb(); } // abrirlo reinicia las 2 semanas
+    pres = pdfToPresentation(pdf);
   } else {
     pres = textToPresentation(item.title, item.text, db, item.themeId);
   }
@@ -31,6 +36,10 @@ export function itemInfo(item, db) {
   if (item.type === 'media') {
     const m = db.media.find(x => x.id === item.mediaId);
     return { icon: m?.kind === 'video' ? '▶' : '▣', title: m?.name ?? '(medio eliminado)', sub: m?.kind === 'video' ? 'Video' : 'Imagen' };
+  }
+  if (item.type === 'pdf') {
+    const p = (db.pdfs ?? []).find(x => x.id === item.pdfId);
+    return { icon: '▣', title: p?.name ?? '(PDF quitado del historial)', sub: p ? `PDF · ${p.pages} página${p.pages === 1 ? '' : 's'}` : 'PDF' };
   }
   return { icon: '¶', title: item.title || 'Texto', sub: 'Texto' };
 }

@@ -1,7 +1,7 @@
 // Modelo de datos y lógica compartida entre el navegador y el servidor (sin dependencias).
 
 export const APP_NAME = 'Proclama';
-export const VERSION = '0.3.1';
+export const VERSION = '0.4.0';
 
 export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -100,6 +100,7 @@ export function defaultDb() {
     version: 1,
     songs: SAMPLE_SONGS.map((s, i) => ({ id: 'ejemplo-' + (i + 1), ccli: '', themeId: '', ...s })),
     media: [],
+    pdfs: [],
     themes: [tSong, tBible, tClean],
     schedule: { name: 'Culto', items: [] },
     settings: {
@@ -109,9 +110,16 @@ export function defaultDb() {
   };
 }
 
+/**
+ * Capa que el presentador dibuja encima de una página de PDF (puntero láser, anotaciones y lupa). Todas las
+ * coordenadas son fracciones de la página (0 a 1), así se ven igual en cualquier pantalla.
+ *  pointer: { x, y, c } · strokes: [{ c, a, w, p: [[x, y], ...] }] · draft: trazo en curso · zoom: { x, y, w, h } · sv: versión de strokes
+ */
+export const emptyOv = () => ({ pointer: null, strokes: [], draft: null, zoom: null, sv: 0 });
+
 export function defaultLive() {
   return {
-    rev: 0, pres: null, index: 0, black: false, clear: false,
+    rev: 0, pres: null, index: 0, black: false, clear: false, ov: emptyOv(),
     logo: { on: false, src: '', text: '' },
     alert: { on: false, text: '' },
     countdown: { on: false, endAt: 0, label: '' },
@@ -218,6 +226,31 @@ export function mediaToPresentation(media, db) {
   };
 }
 
+// ---------- PDF (cada página es una diapositiva) ----------
+
+/** Días que un PDF se conserva en el historial sin abrirse. Pasado ese tiempo se quita junto con sus páginas. */
+export const PDF_KEEP_DAYS = 14;
+const DAY = 86400e3;
+
+/** Nombre de la imagen de una página: p0007 (grande, para proyectar) o t0007 (miniatura). */
+export const pdfKey = (kind, n) => kind + String(n).padStart(4, '0');
+export const pdfSrc = (pdf, kind, n) => pdf.pattern.replace('{k}', pdfKey(kind, n));
+export const pdfLastUse = (pdf) => pdf.lastOpened ?? pdf.addedAt ?? 0;
+export const pdfDaysLeft = (pdf, now = Date.now()) => Math.max(0, Math.ceil(PDF_KEEP_DAYS - (now - pdfLastUse(pdf)) / DAY));
+export const expiredPdfs = (db, now = Date.now()) => (db.pdfs ?? []).filter(p => now - pdfLastUse(p) > PDF_KEEP_DAYS * DAY);
+
+/** Un PDF guardado -> presentación con una diapositiva (imagen) por página. */
+export function pdfToPresentation(pdf) {
+  const slides = [];
+  for (let n = 1; n <= pdf.pages; n++) {
+    slides.push({ text: '', label: '', footer: '', media: { kind: 'image', src: pdfSrc(pdf, 'p', n), thumb: pdfSrc(pdf, 't', n) } });
+  }
+  return {
+    id: uid(), type: 'pdf', pdfId: pdf.id, title: pdf.name, slides,
+    theme: defaultTheme({ id: 'pdf', bg: { type: 'color', color: '#000000', color2: '#000000', src: '' } }),
+  };
+}
+
 // ---------- Estado en vivo ----------
 
 /** Reductor puro del estado en vivo. Devuelve un objeto nuevo con rev + 1. */
@@ -229,7 +262,7 @@ export function liveReducer(live, action) {
   switch (action.type) {
     case 'show':
       l.pres = action.pres; l.index = Math.max(0, Math.min((action.pres?.slides.length ?? 1) - 1, action.index | 0));
-      l.black = false; l.clear = false; l.logo = { ...l.logo, on: false };
+      l.black = false; l.clear = false; l.logo = { ...l.logo, on: false }; l.ov = emptyOv();
       break;
     case 'next': if (n) { l.index = clamp(l.index + 1); l.clear = false; } break;
     case 'prev': if (n) { l.index = clamp(l.index - 1); l.clear = false; } break;
@@ -239,7 +272,8 @@ export function liveReducer(live, action) {
     case 'logo':
       l.logo = { on: on(l.logo.on, action.value), src: action.src ?? l.logo.src, text: action.text ?? l.logo.text };
       break;
-    case 'close': l.pres = null; l.index = 0; l.clear = false; break;
+    case 'close': l.pres = null; l.index = 0; l.clear = false; l.ov = emptyOv(); break;
+    case 'overlay': l.ov = { ...(l.ov ?? emptyOv()), ...action.patch }; break; // puntero, anotaciones y lupa del presentador
     case 'alert': {
       const text = action.text ?? l.alert.text;
       l.alert = { text, on: !!text && on(l.alert.on, action.value) };
@@ -255,6 +289,8 @@ export function liveReducer(live, action) {
     case 'stage': l.stageMsg = String(action.text ?? ''); break;
     default: return live;
   }
+  // Al cambiar de página se limpian puntero, anotaciones y lupa (el presentador puede devolver las de esa página en la misma acción).
+  if (action.type !== 'show' && action.type !== 'overlay' && l.index !== (live?.index ?? 0)) l.ov = { ...emptyOv(), ...(action.ov ?? {}) };
   l.rev = (live?.rev ?? 0) + 1;
   return l;
 }

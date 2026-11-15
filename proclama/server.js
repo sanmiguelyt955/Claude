@@ -8,7 +8,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { APP_NAME, VERSION, defaultDb, defaultLive, liveReducer, songToPresentation, textToPresentation, mediaToPresentation, norm, uid } from './public/shared/model.js';
+import { expiredPdfs, APP_NAME, VERSION, defaultDb, defaultLive, liveReducer, songToPresentation, textToPresentation, mediaToPresentation, norm, uid } from './public/shared/model.js';
 import { parseReference, bibleToPresentation } from './public/shared/bible.js';
 import { importEasyWorship } from './lib/easyworship.js';
 import { checkUpdate, applyUpdate } from './lib/update.js';
@@ -18,6 +18,7 @@ const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(ROOT, 'public');
 const DATA = path.resolve(process.env.PROCLAMA_DATA || path.join(ROOT, 'data'));
 const MEDIA = path.join(DATA, 'media');
+const PDFS = path.join(DATA, 'pdfs'); // páginas de los PDF abiertos: pdfs/<id>/p0001.jpg y t0001.jpg
 const BIBLES = path.join(DATA, 'bibles');
 const DB_FILE = path.join(DATA, 'db.json');
 const PORT = Number(process.env.PORT || process.argv[2] || 7700);
@@ -40,6 +41,7 @@ const MEDIA_KINDS = { image: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif',
 const PAGES = { '/': 'index.html', '/output': 'output.html', '/stage': 'stage.html', '/remote': 'remote.html', '/obs': 'output.html' };
 
 fs.mkdirSync(MEDIA, { recursive: true });
+fs.mkdirSync(PDFS, { recursive: true });
 fs.mkdirSync(BIBLES, { recursive: true });
 
 let db = defaultDb();
@@ -123,7 +125,7 @@ async function serveFile(req, res, file) {
   try { stat = await fsp.stat(file); } catch { return send(res, 404, 'No encontrado'); }
   if (!stat.isFile()) return send(res, 404, 'No encontrado');
   const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
-  const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': file.startsWith(MEDIA) || file.includes(`${path.sep}bibles${path.sep}`) ? 'max-age=3600' : 'no-cache' };
+  const headers = { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Cache-Control': file.startsWith(MEDIA) || file.startsWith(PDFS) || file.includes(`${path.sep}bibles${path.sep}`) ? 'max-age=3600' : 'no-cache' };
   const modified = new Date(Math.floor(stat.mtimeMs / 1000) * 1000).toUTCString();
   headers['Last-Modified'] = modified;
   if (!req.headers.range && req.headers['if-modified-since'] === modified) { res.writeHead(304, headers); return res.end(); }
@@ -258,6 +260,21 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  // Una página de un PDF ya convertida a imagen por el navegador: /api/pdf/<id>/<p0001|t0001>
+  const pdfPage = /^\/api\/pdf\/([a-z0-9]{6,24})\/([pt]\d{4})$/.exec(p);
+  if (pdfPage && req.method === 'POST') {
+    const body = await readBody(req, 40e6);
+    if (body.length < 100 || body[0] !== 0xff || body[1] !== 0xd8) return send(res, 400, { error: 'La página debe ser una imagen JPEG' });
+    await fsp.mkdir(path.join(PDFS, pdfPage[1]), { recursive: true });
+    await fsp.writeFile(path.join(PDFS, pdfPage[1], pdfPage[2] + '.jpg'), body);
+    return send(res, 200, { ok: true });
+  }
+  const pdfDel = /^\/api\/pdf\/([a-z0-9]{6,24})$/.exec(p);
+  if (pdfDel && req.method === 'DELETE') {
+    await fsp.rm(path.join(PDFS, pdfDel[1]), { recursive: true, force: true });
+    return send(res, 200, { ok: true });
+  }
+
   if (p === '/api/media' && req.method === 'POST') {
     const original = path.basename(url.searchParams.get('name') || 'archivo');
     const ext = path.extname(original).toLowerCase();
@@ -338,6 +355,29 @@ if (process.env.PROCLAMA_AUTO_EXIT === '1') {
   }, 5000).unref();
 }
 
+/**
+ * Historial de PDF: lo que lleva más de PDF_KEEP_DAYS sin abrirse se quita de la lista y se borran sus páginas.
+ * También limpia carpetas sueltas (subidas que no llegaron a registrarse) de más de un día.
+ */
+async function prunePdfs() {
+  try {
+    const old = expiredPdfs(db);
+    if (old.length) {
+      db.pdfs = db.pdfs.filter(x => !old.includes(x));
+      for (const x of old) await fsp.rm(path.join(PDFS, x.id), { recursive: true, force: true });
+      saveDb(); broadcast('db', db);
+    }
+    const known = new Set((db.pdfs ?? []).map(x => x.id));
+    for (const d of await fsp.readdir(PDFS, { withFileTypes: true })) {
+      if (!d.isDirectory() || known.has(d.name)) continue;
+      const st = await fsp.stat(path.join(PDFS, d.name));
+      if (Date.now() - st.mtimeMs > 86400e3) await fsp.rm(path.join(PDFS, d.name), { recursive: true, force: true });
+    }
+  } catch (e) { console.error('No se pudo limpiar el historial de PDF:', e.message); }
+}
+setTimeout(prunePdfs, 3000).unref();
+setInterval(prunePdfs, 6 * 3600e3).unref();
+
 /** Vuelve a arrancar el servidor con el código nuevo (mismo puerto y opciones). */
 function restart() {
   if (saveTimer) { clearTimeout(saveTimer); try { fs.writeFileSync(DB_FILE, JSON.stringify(db)); } catch { /* se conserva el archivo anterior */ } }
@@ -367,8 +407,9 @@ const server = http.createServer(async (req, res) => {
       const own = path.join(BIBLES, path.basename(rel));
       if (fs.existsSync(own)) return await serveFile(req, res, own);
     }
-    const base = rel.startsWith('/media/') ? MEDIA : PUBLIC;
-    const file = path.join(base, rel.startsWith('/media/') ? rel.slice('/media/'.length) : rel);
+    const area = rel.startsWith('/media/') ? ['/media/', MEDIA] : rel.startsWith('/pdf/') ? ['/pdf/', PDFS] : null;
+    const base = area ? area[1] : PUBLIC;
+    const file = path.join(base, area ? rel.slice(area[0].length) : rel);
     if (file !== base && !file.startsWith(base + path.sep)) return send(res, 403, 'Prohibido');
     return await serveFile(req, res, file);
   } catch (e) {

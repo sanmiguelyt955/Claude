@@ -2,11 +2,12 @@
 import { createStore, resolveSrc, withToken } from './store.js';
 import { createScreen } from './render.js';
 import { resolveItem, itemInfo, labelColor } from './resolve.js';
-import { defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresentation, themeById, norm, uid, FONTS } from '../shared/model.js';
+import { defaultLive, defaultTheme, defaultDb, songToPresentation, mediaToPresentation, themeById, norm, uid, FONTS, PDF_KEEP_DAYS, pdfDaysLeft, pdfLastUse } from '../shared/model.js';
 import { BOOKS_ES, bookName, parseReference, formatRef, searchBible, bibleToPresentation } from '../shared/bible.js';
 import { importSongFile } from '../shared/importers.js';
 import { buildBible } from '../shared/bible-import.js';
 import { icon, hydrateIcons } from './icons.js';
+import { createPresenter } from './presenter.js';
 
 const $ = (id) => document.getElementById(id);
 function h(tag, props, ...kids) {
@@ -26,7 +27,7 @@ function h(tag, props, ...kids) {
 }
 /** Botón de acción con icono; `text` es la etiqueta visible (opcional). */
 const act = (ic, title, onclick, text = '', cls = '') => h('button', { class: 'act ' + cls, title, 'aria-label': title, onclick }, icon(ic, 16), text && h('span', {}, text));
-const KIND_ICON = { song: 'music', bible: 'book', media: 'image', text: 'text' };
+const KIND_ICON = { song: 'music', bible: 'book', media: 'image', text: 'text', pdf: 'file' };
 const debounce = (fn, ms = 180) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 let toastTimer;
 function toast(msg) {
@@ -41,7 +42,7 @@ function setPanel(p) {
 
 const store = await createStore('operator');
 const ui = {
-  tab: 'songs', songQuery: '', preview: null, // preview: { pres, index, item? }
+  tab: 'songs', view: 'culto', songQuery: '', preview: null, // preview: { pres, index, item? }
   bible: { version: store.db.settings.bibleVersion, book: 42, chapter: 3, query: '', data: null },
   themeId: store.db.themes[0]?.id,
 };
@@ -62,6 +63,31 @@ function syncSlides(box, slides, index, make, emptyText) {
     box._active?.classList.remove('active'); next?.classList.add('active'); box._active = next;
     next?.scrollIntoView({ block: 'nearest' });
   }
+}
+
+// ---------- Secciones: Culto y Presentar PDF ----------
+const presenter = createPresenter({ store, root: $('pdfView'), h, toast, addToSchedule: (it) => addToSchedule(it), openProjector, swapScreens, hasProjector });
+function setView(v) {
+  ui.view = v; document.body.dataset.view = v;
+  document.querySelector('main').hidden = v === 'pdf'; $('pdfView').hidden = v !== 'pdf';
+  document.querySelectorAll('.views button').forEach(b => b.classList.toggle('on', b.dataset.view === v));
+  if (v === 'pdf') presenter.refresh();
+}
+document.querySelectorAll('.views button').forEach(b => b.onclick = () => setView(b.dataset.view));
+// Arrastrar un PDF a cualquier parte de la ventana lo abre en «Presentar PDF»
+{
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+  addEventListener('dragenter', (e) => { if (hasFiles(e)) { depth++; document.body.classList.add('dropping'); } });
+  addEventListener('dragleave', (e) => { if (hasFiles(e) && --depth <= 0) { depth = 0; document.body.classList.remove('dropping'); } });
+  addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  addEventListener('drop', (e) => {
+    depth = 0; document.body.classList.remove('dropping');
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const f = [...e.dataTransfer.files].find(x => /\.pdf$/i.test(x.name) || x.type === 'application/pdf');
+    if (f) { setView('pdf'); presenter.importFile(f); } else toast('Para presentar, suelta un archivo PDF');
+  });
 }
 
 // ---------- Diálogos ----------
@@ -86,6 +112,7 @@ function setPreview(pres, index = 0, item = null) {
   if (isMobile() && pres) setPanel('preview');
 }
 async function previewItem(item, live = false) {
+  if (item.type === 'pdf') { setView('pdf'); presenter.open(item.pdfId, live); return; } // los PDF se presentan en su propia sección
   try {
     const pres = await resolveItem(item, store);
     setPreview(pres, item.start ?? 0, item);
@@ -99,10 +126,17 @@ function goLive(index) {
   if (isMobile()) setPanel('live');
 }
 
+/** Miniatura de una imagen (página de PDF, foto): se carga solo cuando aparece en pantalla. */
+function thumbImg(src) {
+  const img = h('img', { class: 'thumbimg', alt: '', decoding: 'async', loading: 'lazy' });
+  resolveSrc(src).then(u => { if (u) img.src = u; });
+  return img;
+}
 function slideCard(slide, i, active, onclick, ondblclick) {
-  const c = labelColor(slide.label);
+  const c = labelColor(slide.label), m = slide.media;
   return h('button', { class: 'slide' + (active ? ' active' : ''), onclick, ondblclick, style: c ? { '--lab': c } : {} },
-    h('span', { class: 'lab' }, h('i', {}, String(i + 1)), slide.label), slide.media ? `(${slide.label.toLowerCase()})` : slide.text);
+    h('span', { class: 'lab' }, h('i', {}, String(i + 1)), slide.label),
+    m ? (m.kind === 'image' ? thumbImg(m.thumb || m.src) : `(${slide.label.toLowerCase()})`) : slide.text);
 }
 
 function renderPreview() {
@@ -121,7 +155,7 @@ function renderPreview() {
     sel._themes = store.db.themes;
     sel.replaceChildren(...store.db.themes.map(t => h('option', { value: t.id }, t.name)));
   }
-  sel.disabled = !p || p.pres.type === 'media';
+  sel.disabled = !p || p.pres.type === 'media' || p.pres.type === 'pdf';
   if (p) sel.value = p.pres.theme.id;
   $('pvLive').disabled = $('pvAdd').disabled = !p;
 }
@@ -486,11 +520,35 @@ document.querySelectorAll('.mobnav button').forEach(b => b.onclick = () => setPa
 // ---------- Pantallas, importar, ajustes ----------
 const pageUrl = (file) => withToken(new URL(file, location.href).href);
 const lanUrl = (file) => (store.mode === 'server' && store.info?.urls?.[0] ? withToken(store.info.urls[0] + '/' + file) : pageUrl(file));
+let projWin = null;
 function openProjector() {
-  window.open(pageUrl('output.html'), 'proclama-proyector', 'width=960,height=540');
-  toast('Lleva esa ventana al proyector y pulsa F para pantalla completa');
+  projWin = window.open(pageUrl('output.html'), 'proclama-proyector', 'width=960,height=540');
+  if (!projWin) return toast('El navegador bloqueó la ventana: permite las ventanas emergentes y vuelve a pulsar');
+  twoScreens().then(sc => {
+    if (sc) { moveTo(projWin, sc.other); toast('Proyector colocado en la otra pantalla. Pulsa F en él para pantalla completa'); }
+    else toast('Lleva esa ventana al proyector y pulsa F para pantalla completa');
+  });
 }
-$('btnProjector').onclick = openProjector;
+// Con dos pantallas, Chrome y Edge dejan colocar las ventanas (piden permiso una sola vez). Sin eso, se arrastran a mano.
+async function twoScreens() {
+  if (!('getScreenDetails' in window) || !window.screen?.isExtended) return null;
+  try {
+    const d = await window.getScreenDetails();
+    if (d.screens.length < 2) return null;
+    return { here: d.currentScreen, other: d.screens.find(sc => sc !== d.currentScreen) ?? d.screens[1], all: d.screens };
+  } catch { return null; }
+}
+const moveTo = (w, sc) => { if (!w || !sc) return; try { w.moveTo(sc.availLeft, sc.availTop); w.resizeTo(sc.availWidth, sc.availHeight); } catch { /* el navegador no lo permite */ } };
+/** Lleva el proyector a la otra pantalla (por si quedó en la equivocada). */
+async function swapScreens() {
+  if (!projWin || projWin.closed) return toast('Primero abre el proyector');
+  const sc = await twoScreens();
+  if (!sc) return toast('No veo una segunda pantalla (o el navegador no deja mover ventanas). Arrastra el proyector a la otra pantalla; en Windows: tecla Windows + Mayús + flecha');
+  const now = sc.all.find(x => projWin.screenX >= x.left - 1 && projWin.screenX < x.left + x.width) ?? sc.here;
+  moveTo(projWin, sc.all.find(x => x !== now) ?? now);
+  toast('Proyector movido a la otra pantalla');
+}
+function hasProjector() { return (store.clients?.output ?? 0) > 0; }
 function renderClients() {
   const open = (store.clients?.output ?? 0) > 0;
   $('btnProjector').classList.toggle('open', open);
@@ -605,7 +663,7 @@ $('btnImport').onclick = () => {
       if (!Array.isArray(data.songs) || !Array.isArray(data.themes)) throw new Error('No es una copia de seguridad de Proclama');
       if (!confirm('Esto reemplaza la biblioteca actual (canciones, temas y programa). ¿Continuar?')) return;
       const base = defaultDb();
-      store.db = { ...base, ...data, media: store.db.media, settings: { ...base.settings, ...data.settings } };
+      store.db = { ...base, ...data, media: store.db.media, pdfs: store.db.pdfs, settings: { ...base.settings, ...data.settings } };
       store.saveDb(); toast('Copia restaurada');
     } catch (err) { toast(err.message); }
   } });
@@ -623,7 +681,7 @@ $('btnImport').onclick = () => {
     h('h4', {}, 'Copia de seguridad'),
     h('div', { class: 'drow' },
       h('button', { onclick: () => {
-        const { media, ...rest } = store.db;
+        const { media, pdfs, ...rest } = store.db;
         const a = h('a', { href: URL.createObjectURL(new Blob([JSON.stringify(rest, null, 1)], { type: 'application/json' })), download: `proclama-${new Date().toISOString().slice(0, 10)}.json` });
         a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       } }, 'Descargar copia (canciones, temas, programa)')),
@@ -707,7 +765,9 @@ $('btnSettings').onclick = async () => {
 
 // ---------- Teclado ----------
 addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey || $('dlg').open) return;
+  if ($('dlg').open) return;
+  if (ui.view === 'pdf') { if (presenter.onKey(e)) e.preventDefault(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
   const onButton = tag === 'BUTTON';
@@ -718,6 +778,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'b' || k === 'B') store.dispatch({ type: 'black' });
   else if (k === 'c' || k === 'C') store.dispatch({ type: 'clear' });
   else if (k === 'l' || k === 'L') toggleLogo();
+  else if (k === 'Escape' && store.live.pres?.type === 'pdf') store.dispatch({ type: 'close' }); // salir de la presentación del PDF
   else return;
   e.preventDefault();
 });
@@ -754,4 +815,5 @@ try { tools.open = localStorage.getItem('proclama.tools') === '1'; } catch { /* 
 tools.addEventListener('toggle', () => { try { localStorage.setItem('proclama.tools', tools.open ? '1' : '0'); } catch { /* sin almacenamiento */ } });
 setPanel('library');
 renderClients(); renderStatus();
+store.pruneLocalPdfs().catch(() => {});
 setTimeout(checkForUpdate, 2500); setInterval(checkForUpdate, 6 * 3600e3); renderSchedule(); renderPreview(); renderLive(); renderLibrary();

@@ -1,10 +1,12 @@
 {
  "name": "Proclama",
- "version": "0.3.1",
- "date": "2026-11-13",
+ "version": "0.4.0",
+ "date": "2026-11-15",
  "notes": [
-  "Instalador para Windows: icono en el escritorio y ventana propia",
-  "Se cierra sola al cerrar la última ventana"
+  "Nueva sección «Presentar PDF» para dos pantallas: página actual y siguiente, cronómetro, puntero, resaltador, lupa y cuadrícula",
+  "Historial de PDF que se limpia solo a las 2 semanas sin abrirlo",
+  "Los PDF se pueden añadir al programa del culto y controlar desde el celular",
+  "Instalador para Linux"
  ],
  "files": {
   ".gitignore": {
@@ -24,7 +26,7 @@
    "size": 5067
   },
   "package.json": {
-   "sha256": "9a3576509299d3d0da30fe2d8478e789d00189ce83b07b4fcf559799ee892882",
+   "sha256": "55fc8ec775489caca50ad16a6a3a2ccd2b19c742eff2350ae92fe3d9e2e0b6f9",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -40,44 +42,56 @@
    "size": 4003891
   },
   "public/css/app.css": {
-   "sha256": "13878eba93bcfb69e242b19227894a23f09e8fba31454c0e0be6a71ffa3d3ac1",
-   "size": 19290
+   "sha256": "f0197b6e8336a985437c668e673402c433536cacca2276a6d20809583febe38e",
+   "size": 27197
   },
   "public/css/screen.css": {
-   "sha256": "affb6c413ee7f061e62eca83f96654f9446de945124f62220fa8f98703cad88a",
-   "size": 3794
+   "sha256": "9abdd4066285e1294cfeba8e16e27c496cef37fbe25c490f820152e2587d993e",
+   "size": 4134
   },
   "public/icon.svg": {
    "sha256": "ffbe85bc824e464f7a55a660ab6167c387861c618750d3d101590fa7aa2b278e",
    "size": 354
   },
   "public/index.html": {
-   "sha256": "778212172104b973956375c14c76657ef45cb255de72d3c12f9fad23057f7dd9",
-   "size": 5973
+   "sha256": "d7ad0487dc4b3353693bd6fb816a9337d8a8a4e62d5d14b8904ec10909277b99",
+   "size": 6362
   },
   "public/js/app.js": {
-   "sha256": "b8c4719655733d3dad8e6f58d047f5a4f003792d1f6fb5bbafc074dcc431625e",
-   "size": 50159
+   "sha256": "ca738d0d003ccc4cee1ade0d6ddfbd0774d2777648f0b65a2f3191470965a74c",
+   "size": 54227
   },
   "public/js/icons.js": {
-   "sha256": "77fe4534464d23603bd0a4e1f178ad4ae0dcc2f3ab019291c2e5701622ec2425",
-   "size": 3029
+   "sha256": "255657450d7b746d5b3eef7ed7d506a1cdcbd15c3a33de3c11296d56f82b659f",
+   "size": 3685
+  },
+  "public/js/overlay.js": {
+   "sha256": "9719a4d85bc20dc6f8eef84b15f4f9d5a503e91fd069bf4142c95eaf1b1717d8",
+   "size": 3196
   },
   "public/js/pdf-bible.js": {
    "sha256": "0ee6bb0962bf72cc3c36f15d615b529ba521517c51e62a998fd749a9d489a552",
    "size": 1532
   },
+  "public/js/pdf-slides.js": {
+   "sha256": "5b0dcf078450190b718b8ffa78313f50829fd52286f15c58e27c9b633576f7ab",
+   "size": 3158
+  },
+  "public/js/presenter.js": {
+   "sha256": "1306f4196413768ee87b514c92f8eac8a01ff81231050a6997b1cbd9f6ad54cb",
+   "size": 29787
+  },
   "public/js/render.js": {
-   "sha256": "cbf83019308f2058111ed10dfa013c824244b31bbf1510e1c67503c79d7c95cc",
-   "size": 8597
+   "sha256": "b170e04ad26b12f8ef5df46e8299debbe414a69de758af968201dfcaeedc4eab",
+   "size": 10275
   },
   "public/js/resolve.js": {
-   "sha256": "12d19d46e40a741e869fbbabb9561739138f1be4e8b77052ac5b6309a23fd21f",
-   "size": 1926
+   "sha256": "fd028682b717f1b77965aaa029995e372dd3989d2c1d48df92361d3073c68974",
+   "size": 2592
   },
   "public/js/store.js": {
-   "sha256": "5917d97f2a6a49ed435c5fcd8d99d0af92612797d8cc851d2f91072bc1a2f68f",
-   "size": 10663
+   "sha256": "b9c572e4dd6624e1eeef024802b8fe5da368a491ebc7c9ac1cf8c0c5c9f5fffb",
+   "size": 11971
   },
   "public/manifest.webmanifest": {
    "sha256": "5bf8d75ce0c92ceacf43fb1abc0d442e987b5db44509b46d90dd87004dfe05a0",
@@ -88,8 +102,8 @@
    "size": 1387
   },
   "public/remote.html": {
-   "sha256": "32d59cc054e8cad72dd98b150ab89ef385277d918d8bdec7703d7a50b03d5ef1",
-   "size": 8056
+   "sha256": "7710492050dd89bdc636e0a08e937726199fc530f1bb7ee6297353ef5f64c219",
+   "size": 8913
   },
   "public/shared/bible-import.js": {
    "sha256": "24a15e883469ba43f52dcf36f3e10528296c176ca8ea7abc1da3d84672223246",
@@ -108,8 +122,12 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "39b13140e4a47b52906a82134231b923c346d0ceadf34d61300cfee92f4cf796",
-   "size": 10765
+   "sha256": "acb625b6bd78fa6ce9e6f76366681720e5ab8022341a5b406aff5980ec08bc26",
+   "size": 13014
+  },
+  "public/shared/timer.js": {
+   "sha256": "723a1dc9ff76fe73a94a271a70bb0fddfdb02cec17a94980ba87ce46bfee61e5",
+   "size": 1093
   },
   "public/stage.html": {
    "sha256": "a6d01b2b46298974713ee80608cc6a96777dbe0fa48d0096699a9163cb42231a",
@@ -132,12 +150,12 @@
    "size": 1417586
   },
   "README.md": {
-   "sha256": "c01ff5c45313d823ca9d993204e3a1b83ef7665044df46c4fa9b76cbd2a9ed5c",
-   "size": 9875
+   "sha256": "100bcc9ba437996904f845fb5aa5581ecda7e692bf99f7c2b972490e6032f5ec",
+   "size": 12282
   },
   "server.js": {
-   "sha256": "18540396e4d9e7907d36e5a6e223039d3f51c47a099b5b72011afa531459e1df",
-   "size": 19870
+   "sha256": "1bc948d47ad44f573d29f7def4187437c13ca8d4ad8db7a55f696e324facadbb",
+   "size": 21996
   },
   "tools/build-bibles.mjs": {
    "sha256": "46ddf160f6d35b7c7a9c46a65184c2de6461d76846c1aae488c0bb7f45e721a9",
@@ -150,6 +168,10 @@
   "tools/import-bible.mjs": {
    "sha256": "32102475ba87c0fe6ac774caf70670b172070e4bd78fdf357ce1b3524fa552cd",
    "size": 1169
+  },
+  "tools/install-linux.sh": {
+   "sha256": "3f705cfedb9b3105a84bbe6fd193bc97d4a329a3f3d5cfd623d4c6bb4c900091",
+   "size": 3831
   },
   "tools/installer/icon.ico": {
    "sha256": "2f575307682f0799f766d5da2516172982fde2328635a5fd5de7279bcfc538ed",
