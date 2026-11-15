@@ -12,16 +12,14 @@
 import { createStore } from './js/store.js';
 import { createScreen } from './js/render.js';
 const q = new URLSearchParams(location.search);
-const mode = q.get('mode') === 'lower' ? 'lower' : 'full';
-if (mode === 'lower') { document.documentElement.style.background = 'transparent'; document.body.classList.add('transparent'); }
 const hint = document.getElementById('hint');
-if (mode === 'lower' || q.has('nohint')) hint.remove();
+if (q.has('nohint')) hint.remove();
 const goFull = () => document.documentElement.requestFullscreen?.().catch(() => {});
 hint.onclick = goFull;
 addEventListener('keydown', (e) => { if (e.key === 'f' || e.key === 'F') goFull(); });
 setTimeout(() => hint.classList.add('hide'), 5000);
-const store = await createStore(mode === 'lower' ? 'obs' : 'output');
-const screen = createScreen(document.body, { mode, muted: q.has('muted') || mode === 'lower' });
+const store = await createStore('output');
+const screen = createScreen(document.body, { muted: q.has('muted') });
 screen.update(store.live);
 store.on((what) => { if (what === 'live') screen.update(store.live); else if (what === 'reload') setTimeout(() => location.reload(), 1500); });
 </script>

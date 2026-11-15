@@ -1,5 +1,5 @@
 // Motor de pantalla: dibuja el estado en vivo sobre un lienzo lógico de 1920x1080 escalado al contenedor.
-// Lo usan el proyector, OBS, la vista previa y el monitor "en vivo" del operador.
+// Lo usan el proyector, la vista previa y el monitor "en vivo" del operador.
 import { fmtClock } from '../shared/model.js';
 import { resolveSrc } from './store.js';
 import { createOverlay, fitRect, zoomTransform } from './overlay.js';
@@ -16,11 +16,11 @@ export function slideHtml(slide) {
 
 /**
  * @param {HTMLElement} container
- * @param {{mode?: 'full'|'lower', muted?: boolean, chrome?: boolean}} opts  chrome=false oculta alerta/cuenta/logo/negro (vista previa)
+ * @param {{muted?: boolean, chrome?: boolean}} opts  chrome=false oculta alerta/cuenta/logo/negro (vista previa)
  */
 export function createScreen(container, opts = {}) {
-  const mode = opts.mode ?? 'full';
-  const root = el('pscreen' + (mode === 'lower' ? ' lower' : ''));
+  const mode = 'full';
+  const root = el('pscreen');
   const bg = el('ps-bg'), media = el('ps-media'), dim = el('ps-dim');
   const zoomEl = el('ps-zoom'), ovBox = el('ps-ov'), overlay = createOverlay(); // la lupa mueve imagen y anotaciones juntas
   ovBox.append(overlay.svg); zoomEl.append(media, ovBox);
@@ -41,12 +41,12 @@ export function createScreen(container, opts = {}) {
   let front = textA, back = textB, lastKey = '', lastBg = '', lastMedia = '', lastAlert = '', timer = null, state = null, seq = 0;
 
   function styleText(box, theme) {
-    const m = mode === 'lower' ? 3 : theme.margin;
+    const m = theme.margin;
     Object.assign(box.style, {
       fontFamily: theme.font, color: theme.color, fontWeight: theme.bold ? '700' : '400', fontStyle: theme.italic ? 'italic' : 'normal',
-      textTransform: theme.upper ? 'uppercase' : 'none', textAlign: mode === 'lower' ? 'center' : theme.align, lineHeight: theme.lineHeight,
-      justifyContent: mode === 'lower' ? 'center' : { top: 'flex-start', middle: 'center', bottom: 'flex-end' }[theme.valign] ?? 'center',
-      padding: `${m}%`, paddingBottom: mode === 'lower' ? '2%' : `calc(${m}% + ${theme.footer ? 50 : 0}px)`,
+      textTransform: theme.upper ? 'uppercase' : 'none', textAlign: theme.align, lineHeight: theme.lineHeight,
+      justifyContent: { top: 'flex-start', middle: 'center', bottom: 'flex-end' }[theme.valign] ?? 'center',
+      padding: `${m}%`, paddingBottom: `calc(${m}% + ${theme.footer ? 50 : 0}px)`,
       textShadow: theme.shadow ? '0 4px 14px rgba(0,0,0,.85), 0 0 3px rgba(0,0,0,.9)' : 'none',
       webkitTextStroke: theme.outline ? `${theme.outline}px #000` : '0',
       transitionDuration: (lite() ? 0 : theme.fade ?? 350) + 'ms',
@@ -56,7 +56,7 @@ export function createScreen(container, opts = {}) {
   // Ajusta la letra para que quepa. Busca por bisección (pocas mediciones) y recuerda el resultado.
   function autoFit(box, theme) {
     const inner = box.firstChild;
-    const max = mode === 'lower' ? Math.min(theme.size, 64) : theme.size;
+    const max = theme.size;
     const key = [mode, max, theme.font, theme.bold, theme.italic, theme.upper, theme.lineHeight, theme.margin, theme.footer, theme.outline, inner.innerHTML].join('|');
     const known = fitCache.get(key);
     if (known) { inner.style.fontSize = known + 'px'; return; }
@@ -75,7 +75,7 @@ export function createScreen(container, opts = {}) {
   const lite = () => (typeof opts.lite === 'function' ? !!opts.lite() : !!opts.lite);
 
   async function setBg(theme, my) {
-    const b = mode === 'lower' ? { type: 'none' } : theme.bg;
+    const b = theme.bg;
     const key = JSON.stringify(b) + lite();
     if (key === lastBg) return;
     lastBg = key;
@@ -174,7 +174,7 @@ export function createScreen(container, opts = {}) {
     const chrome = opts.chrome !== false;
     root.classList.toggle('empty', !pres);
     if (pres) { setBg(pres.theme, my); dim.style.background = `rgba(0,0,0,${(pres.theme.dim || 0) / 100})`; }
-    else if (mode !== 'lower') { lastBg = ''; bg.replaceChildren(); bg.style.background = '#000'; dim.style.background = 'transparent'; }
+    else { lastBg = ''; bg.replaceChildren(); bg.style.background = '#000'; dim.style.background = 'transparent'; }
     setMedia(pres && !live.clear ? slide?.media : null);
     paintOverlay();
     const nextMedia = pres?.slides[live.index + 1]?.media; // se precarga la página siguiente para que el cambio sea instantáneo
@@ -193,7 +193,7 @@ export function createScreen(container, opts = {}) {
         front.classList.add('on');
       } else front.classList.remove('on');
     }
-    const foot = showText && pres.theme.footer && mode !== 'lower' ? slide.footer : '';
+    const foot = showText && pres.theme.footer ? slide.footer : '';
     footer.textContent = foot || '';
     footer.style.color = pres?.theme.color ?? '#fff';
     footer.style.fontFamily = pres?.theme.font ?? '';

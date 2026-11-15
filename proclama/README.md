@@ -1,7 +1,7 @@
 # Proclama
 
 Software de presentación para iglesias: letras de canciones, Biblia, imágenes y videos, programa del culto,
-pantalla de escenario, salida para OBS y control remoto desde el celular. Reúne ideas de EasyWorship
+pantalla de escenario y control remoto desde el celular. Reúne ideas de EasyWorship
 (programa + vista previa + en vivo) y de Holyrics (API de control, salida para transmisión, control web),
 con código propio y sin dependencias.
 
@@ -72,7 +72,6 @@ está conectada) y en **Más pantallas** están los enlaces a las demás vistas:
 | Operador | `/` | Biblioteca, programa, vista previa y control en vivo |
 | Proyector | `/output` | Llévala a la segunda pantalla y pulsa `F` (pantalla completa) |
 | Escenario | `/stage` | Letra actual y siguiente, reloj, cuenta regresiva y mensajes a los músicos |
-| OBS | `/obs?mode=lower` | Tercio inferior con fondo transparente (fuente «Navegador», 1920×1080) |
 | Control remoto | `/remote` | Desde el celular, en la misma red Wi-Fi |
 
 Otro puerto: `PORT=8080 node server.js`. Los datos (canciones, temas, programa, medios) se guardan en `proclama/data/`
@@ -190,7 +189,7 @@ launcher.mjs         arranque como app de escritorio (ventana propia, datos en l
 lib/easyworship.js   lector de la base de datos de EasyWorship (node:sqlite)
 public/shared/       lógica común a navegador y servidor: modelo, Biblia, importadores
 public/js/           operador (app.js), presentador de PDF (presenter.js, pdf-slides.js, overlay.js), motor de pantalla (render.js), sincronización (store.js)
-public/*.html        operador, proyector/OBS, escenario, control remoto
+public/*.html        operador, proyector, escenario, control remoto
 test/                pruebas (`npm test`)
 ```
 

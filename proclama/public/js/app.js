@@ -612,11 +612,10 @@ $('btnOutputs').onclick = () => {
   openDialog('Pantallas', [
     link('monitor', 'Proyector', 'Lo que ve la congregación. Lleva la ventana a la segunda pantalla y pulsa F.', 'output.html', 'output', 'width=960,height=540'),
     link('music', 'Pantalla de escenario', 'Para los músicos: letra actual, la siguiente, reloj y mensajes.', 'stage.html', 'stage', 'width=960,height=540'),
-    link('broadcast', 'Transmisión (OBS)', 'Letra en la parte baja con fondo transparente. En OBS: fuente «Navegador», 1920×1080.', 'output.html?mode=lower', 'obs', 'width=960,height=540'),
     link('phone', 'Control remoto', 'Abre este enlace en el celular para pasar las diapositivas.', 'remote.html', 'remote', 'width=420,height=800'),
     h('div', { class: 'tip' }, store.mode === 'server'
       ? 'Cualquier dispositivo conectado al mismo Wi-Fi puede abrir estos enlaces.'
-      : 'Modo local: las pantallas solo funcionan en este mismo navegador. Para usar el celular, otra computadora u OBS, inicia la app con «node server.js».'),
+      : 'Modo local: las pantallas solo funcionan en este mismo navegador. Para usar el celular u otra computadora, inicia la app con «node server.js».'),
   ]);
 };
 

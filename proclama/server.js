@@ -38,7 +38,7 @@ const MIME = {
   '.m4v': 'video/mp4', '.ogv': 'video/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json',
 };
 const MEDIA_KINDS = { image: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.svg'], video: ['.mp4', '.webm', '.mov', '.m4v', '.ogv'] };
-const PAGES = { '/': 'index.html', '/output': 'output.html', '/stage': 'stage.html', '/remote': 'remote.html', '/obs': 'output.html' };
+const PAGES = { '/': 'index.html', '/output': 'output.html', '/stage': 'stage.html', '/remote': 'remote.html' };
 
 fs.mkdirSync(MEDIA, { recursive: true });
 fs.mkdirSync(PDFS, { recursive: true });
@@ -425,7 +425,6 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`  Panel del operador:   ${local}/`);
   console.log(`  Proyector:            ${local}/output`);
   console.log(`  Pantalla de escenario:${local}/stage`);
-  console.log(`  OBS (tercio inferior):${local}/obs?mode=lower`);
   console.log(`  Control remoto:       ${(lanUrls()[0] ?? local)}/remote${TOKEN ? '?token=…' : ''}`);
   console.log(`\n  Datos en: ${DATA}\n`);
 });

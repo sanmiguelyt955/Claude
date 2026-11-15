@@ -38,7 +38,7 @@ export async function resolveSrc(src) {
   return blobUrls.get(src);
 }
 
-/** @param {string} role  operator | output | obs | stage | remote: sirve para saber qué pantallas están abiertas */
+/** @param {string} role  operator | output | stage | remote: sirve para saber qué pantallas están abiertas */
 export async function createStore(role = 'operator') {
   const me = uid();
   const listeners = new Set();

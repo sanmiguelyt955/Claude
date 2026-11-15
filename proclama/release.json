@@ -1,12 +1,9 @@
 {
  "name": "Proclama",
- "version": "0.4.2",
+ "version": "0.4.3",
  "date": "2026-11-15",
  "notes": [
-  "Logo: subir la imagen del logo desde Ajustes",
-  "Logo: usar un tema como logo (fondo y nombre de la iglesia)",
-  "Temas: arreglo al subir varias fotos o videos a la vez",
-  "Arreglo: los cambios no se perdían al subir archivos"
+  "Se quita la opción de transmitir en OBS (no funcionaba sin su conexión)"
  ],
  "files": {
   ".gitignore": {
@@ -26,7 +23,7 @@
    "size": 5083
   },
   "package.json": {
-   "sha256": "03196f86c8e1435100c344e4bd5c3fce1cbde5e7c8f3b113f4cbfad943f5cde3",
+   "sha256": "89c870d54ef69c798f038cdbd9571945db0881ac7d9791c1bfdb2a23e23969aa",
    "size": 463
   },
   "public/bibles/index.json": {
@@ -54,12 +51,12 @@
    "size": 354
   },
   "public/index.html": {
-   "sha256": "d7ad0487dc4b3353693bd6fb816a9337d8a8a4e62d5d14b8904ec10909277b99",
-   "size": 6362
+   "sha256": "3d89b39f1f06779bf357fd0f62873c6877c81635e32637db609eb818b1dad352",
+   "size": 6353
   },
   "public/js/app.js": {
-   "sha256": "3deff6b80e70ffc86f66171ae5538b17036b8d8e391d2b8e552da8f91b083052",
-   "size": 58253
+   "sha256": "2de45323b82beb1615ba1007ba531453364e91f7a12b4ace54e9466a6297c483",
+   "size": 58054
   },
   "public/js/icons.js": {
    "sha256": "255657450d7b746d5b3eef7ed7d506a1cdcbd15c3a33de3c11296d56f82b659f",
@@ -82,24 +79,24 @@
    "size": 29787
   },
   "public/js/render.js": {
-   "sha256": "efbdc1b8f9ef4b6a0efd30a9d02b31c12392444bd78e6690b387bdbafff42d4d",
-   "size": 11921
+   "sha256": "d6f26767ec9718a6fe1c95bc1553dcd82612d75c48f56cac771b41221c24bc4f",
+   "size": 11608
   },
   "public/js/resolve.js": {
    "sha256": "fd028682b717f1b77965aaa029995e372dd3989d2c1d48df92361d3073c68974",
    "size": 2592
   },
   "public/js/store.js": {
-   "sha256": "9775df93a65b232485e32f8450dbd5c0626ddc7c359a6f6f75a9c39967a1b2e7",
-   "size": 11989
+   "sha256": "d88a1c4df9bd23b979134c337f43783a9a2c5195f82b30008f96a12bea0a055f",
+   "size": 11983
   },
   "public/manifest.webmanifest": {
    "sha256": "5bf8d75ce0c92ceacf43fb1abc0d442e987b5db44509b46d90dd87004dfe05a0",
    "size": 225
   },
   "public/output.html": {
-   "sha256": "2028c6ccac0f3d885e44a2f1970dd9808dc9f8b8c9484febb6c3dcaa79d8689b",
-   "size": 1387
+   "sha256": "41e03968f5ef8fcb6388d271d5e27f32acde0641faebc375156fc43585925465",
+   "size": 1126
   },
   "public/remote.html": {
    "sha256": "7710492050dd89bdc636e0a08e937726199fc530f1bb7ee6297353ef5f64c219",
@@ -122,7 +119,7 @@
    "size": 10392
   },
   "public/shared/model.js": {
-   "sha256": "7cdc5c50dab4d29e6dfbb1c4448800dc60b36c364bbb514449bf235152e219db",
+   "sha256": "f43c7c8e5c4a818968a4aaa9e16a7fef86c66019b829283973b50d5ff3f77026",
    "size": 13572
   },
   "public/shared/timer.js": {
@@ -150,12 +147,12 @@
    "size": 1417586
   },
   "README.md": {
-   "sha256": "d609148276083bfaf8c285522e9ca035f79d8302039a25e90ce4367af3613026",
-   "size": 12295
+   "sha256": "ad6385bec346d9860ce62111f74b977cc4a13c9173a914ce604de0eac5a89229",
+   "size": 12170
   },
   "server.js": {
-   "sha256": "0da6dafa4604b505dc96a4aea2533971fb7ff35de15058607ad317e544c949a5",
-   "size": 22152
+   "sha256": "24523c465f84747a206d039dfbfec89f6a5ffc0525f9e0f28e195d11baa5e779",
+   "size": 22063
   },
   "tools/build-bibles.mjs": {
    "sha256": "46ddf160f6d35b7c7a9c46a65184c2de6461d76846c1aae488c0bb7f45e721a9",
