@@ -1,0 +1,22 @@
+[
+  {
+    "ruta": "proyectos/obsidian-2.0.md",
+    "titulo": "Obsidian 2.0 — cuaderno en la nube",
+    "texto": "Memoria permanente en la nube para Claude (chat, Cowork, Claude Code y celular). Almacenamiento en Cloudflare R2, servidor Cloudflare Worker obsidian-2-0. Herramientas: listar_notas, leer_nota, escribir_nota, agregar_a_nota, buscar_notas, borrar_nota, ver_versiones, restaurar_version, leer_archivo. Versiones ilimitadas por nota. Costo $0 al mes en el plan gratis de Cloudflare."
+  },
+  {
+    "ruta": "indice.md",
+    "titulo": "Índice de Obsidian 2.0 (léelo primero)",
+    "texto": "Cuaderno en la nube de Sanmi. Una sola memoria compartida entre Claude y Muse. Orden de lectura: índice, memoria/perfil.md, memoria/LEEME-para-IAs.md, y luego buscar_notas antes de abrir notas largas. Secciones: memoria compartida, proyectos, biblioteca del negocio, historial de chats, buzón entre IAs."
+  },
+  {
+    "ruta": "proyectos/sidestore-iphone.md",
+    "titulo": "SideStore: instalar mis .ipa en el iPhone",
+    "texto": "Guía para instalar archivos .ipa (Eco y otras) en el iPhone con SideStore. La laptop se usa una sola vez con iloader en Linux; después todo se hace desde el iPhone con LocalDevVPN. Renovar cada 7 días con Refresh All. Con Apple ID gratis: máximo 3 apps a la vez y 10 apps nuevas por semana. Apple Developer cuesta 99 USD al año."
+  },
+  {
+    "ruta": "proyectos/bajar-para-ias.md",
+    "titulo": "«Bajar para IAs»: atajo de iPhone",
+    "texto": "Atajo de iPhone que baja videos de YouTube, Instagram, TikTok o Facebook en 1080p usando a-Shell y yt-dlp, y los sube al buzón de videos en Cloudflare (Worker buzon-videos, R2 videos-para-ias). Solo con Wi-Fi. Las IAs usan buzon.py --ultimo y buzon.py --terminar para borrar el video al terminar de analizarlo."
+  }
+]
