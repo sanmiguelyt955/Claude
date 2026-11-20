@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Temporizador Pomodoro: bloques de enfoque y descanso. Todo funciona en tu navegador; no guarda ni envía datos.">
+<meta name="theme-color" content="#b91c1c">
+<title>Pomodoro</title>
+<style>
+  :root {
+    --bg: #faf7f5; --card: #ffffff; --texto: #1f2937; --suave: #6b7280;
+    --acento: #b91c1c; --borde: #e5e7eb; --descanso: #15803d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111111; --card: #1c1c1c; --texto: #f3f4f6; --suave: #9ca3af;
+      --acento: #f87171; --borde: #333333; --descanso: #4ade80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111111; --card: #1c1c1c; --texto: #f3f4f6; --suave: #9ca3af;
+    --acento: #f87171; --borde: #333333; --descanso: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--texto);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  main { width: 100%; max-width: 360px; text-align: center; }
+  h1 { font-size: 20px; margin: 0 0 16px; font-weight: 600; }
+  .modo {
+    display: inline-flex; background: var(--card); border: 1px solid var(--borde);
+    border-radius: 999px; padding: 4px; margin-bottom: 24px;
+  }
+  .modo button {
+    border: 0; background: none; color: var(--suave); font-size: 14px;
+    padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  }
+  .modo button.activo { background: var(--acento); color: #fff; }
+  .reloj {
+    font-size: 84px; font-weight: 300; font-variant-numeric: tabular-nums;
+    letter-spacing: -2px; margin: 8px 0 24px; line-height: 1;
+  }
+  .reloj.descanso { color: var(--descanso); }
+  .botones { display: flex; gap: 12px; justify-content: center; }
+  .botones button {
+    font-size: 17px; padding: 14px 26px; border-radius: 14px; border: 1px solid var(--borde);
+    background: var(--card); color: var(--texto); cursor: pointer; min-width: 120px;
+  }
+  .botones button.principal { background: var(--acento); border-color: var(--acento); color: #fff; font-weight: 600; }
+  .contador { margin-top: 28px; font-size: 14px; color: var(--suave); }
+  .nota { margin-top: 22px; font-size: 12px; color: var(--suave); line-height: 1.4; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Pomodoro</h1>
+  <div class="modo" role="group" aria-label="Modo">
+    <button id="m-enfoque" class="activo" data-modo="enfoque">Enfoque 25 min</button>
+    <button id="m-descanso" data-modo="descanso">Descanso 5 min</button>
+  </div>
+  <div class="reloj" id="reloj" aria-live="polite">25:00</div>
+  <div class="botones">
+    <button id="iniciar" class="principal">Iniciar</button>
+    <button id="reiniciar">Reiniciar</button>
+  </div>
+  <div class="contador" id="contador">Bloques de enfoque completados hoy: 0</div>
+  <p class="nota">Los bloques completados se cuentan solo mientras la página está abierta. Al cerrarla, el contador vuelve a 0.</p>
+</main>
+
+<script>
+(function () {
+  var DURACION = { enfoque: 25 * 60, descanso: 5 * 60 };
+  var modo = 'enfoque';
+  var restante = DURACION.enfoque;
+  var corriendo = false;
+  var terminaEn = 0;
+  var completados = 0;
+  var tick = null;
+
+  var reloj = document.getElementById('reloj');
+  var btnIniciar = document.getElementById('iniciar');
+  var contador = document.getElementById('contador');
+  var botonesModo = document.querySelectorAll('[data-modo]');
+
+  function formato(s) {
+    var m = Math.floor(s / 60), r = s % 60;
+    return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  function pintar() {
+    reloj.textContent = formato(restante);
+    reloj.classList.toggle('descanso', modo === 'descanso');
+    btnIniciar.textContent = corriendo ? 'Pausar' : 'Iniciar';
+    contador.textContent = 'Bloques de enfoque completados hoy: ' + completados;
+    botonesModo.forEach(function (b) {
+      b.classList.toggle('activo', b.dataset.modo === modo);
+    });
+  }
+
+  // Sonido corto generado en el navegador (no usa archivos).
+  function avisar() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; g.gain.value = 0.2;
+      o.start(); o.stop(ctx.currentTime + 0.6);
+    } catch (e) { /* sin audio: no pasa nada */ }
+    if (navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch (e) {} }
+  }
+
+  function parar() {
+    corriendo = false;
+    clearInterval(tick);
+    tick = null;
+  }
+
+  function terminar() {
+    parar();
+    avisar();
+    if (modo === 'enfoque') {
+      completados++;
+      modo = 'descanso';
+    } else {
+      modo = 'enfoque';
+    }
+    restante = DURACION[modo];
+    pintar();
+  }
+
+  function actualizar() {
+    var faltan = Math.round((terminaEn - Date.now()) / 1000);
+    restante = Math.max(0, faltan);
+    if (restante === 0) { terminar(); return; }
+    pintar();
+  }
+
+  btnIniciar.addEventListener('click', function () {
+    if (corriendo) {
+      restante = Math.max(0, Math.round((terminaEn - Date.now()) / 1000));
+      parar();
+    } else {
+      corriendo = true;
+      terminaEn = Date.now() + restante * 1000;
+      tick = setInterval(actualizar, 250);
+    }
+    pintar();
+  });
+
+  document.getElementById('reiniciar').addEventListener('click', function () {
+    parar();
+    restante = DURACION[modo];
+    pintar();
+  });
+
+  botonesModo.forEach(function (b) {
+    b.addEventListener('click', function () {
+      parar();
+      modo = b.dataset.modo;
+      restante = DURACION[modo];
+      pintar();
+    });
+  });
+
+  pintar();
+})();
+</script>
+</body>
+</html>
