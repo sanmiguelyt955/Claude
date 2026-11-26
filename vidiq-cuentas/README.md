@@ -10,6 +10,14 @@ Un conector MCP **por cada cuenta de vidIQ**, todos en un solo Worker de Cloudfl
 - `<nicho>` es el nombre del secreto sin `VIDIQ_`. Va en minúsculas: `VIDIQ_KUBO` → `/kubo/mcp/...`
 - `/cuentas/mcp/<ACCESO>` lista los nombres de las cuentas configuradas. Nunca muestra las claves.
 
+## Dos modos por cuenta
+| Ruta | Cómo entra a vidIQ | Herramientas | En claude.ai |
+|---|---|---|---|
+| `/<cuenta>/mcp/<llave>` | Clave de API (secreto) | 87, solo lectura | «Sin inicio de sesión» |
+| `/<cuenta>/mcp-completo/<llave>` | Inicio de sesión oficial de vidIQ: el Worker hace de intermediario y el permiso lo guarda claude.ai | Todas (publicar, editar, responder…) | «Iniciar sesión ahora» |
+
+En el modo completo, el Worker expone los datos de descubrimiento del inicio de sesión (`/.well-known/...`) y reenvía `/oauth/register`, `/oauth/authorize` y `/oauth/token` a vidIQ, cambiando `resource` por el de vidIQ. vidIQ solo acepta direcciones de regreso aprobadas (claude.ai, ChatGPT, localhost), por eso el regreso va directo a claude.ai y el Worker no guarda ningún permiso.
+
 ## Secretos (en Cloudflare, nunca en el repo ni en el chat)
 | Secreto | Qué guarda | Quién lo pone |
 |---|---|---|
