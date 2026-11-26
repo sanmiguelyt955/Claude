@@ -1,0 +1,367 @@
+{
+ "nombre": "La guerra de los emús — prueba del motor 2.5D",
+ "ancho": 540,
+ "alto": 960,
+ "fps": 30,
+ "duracion": 6,
+ "luz": {
+  "cielo_arriba": "#6c5fa8",
+  "horizonte": "#ffc98a",
+  "sombra": "#4a3f78",
+  "sol": "#ffd4a0",
+  "fuerza_sol": 2.6,
+  "sol_az": 150,
+  "sol_el": 22,
+  "relleno": 0.9,
+  "niebla": [
+   25,
+   140
+  ],
+  "tinta_tarjetas": "#fff1e0"
+ },
+ "mundo": {
+  "suelo": "#d9a040",
+  "espigas": [
+   "#f0c060",
+   "#b87a28",
+   "#e8b04c",
+   "#a86a24"
+  ],
+  "espiga_cerca": "#e2a83c",
+  "n_espigas": 2500,
+  "colinas": [
+   [
+    -70,
+    -160,
+    45,
+    "#c48a52"
+   ],
+   [
+    60,
+    -180,
+    55,
+    "#b37a4a"
+   ],
+   [
+    0,
+    -210,
+    70,
+    "#9c6c4a"
+   ]
+  ],
+  "rocas": [
+   [
+    2.2,
+    -3,
+    0.9
+   ],
+   [
+    -6,
+    -12,
+    1.4
+   ],
+   [
+    8,
+    -16,
+    1.1
+   ]
+  ],
+  "cercas": [
+   {
+    "x": -8,
+    "z": -7,
+    "n": 7,
+    "rota": 4
+   }
+  ]
+ },
+ "elenco": [
+  {
+   "tipo": "emu",
+   "alto": 2.0,
+   "pos": [
+    -1.2,
+    0,
+    0.5
+   ],
+   "semilla": 0,
+   "estados": [
+    {
+     "t": 0,
+     "accion": "picotear"
+    },
+    {
+     "t": 4.2,
+     "accion": "correr",
+     "cara": "alarma"
+    }
+   ],
+   "ruta": [
+    {
+     "t": 0,
+     "pos": [
+      -1.2,
+      0,
+      0.5
+     ]
+    },
+    {
+     "t": 4.2,
+     "pos": [
+      -1.2,
+      0,
+      0.5
+     ]
+    },
+    {
+     "t": 6,
+     "pos": [
+      -9,
+      0,
+      -2
+     ]
+    }
+   ]
+  },
+  {
+   "tipo": "emu",
+   "alto": 1.9,
+   "pos": [
+    0.6,
+    0,
+    -1.5
+   ],
+   "semilla": 1.3,
+   "estados": [
+    {
+     "t": 0,
+     "accion": "picotear"
+    },
+    {
+     "t": 4.3,
+     "accion": "correr",
+     "cara": "alarma"
+    }
+   ],
+   "ruta": [
+    {
+     "t": 0,
+     "pos": [
+      0.6,
+      0,
+      -1.5
+     ]
+    },
+    {
+     "t": 4.3,
+     "pos": [
+      0.6,
+      0,
+      -1.5
+     ]
+    },
+    {
+     "t": 6,
+     "pos": [
+      8,
+      0,
+      -7
+     ]
+    }
+   ],
+   "espejo": true
+  },
+  {
+   "tipo": "emu",
+   "alto": 2.4,
+   "pos": [
+    2.2,
+    1.25,
+    -3
+   ],
+   "semilla": 2.1,
+   "estados": [
+    {
+     "t": 0,
+     "accion": "quieto"
+    },
+    {
+     "t": 3.4,
+     "cara": "alarma"
+    }
+   ]
+  },
+  {
+   "tipo": "granjero",
+   "alto": 2.1,
+   "pos": [
+    -3.2,
+    0,
+    -6.6
+   ],
+   "semilla": 0.5,
+   "estados": [
+    {
+     "t": 0,
+     "cara": "serio"
+    }
+   ]
+  }
+ ],
+ "camara": [
+  {
+   "t": 0,
+   "pos": [
+    0,
+    2.0,
+    8
+   ],
+   "mira": [
+    0,
+    1.3,
+    -2
+   ],
+   "fov": 44
+  },
+  {
+   "t": 3.0,
+   "pos": [
+    0.4,
+    1.7,
+    6
+   ],
+   "mira": [
+    0.3,
+    1.4,
+    -2
+   ],
+   "fov": 42
+  },
+  {
+   "t": 3.0001,
+   "corte": true,
+   "pos": [
+    3.6,
+    3.3,
+    0.8
+   ],
+   "mira": [
+    2.3,
+    3.2,
+    -3
+   ],
+   "fov": 30
+  },
+  {
+   "t": 4.2,
+   "pos": [
+    3.4,
+    3.3,
+    1.4
+   ],
+   "mira": [
+    2.3,
+    3.2,
+    -3
+   ],
+   "fov": 28
+  },
+  {
+   "t": 4.2001,
+   "corte": true,
+   "pos": [
+    0,
+    5.5,
+    9
+   ],
+   "mira": [
+    0,
+    0.8,
+    -2
+   ],
+   "fov": 50
+  },
+  {
+   "t": 6,
+   "pos": [
+    0,
+    7.5,
+    12
+   ],
+   "mira": [
+    0,
+    0.5,
+    -3
+   ],
+   "fov": 52
+  }
+ ],
+ "sacudidas": [
+  3.4,
+  4.2
+ ],
+ "fx": [
+  {
+   "t": 3.35,
+   "id": "ui/exclamation",
+   "pos": [
+    2.75,
+    3.95,
+    -2.9
+   ],
+   "alto": 0.7
+  },
+  {
+   "t": 4.2,
+   "id": "explosions/cartoon-pow",
+   "pos": [
+    0,
+    1.5,
+    -1
+   ],
+   "alto": 2.2
+  }
+ ],
+ "sonidos": [
+  {
+   "t": 0.6,
+   "id": "click/soft",
+   "vol": 0.5
+  },
+  {
+   "t": 1.35,
+   "id": "click/soft",
+   "vol": 0.5
+  },
+  {
+   "t": 2.1,
+   "id": "click/soft",
+   "vol": 0.5
+  },
+  {
+   "t": 3.0,
+   "id": "cut_hit/air",
+   "vol": 0.8
+  },
+  {
+   "t": 3.35,
+   "id": "cut_hit/punch",
+   "vol": 1.0
+  },
+  {
+   "t": 4.2,
+   "id": "cut_hit/kick",
+   "vol": 1.0
+  },
+  {
+   "t": 2.85,
+   "id": "swish/flick",
+   "vol": 0.7
+  },
+  {
+   "t": 4.0,
+   "id": "pro_whoosh_big/swell",
+   "vol": 0.8
+  }
+ ]
+}

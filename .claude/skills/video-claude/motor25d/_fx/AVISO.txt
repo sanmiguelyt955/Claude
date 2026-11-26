@@ -1,0 +1,2 @@
+Sprites generados con pixelfx (MIT License, Copyright (c) 2026 Patch, https://github.com/patch-gg/pixelfx).
+Sonidos del banco de earshot (MIT License, https://github.com/Leonxlnx/earshot).
