@@ -1,5 +1,5 @@
 # ÍNDICE del repo (para IAs)
-Generado: 2026-11-26 02:03 con `python3 herramientas/indice.py`.
+Generado: 2026-11-26 02:48 con `python3 herramientas/indice.py`.
 Cómo usarlo: busca aquí la palabra de lo que necesitas, abre el archivo y lee su encabezado. Reglas en `CLAUDE.md`.
 Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `aprendizajes/`).
 
@@ -84,9 +84,8 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
   - `proyectos/monalisa/img/` — carpeta (28 archivos)
 
 ## Herramientas
-- `herramientas/buscarepos/` — buscarepos — el buscador inteligente de repos de GitHub
-  - `herramientas/buscarepos/README.md` — buscarepos — el buscador inteligente de repos de GitHub
-  - `herramientas/buscarepos/buscarepos.py` — buscarepos: dile qué quieres hacer y te da los MEJORES repos de GitHub para eso, del mejor al peor.
+- `herramientas/RepoSommelier.md` — buscarepos se mudó
+- `herramientas/buscarepos/` — carpeta (1 archivos)
 - `herramientas/indice.py` — Genera INDICE.md: el mapa del repo para cualquier IA (Claude, Muses, Codex…). Un renglón por cosa, con qué es y dónde está.
 
 ## Servicios en la nube (Workers, servidores, VPS)
