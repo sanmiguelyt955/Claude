@@ -39,3 +39,10 @@
 | Reddit / X | Firecrawl |
 | Gemini TTS sin cuota | HeadTTS (CPU) |
 | GPU | RunPod, HF o laptop |
+
+## Prueba 2 (mismo día)
+- scrapecreators **video-comments**: ✅ 20 comentarios por página, con token para pedir más (probado en 4rKZG2s_YgU). En 0o1L-auFq9Y salió vacío porque el video no tiene comentarios.
+- scrapecreators **search**: ✅ 11 videos y 25 shorts, con token para pedir más.
+- **Storyboard completo:** con el link firmado bajaron las 16 hojas (L3). Son 144 cuadros de 320×180, uno cada 2 s, de 0:00 a 4:38. Se ve el video completo en baja resolución, sin audio.
+  - El video trae subtítulos amarillos quemados. Se leen a medias, solo como pedazos.
+- **Audio y transcripción:** NO se lograron por esta vía; el link de `timedtext` llegó vacío. Para el audio quedan Gemini por link y vidIQ.
