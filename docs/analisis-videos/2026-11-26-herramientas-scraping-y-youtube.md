@@ -46,3 +46,15 @@
 - **Storyboard completo:** con el link firmado bajaron las 16 hojas (L3). Son 144 cuadros de 320×180, uno cada 2 s, de 0:00 a 4:38. Se ve el video completo en baja resolución, sin audio.
   - El video trae subtítulos amarillos quemados. Se leen a medias, solo como pedazos.
 - **Audio y transcripción:** NO se lograron por esta vía; el link de `timedtext` llegó vacío. Para el audio quedan Gemini por link y vidIQ.
+
+## Prueba 3: ¿sirve con cualquier video? (imagen + transcripción)
+| Video | Imagen (scrapecreators → storyboard) | Transcripción |
+|---|---|---|
+| 0o1L-auFq9Y (4:37) | ✅ 144 cuadros, 1 cada 2 s | youtube-com ❌ 502 (3 veces) · **vidIQ ✅** (5 créditos vidIQ) |
+| Short DkJAY44ZxbU (0:28, vertical) | ✅ 29 cuadros, 1 por segundo | youtube-com ✅ (8 idiomas) · Gemini gratis ✅ |
+| EsTrWCV0Ph4 (2:13:15) | ✅ 801 cuadros, 1 cada 10 s (89 hojas) + mapa «lo más repetido» | youtube-com ✅ 4,226 frases · Gemini ❌ 429 (sin cuota) |
+
+- El intervalo del storyboard depende de la duración: Short 1 s · 4 min 2 s · 2 h 10 s.
+- Costos: scrapecreators/video 1 crédito Firecrawl; youtube-com transcript ~5 solo si funciona (las fallas no cobran); vidIQ transcript 5 créditos vidIQ.
+- **Orden recomendado para transcripción:** Gemini (gratis) → youtube-com (Firecrawl) → vidIQ.
+- **Límite real:** si el video NO tiene subtítulos (ni automáticos), las tres dan vacío; entonces solo Gemini (que oye el audio) o el atajo «Bajar para IAs».
