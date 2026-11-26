@@ -1,0 +1,50 @@
+diff --git a/src/youtube_gemini_mcp/gemini_client.py b/src/youtube_gemini_mcp/gemini_client.py
+index 35198ae..91541ee 100644
+--- a/src/youtube_gemini_mcp/gemini_client.py
++++ b/src/youtube_gemini_mcp/gemini_client.py
+@@ -1,3 +1,4 @@
++import os
+ """Google Gemini API client for video analysis."""
+ 
+ import logging
+@@ -25,7 +26,7 @@ class GeminiClient:
+         youtube_url: str,
+         user_prompt: str,
+         timestamp_range: Optional[str] = None,
+-        model: str = "gemini-2.5-flash",
++        model: str = os.environ.get("YOUTUBE_GEMINI_MODEL", "gemini-3.8-flash"),
+     ) -> Dict[str, Any]:
+         """Analyze YouTube video directly using URL (PREFERRED METHOD)."""
+         try:
+@@ -95,7 +96,7 @@ class GeminiClient:
+         file_id: str,
+         user_prompt: str,
+         timestamp_range: Optional[str] = None,
+-        model: str = "gemini-2.5-flash",
++        model: str = os.environ.get("YOUTUBE_GEMINI_MODEL", "gemini-3.8-flash"),
+     ) -> Dict[str, Any]:
+         """Analyze uploaded video using Files API (for local videos)."""
+         try:
+@@ -137,7 +138,7 @@ class GeminiClient:
+         session: VideoSession,
+         user_prompt: str,
+         timestamp_range: Optional[str] = None,
+-        model: str = "gemini-2.5-flash",
++        model: str = os.environ.get("YOUTUBE_GEMINI_MODEL", "gemini-3.8-flash"),
+     ) -> Dict[str, Any]:
+         """Analyze video using conversation context."""
+         try:
+diff --git a/src/youtube_gemini_mcp/server.py b/src/youtube_gemini_mcp/server.py
+index 4b6d468..9701903 100644
+--- a/src/youtube_gemini_mcp/server.py
++++ b/src/youtube_gemini_mcp/server.py
+@@ -179,7 +179,8 @@ def analyze_video_in_session(
+         # Analyze video using Gemini
+         client = get_gemini_client()
+         analysis_result = client.analyze_video_with_conversation(
+-            session=session, user_prompt=prompt, timestamp_range=timestamp_range
++            session=session, user_prompt=prompt, timestamp_range=timestamp_range,
++            model=session.model if not str(session.model).startswith("gemini-2.5") else os.environ.get("YOUTUBE_GEMINI_MODEL", "gemini-3.8-flash"),
+         )
+ 
+         if analysis_result["success"]:
