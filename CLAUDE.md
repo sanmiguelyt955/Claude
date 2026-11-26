@@ -1,5 +1,7 @@
 # Instrucciones permanentes
 
+- **Mapa del repo:** lee `INDICE.md` para encontrar cualquier cosa; regéneralo con `python3 herramientas/indice.py` después de cambios grandes.
+
 ## Guardar todo en GitHub
 
 - Al terminar el trabajo de cada conversación (Claude Code o Claude Cowork), sube todo a este repositorio (`sanmiguelyt955/claude`): código, mods, documentos, notas y resultados.
