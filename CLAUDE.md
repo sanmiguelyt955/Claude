@@ -22,6 +22,13 @@
 
 ## Videos de YouTube / Shorts
 
+- **Orden para VER (jerarquía):**
+  1. **vidIQ** (ve la imagen y oye el audio sincronizados): Short → `vidiq_watch_shortform_content` (10 créditos); video de hasta ~20 min → `vidiq_video_watch` (25); video largo → `vidiq_video_transcript` (5, trae todo) + storyboard + Gemini `--zoom`, porque `video_watch` falla en videos de horas.
+     Usar la cuenta del nicho y revisar el presupuesto con `herramientas/vidiq_presupuesto.py`.
+  2. **Sin créditos o si vidIQ falla:** `youtube_ver.py` (cuadros + Gemini + transcripción, storyboard por scrapecreators si YouTube bloquea).
+  3. Atajo «Bajar para IAs» + buzón.
+  Detalle en la skill video-claude, sección «Orden para VER videos de YouTube».
+
 - **Primero:** `scripts/youtube_ver.py <link>` (skill video-claude): cuadros reales cada ~2 s (miniaturas públicas de la barra) que ves tú mismo + bitácora segundo a segundo de Gemini + transcripción de Firecrawl. Haz UNA consulta por video (si YouTube da 429, espera; no insistas) y borra la carpeta al terminar.
 - Intenta verlos completos (descarga). Si YouTube bloquea la descarga desde la nube (lo normal), usa el modo por link: transcripción (Firecrawl) + cuadros públicos + conector Gemini Video para lo visual. Nunca intentes saltarte el bloqueo; ofrece las opciones (adjuntar el archivo, Drive, computadora conectada).
 

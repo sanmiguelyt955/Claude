@@ -24,6 +24,25 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 | **Estudiar un canal viral** (ordena Shorts por vistas, Gemini analiza los mejores con marketing/neuromarketing/psicología) | `scripts/canal_viral.py @canal [--lista shorts.json de Firecrawl] [--top 3]` | `references/guiones.md` |
 | **Guion viral** (estudiar virales, ganchos, estructura) | Firecrawl + `scripts/youtube_gemini.py` → fórmula → guion → `scripts/voz.py` | `references/guiones.md` |
 
+## Orden para VER videos de YouTube (jerarquía, desde 2026-11-26)
+
+1. **vidIQ, primera opción.** Ve la imagen (dice que a 1 fps) y oye el audio a la vez.
+   - **Short o reel** → `vidiq_watch_shortform_content` (10 créditos). También sirve para TikTok e Instagram.
+   - **Video normal (hasta ~20 min)** → `vidiq_video_watch` (25 créditos).
+   - **Video largo (más de ~20 min)** → NO usar `vidiq_video_watch`. Con 2 h se quedó en los primeros minutos y dio tiempos falsos.
+     - Usar `vidiq_video_transcript` (5 créditos, trae el video completo; con 2 h llegó hasta 2:13:11).
+     - Más los cuadros del storyboard (Firecrawl › scrapecreators, 1 crédito).
+     - Más Gemini con `--zoom` en los tramos que importen.
+   - **Solo lo que se dice** → `vidiq_video_transcript` (5 créditos, cuesta igual sin importar la duración).
+   - **Qué cuenta usar:** la del nicho del video; si no hay, la que tenga más saldo. Hay 10 conectores `VidIQ-<cuenta>` y el `vidIQ` original.
+   - **Presupuesto:** antes de gastar, revisar saldo con `vidiq_balance` (gratis), guardar la foto con `herramientas/vidiq_presupuesto.py --agregar …` y respetar el «seguro/día» del reporte.
+2. **Si se acaban los créditos o vidIQ falla → segunda opción (gratis o casi):**
+   - `scripts/youtube_ver.py <link>`: cuadros reales + Gemini por link + transcripción. Si YouTube bloquea los cuadros, sacar el link firmado del storyboard con Firecrawl › `scrapecreators/youtube/video`.
+   - Transcripción: Gemini → Firecrawl `youtube-com/videos/video_transcript` (~5 créditos de Firecrawl, no cobra si falla).
+3. **Tercera opción:** el atajo de iPhone «Bajar para IAs» + `buzon.py --ultimo` (video completo, con `extraer_video.py`).
+
+**Ojo:** Claude no oye audio. Lee texto: subtítulos de YouTube, o lo que escriben vidIQ y Gemini, que sí escuchan. Los fps que reporta vidIQ los dice su propio modelo y no se pueden comprobar.
+
 **Lee la referencia correspondiente antes de empezar** (Read del archivo, ruta relativa a esta carpeta: `.claude/skills/video-claude/`). Si la petición combina capacidades (p. ej. «edítalo y ponle música»), sigue este orden: ver → música → editar → revisar.
 
 ## Reglas comunes

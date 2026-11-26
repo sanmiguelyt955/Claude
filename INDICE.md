@@ -1,5 +1,5 @@
 # ÍNDICE del repo (para IAs)
-Generado: 2026-11-26 18:59 con `python3 herramientas/indice.py`.
+Generado: 2026-11-26 20:35 con `python3 herramientas/indice.py`.
 Cómo usarlo: busca aquí la palabra de lo que necesitas, abre el archivo y lee su encabezado. Reglas en `CLAUDE.md`.
 Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `aprendizajes/`).
 
@@ -87,6 +87,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
 - `herramientas/RepoSommelier.md` — buscarepos se mudó
 - `herramientas/buscarepos/` — carpeta (1 archivos)
 - `herramientas/indice.py` — Genera INDICE.md: el mapa del repo para cualquier IA (Claude, Muses, Codex…). Un renglón por cosa, con qué es y dónde está.
+- `herramientas/vidiq_presupuesto.py` — vidiq_presupuesto.py — cuánto gastamos de vidIQ y cuánto podemos gastar para que alcance hasta el reinicio.
 - `herramientas/youtube-gemini-mcp-modelo.patch` — 
 - `herramientas/youtube-gemini-mcp.md` — youtube-gemini-mcp (aigentive, MIT) — ver YouTube por link con memoria
 
@@ -121,6 +122,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
   - `docs/analisis-videos/2026-11-26-top10-scraping-githubrepo.md` — «Top 10 Web Scraping & Automation Tools Taking Over GitHub (2026)» — githubrepo_cloud (4:36)
 - `docs/monetizacion/` — carpeta (1 archivos)
   - `docs/monetizacion/2026-11-06-monetizacion-redes.md` — Monetización en redes (noviembre 2026): cuánto pagan y qué piden
+- `docs/noticias-repos-conectores-2026-11-26.md` — Noticias de repos y conectores (2026-11-26)
 - `docs/ranking-repos-videos-3d-2026-11-26.md` — Mejores repos para: hacer videos 3D animados con código para shorts
 - `docs/tickets-github.md` — Textos para tickets de soporte de GitHub (Actions bloqueadas)
 
