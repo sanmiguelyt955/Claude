@@ -46,7 +46,7 @@ export default {
     if (partes[0] === "cuentas") return json(200, { cuentas: cuentas(env) });
 
     const clave = env["VIDIQ_" + nicho];
-    if (!clave) return json(404, { error: `No hay clave para la cuenta «${partes[0]}». Agrega el secreto VIDIQ_${nicho}.`, cuentas: cuentas(env) });
+    if (!clave) return json(503, { error: `No hay clave para la cuenta «${partes[0]}». Agrega el secreto VIDIQ_${nicho}.`, cuentas: cuentas(env) });
 
     const cabeceras = new Headers();
     for (const h of IDA) { const v = request.headers.get(h); if (v) cabeceras.set(h, v); }
