@@ -20,3 +20,15 @@ Un conector MCP **por cada cuenta de vidIQ**, todos en un solo Worker de Cloudfl
 
 ## Publicar
 `npx wrangler deploy`
+
+## Cuentas de Sanmi
+| Conector en claude.ai | Secreto en Cloudflare | Ruta |
+|---|---|---|
+| VidIQ-Sanmiguelyt3 | `VIDIQ_SANMIGUELYT3` | `/sanmiguelyt3/mcp/<ACCESO>` |
+| VidIQ-Burneracsanmillonario | `VIDIQ_BURNERACSANMILLONARIO` | `/burneracsanmillonario/mcp/<ACCESO>` |
+| VidIQ-Walllife7 | `VIDIQ_WALLLIFE7` | `/walllife7/mcp/<ACCESO>` |
+| VidIQ-Luffybloom777 | `VIDIQ_LUFFYBLOOM777` | `/luffybloom777/mcp/<ACCESO>` |
+| VidIQ-Automatizaciones777 | `VIDIQ_AUTOMATIZACIONES777` | `/automatizaciones777/mcp/<ACCESO>` |
+| VidIQ-Noticiasia777 | `VIDIQ_NOTICIASIA777` | `/noticiasia777/mcp/<ACCESO>` |
+
+Cuando Claude ve estos conectores, cada uno se llama `mcp__VidIQ-<cuenta>__...`. Antes de gastar créditos, revisa el saldo con `vidiq_balance`.
