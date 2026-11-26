@@ -23,8 +23,15 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# La clave también puede estar en ~/.config/watch/.env (igual que youtube_gemini.py).
+_ENV_WATCH = Path.home() / ".config/watch/.env"
+if not os.environ.get("GEMINI_API_KEY") and _ENV_WATCH.exists():
+    for _l in _ENV_WATCH.read_text(encoding="utf-8").splitlines():
+        if _l.startswith("GEMINI_API_KEY=") and _l.split("=", 1)[1].strip().strip('"'):
+            os.environ["GEMINI_API_KEY"] = _l.split("=", 1)[1].strip().strip('"')
+
 UA = {"User-Agent": "video-claude/1.0", "Content-Type": "application/json"}
-MODELOS_TTS = [m.strip() for m in os.environ.get("VIDEO_GEMINI_TTS", "gemini-2.5-flash-preview-tts").split(",") if m.strip()]
+MODELOS_TTS = [m.strip() for m in os.environ.get("VIDEO_GEMINI_TTS", "gemini-3.8-flash-tts,gemini-3.1-flash-tts-preview,gemini-2.5-flash-preview-tts").split(",") if m.strip()]
 CUENTA_CF = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "73e77f7d8385b30a95f3ca5f7c00f86a")
 
 
