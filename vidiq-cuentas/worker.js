@@ -22,7 +22,7 @@ function json(status, data) {
 }
 
 function cuentas(env) {
-  return Object.keys(env).filter((k) => k.startsWith("VIDIQ_") && env[k]).map((k) => k.slice(6).toLowerCase()).sort();
+  return [...new Set(Object.keys(env).filter((k) => /^(VIDIQ|ACCESO)_/.test(k) && env[k]).map((k) => k.replace(/^(VIDIQ|ACCESO)_/, "").toLowerCase()))].sort();
 }
 
 export default {
@@ -34,8 +34,8 @@ export default {
 
     if (partes.length !== 3 || partes[1] !== "mcp") return json(404, { error: "No encontrado." });
     const nicho = partes[0].toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-    // Llave propia de la cuenta (ACCESO_<NICHO>) o, si no hay, la general (ACCESO).
-    const acceso = env["ACCESO_" + nicho] || env.ACCESO || "";
+    // Llave de acceso de la cuenta (la que va en la URL): LLAVE_<NICHO>, o la general LLAVE.
+    const acceso = env["LLAVE_" + nicho] || env.LLAVE || "";
     if (!acceso || !iguales(partes[2], acceso)) {
       return json(404, { error: "No encontrado." }); // sin pistas para quien adivine URLs
     }
@@ -43,7 +43,8 @@ export default {
     // Lista de cuentas configuradas (solo nombres, nunca claves): /cuentas/mcp/<ACCESO o ACCESO_CUENTAS>
     if (partes[0] === "cuentas") return json(200, { cuentas: cuentas(env) });
 
-    const clave = env["VIDIQ_" + nicho];
+    // Clave de API de vidIQ de la cuenta: VIDIQ_<NICHO>, o ACCESO_<NICHO> (ahí la pegó Sanmi el 2026-11-26).
+    const clave = env["VIDIQ_" + nicho] || env["ACCESO_" + nicho];
     if (!clave) return json(503, { error: `No hay clave para la cuenta «${partes[0]}». Agrega el secreto VIDIQ_${nicho}.`, cuentas: cuentas(env) });
 
     const cabeceras = new Headers();
