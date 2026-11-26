@@ -32,15 +32,17 @@ export default {
 
     if (partes.length === 0) return new Response("vidIQ Cuentas: ok. Usa /<nicho>/mcp/<llave>.\n");
 
-    const acceso = env.ACCESO ?? "";
-    if (partes.length !== 3 || partes[1] !== "mcp" || !acceso || !iguales(partes[2], acceso)) {
+    if (partes.length !== 3 || partes[1] !== "mcp") return json(404, { error: "No encontrado." });
+    const nicho = partes[0].toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+    // Llave propia de la cuenta (ACCESO_<NICHO>) o, si no hay, la general (ACCESO).
+    const acceso = env["ACCESO_" + nicho] || env.ACCESO || "";
+    if (!acceso || !iguales(partes[2], acceso)) {
       return json(404, { error: "No encontrado." }); // sin pistas para quien adivine URLs
     }
 
-    // Lista de cuentas configuradas (solo nombres, nunca claves): /cuentas/mcp/<llave>
+    // Lista de cuentas configuradas (solo nombres, nunca claves): /cuentas/mcp/<ACCESO o ACCESO_CUENTAS>
     if (partes[0] === "cuentas") return json(200, { cuentas: cuentas(env) });
 
-    const nicho = partes[0].toUpperCase().replace(/[^A-Z0-9_]/g, "_");
     const clave = env["VIDIQ_" + nicho];
     if (!clave) return json(404, { error: `No hay clave para la cuenta «${partes[0]}». Agrega el secreto VIDIQ_${nicho}.`, cuentas: cuentas(env) });
 

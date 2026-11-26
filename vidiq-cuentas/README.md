@@ -11,7 +11,7 @@ Un conector MCP **por cada cuenta de vidIQ**, todos en un solo Worker de Cloudfl
 - `/cuentas/mcp/<ACCESO>` lista los nombres de las cuentas configuradas. Nunca muestra las claves.
 
 ## Secretos (en Cloudflare, nunca en el repo ni en el chat)
-- `ACCESO`: tu llave de acceso. Sin ella el Worker responde 404.
+- `ACCESO_<NICHO>`: la llave de acceso de cada cuenta, que va al final de su URL. Así, si se filtra un link, solo queda expuesta esa cuenta. Si no existe, se usa `ACCESO` (general). Sin llave, el Worker responde 404.
 - `VIDIQ_<NICHO>`: la clave de API de vidIQ de cada cuenta. Se crea en `app.vidiq.com/account/settings/mcp`.
 
 ## Límites
