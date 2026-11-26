@@ -5,7 +5,7 @@ Un conector MCP **por cada cuenta de vidIQ**, todos en un solo Worker de Cloudfl
 **Por qué existe:** claude.ai no deja agregar dos conectores con la misma URL. vidIQ siempre usa `https://mcp.vidiq.com/mcp`. Este Worker le da a cada cuenta su propia URL y reenvía todo a vidIQ con la clave de API de esa cuenta.
 
 ## URLs
-`https://vidiq-cuentas.<subdominio>.workers.dev/<nicho>/mcp/<ACCESO>`
+`https://vidiq-cuentas.sanmiguelyt955.workers.dev/<nicho>/mcp/<ACCESO>` (publicado el 2026-11-26)
 
 - `<nicho>` es el nombre del secreto sin `VIDIQ_`. Va en minúsculas: `VIDIQ_KUBO` → `/kubo/mcp/...`
 - `/cuentas/mcp/<ACCESO>` lista los nombres de las cuentas configuradas. Nunca muestra las claves.
@@ -19,7 +19,9 @@ Un conector MCP **por cada cuenta de vidIQ**, todos en un solo Worker de Cloudfl
 - Cada cuenta gasta sus propios créditos.
 
 ## Publicar
-`npx wrangler deploy`
+Desde la nube (la clave de api.cloudflare.com la pone el proxy): `CLOUDFLARE_API_TOKEN=proxy-injected NODE_USE_ENV_PROXY=1 npx wrangler deploy`
+
+En la compu: `npx wrangler deploy`
 
 ## Cuentas de Sanmi
 | Conector en claude.ai | Secreto en Cloudflare | Ruta |
