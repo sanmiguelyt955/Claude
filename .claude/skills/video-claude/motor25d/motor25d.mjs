@@ -33,8 +33,8 @@ const tipos = { ".js": "text/javascript", ".html": "text/html", ".png": "image/p
 const srv = createServer((q, s) => {
   const u = q.url.split("?")[0];
   const f = u === "/" ? null : u.startsWith("/three/") ? join(THREE_DIR, u.slice(7)) : join(AQUI, u.slice(1));
-  if (!f) { s.setHeader("content-type", "text/html");
-    return s.end(`<!doctype html><style>body{margin:0;background:#000}</style><script>window.PLAN=${JSON.stringify(plan)}</script>
+  if (!f) { s.setHeader("content-type", "text/html; charset=utf-8");
+    return s.end(`<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#000}</style><script>window.PLAN=${JSON.stringify(plan)}</script>
 <script type="importmap">{"imports":{"three":"/three/three.module.js"}}</script><script type="module" src="/escena.js"></script>`); }
   if (!existsSync(f)) { s.statusCode = 404; return s.end(); }
   s.setHeader("content-type", tipos[extname(f)] || "application/octet-stream"); s.end(readFileSync(f));
@@ -47,7 +47,7 @@ pag.on("pageerror", (e) => console.error("Error en la escena:", e.message));
 await pag.goto(`http://127.0.0.1:${puerto}/`); await pag.waitForFunction(() => window.listo === true, null, { timeout: 60000 });
 const t0 = Date.now(); let n = 0;
 for (let f = 0; f < total; f += paso) {
-  const png = await pag.evaluate((f) => { window.cuadro(f); return document.querySelector("canvas").toDataURL("image/png"); }, f);
+  const png = await pag.evaluate((f) => { window.cuadro(f); return (document.getElementById("salida") || document.querySelector("canvas")).toDataURL("image/png"); }, f);
   writeFileSync(join(dir, `c_${String(n++).padStart(5, "0")}.png`), Buffer.from(png.split(",")[1], "base64"));
 }
 await nav.close(); srv.close();
@@ -62,6 +62,10 @@ const ent = ["-framerate", String(fpsSal), "-i", join(dir, "c_%05d.png")], filtr
   const k = nEnt++; ent.push("-i", wav);
   filtros.push(`[${k}:a]adelay=${Math.round(s.t * 1000)}:all=1,volume=${s.vol ?? 1}[a${k}]`);
 });
+if (plan.voz_archivo) {
+  const k = nEnt++; ent.push("-i", resolve(dirname(planRuta), plan.voz_archivo));
+  filtros.push(`[${k}:a]volume=${plan.voz_volumen ?? 1}[a${k}]`);
+}
 let mapa = [];
 if (filtros.length) {
   const etiquetas = filtros.map((f) => f.match(/\[(a\d+)\]$/)[1]);

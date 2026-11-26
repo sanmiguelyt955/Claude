@@ -16,3 +16,11 @@ herr/bin/earshot doctor --fetch >/dev/null   # baja los 2 modelos (~1.1 GB) una 
 git -C repos/pixelfx checkout -q 5294518
 (cd repos/pixelfx && npm install --silent --no-audit --no-fund)
 echo "Listo: $BASE/herr/bin/earshot, $BASE/repos/pixelfx"
+
+# HeadTTS (MIT): voz en inglés (Kokoro) con tiempos por palabra y visemas para la boca. CPU, sin GPU.
+# El paso de instalación de onnxruntime-node baja binarios de CUDA que no hacen falta: se salta con --ignore-scripts.
+[ -d repos/HeadTTS ] || git clone -q --depth 1 https://github.com/met4citizen/HeadTTS.git repos/HeadTTS
+(cd repos/HeadTTS && NODE_USE_ENV_PROXY=1 npm install --omit=dev --ignore-scripts --no-audit --no-fund --silent \
+  && mkdir -p -m 777 node_modules/@huggingface/transformers/.cache \
+  && python3 -c "import json;c=json.load(open('headtts-node.json'));c['tts'].update(device='cpu',threads=2,voices=['am_fenrir','af_bella']);json.dump(c,open('headtts-cloud.json','w'),indent=1)")
+echo "HeadTTS: cd $BASE/repos/HeadTTS && NODE_USE_ENV_PROXY=1 node modules/headtts-node.mjs --config ./headtts-cloud.json  (POST :8882/v1/synthesize)"

@@ -62,4 +62,61 @@ export function granjero(g, e) {
   g.beginPath(); g.moveTo(232, 300); g.lineTo(282, 300); g.stroke();
 }
 
-export const DIBUJOS = { emu, granjero };
+// Boca según el visema (Oculus): abertura y ancho.
+const BOCAS = { sil: [0.05, 0.9], PP: [0.02, 0.8], FF: [0.12, 0.9], TH: [0.15, 0.9], DD: [0.25, 0.9], kk: [0.3, 0.9],
+  CH: [0.25, 0.7], SS: [0.12, 1.1], nn: [0.18, 0.9], RR: [0.3, 0.7], aa: [0.65, 1.0], E: [0.4, 1.15], I: [0.3, 1.2],
+  O: [0.55, 0.6], U: [0.35, 0.5] };
+
+export function kubo(g, e) {
+  const t = e.t, s = e.semilla || 0, TINTA2 = "#14202a";
+  g.lineJoin = "round"; g.lineCap = "round"; g.strokeStyle = TINTA2; g.lineWidth = 7;
+  const bob = Math.sin(t * 3 + s) * 4, señala = e.accion === "señalar";
+  // piernas y zapatos
+  g.fillStyle = "#1e3a5c";
+  g.beginPath(); g.roundRect(196, 560, 52, 150, 16); g.fill(); g.stroke();
+  g.beginPath(); g.roundRect(266, 560, 52, 150, 16); g.fill(); g.stroke();
+  g.fillStyle = "#16304d"; g.beginPath(); g.roundRect(180, 700, 76, 40, 18); g.fill(); g.stroke();
+  g.beginPath(); g.roundRect(258, 700, 76, 40, 18); g.fill(); g.stroke();
+  // chamarra
+  g.fillStyle = "#e8742a"; g.beginPath(); g.roundRect(168, 440 + bob, 178, 150, 36); g.fill(); g.stroke();
+  // brazos
+  g.strokeStyle = "#e8742a"; g.lineWidth = 34;
+  g.beginPath(); g.moveTo(178, 470 + bob); g.lineTo(140, 560); g.stroke();
+  g.beginPath(); g.moveTo(336, 470 + bob);
+  if (señala) g.lineTo(430, 420); else g.lineTo(374, 560); g.stroke();
+  g.fillStyle = "#2fd6c8"; g.strokeStyle = TINTA2; g.lineWidth = 6;
+  g.beginPath(); g.arc(138, 572, 22, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.beginPath(); señala ? g.arc(440, 412, 22, 0, Math.PI * 2) : g.arc(376, 572, 22, 0, Math.PI * 2); g.fill(); g.stroke();
+  // cabeza cuadrada
+  const hy = 120 + bob;
+  g.fillStyle = "#2fd6c8"; g.lineWidth = 8;
+  g.beginPath(); g.roundRect(86, hy, 340, 320, 70); g.fill(); g.stroke();
+  g.fillStyle = "#f2c230"; g.lineWidth = 6;
+  g.beginPath(); g.roundRect(64, hy + 140, 26, 70, 10); g.fill(); g.stroke();
+  g.beginPath(); g.roundRect(422, hy + 140, 26, 70, 10); g.fill(); g.stroke();
+  if (e.casco) {   // casco militar mini
+    g.fillStyle = "#5d6b3a"; g.beginPath(); g.ellipse(256, hy + 6, 150, 70, 0, Math.PI, 0); g.fill(); g.stroke();
+    g.fillRect(96, hy, 320, 16); g.strokeRect(96, hy, 320, 16);
+  } else {
+    g.strokeStyle = TINTA2; g.lineWidth = 6; g.beginPath(); g.moveTo(256, hy); g.lineTo(256, hy - 40); g.stroke();
+    g.fillStyle = "#f2c230"; g.beginPath(); g.arc(256, hy - 52, 22, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
+  // mejillas
+  g.fillStyle = "#f3a3b5"; g.beginPath(); g.arc(178, hy + 220, 26, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(334, hy + 220, 26, 0, Math.PI * 2); g.fill();
+  // ojos (guiño)
+  const ab = parpadeo(t, s);
+  g.fillStyle = TINTA2;
+  if (e.cara === "guiño") { g.lineWidth = 8; g.beginPath(); g.moveTo(178, hy + 170); g.quadraticCurveTo(200, hy + 155, 222, hy + 170); g.stroke(); }
+  else { g.beginPath(); g.ellipse(200, hy + 168, 20, 26 * ab, 0, 0, Math.PI * 2); g.fill(); }
+  g.beginPath(); g.ellipse(312, hy + 168, 20, 26 * ab, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#fff"; g.beginPath(); g.arc(306, hy + 158, 7, 0, Math.PI * 2); g.fill();
+  if (e.cara !== "guiño") { g.beginPath(); g.arc(194, hy + 158, 7, 0, Math.PI * 2); g.fill(); }
+  // boca por visema
+  const [ab_, an] = BOCAS[e.visema || "sil"] || BOCAS.sil, w = 46 * an, h = 8 + 48 * ab_;
+  g.fillStyle = "#2a1520"; g.strokeStyle = TINTA2; g.lineWidth = 5;
+  g.beginPath(); g.ellipse(256, hy + 236, w, h / 2 + 2, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+  if (ab_ > 0.25) { g.fillStyle = "#e86b7d"; g.beginPath(); g.ellipse(256, hy + 236 + h / 4, w * 0.55, h / 5, 0, 0, Math.PI * 2); g.fill(); }
+}
+
+export const DIBUJOS = { emu, granjero, kubo };

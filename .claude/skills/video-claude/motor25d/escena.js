@@ -57,6 +57,59 @@ const espigaMat = new THREE.MeshToonMaterial({ color: P.mundo.espiga_cerca, grad
 for (let i = 0; i < P.mundo.n_espigas; i++) { const h = .5 + azar() * .6, m = new THREE.Mesh(new THREE.ConeGeometry(.025, h, 3), espigaMat);
   m.position.set((azar() - .5) * 40, h / 2, (azar() - .5) * 40); m.rotation.z = (azar() - .5) * .3; m.castShadow = true; esc.add(m); }
 
+// --- objetos 3D (con tinta): camión viejo
+function camion() {
+  const g = new THREE.Group();
+  const caja = conTinta(new THREE.BoxGeometry(2.2, 1.2, 1.6), "#5f6b3e"); caja.position.set(-0.6, 1.1, 0); g.add(caja);
+  const cab = conTinta(new THREE.BoxGeometry(1.1, 1.0, 1.5), "#6e7a48"); cab.position.set(1.1, 1.0, 0); g.add(cab);
+  const vid = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.45), new THREE.MeshBasicMaterial({ color: "#9fc6d8" }));
+  vid.position.set(1.66, 1.2, 0); vid.rotation.y = Math.PI / 2; g.add(vid);
+  for (const [x, z] of [[-1.2, .8], [-1.2, -.8], [1.1, .8], [1.1, -.8]]) {
+    const r = conTinta(new THREE.CylinderGeometry(.38, .38, .3, 16), "#222"); r.rotation.x = Math.PI / 2; r.position.set(x, .38, z); g.add(r); }
+  return g;
+}
+const objetos = (P.objetos || []).map((o) => { const m = o.tipo === "camion" ? camion() : new THREE.Group(); m.scale.setScalar(o.escala || 1); esc.add(m); return { o, m }; });
+const visibleEn = (v, t) => !v || v.some(([a, b]) => t >= a && t < b);
+const VIS = (P.voz || []).flatMap((l) => l.visemas || []);
+function visemaEn(t) { let v = "sil"; for (const x of VIS) { if (t >= x.t && t < x.t + x.d) { v = x.v; break; } } return v; }
+
+// --- capa 2D encima (textos, contador, subtítulos palabra por palabra)
+const salida = document.createElement("canvas"); salida.id = "salida"; salida.width = W; salida.height = H;
+salida.style.display = "none"; document.body.appendChild(salida);
+const sg = salida.getContext("2d");
+const PALABRAS = (P.voz || []).flatMap((l) => l.palabras.map((w, i) => ({ ...w, linea: l.n, i })));
+function textoBonito(txt, x, y, tam, color, escala = 1, rot = 0) {
+  sg.font = `900 ${tam}px "DejaVu Sans", Arial, sans-serif`;
+  const ancho = sg.measureText(txt).width * escala; if (ancho > W * 0.92) escala *= (W * 0.92) / ancho;   // nunca se sale del cuadro
+  sg.save(); sg.translate(x, y); sg.rotate(rot); sg.scale(escala, escala);
+  sg.font = `900 ${tam}px "DejaVu Sans", Arial, sans-serif`; sg.textAlign = "center"; sg.textBaseline = "middle";
+  sg.lineJoin = "round"; sg.lineWidth = tam * 0.18; sg.strokeStyle = "#141018"; sg.strokeText(txt, 0, 0);
+  sg.fillStyle = color; sg.fillText(txt, 0, 0); sg.restore();
+}
+function capa2D(t) {
+  sg.clearRect(0, 0, W, H); sg.drawImage(r.domElement, 0, 0);
+  for (const x of P.textos || []) {
+    if (t < x.t0 || t >= x.t1) continue;
+    const d = t - x.t0, pop = d < .18 ? .4 + (d / .18) * .75 : d < .3 ? 1.15 - ((d - .18) / .12) * .15 : 1;
+    let txt = x.texto;
+    if (x.contar) { const k = Math.min(1, d / (x.contar.dur || 1.5)); txt = Math.round(x.contar.de + (x.contar.a - x.contar.de) * (1 - Math.pow(1 - k, 3))).toLocaleString("en-US") + (x.contar.sufijo || ""); }
+    textoBonito(txt, x.x * W, x.y * H, (x.tam || 0.09) * W, x.color || "#ffd23f", pop, (x.rot || 0) * Math.PI / 180);
+  }
+  if (P.subtitulos !== false) {
+    const w = PALABRAS.findIndex((p) => t >= p.t && t < p.t + Math.max(p.d, .05) + .25);
+    if (w >= 0) {
+      const p = PALABRAS[w], g0 = PALABRAS.filter((q) => q.linea === p.linea), k = g0.indexOf(p), ini = Math.floor(k / 3) * 3;
+      const grupo = g0.slice(ini, ini + 3); let tam = 0.068 * W;
+      sg.font = `900 ${tam}px "DejaVu Sans", Arial, sans-serif`;
+      let anchos = grupo.map((q) => sg.measureText(q.w.toUpperCase() + "  ").width), tot = anchos.reduce((a, b) => a + b, 0);
+      if (tot > W * 0.9) { const k = (W * 0.9) / tot; tam *= k; anchos = anchos.map((a) => a * k); tot *= k; }
+      let x0 = W / 2 - tot / 2;
+      grupo.forEach((q, i) => { const c = q === p ? "#ffd23f" : "#ffffff";
+        textoBonito(q.w.toUpperCase(), x0 + anchos[i] / 2, H * 0.78, tam, c, q === p ? 1.08 : 1); x0 += anchos[i]; });
+    }
+  }
+}
+
 // --- personajes: tarjetas que miran a la cámara (solo giran en Y), con sombra real y sombra de contacto
 const elenco = P.elenco.map((p) => {
   const c = document.createElement("canvas"); c.width = 512; c.height = 768; const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
@@ -97,10 +150,16 @@ window.cuadro = (f) => {
   cam.fov = c.fov; cam.updateProjectionMatrix(); cam.lookAt(...c.mira);
   for (const a of elenco) {
     const e = estadoEn(a.p.estados, t, { cara: "normal", accion: "quieto" }), pos = posEn(a.p.ruta, t) || a.p.pos;
-    a.g.clearRect(0, 0, 512, 768); DIBUJOS[a.p.tipo](a.g, { ...e, t, semilla: a.p.semilla || 0 });
+    const vis = visibleEn(a.p.visible, t); a.m.visible = a.sombra.visible = vis; if (!vis) continue;
+    const vis_ = a.p.habla ? visemaEn(t) : "sil";
+    a.g.clearRect(0, 0, 512, 768); DIBUJOS[a.p.tipo](a.g, { ...e, t, semilla: a.p.semilla || 0, visema: vis_ });
     a.tex.needsUpdate = true; a.m.position.set(pos[0], pos[1] || 0, pos[2]);
     a.m.rotation.y = Math.atan2(cam.position.x - pos[0], cam.position.z - pos[2]);
     a.sombra.position.set(pos[0], (pos[1] || 0) + .02, pos[2]);
+  }
+  for (const x of objetos) {
+    x.m.visible = visibleEn(x.o.visible, t); const ps = posEn(x.o.ruta, t) || x.o.pos; x.m.position.set(ps[0], ps[1] || 0, ps[2]);
+    x.m.rotation.y = (x.o.giro || 0) * Math.PI / 180;
   }
   for (const x of efectos) {
     const d = t - x.e.t; x.m.visible = d >= 0 && d < x.dur * (x.e.veces || 1);
@@ -109,6 +168,6 @@ window.cuadro = (f) => {
     const q = x.fr[i].frame; x.tex.offset.set(q.x / x.W0, 1 - (q.y + q.h) / x.H0);
     x.m.position.set(...x.e.pos); x.m.quaternion.copy(cam.quaternion);
   }
-  r.render(esc, cam); return true;
+  r.render(esc, cam); capa2D(t); return true;
 };
 window.listo = true;
