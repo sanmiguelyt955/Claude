@@ -10,6 +10,10 @@ YouTube no deja bajar el video a servidores (403). Este script mezcla tres fuent
 No se baja el video ni se salta ningún bloqueo. Hace UNA consulta a YouTube por video (si da 429, esperar; no insistir).
 
 Uso:  python3 youtube_ver.py <link> [--sin-gemini] [--pregunta "..."] [--por-hoja 20] [--salida carpeta]
+                               [--zoom 43-46 --zoom 90-95] [--fps 10]
+FPS: los cuadros reales que veo yo son ~1 cada 2 s (YouTube decide; no se puede subir). Para más detalle, --zoom
+pide a Gemini mirar esos tramos a --fps cuadros por segundo (10 por defecto) y da una bitácora cada 0.1 s.
+Úsalo en tramos cortos (3-10 s): gasta más cuota de Gemini. Lo de Gemini es su descripción, no mis ojos.
 Imprime JSON: {video_id, titulo, duracion, cada_s, cuadros (n), hojas [rutas JPG, cortes en rojo], cortes [MM:SS],
                subtitulos, linea_tiempo (.md: cuadro + corte + lo que se dice), gemini, analisis}
 Mejoras v2: guarda info.json (no repite la consulta a YouTube), marca los cortes de plano en rojo, y trae los
@@ -159,7 +163,22 @@ def linea_tiempo(lista, sub, cortes_idx, carpeta):
     return str(r)
 
 
-def ver(url, gemini=True, pregunta=None, por_hoja=20, salida=None):
+PROMPT_ZOOM = ("Responde en español. Mira y escucha SOLO este tramo, muestreado a {fps} cuadros por segundo. Da una "
+               "bitácora cada {paso} s con formato SS.d | SE VE (movimiento exacto, cortes, texto en pantalla) | "
+               "SE DICE / SUENA. Marca CORTE donde cambie la toma. No inventes.")
+
+
+def zoom(url, tramos, fps=10):
+    """Gemini mira tramos cortos a alta frecuencia (hasta ~10+ fps). Tramos: lista de (inicio, fin) en segundos."""
+    salida = []
+    for a, b in tramos:
+        t, e = yg.gemini_youtube(f"https://www.youtube.com/watch?v={yg.id_youtube(url)}",
+                                 PROMPT_ZOOM.format(fps=fps, paso=round(1 / fps, 2)), inicio=a, fin=b, fps=fps)
+        salida.append({"tramo": f"{_mmss(a)}-{_mmss(b)}", "fps": fps, "gemini": e, "bitacora": t})
+    return salida
+
+
+def ver(url, gemini=True, pregunta=None, por_hoja=20, salida=None, tramos=None, fps=10):
     vid = yg.id_youtube(url) or "video"
     carpeta = Path(salida) if salida else RAIZ / vid
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -187,6 +206,8 @@ def ver(url, gemini=True, pregunta=None, por_hoja=20, salida=None):
     if gemini:
         g = yg.ver(url, pregunta=pregunta or PROMPT_SEGUNDOS, salida=str(carpeta))
         res.update(gemini=g.get("gemini"), analisis=g.get("analisis"), hoja_publica=g.get("hoja"))
+    if tramos:
+        res["zoom"] = zoom(url, tramos, fps)
     return res
 
 
@@ -197,12 +218,17 @@ if __name__ == "__main__":
     ap.add_argument("--pregunta")
     ap.add_argument("--por-hoja", type=int, default=20)
     ap.add_argument("--salida")
+    ap.add_argument("--zoom", action="append", default=[],
+                    help="tramo a alta frecuencia con Gemini, en segundos: 43-46 (se puede repetir)")
+    ap.add_argument("--fps", type=float, default=10, help="cuadros por segundo para --zoom (por defecto 10)")
     ap.add_argument("--borrar", help="borra la carpeta del análisis al terminar")
     a = ap.parse_args()
     if a.borrar:
         shutil.rmtree(a.borrar, ignore_errors=True)
         print(json.dumps({"borrado": a.borrar}))
     elif a.url:
-        print(json.dumps(ver(a.url, not a.sin_gemini, a.pregunta, a.por_hoja, a.salida), ensure_ascii=False, indent=1))
+        tr = [tuple(float(x) for x in z.split("-")) for z in a.zoom]
+        print(json.dumps(ver(a.url, not a.sin_gemini, a.pregunta, a.por_hoja, a.salida, tr, a.fps),
+                         ensure_ascii=False, indent=1))
     else:
         ap.print_help()

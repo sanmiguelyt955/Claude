@@ -92,11 +92,13 @@ def hoja_publica(vid, destino, vertical=False):
     return str(destino)
 
 
-def gemini_youtube(url, prompt=None, inicio=None, fin=None, timeout=300, baja=False):
+def gemini_youtube(url, prompt=None, inicio=None, fin=None, timeout=300, baja=False, fps=None):
     """Devuelve (texto, estado). 404 = probar el siguiente modelo; 503 o cualquier otro error = descartar."""
     parte_video = {"file_data": {"file_uri": url}}
-    if inicio is not None or fin is not None:
+    if inicio is not None or fin is not None or fps:
         meta = {}
+        if fps:
+            meta["fps"] = float(fps)
         if inicio is not None:
             meta["start_offset"] = f"{float(inicio):.0f}s"
         if fin is not None:
@@ -134,7 +136,7 @@ def gemini_youtube(url, prompt=None, inicio=None, fin=None, timeout=300, baja=Fa
     return None, f"Gemini: {estado}; descartado"
 
 
-def ver(url, pregunta=None, inicio=None, fin=None, gemini=True, salida=None, baja=False):
+def ver(url, pregunta=None, inicio=None, fin=None, gemini=True, salida=None, baja=False, fps=None):
     vid = id_youtube(url)
     if not vid:
         raise ValueError("No parece un enlace de YouTube (watch, shorts, live, embed o youtu.be)")
@@ -142,7 +144,7 @@ def ver(url, pregunta=None, inicio=None, fin=None, gemini=True, salida=None, baj
     salida = Path(salida or Path(__file__).resolve().parents[4] / "datos" / "vision" / "youtube")
     out = {"modo": "enlace", "video_id": vid, "url": limpio, **datos_publicos(vid)}
     out["hoja"] = hoja_publica(vid, salida / f"youtube_{vid}.jpg", vertical="/shorts/" in url)
-    out["analisis"], out["gemini"] = gemini_youtube(limpio, pregunta, inicio, fin, baja=baja) if gemini else (None, "no pedido")
+    out["analisis"], out["gemini"] = gemini_youtube(limpio, pregunta, inicio, fin, baja=baja, fps=fps) if gemini else (None, "no pedido")
     out["nota"] = ("Con análisis de Gemini: lo visual y el audio vienen de su descripción del video completo. "
                    if out["analisis"] else "Sin Gemini: solo se vio la portada y 3 cuadros públicos. ") + \
                   "Trae además la transcripción con Firecrawl (youtube-com/videos/video_transcript)."
