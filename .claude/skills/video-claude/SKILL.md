@@ -19,7 +19,7 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 | **Animar con código** (reel de motion graphics o collage con capas y cámara 3D, sin video de IA) | `scripts/motion.py reel\|collage guion.json --control` → revisar → final | `references/motion.md`, `plantillas/` |
 | **Video 2.5D** (personajes 2D en mundo 3D con luz, sombras, tinta, efectos pixel y sonido hecho con código) | `motor25d/motor25d.mjs plan.json salida.mp4 [--control]` | `references/motor25d.md` |
 | **Oídos** (escuchar un video: eventos, volumen, si el sonido cae en el corte; 252 sonidos hechos con código) | `earshot describe/timeline/sheet/critique/sfx` (instalar con `scripts/instalar_repos.sh`) | `references/motor25d.md` |
-| **Buscar repos** para cualquier necesidad, ordenados del mejor al peor | `python3 herramientas/buscar_repos.py "tarea" --consultas ...` | `herramientas/buscar_repos.py` |
+| **Buscar repos** para cualquier necesidad, ordenados del mejor al peor | `python3 herramientas/buscarepos/buscarepos.py "tarea"` (adaptado a ti con datos/perfil.json) | `herramientas/buscarepos/README.md` |
 | **Animación 3D estilo cabezón** (personajes, escenarios, cámaras, voz, subtítulos, música; tipo Creatorize, propia) | `kubo/kubo.py nuevo → plan → revisar → render → exportar` (Blender en la nube) | `references/kubo.md` |
 | **Estudiar un canal viral** (ordena Shorts por vistas, Gemini analiza los mejores con marketing/neuromarketing/psicología) | `scripts/canal_viral.py @canal [--lista shorts.json de Firecrawl] [--top 3]` | `references/guiones.md` |
 | **Guion viral** (estudiar virales, ganchos, estructura) | Firecrawl + `scripts/youtube_gemini.py` → fórmula → guion → `scripts/voz.py` | `references/guiones.md` |
