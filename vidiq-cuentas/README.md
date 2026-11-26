@@ -32,5 +32,7 @@ En la compu: `npx wrangler deploy`
 | VidIQ-Luffybloom777 | `VIDIQ_LUFFYBLOOM777` | `/luffybloom777/mcp/<ACCESO>` |
 | VidIQ-Automatizaciones777 | `VIDIQ_AUTOMATIZACIONES777` | `/automatizaciones777/mcp/<ACCESO>` |
 | VidIQ-Noticiasia777 | `VIDIQ_NOTICIASIA777` | `/noticiasia777/mcp/<ACCESO>` |
+| VidIQ-Viewshortsfactory777 | `VIDIQ_VIEWSHORTSFACTORY777` | `/viewshortsfactory777/mcp/<ACCESO>` |
+| VidIQ-mejoresreposdegithub777 | `VIDIQ_MEJORESREPOSDEGITHUB777` | `/mejoresreposdegithub777/mcp/<ACCESO>` |
 
 Cuando Claude ve estos conectores, cada uno se llama `mcp__VidIQ-<cuenta>__...`. Antes de gastar créditos, revisa el saldo con `vidiq_balance`.
