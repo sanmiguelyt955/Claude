@@ -23,7 +23,7 @@
 ## Videos de YouTube / Shorts
 
 - **Orden para VER (jerarquía):**
-  1. **vidIQ** (ve la imagen y oye el audio sincronizados): Short → `vidiq_watch_shortform_content` (10 créditos); video de hasta ~20 min → `vidiq_video_watch` (25); video largo → `vidiq_video_transcript` (5, trae todo) + storyboard + Gemini `--zoom`, porque `video_watch` falla en videos de horas.
+  1. **vidIQ** (ve la imagen y oye el audio sincronizados): Short → `vidiq_watch_shortform_content` (10 créditos); video de hasta ~20 min → `vidiq_video_watch` (25); video largo → `vidiq_video_transcript` (5, trae todo con tiempos exactos) + storyboard + Gemini por tramos (conector Gemini Video con start/end), porque en videos de horas `video_watch` sí ve todo pero pone mal los minutos.
      Usar la cuenta del nicho y revisar el presupuesto con `herramientas/vidiq_presupuesto.py`.
   2. **Sin créditos o si vidIQ falla:** `youtube_ver.py` (cuadros + Gemini + transcripción, storyboard por scrapecreators si YouTube bloquea).
   3. Atajo «Bajar para IAs» + buzón.

@@ -29,10 +29,11 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 1. **vidIQ, primera opción.** Ve la imagen (dice que a 1 fps) y oye el audio a la vez.
    - **Short o reel** → `vidiq_watch_shortform_content` (10 créditos). También sirve para TikTok e Instagram.
    - **Video normal (hasta ~20 min)** → `vidiq_video_watch` (25 créditos).
-   - **Video largo (más de ~20 min)** → NO usar `vidiq_video_watch`. Con 2 h se quedó en los primeros minutos y dio tiempos falsos.
+   - **Video largo (más de ~20 min)** → NO confiar en los tiempos de `vidiq_video_watch`. Sí ve todo el video y cita frases reales, pero ubica mal los minutos (probado con 2 h: lo que dijo para 30:15, 1:00:03, 1:30:12 y 2:00:00 estaba en realidad en 4:30, 11:00, 19:16 y 57:53). Sirve solo para un resumen general sin tiempos.
      - Usar `vidiq_video_transcript` (5 créditos, trae el video completo; con 2 h llegó hasta 2:13:11).
      - Más los cuadros del storyboard (Firecrawl › scrapecreators, 1 crédito).
-     - Más Gemini con `--zoom` en los tramos que importen.
+     - Más Gemini por tramos con tiempos exactos: conector **Gemini Video** `ver_video` con `start_offset_seconds`/`end_offset_seconds`/`fps` (su propia cuota), o `youtube_gemini.py --inicio --fin` (nuestra clave).
+     - Si todo falla: atajo «Bajar para IAs» → cortar en pedazos de ≤10 min → `vidiq_video_watch videoUrl=` (archivo propio: 5, 10 o 25 créditos según duración; algunas cuentas solo aceptan YouTube) o MEMORIES.AI / Picsart `media_describe_video` con el archivo.
    - **Solo lo que se dice** → `vidiq_video_transcript` (5 créditos, cuesta igual sin importar la duración).
    - **Qué cuenta usar:** la del nicho del video; si no hay, la que tenga más saldo. Hay 10 conectores `VidIQ-<cuenta>` y el `vidIQ` original.
    - **Presupuesto:** antes de gastar, revisar saldo con `vidiq_balance` (gratis), guardar la foto con `herramientas/vidiq_presupuesto.py --agregar …` y respetar el «seguro/día» del reporte.

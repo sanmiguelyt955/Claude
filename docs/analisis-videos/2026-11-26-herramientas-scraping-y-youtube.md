@@ -58,3 +58,18 @@
 - Costos: scrapecreators/video 1 crédito Firecrawl; youtube-com transcript ~5 solo si funciona (las fallas no cobran); vidIQ transcript 5 créditos vidIQ.
 - **Orden recomendado para transcripción:** Gemini (gratis) → youtube-com (Firecrawl) → vidIQ.
 - **Límite real:** si el video NO tiene subtítulos (ni automáticos), las tres dan vacío; entonces solo Gemini (que oye el audio) o el atajo «Bajar para IAs».
+
+## Prueba 4: vidIQ por duración (2026-11-26)
+| Video | Ver (créditos) | Transcripción | ¿Sirve? |
+|---|---|---|---|
+| Short de 28 s | 10 | 5 | ✅ las escenas coinciden con el storyboard |
+| Normal de 4:37 | 25 | 5 | ✅ los 10 capítulos exactos |
+| Largo de 2:13:15 | 25 | 5 (158k caracteres, completo) | ⚠️ ve todo y cita frases reales, pero ubica mal los minutos (30:15→4:30, 1:00:03→11:00, 1:30:12→19:16, 2:00:00→57:53) |
+
+- El precio **no cambia** con la duración de un video de YouTube. Solo cambia con archivos propios: 5 (≤60 s), 10 (≤180 s) o 25.
+- **Sustitutos para videos largos:**
+  - transcripción con tiempos exactos (vidIQ 5 o Firecrawl);
+  - storyboard (scrapecreators);
+  - Gemini por tramos (conector Gemini Video con start/end, o youtube_gemini.py --inicio/--fin);
+  - atajo «Bajar para IAs» + pedazos de ≤10 min.
+- Hoy Gemini dio 429 (nuestra clave) y 503 (conector saturado): hay que tener siempre más de una opción.
