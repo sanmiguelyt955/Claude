@@ -1,0 +1,11 @@
+{
+  // vidIQ Cuentas: un conector MCP por cada cuenta de vidIQ (una URL distinta para cada nicho).
+  // Reenvía todo a https://mcp.vidiq.com/mcp poniendo la clave de API de esa cuenta.
+  // Secretos (NO van aquí, se ponen en el panel de Cloudflare):
+  //   ACCESO          = llave de acceso tuya (va al final de cada URL)
+  //   VIDIQ_<NICHO>   = clave de API de vidIQ de esa cuenta (p. ej. VIDIQ_KUBO, VIDIQ_RECETAS)
+  "name": "vidiq-cuentas",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "keep_vars": true
+}

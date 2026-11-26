@@ -1,0 +1,5 @@
+{
+  "name": "vidiq-cuentas",
+  "private": true,
+  "scripts": { "deploy": "wrangler deploy", "dev": "wrangler dev", "check": "wrangler deploy --dry-run --outdir dist" }
+}
