@@ -10,7 +10,10 @@ YouTube no deja bajar el video a servidores (403). Este script mezcla tres fuent
 No se baja el video ni se salta ningún bloqueo. Hace UNA consulta a YouTube por video (si da 429, esperar; no insistir).
 
 Uso:  python3 youtube_ver.py <link> [--sin-gemini] [--pregunta "..."] [--por-hoja 20] [--salida carpeta]
-Imprime JSON: {video_id, titulo, duracion, cada_s, cuadros (n), hojas [rutas JPG], gemini, analisis}
+Imprime JSON: {video_id, titulo, duracion, cada_s, cuadros (n), hojas [rutas JPG, cortes en rojo], cortes [MM:SS],
+               subtitulos, linea_tiempo (.md: cuadro + corte + lo que se dice), gemini, analisis}
+Mejoras v2: guarda info.json (no repite la consulta a YouTube), marca los cortes de plano en rojo, y trae los
+subtítulos con tiempo (manuales o automáticos) del mismo info, sin Firecrawl.
 Al terminar el análisis, borrar la carpeta (--borrar <carpeta>).
 """
 import argparse
@@ -35,12 +38,54 @@ PROMPT_SEGUNDOS = ("Responde en español. Mira y escucha el video completo. Da u
                    "Después: lista de cortes con su MM:SS y el estilo de edición. No inventes lo que no se ve.")
 
 
-def info(url):
+def info(url, carpeta=None):
+    cache = Path(carpeta) / "info.json" if carpeta else None
+    if cache and cache.exists():
+        return json.loads(cache.read_text())
     r = subprocess.run(["yt-dlp", "--js-runtimes", "node", "-J", "--no-warnings", url],
                        capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "yt-dlp falló")
-    return json.loads(r.stdout)
+    d = json.loads(r.stdout)
+    if cache:
+        cache.write_text(json.dumps(d))
+    return d
+
+
+def subtitulos(d, idiomas=("es", "es-419", "en", "en-US")):
+    """Subtítulos con tiempo desde el info (manuales primero, luego automáticos). Una petición, sin descargar video."""
+    for fuente, tipo in ((d.get("subtitles") or {}, "manuales"), (d.get("automatic_captions") or {}, "automáticos")):
+        base = d.get("language") or ""
+        orig = [k for k in fuente if k.endswith("-orig")] + [k for k in fuente if base and k.split("-")[0] == base]
+        for lang in list(dict.fromkeys(orig + [l for l in idiomas if l in fuente])):
+            f = next((x for x in fuente[lang] if x.get("ext") == "json3"), None)
+            if not f:
+                continue
+            try:
+                j = json.loads(urllib.request.urlopen(urllib.request.Request(f["url"], headers=yg.UA), timeout=30).read())
+            except Exception:  # noqa: BLE001
+                continue
+            seg = []
+            for e in j.get("events", []):
+                txt = "".join(x.get("utf8", "") for x in e.get("segs", []) or []).replace("\n", " ").strip()
+                if txt:
+                    seg.append((e.get("tStartMs", 0) / 1000, txt))
+            if seg:
+                return {"idioma": lang, "tipo": tipo, "segmentos": seg}
+    return None
+
+
+def cortes(lista, umbral=28.0):
+    """Cambios de plano entre cuadros consecutivos (diferencia media de píxeles). Devuelve índices de cuadros con corte."""
+    marcados, prev = set(), None
+    for i, (_, c) in enumerate(lista):
+        g = c.convert("L").resize((32, 18))
+        if prev is not None:
+            dif = sum(abs(a - b) for a, b in zip(g.tobytes(), prev.tobytes())) / (32 * 18)
+            if dif > umbral:
+                marcados.add(i)
+        prev = g
+    return marcados
 
 
 def mejor_storyboard(d):
@@ -73,7 +118,7 @@ def cuadros(sb, duracion):
     return salida, (salida[1][0] - salida[0][0]) if len(salida) > 1 else None
 
 
-def hojas(lista, carpeta, por_hoja=20, escala=2, cols=5):
+def hojas(lista, carpeta, por_hoja=20, escala=2, cols=5, con_corte=frozenset()):
     rutas = []
     for k in range(0, len(lista), por_hoja):
         grupo = lista[k:k + por_hoja]
@@ -84,11 +129,34 @@ def hojas(lista, carpeta, por_hoja=20, escala=2, cols=5):
         for i, (t, c) in enumerate(grupo):
             x, y = (i % cols) * w, (i // cols) * (h + 18)
             lienzo.paste(c.resize((w, h), Image.LANCZOS), (x, y + 18))
-            d.text((x + 4, y + 3), f"{int(t // 60):02d}:{int(t % 60):02d}", fill="yellow")
+            corte = (k + i) in con_corte
+            if corte:
+                d.rectangle((x, y + 18, x + w - 1, y + 18 + h - 1), outline="red", width=4)
+            d.text((x + 4, y + 3), f"{int(t // 60):02d}:{int(t % 60):02d}" + ("  CORTE" if corte else ""),
+                   fill="red" if corte else "yellow")
         r = carpeta / f"hoja_{k // por_hoja + 1:02d}.jpg"
         lienzo.save(r, quality=90)
         rutas.append(str(r))
     return rutas
+
+
+def _mmss(t):
+    return f"{int(t // 60):02d}:{int(t % 60):02d}"
+
+
+def linea_tiempo(lista, sub, cortes_idx, carpeta):
+    """Archivo .md con un renglón por cuadro: MM:SS, si hay corte, y lo que se dice en ese tramo."""
+    if not lista and not sub:
+        return None
+    filas = ["| MM:SS | Corte | Se dice (subtítulos) |", "|---|---|---|"]
+    tiempos = [t for t, _ in lista] or sorted({round(t) for t, _ in sub["segmentos"]})
+    for i, t in enumerate(tiempos):
+        fin = tiempos[i + 1] if i + 1 < len(tiempos) else t + 2
+        dicho = " ".join(x for s0, x in (sub["segmentos"] if sub else []) if t <= s0 < fin)
+        filas.append(f"| {_mmss(t)} | {'✂️' if i in cortes_idx else ''} | {dicho} |")
+    r = Path(carpeta) / "linea_tiempo.md"
+    r.write_text("\n".join(filas) + "\n", encoding="utf-8")
+    return str(r)
 
 
 def ver(url, gemini=True, pregunta=None, por_hoja=20, salida=None):
@@ -97,18 +165,25 @@ def ver(url, gemini=True, pregunta=None, por_hoja=20, salida=None):
     carpeta.mkdir(parents=True, exist_ok=True)
     res = {"video_id": vid, "carpeta": str(carpeta)}
     try:
-        d = info(url)
+        d = info(url, carpeta)
         res.update(titulo=d.get("title"), canal=d.get("channel"), duracion=d.get("duration"))
         sb = mejor_storyboard(d)
+        lista, cc = [], set()
         if sb:
             lista, cada = cuadros(sb, d.get("duration") or 1e9)
+            cc = cortes(lista)
             res.update(cuadros=len(lista), cada_s=round(cada, 2) if cada else None,
-                       tamano=f"{sb['width']}x{sb['height']}", hojas=hojas(lista, carpeta, por_hoja))
-        else:
+                       tamano=f"{sb['width']}x{sb['height']}", hojas=hojas(lista, carpeta, por_hoja, con_corte=cc),
+                       cortes=[_mmss(lista[i][0]) for i in sorted(cc)])
+        if not sb:
             res["cuadros"] = 0
             res["nota_cuadros"] = "Este video no trae miniaturas de barra; quedan la portada y 3 cuadros de Gemini."
+        sub = subtitulos(d)
+        if sub:
+            res["subtitulos"] = f"{sub['tipo']} ({sub['idioma']}), {len(sub['segmentos'])} líneas"
+        res["linea_tiempo"] = linea_tiempo(lista, sub, cortes_idx=cc, carpeta=carpeta)
     except Exception as e:  # noqa: BLE001
-        res["error_cuadros"] = str(e)
+        res.setdefault("error_cuadros", str(e))
     if gemini:
         g = yg.ver(url, pregunta=pregunta or PROMPT_SEGUNDOS, salida=str(carpeta))
         res.update(gemini=g.get("gemini"), analisis=g.get("analisis"), hoja_publica=g.get("hoja"))
