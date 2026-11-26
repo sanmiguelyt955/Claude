@@ -20,6 +20,7 @@
 
 ## Videos de YouTube / Shorts
 
+- **Primero:** `scripts/youtube_ver.py <link>` (skill video-claude): cuadros reales cada ~2 s (miniaturas públicas de la barra) que ves tú mismo + bitácora segundo a segundo de Gemini + transcripción de Firecrawl. Haz UNA consulta por video (si YouTube da 429, espera; no insistas) y borra la carpeta al terminar.
 - Intenta verlos completos (descarga). Si YouTube bloquea la descarga desde la nube (lo normal), usa el modo por link: transcripción (Firecrawl) + cuadros públicos + conector Gemini Video para lo visual. Nunca intentes saltarte el bloqueo; ofrece las opciones (adjuntar el archivo, Drive, computadora conectada).
 
 - Si YouTube no deja (bloqueo o sin cuota de Gemini): pedir a Sanmi que use su atajo de iPhone **«Bajar para IAs»**
