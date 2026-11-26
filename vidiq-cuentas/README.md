@@ -34,5 +34,7 @@ En la compu: `npx wrangler deploy`
 | VidIQ-Noticiasia777 | `VIDIQ_NOTICIASIA777` | `/noticiasia777/mcp/<ACCESO>` |
 | VidIQ-Viewshortsfactory777 | `VIDIQ_VIEWSHORTSFACTORY777` | `/viewshortsfactory777/mcp/<ACCESO>` |
 | VidIQ-mejoresreposdegithub777 | `VIDIQ_MEJORESREPOSDEGITHUB777` | `/mejoresreposdegithub777/mcp/<ACCESO>` |
+| VidIQ-Aprendertrading777 | `VIDIQ_APRENDERTRADING777` | `/aprendertrading777/mcp/<ACCESO>` |
+| VidIQ-Dolaai2608 | `VIDIQ_DOLAAI2608` | `/dolaai2608/mcp/<ACCESO>` |
 
 Cuando Claude ve estos conectores, cada uno se llama `mcp__VidIQ-<cuenta>__...`. Antes de gastar créditos, revisa el saldo con `vidiq_balance`.
