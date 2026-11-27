@@ -1,5 +1,5 @@
 # ÍNDICE del repo (para IAs)
-Generado: 2026-11-27 05:00 con `python3 herramientas/indice.py`.
+Generado: 2026-11-27 19:07 con `python3 herramientas/indice.py`.
 Cómo usarlo: busca aquí la palabra de lo que necesitas, abre el archivo y lee su encabezado. Reglas en `CLAUDE.md`.
 Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `aprendizajes/`).
 
@@ -40,7 +40,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
     - `.claude/skills/video-claude/remotion/src/TitleCard.tsx` — 
     - `.claude/skills/video-claude/remotion/src/comun.tsx` — 
     - `.claude/skills/video-claude/remotion/src/index.ts` — registerRoot(Root);
-- `.claude/skills/video-claude/scripts/` — carpeta (22 archivos)
+- `.claude/skills/video-claude/scripts/` — carpeta (23 archivos)
   - `.claude/skills/video-claude/scripts/analyze.sh` — Uso: analyze.sh video.mp4  -> resumen técnico + silencios
   - `.claude/skills/video-claude/scripts/bajar_para_ias.py` — «Bajar para IAs»: programa para a-Shell (iPhone) que usa el atajo del mismo nombre.
   - `.claude/skills/video-claude/scripts/buzon.py` — Buzón de videos para IAs: lo que Sanmi manda desde su iPhone (atajo «Bajar para IAs» → a-Shell → Cloudflare).
@@ -56,6 +56,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
   - `.claude/skills/video-claude/scripts/polyhaven.py` — Poly Haven: cielos (HDRI), texturas y modelos 3D GRATIS y libres (CC0: se pueden usar en videos monetizados
   - `.claude/skills/video-claude/scripts/preview.sh` — Contact sheet 4x3 para revisar el resultado visualmente. Uso: preview.sh video.mp4 [out.jpg]
   - `.claude/skills/video-claude/scripts/render.sh` — Uso: render.sh in.mp4 subs.ass out.mp4 [--aspect 9:16|16:9|1:1] [--overlay ov.webm] [--music m.mp3] [--logo logo.png] [--logo-pos tr|tl|br|bl]
+  - `.claude/skills/video-claude/scripts/repos_de_videos.py` — repos_de_videos.py — de videos de YouTube a la lista de repos, ahorrando créditos.
   - `.claude/skills/video-claude/scripts/setup.sh` — Valida/instala dependencias. Seguro de ejecutar varias veces.
   - `.claude/skills/video-claude/scripts/sonido.py` — Banda sonora procedural para videos de historia (sin derechos, sin conectores): efectos de sonido sintetizados,
   - `.claude/skills/video-claude/scripts/transcribe.py` — Transcribe con faster-whisper -> words.json [{word,start,end}] + segments.
