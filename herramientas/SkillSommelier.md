@@ -12,3 +12,9 @@ Busca **skills** (SKILL.md) para cualquier necesidad. Lee cada una antes de reco
 cd ~/skillsommelier && python3 skillsommelier.py "hacer videos al ritmo de la música" --where cloud
 python3 skillsommelier.py --audit owner/repo/skill
 ```
+
+## 🧰 kit.py: el kit completo para una meta
+Es el mismo archivo en los tres repos. Parte la meta en pasos y en cada uno da solo lo que hace falta (📦 repo, 🔌 conector, 🎓 skill o 🤖 nada). Respeta «gratis» y «para monetizar» (licencias comerciales).
+```bash
+cd ~/skillsommelier && python3 kit.py "quiero hacer videos animados gratis con IA y publicarlos en YouTube para monetizarlos" --where cloud --inventory /ruta/a/tu/inventory.json
+```
