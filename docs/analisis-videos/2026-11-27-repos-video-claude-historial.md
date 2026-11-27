@@ -33,3 +33,28 @@ Método:
 3. **video-shotcraft**: 124 recetas de tomas.
 4. **reanimate**: copiar movimientos que nos gusten de otros videos o sitios.
 5. **humanizer**: guiones que no suenen a IA.
+
+## Tanda 2 (2026-11-27)
+**Pl7Cqf5ApT0, Short de afCodeHub** (1:48, 36.5k vistas, en portugués, etiquetado como «hecho con IA»). Lo vio vidIQ (10 créditos, Viewshortsfactory777) y corrigió los nombres que la transcripción escribía mal:
+| # | Repo | ⭐ | Reemplaza a |
+|---|---|---|---|
+| 1 | wide-trace/open-higgsfield | 7k | Higgsfield (imagen y video; algunos modelos necesitan clave de API) |
+| 2 | debpalash/VoiceStudio | 119k | ElevenLabs (clonar voz, doblaje, 646 idiomas, local) |
+| 3 | every-app/open-seo | 26.6k | Semrush (usa APIs de DataForSEO y trae MCP) |
+| 4 | AppFlowy-IO/AppFlowy | 79.6k | Notion |
+| 5 | OpenWhispr/openwhispr | 10.6k | Dictado y transcripción (Parakeet/Whisper local) |
+| 6 | opf/openproject | 17.8k | Asana |
+| 7 | calcom/cal.diy | 49.7k | Calendly (agenda propia, MIT) |
+| 8 | chatwoot/chatwoot | 40.7k | Intercom/Zendesk |
+| 9 | CapSoftware/Cap | 25.7k | Loom |
+
+- **Formato del Short (para copiar la idea, no el contenido):**
+  - ventana de navegador con inclinación 2.5D que recorre la página del repo;
+  - contador «GITHUB · 01 / 09» arriba;
+  - etiquetas de funciones abajo;
+  - voz de IA con subtítulos sincronizados y música suave.
+
+**TiBUeT1-oI8, githubrepo_cloud** (4:37). Es otra versión del Top 10 de scraping. Lo nuevo:
+- **unclecode/crawl4ai** (86.6k⭐): convierte sitios en markdown para IA.
+- **citrolabs/ego-lite** (24.7k⭐): navegador rápido para agentes que comparte tu sesión iniciada.
+- Igual que antes, **stealth-browser-mcp NO se usa**.
