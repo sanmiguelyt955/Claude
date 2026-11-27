@@ -1,5 +1,5 @@
 # ÍNDICE del repo (para IAs)
-Generado: 2026-11-26 20:35 con `python3 herramientas/indice.py`.
+Generado: 2026-11-27 05:00 con `python3 herramientas/indice.py`.
 Cómo usarlo: busca aquí la palabra de lo que necesitas, abre el archivo y lee su encabezado. Reglas en `CLAUDE.md`.
 Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `aprendizajes/`).
 
@@ -107,7 +107,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
 - `musica/` — Biblioteca musical (skill video-claude → música)
 
 ## Documentos y análisis
-- `docs/analisis-videos/` — carpeta (19 archivos)
+- `docs/analisis-videos/` — carpeta (20 archivos)
   - `docs/analisis-videos/2026-11-06-animaciones-3d-creatorize.md` — Animaciones 3D virales con IA (canal «g russ», herramienta Creatorize) — 2026-11-06
   - `docs/analisis-videos/2026-11-06-capybluh-viral.md` — @capybluh: por qué retienen sus Shorts más vistos
   - `docs/analisis-videos/2026-11-06-capybluh.md` — Canal Capybluh (@capybluh): análisis de su fórmula viral
@@ -120,6 +120,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
   - `docs/analisis-videos/2026-11-26-bencord-top10-repos-video.md` — Bencord: «Probé 100+ repos de GitHub para editar videos. Este es mi TOP 10» (10:55)
   - `docs/analisis-videos/2026-11-26-herramientas-scraping-y-youtube.md` — Herramientas de scraping y de YouTube (cacería del 2026-11-26)
   - `docs/analisis-videos/2026-11-26-top10-scraping-githubrepo.md` — «Top 10 Web Scraping & Automation Tools Taking Over GitHub (2026)» — githubrepo_cloud (4:36)
+  - `docs/analisis-videos/2026-11-27-repos-video-claude-historial.md` — Repos para hacer video con Claude: tu historial de YouTube (2026-11-27)
 - `docs/monetizacion/` — carpeta (1 archivos)
   - `docs/monetizacion/2026-11-06-monetizacion-redes.md` — Monetización en redes (noviembre 2026): cuánto pagan y qué piden
 - `docs/noticias-repos-conectores-2026-11-26.md` — Noticias de repos y conectores (2026-11-26)
