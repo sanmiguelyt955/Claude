@@ -27,7 +27,7 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 
 ## Orden para VER videos de YouTube (jerarquía, desde 2026-11-26)
 
-> **Transcripción de respaldo: conector YTAPI** (desde 2026-11-28). `get_video_info` es gratis y dice qué idiomas hay; `get_transcript` cuesta 1 crédito (plan free: 200 créditos, hasta 100 al día) y funciona desde la nube sin bloqueo. También tiene `get_comments`, `get_video_details`, `get_video_heatmap` y `search_youtube`. Úsalo si falla la transcripción de Firecrawl o la de vidIQ.
+> **Transcripción de respaldo: conector YTAPI** (desde 2026-11-28). `get_video_info` es gratis y dice qué idiomas hay; `get_transcript` cuesta 1 crédito (plan free: 200 créditos, hasta 100 al día) y funciona desde la nube sin bloqueo. También tiene `get_comments`, `get_video_details`, `get_video_heatmap` y `search_youtube`. Costos medidos (28 nov): info y saldo = 0; transcripción, detalles, mapa de calor, comentarios, canal, búsqueda = 1 crédito cada una (la duración del video no cambia el precio; las páginas siguientes del mismo formato son gratis; otro formato cuesta otro crédito). Para transcripción con tiempos exactos usa `format: srt`. Es la primera opción para TRANSCRIBIR; no ve imagen ni oye audio. Detalle en Obsidian: `guias/YTAPI - qué hace y cuánto gasta (pruebas 28 nov 2026)`.
 
 1. **vidIQ, primera opción.** Ve la imagen (dice que a 1 fps) y oye el audio a la vez.
    - **Short o reel** → `vidiq_watch_shortform_content` (10 créditos). También sirve para TikTok e Instagram.
