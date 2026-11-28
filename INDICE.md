@@ -1,5 +1,5 @@
 # ÍNDICE del repo (para IAs)
-Generado: 2026-11-27 19:19 con `python3 herramientas/indice.py`.
+Generado: 2026-11-28 00:03 con `python3 herramientas/indice.py`.
 Cómo usarlo: busca aquí la palabra de lo que necesitas, abre el archivo y lee su encabezado. Reglas en `CLAUDE.md`.
 Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `aprendizajes/`).
 
@@ -89,6 +89,7 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
 - `herramientas/SkillSommelier.md` — SkillSommelier → https://github.com/sanmiguelyt955/SkillSommelier
 - `herramientas/buscarepos/` — carpeta (1 archivos)
 - `herramientas/indice.py` — Genera INDICE.md: el mapa del repo para cualquier IA (Claude, Muses, Codex…). Un renglón por cosa, con qué es y dónde está.
+- `herramientas/scraping-y-youtube.md` — Kit de scraping y ver YouTube (2026-11-28)
 - `herramientas/vidiq_presupuesto.py` — vidiq_presupuesto.py — cuánto gastamos de vidIQ y cuánto podemos gastar para que alcance hasta el reinicio.
 - `herramientas/youtube-gemini-mcp-modelo.patch` — 
 - `herramientas/youtube-gemini-mcp.md` — youtube-gemini-mcp (aigentive, MIT) — ver YouTube por link con memoria
@@ -123,6 +124,10 @@ Memoria compartida de todas las IAs: Obsidian 2.0 (`indice.md`, `buzon/`, `apren
   - `docs/analisis-videos/2026-11-26-herramientas-scraping-y-youtube.md` — Herramientas de scraping y de YouTube (cacería del 2026-11-26)
   - `docs/analisis-videos/2026-11-26-top10-scraping-githubrepo.md` — «Top 10 Web Scraping & Automation Tools Taking Over GitHub (2026)» — githubrepo_cloud (4:36)
   - `docs/analisis-videos/2026-11-27-repos-video-claude-historial.md` — Repos para hacer video con Claude: tu historial de YouTube (2026-11-27)
+- `docs/kits/` — carpeta (3 archivos)
+  - `docs/kits/2026-11-27-correos-shopify-telegram.md` — Tu kit para: quiero que la IA responda automáticamente los correos de los clientes de mi tienda en Shopify y que me avise por Telegram cuando haya un problema
+  - `docs/kits/2026-11-27-scraping-y-ver-youtube.md` — Tu kit para: quiero herramientas para hacer scraping y tener la opción de poder ver videos de YouTube
+  - `docs/kits/2026-11-27-videos-animados-monetizar.md` — Tu kit para: quiero hacer videos animados de manera gratuita con IA, con voz y subtítulos, y publicarlos en YouTube para después monetizarlos
 - `docs/monetizacion/` — carpeta (1 archivos)
   - `docs/monetizacion/2026-11-06-monetizacion-redes.md` — Monetización en redes (noviembre 2026): cuánto pagan y qué piden
 - `docs/noticias-repos-conectores-2026-11-26.md` — Noticias de repos y conectores (2026-11-26)

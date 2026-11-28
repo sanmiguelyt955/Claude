@@ -24,3 +24,7 @@ echo "Listo: $BASE/herr/bin/earshot, $BASE/repos/pixelfx"
   && mkdir -p -m 777 node_modules/@huggingface/transformers/.cache \
   && python3 -c "import json;c=json.load(open('headtts-node.json'));c['tts'].update(device='cpu',threads=2,voices=['am_fenrir','af_bella']);json.dump(c,open('headtts-cloud.json','w'),indent=1)")
 echo "HeadTTS: cd $BASE/repos/HeadTTS && NODE_USE_ENV_PROXY=1 node modules/headtts-node.mjs --config ./headtts-cloud.json  (POST :8882/v1/synthesize)"
+
+# Scrapy (BSD): scraping de sitios enteros. google-genai: lo usa la skill gemini-video-understanding.
+pip install -q scrapy google-genai
+echo "Scrapy: scrapy runspider mi_spider.py -o salida.json  ·  Gemini video: python3 .claude/skills/gemini-video-understanding/scripts/analyze_video.py --youtube-url <link> --prompt '...'"
