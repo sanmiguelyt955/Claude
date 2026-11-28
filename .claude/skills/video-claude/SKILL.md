@@ -29,6 +29,13 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 
 > **Transcripción de respaldo: conector YTAPI** (desde 2026-11-28). `get_video_info` es gratis y dice qué idiomas hay; `get_transcript` cuesta 1 crédito (plan free: 200 créditos, hasta 100 al día) y funciona desde la nube sin bloqueo. También tiene `get_comments`, `get_video_details`, `get_video_heatmap` y `search_youtube`. Costos medidos (28 nov): info y saldo = 0; transcripción, detalles, mapa de calor, comentarios, canal, búsqueda = 1 crédito cada una (la duración del video no cambia el precio; las páginas siguientes del mismo formato son gratis; otro formato cuesta otro crédito). Para transcripción con tiempos exactos usa `format: srt`. Es la primera opción para TRANSCRIBIR; no ve imagen ni oye audio. Detalle en Obsidian: `guias/YTAPI - qué hace y cuánto gasta (pruebas 28 nov 2026)`.
 
+> **Combo «vidIQ ve + YTAPI corrige» (desde 2026-11-28).** vidIQ ve imagen y audio, pero pone mal los minutos (sobre todo en videos largos). YTAPI trae los subtítulos con tiempos exactos. Pasos:
+> 1. YTAPI `get_video_info` (gratis) → duración e idiomas. Luego `get_transcript` con `format: srt` (1 crédito; si pesa mucho el resultado se guarda solo en un archivo, usa esa ruta) y, si el video es largo, `get_video_heatmap` (1) y `get_video_details` (1, trae capítulos).
+> 2. vidIQ (Short 10 / video 25 créditos). En el prompt pídele, para CADA momento, el minuto y **la frase exacta que se oye entre comillas** además de lo que se ve. Sin frase no se puede corregir el minuto.
+> 3. Guarda lo de vidIQ en un archivo y corre `python3 scripts/corregir_tiempos.py --srt X.srt --vidiq vidiq.md --salida corregido.md`. Pone el minuto real, deja igual los que ya estaban bien (±5 s) y marca «⚠️ revisar» lo que no aparece en los subtítulos (muchas veces es algo que solo se ve y no se dice: ahí manda vidIQ).
+> 4. Lo que vidIQ hace bien y YTAPI no: ver imagen, texto en pantalla, qué pasa sin hablar. Lo que YTAPI hace mejor: tiempos exactos, palabras exactas (nombres de repos, cifras; revisa que no sea un error del subtítulo automático), capítulos, mapa de calor, comentarios (quejas, links rotos).
+> 5. Costo típico: Short ≈ 1 + 10 = 11 créditos; video de ≤20 min ≈ 1 + 25 = 26; video largo: SRT (1) + mapa de calor (1) y se ven con vidIQ solo los tramos importantes. Ya no hace falta `vidiq_video_transcript` (5), YTAPI lo hace con 1.
+
 1. **vidIQ, primera opción.** Ve la imagen (dice que a 1 fps) y oye el audio a la vez.
    - **Short o reel** → `vidiq_watch_shortform_content` (10 créditos). También sirve para TikTok e Instagram.
    - **Video normal (hasta ~20 min)** → `vidiq_video_watch` (25 créditos).
