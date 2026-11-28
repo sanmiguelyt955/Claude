@@ -27,6 +27,8 @@ Una sola skill con tres capacidades. Todas usan el conector MCP **`video-nube`**
 
 ## Orden para VER videos de YouTube (jerarquía, desde 2026-11-26)
 
+> **Transcripción de respaldo: conector YTAPI** (desde 2026-11-28). `get_video_info` es gratis y dice qué idiomas hay; `get_transcript` cuesta 1 crédito (plan free: 200 créditos, hasta 100 al día) y funciona desde la nube sin bloqueo. También tiene `get_comments`, `get_video_details`, `get_video_heatmap` y `search_youtube`. Úsalo si falla la transcripción de Firecrawl o la de vidIQ.
+
 1. **vidIQ, primera opción.** Ve la imagen (dice que a 1 fps) y oye el audio a la vez.
    - **Short o reel** → `vidiq_watch_shortform_content` (10 créditos). También sirve para TikTok e Instagram.
    - **Video normal (hasta ~20 min)** → `vidiq_video_watch` (25 créditos).

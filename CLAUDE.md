@@ -9,6 +9,7 @@
 - Haz commit con un mensaje claro y push a la rama designada de la sesión. No crees Pull Request salvo que el usuario lo pida.
 - Si algo no cabe en el repo (secretos, claves, tokens), no lo subas: avisa al usuario.
 - El usuario habla español: responde en español.
+- «Obsidian» siempre significa **Obsidian 2.0** (el conector `Obsidian_2_0`), nunca otro.
 
 ## Cuando el usuario manda un video o un link de video
 
