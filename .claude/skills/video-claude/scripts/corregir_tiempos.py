@@ -81,7 +81,7 @@ def buscar(frase, palabras, idx, n=3):
             mejor, mejor_v = p, v
     total = max(1, len(q) - n + 1)
     p = max(0, min(mejor, len(palabras) - 1))
-    return {"seg": palabras[p][0], "confianza": round(min(1.0, mejor_v / total), 2)}
+    return {"seg": palabras[p][0], "confianza": round(min(1.0, mejor_v / total), 2), "votos": mejor_v}
 
 
 def a_seg(ts):
@@ -94,11 +94,11 @@ def fmt(s):
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
 
 
-def frase_de(linea, ts):
-    q = re.findall(r"[\"“«'‘]([^\"”»'’]{12,})[\"”»'’]", linea)
-    if q:
-        return " ".join(q)
-    return linea.replace(ts, " ")
+def frases_de(linea, ts):
+    """Frases candidatas de una línea: cada texto entre comillas (vidIQ mezcla texto de pantalla y frase hablada)
+    y, si no hay comillas, toda la línea."""
+    q = [x for x in re.findall(r"[\"“«]([^\"”»]{12,})[\"”»]", linea)]
+    return q or [linea.replace(ts, " ")]
 
 
 def main():
@@ -122,7 +122,11 @@ def main():
             salida.append(linea)
             continue
         ts = m.group(1)
-        r = buscar(frase_de(linea, ts), palabras, idx)
+        # probamos cada frase y nos quedamos con la que mejor encaja en los subtítulos
+        cands = [buscar(f, palabras, idx) for f in frases_de(linea, ts)]
+        cands = [c for c in cands if c]
+        # más evidencia (tríos de palabras que coinciden) gana: una frase larga pesa más que un rótulo corto
+        r = max(cands, key=lambda c: (c["votos"] * c["confianza"], c["confianza"])) if cands else None
         orig = a_seg(ts)
         if not r or r["confianza"] < 0.25:
             filas.append({"original": ts, "corregido": None, "dif_s": None, "confianza": r["confianza"] if r else 0,

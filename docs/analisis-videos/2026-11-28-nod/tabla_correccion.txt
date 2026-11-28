@@ -1,0 +1,37 @@
+SRT: 3059 palabras, hasta 16:56.  Líneas con minuto: 33
+   vidIQ     real     dif  conf  estado     texto
+    0:00     0:00     +0s   1.0  ok         - [0:00] Speaker introducing the topic of AI agents on screen with text "La carrera por el
+    0:16     0:16     +0s   1.0  ok         - [0:16] Speaker discussing n8n's agent on screen with text "Y ahora, los creadores de n8n
+    0:23     0:21     -2s  0.84  ok         - [0:23] Speaker introducing "Nod" on screen with text "Se llama Nod", "Gratis", "Código a
+    0:31     0:28     -3s  0.84  ok         - [0:31] Speaker explaining Nod's connections on screen with text "Correo", "Calendario", 
+    0:41     0:40     -1s   1.0  ok         - [0:41] Speaker outlining the video steps on screen with text "Instalarlo juntos", "Darle
+    0:52     0:51     -1s  0.85  ok         - [0:52] Speaker comparing agent execution models on screen with text "Agente en la nube" 
+    1:33     1:33     +0s   1.0  ok         - [1:33] Speaker discussing system isolation on screen with text "Aislamiento de entorno a
+    1:42     1:40     -2s   1.0  ok         - [1:42] Speaker comparing n8n and Nod on screen with text "Del mismo equipo, pero aparte"
+    2:42     2:45     +3s   1.0  corregido  - [2:42] Speaker showing GitHub repository on screen with URL "github.com/n8n-io/nod" and 
+    2:57     2:57     +0s   1.0  ok         - [2:57] Speaker discussing security vault on screen with text "Vault: la bóveda" and "Bóv
+    3:47     3:45     -2s   1.0  ok         - [3:47] Speaker introducing installation on Windows on screen with text "Parte 1: Instala
+    3:51     3:51     +0s  0.77  ok         - [3:51] Speaker showing Nod official website on screen with URL "nod.n8n.io" and text "Me
+    4:30     4:29     -1s   1.0  ok         - [4:30] Speaker showing setup screen on screen with text "Get started = Empezar" and "An 
+    4:38     4:36     -2s   1.0  ok         - [4:38] Speaker showing account connection on screen with text "Conectar tus cuentas", "G
+    4:56     4:53     -3s   1.0  ok         - [4:56] Speaker showing Google login screen on screen with text "Iniciar sesión con Googl
+    5:13     5:11     -2s   1.0  ok         - [5:13] Speaker showing questionnaire screen on screen with text "Unas preguntas sobre el
+    5:31     5:30     -1s   1.0  ok         - [5:31] Speaker showing AI model selection screen on screen with text "¿Qué IA va a utili
+    6:00     5:58     -2s   1.0  ok         - [6:00] Speaker showing OpenAI connection options on screen with text "Dos formas de cone
+    6:31     6:30     -1s   1.0  ok         - [6:31] Speaker showing model choice screen on screen with text "Elegir el modelo", "GPT-
+    6:52     6:54     +2s   1.0  ok         - [6:52] Speaker showing Nod chat interface on screen with text "El chat: aquí se le pide 
+    7:13     7:16     +3s   1.0  corregido  - [7:13] Speaker showing settings screen on screen with text "Settings > General", "Europe
+    7:36     7:33     -3s   1.0  ok         - [7:36] Speaker introducing task 1 on screen with text "Encargo 1 de 4", "Revisar el corr
+    8:06     8:07     +1s   1.0  ok         - [8:06] Speaker showing demonstration data on screen with text "Cuenta y datos de demostr
+    8:21     8:19     -2s   1.0  ok         - [8:21] Speaker showing chat task prompt on screen with text "Revisa los correos de Gmail
+    9:44     9:47     +3s   1.0  ok         - [9:44] Speaker introducing task 2 on screen with text "Encargo 2 de 4", "Programarlo a d
+   10:48    10:50     +2s   1.0  ok         - [10:48] Speaker introducing task 3 on screen with text "Encargo 3 de 4", "Hablarle desde
+   11:23    11:23     +0s  0.89  ok         - [11:23] Speaker showing Telegram connection screen on screen with text "Connect Telegram
+   12:47    12:46     -1s   1.0  ok         - [12:47] Speaker showing Telegram chat on screen with text "Compara 3 auriculares inalámb
+   13:48    13:49     +1s   1.0  ok         - [13:48] Speaker showing Usage screen on screen with text "Usage: la actividad". "Aquí po
+   14:00    13:58     -2s   1.0  ok         - [14:00] Speaker showing Vault screen on screen with text "Vault: la bóveda", "Add a logi
+   14:22    14:24     +2s   1.0  ok         - [14:22] Speaker introducing task 4 on screen with text "Encargo 4 de 4", "Preparar una r
+   14:45    14:45     +0s   1.0  ok         - [14:45] Speaker showing Calendar connection screen on screen with text "Google Calendar"
+   16:05    16:04     -1s   1.0  ok         - [16:05] Speaker reviewing common tasks on screen with text "Tareas que repites a menudo"
+
+ok: 31  corregidos: 2  a revisar: 0
